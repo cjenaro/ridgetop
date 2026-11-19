@@ -1,0 +1,58 @@
+import type { IncomingMessage, ServerResponse } from 'node:http'
+import type { Records } from './server-types.ts'
+import { randomUUID } from 'node:crypto'
+import { mkdir, readFile, rename, writeFile } from 'node:fs/promises'
+import { dirname } from 'node:path'
+
+export function createRecords<T>(file?: string, saved: Iterable<readonly [string, T]> = []): Records<T> {
+  const records = new Map(saved)
+  let pending = Promise.resolve()
+  let dirty = false
+  return {
+    get(id) { return records.get(id) },
+    set(id, record) {
+      records.set(id, record)
+      dirty = true
+    },
+    save() {
+      if (!file || !dirty) return pending
+      dirty = false
+      pending = pending.catch(() => {}).then(async () => {
+        const value = JSON.stringify([...records])
+        try {
+          await mkdir(dirname(file), { recursive: true, mode: 0o700 })
+          await writeFile(file + '.tmp', value, { mode: 0o600 })
+          await rename(file + '.tmp', file)
+        } catch (error) {
+          dirty = true
+          throw error
+        }
+      })
+      return pending
+    }
+  }
+}
+
+export async function openRecords<T>(file: string): Promise<Records<T>> {
+  let saved
+  try {
+    saved = JSON.parse(await readFile(file, 'utf8'))
+  } catch (error) {
+    if (error.code !== 'ENOENT') throw error
+  }
+  return createRecords<T>(file, saved)
+}
+
+export function createIdentity() { return randomUUID() }
+
+export function createCookieSession({ name, path, maxAge }: { name: string; path: string; maxAge: number }) {
+  if (!/^[A-Za-z0-9_-]+$/.test(name)) throw new TypeError('Invalid session cookie name')
+  const pattern = new RegExp('(?:^|;\\s*)' + name + '=([a-f0-9-]{36})(?:;|$)')
+  return {
+    read(req: IncomingMessage) { return pattern.exec(req.headers.cookie ?? '')?.[1] },
+    write(req: IncomingMessage, res: ServerResponse, id: string) {
+      res.setHeader('Set-Cookie', name + '=' + id + '; Path=' + path +
+        '; HttpOnly; SameSite=Strict; Max-Age=' + maxAge + ('encrypted' in req.socket && req.socket.encrypted ? '; Secure' : ''))
+    }
+  }
+}

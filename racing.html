@@ -1,0 +1,96 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Signal Drift · Ridgetop</title>
+  <link rel="stylesheet" href="/style.css">
+  <link rel="stylesheet" href="/game-ui.css">
+  <link rel="stylesheet" href="/racing/style.css">
+  <script type="module" src="/racing/main.js"></script>
+</head>
+<body class="race-page">
+  <main class="game-viewport" aria-label="Signal Drift">
+    <canvas id="race-stage" class="playfield" width="960" height="540" tabindex="-1" aria-label="Signal Drift isometric circuit"></canvas>
+    <canvas id="race-hud" class="game-layer" width="960" height="540" aria-hidden="true"></canvas>
+    <div id="race-readout" class="game-readout" aria-label="Race status">
+      <span id="race-lap">Lap 1 / 2</span>
+      <span id="race-position">4 / 4</span>
+      <span id="race-speed">0 km/h</span>
+      <span id="race-time">0:00.00</span>
+      <span id="race-surface">On track</span>
+      <span id="race-shield"></span>
+      <span id="race-ammo"></span>
+      <span id="race-backend">Starting renderer</span>
+    </div>
+    <div id="race-controls" class="play-controls" hidden>
+      <div class="game-actions">
+        <button id="race-recover" type="button" class="quiet">Recover</button>
+        <button id="race-pause" type="button" class="quiet">Pause</button>
+      </div>
+      <div class="touch touch-deck driving-touch" aria-label="Driving controls">
+        <div class="combat-controls">
+          <button type="button" data-control="pulse">Pulse</button>
+          <button type="button" data-control="snare">Snare</button>
+        </div>
+        <div>
+          <button type="button" data-control="left" aria-label="Steer left">←</button>
+          <button type="button" data-control="right" aria-label="Steer right">→</button>
+        </div>
+        <div>
+          <button type="button" data-control="drift">Drift</button>
+          <button type="button" data-control="brake" aria-label="Brake and reverse">Brake</button>
+          <button type="button" data-control="throttle" aria-label="Accelerate">Go</button>
+        </div>
+      </div>
+    </div>
+    <section id="race-overlay" class="game-overlay game-title" aria-label="Race menu">
+      <div class="hero-card race-menu">
+        <p class="chapter" id="race-overlay-kicker">Championship</p>
+        <h1 id="race-overlay-title">Signal<br>Drift</h1>
+        <p id="race-overlay-description">Loading the starting grid…</p>
+        <p class="campaign-progress" id="race-purse" hidden></p>
+        <ul class="race-choices" id="race-choices" hidden></ul>
+        <div class="title-actions">
+          <button id="race-start" type="button" disabled>Start race</button>
+          <button id="race-next" type="button" hidden>Next event</button>
+          <button id="race-events" class="quiet" type="button" hidden>Events</button>
+          <button id="race-garage" class="quiet" type="button" hidden>Garage</button>
+          <button id="race-restart" class="quiet" type="button" hidden>Restart race</button>
+          <button id="race-home" class="quiet" type="button" hidden>Main menu</button>
+          <a id="race-beacon" class="text-link" href="/">Play Beacon Run</a>
+        </div>
+        <p class="control-guide" id="race-guide"><kbd>W</kbd> Accelerate <kbd>A</kbd> <kbd>D</kbd> Steer <kbd>S</kbd> Brake <kbd>Space</kbd> Drift <kbd>J</kbd> Pulse <kbd>K</kbd> Snare</p>
+      </div>
+    </section>
+    <section id="garage-screen" class="garage-screen" aria-labelledby="garage-heading" hidden>
+      <header class="garage-header">
+        <div>
+          <p class="garage-game">Signal Drift</p>
+          <h1 id="garage-heading">Garage</h1>
+        </div>
+        <div class="garage-wallet">
+          <div class="garage-balance"><span>Credits</span><strong id="garage-credits"></strong></div>
+          <button id="garage-back" class="quiet" type="button">Back</button>
+        </div>
+      </header>
+      <div class="garage-bay" id="garage-bay">
+        <div class="garage-car-name">Rally hatch</div>
+      </div>
+      <div class="garage-parts" id="garage-parts" aria-label="Upgrade parts" role="group"></div>
+      <section class="garage-inspector" aria-labelledby="garage-part-name">
+        <div>
+          <p id="garage-tier" class="garage-tier"></p>
+          <h2 id="garage-part-name"></h2>
+        </div>
+        <dl id="garage-stats" class="garage-stats" aria-label="Upgrade comparison"></dl>
+        <div class="garage-purchase">
+          <button id="garage-install" type="button" aria-describedby="garage-feedback"></button>
+          <p id="garage-feedback" role="status"></p>
+        </div>
+      </section>
+    </section>
+    <p id="race-message" class="game-toast" role="status"></p>
+  </main>
+</body>
+</html>

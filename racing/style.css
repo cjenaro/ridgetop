@@ -1,0 +1,286 @@
+.race-page {
+  --accent: #ffc384;
+  --border: #76583c;
+  --muted: #c0aea2;
+  background: #191713;
+}
+.race-page .game-viewport {
+  --panel: #271f19;
+  --caption: #f1e2d5;
+  background: #151922;
+}
+.race-page .game-title {
+  background: linear-gradient(90deg, #1e1612f5 0%, #201711cf 35%, #1c171427 77%);
+}
+.race-page .game-overlay:not(.game-title) .hero-card {
+  width: min(100%, 555px);
+  padding: clamp(14px, 3.5vw, 28px);
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+}
+.race-page .game-overlay:not(.game-title) h1 { font-size: clamp(1.5rem, 5vw, 2.75rem); line-height: 1; }
+.race-choices { display: grid; gap: 7px; margin: 15px 0 4px; padding: 0; list-style: none; }
+.race-choices li {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  align-items: center;
+  gap: 6px 14px;
+  padding: 9px 0;
+  border-top: 1px solid var(--border);
+}
+.race-choices small { display: block; margin-top: 3px; color: var(--caption); }
+.race-choices button { min-width: 85px; }
+.race-choices button:disabled { cursor: default; }
+.race-page .combat-controls { position: absolute; bottom: calc(100% + 7px); right: 0; }
+.race-page .combat-controls button { min-height: 42px; }
+.race-page button {
+  background: #ffc384;
+  color: #26190f;
+  border-color: #cf9860;
+}
+.race-page button:hover { background: #ffd8af; }
+.race-page button.quiet, .race-page .touch-deck button {
+  color: #fff0dd;
+  background: #211b18eb;
+  border-color: #bea48c71;
+}
+.race-page button.quiet:hover, .race-page .touch-deck button:active { background: #47372d; }
+.race-page .control-guide { max-width: 36ch; line-height: 2.1; }
+@media (max-width: 420px) {
+  .race-page .game-title { background: #201711b6; }
+  .race-page .game-actions { max-width: 132px; }
+  .race-page .touch-deck button { min-width: 44px; padding-inline: 5px; }
+}
+
+.race-page .garage-screen {
+  --garage-ink: #0c191f;
+  --garage-panel: #12242b;
+  --garage-line: #315050;
+  --garage-text: #eaf7ea;
+  --garage-muted: #9ebbb8;
+  --garage-mint: #8ef0cd;
+  --garage-gold: #ffc384;
+  --accent: var(--garage-mint);
+  position: absolute;
+  z-index: 2;
+  inset: 0;
+  display: grid;
+  grid-template:
+    "header header" auto
+    "bay detail" minmax(260px, 1fr)
+    "parts detail" auto / minmax(0, 1fr) minmax(280px, 28%);
+  gap: clamp(11px, 1.3vw, 20px);
+  padding: clamp(14px, 2.8vw, 46px);
+  overflow: auto;
+  overscroll-behavior: contain;
+  color: var(--garage-text);
+  background: radial-gradient(ellipse at 5% 0%, #203438 0%, #101f25 44%, var(--garage-ink) 84%);
+}
+
+.garage-header {
+  grid-area: header;
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-end;
+  gap: 12px;
+  padding: 0 0 clamp(10px, 1.5vw, 23px);
+  border-bottom: 1px solid var(--garage-line);
+}
+.garage-game, .garage-tier, .garage-car-name, .garage-balance span {
+  color: var(--garage-mint);
+  font: 750 .75rem var(--mono);
+  letter-spacing: .15em;
+  text-transform: uppercase;
+}
+.garage-game { margin: 0 0 6px; }
+.garage-header h1 {
+  margin: 0;
+  color: var(--garage-text);
+  font-size: clamp(2.6rem, 6.5vw, 6rem);
+  line-height: .85;
+  text-transform: uppercase;
+}
+.garage-wallet { display: flex; align-items: center; gap: clamp(8px, 2.4vw, 38px); }
+.garage-balance {
+  display: grid;
+  gap: 4px;
+  padding: 2px 0;
+  text-align: right;
+}
+.garage-balance span { color: var(--garage-muted); }
+.garage-balance strong {
+  color: var(--garage-gold);
+  font: 800 clamp(1rem, 2.5vw, 1.85rem) var(--mono);
+}
+
+.garage-bay {
+  grid-area: bay;
+  position: relative;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+  border: 1px solid var(--garage-line);
+  border-radius: 4px;
+  background: #0b1a21;
+}
+.garage-bay::after {
+  position: absolute;
+  inset: 0;
+  content: "";
+  pointer-events: none;
+  box-shadow: inset 0 0 55px #030c14ac;
+  background: linear-gradient(180deg, #09181e44, transparent 24%, transparent 81%, #08141cc2);
+}
+.garage-car-name {
+  position: absolute;
+  z-index: 1;
+  left: 18px;
+  bottom: 14px;
+  color: #d9efe8;
+  pointer-events: none;
+}
+
+.garage-parts {
+  grid-area: parts;
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 9px;
+}
+.race-page .garage-tile {
+  --part-color: #ffd08e;
+  display: flex;
+  align-items: center;
+  gap: clamp(6px, .85vw, 14px);
+  min-width: 0;
+  min-height: 86px;
+  padding: clamp(6px, .9vw, 12px);
+  text-align: left;
+  border: 1px solid var(--garage-line);
+  border-radius: 3px;
+  color: var(--garage-text);
+  background: #12242a;
+}
+.race-page .garage-tile[data-upgrade="tires"] { --part-color: #a9dce6; }
+.race-page .garage-tile[data-upgrade="armor"] { --part-color: #8ef0cd; }
+.race-page .garage-tile[data-upgrade="capacitor"] { --part-color: #bdaaf1; }
+.race-page .garage-tile:hover { background: #1b3336; }
+.race-page .garage-tile[aria-pressed="true"] {
+  border-color: var(--part-color);
+  box-shadow: inset 0 -3px var(--part-color);
+  background: #223b3c;
+}
+.garage-tile canvas {
+  width: clamp(38px, 4.3vw, 63px);
+  aspect-ratio: 1;
+  flex: none;
+  background: #0e1b23;
+  border: 1px solid #315050;
+  image-rendering: pixelated;
+}
+.garage-tile-info { display: grid; min-width: 0; gap: 6px; }
+.garage-tile strong { font-size: clamp(.76rem, 1.2vw, 1.02rem); }
+.garage-tile small { color: var(--garage-muted); font: 700 .69rem var(--mono); white-space: nowrap; }
+.garage-pips { display: flex; gap: 3px; }
+.garage-pips i {
+  width: clamp(8px, .85vw, 13px);
+  height: 5px;
+  border: 1px solid #53716b;
+  border-radius: 1px;
+}
+.garage-pips i.fitted { background: var(--part-color); border-color: var(--part-color); }
+
+.garage-inspector {
+  grid-area: detail;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  gap: 16px;
+  border: 1px solid var(--garage-line);
+  border-radius: 4px;
+  padding: clamp(14px, 2vw, 28px);
+  background: linear-gradient(145deg, #1b3338, var(--garage-panel) 47%);
+}
+.garage-tier { margin: 0 0 9px; }
+.garage-inspector h2 {
+  margin: 0;
+  font-size: clamp(1.7rem, 4vw, 3.2rem);
+  line-height: .95;
+  text-transform: uppercase;
+  letter-spacing: -.06em;
+  overflow-wrap: anywhere;
+}
+.garage-stats {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 7px;
+  padding: 0;
+  margin: 4px 0;
+}
+.garage-stats dt {
+  padding-top: 12px;
+  border-top: 1px solid var(--garage-line);
+  color: var(--garage-muted);
+  font-weight: 600;
+  font-size: .85rem;
+}
+.garage-stats dd {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+  margin: 0 0 8px;
+  font: 700 clamp(.86rem, 1.1vw, 1.06rem) var(--mono);
+  color: #d7e8e5;
+}
+.garage-stats dd span:nth-child(2) { color: #91b8b4; }
+.garage-stats dd strong { color: var(--garage-mint); }
+.garage-purchase { margin-top: auto; }
+.race-page .garage-purchase button {
+  width: 100%;
+  min-height: 46px;
+  margin-top: 8px;
+  border-color: #eaca8c;
+  border-radius: 3px;
+  background: var(--garage-gold);
+}
+.race-page .garage-purchase button:hover { background: #ffd6a4; }
+.race-page .garage-purchase button[aria-disabled="true"] {
+  cursor: default;
+  color: #b7c9c5;
+  border-color: #527270;
+  background: #263b40;
+}
+#garage-feedback { min-height: 1.7em; margin: 7px 0 0; color: var(--garage-muted); font-size: .78rem; }
+.race-page #garage-back { background: #14272d; border-color: var(--garage-line); color: var(--garage-text); }
+.race-page #garage-back:hover { background: #274347; }
+
+@media (max-width: 900px) and (min-width: 701px) {
+  .garage-parts { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .race-page .garage-tile { min-height: 60px; }
+}
+
+@media (max-width: 700px) {
+  .race-page .garage-screen {
+    grid-template: "header" auto "bay" clamp(214px, 65vw, 330px) "parts" auto "detail" auto / minmax(0, 1fr);
+    gap: 9px;
+    padding: 13px;
+  }
+  .garage-header { padding-bottom: 11px; }
+  .garage-parts { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px; }
+  .race-page .garage-tile { min-height: 56px; padding: 6px; }
+  .garage-tile canvas { width: 37px; }
+  .garage-tile-info { gap: 3px; }
+  .garage-car-name { left: 11px; bottom: 9px; }
+  .garage-inspector { gap: 10px; }
+  .garage-stats { gap: 4px; }
+  .garage-stats dt { padding-top: 8px; }
+  .garage-stats dd { margin-bottom: 4px; }
+  .garage-balance strong { font-size: .92rem; }
+  .garage-game, .garage-balance span { font-size: .65rem; }
+}
+
+@media (forced-colors: active) {
+  .race-page .garage-tile[aria-pressed="true"] { border-color: Highlight; }
+  .garage-pips i.fitted { background: Highlight; forced-color-adjust: none; }
+}

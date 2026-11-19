@@ -1,0 +1,50 @@
+:root {
+  color-scheme: dark;
+  font-family: "Avenir Next", system-ui, sans-serif;
+  color: #eaf1e9;
+  background: #101b20;
+  --accent: #c0ed9d;
+  --muted: #aebfb9;
+  --border: #334843;
+  --mono: ui-monospace, monospace;
+}
+* { box-sizing: border-box; }
+body { margin: 0; }
+main { width: min(1100px, 100%); margin: auto; padding: 23px 28px; }
+.masthead, .intro { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.masthead { border-bottom: 1px solid var(--border); padding-bottom: 15px; }
+.identity, .text-link { font: 600 .79rem var(--mono); }
+.identity { display: flex; align-items: center; gap: 9px; letter-spacing: .19em; text-decoration: none; color: #eaf1e9; }
+.identity span { color: var(--accent); font-size: 1.3rem; }
+.text-link { color: var(--muted); text-underline-offset: 3px; }
+.intro { padding: 24px 0 16px; }
+h1 { font-size: clamp(2.45rem, 6vw, 4.75rem); letter-spacing: -.075em; line-height: 1; margin: 0; }
+p { margin: 7px 0 0; color: var(--muted); }
+button, select {
+  font: inherit;
+  font-weight: 650;
+  border: 1px solid #607d55;
+  border-radius: 7px;
+  background: #c0ed9d;
+  color: #192a23;
+  padding: 9px 14px;
+  cursor: pointer;
+}
+button:hover, button:active { background: #dcfac9; }
+button:disabled { cursor: wait; opacity: .65; }
+button:focus-visible, a:focus-visible, select:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+select { color: #eaf1e9; background: #263a34; border-color: var(--border); padding: 5px 10px; }
+canvas { display: block; width: 100%; height: auto; aspect-ratio: 16 / 9; }
+[hidden] { display: none !important; }
+kbd { border: 1px solid var(--border); padding: 2px 5px; border-radius: 4px; color: #edf6ed; }
+.quiet { color: #eaf1e9; border-color: var(--border); background: #253733; }
+.quiet:hover, .quiet:active { background: #38504a; }
+#viewport { overflow: auto; margin-top: 12px; }
+a { color: var(--accent); }
+@media (max-width: 580px) {
+  main { padding: 14px; }
+  .intro { align-items: flex-start; flex-direction: column; }
+}
+.benchmark-controls { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; }
+.benchmark-controls label { color: var(--muted); font-size: .9rem; }
+.benchmark-controls select { margin-left: 4px; }

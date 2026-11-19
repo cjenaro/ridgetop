@@ -1,0 +1,97 @@
+import type { Color, InstanceBatch, Matrix, Mesh, Quaternion, Vec3 } from './types.ts'
+
+export const INSTANCE_SIZE = 16
+const white: Vec3 = [1, 1, 1]
+const origin: Vec3 = [0, 0, 0]
+const uniformScale: Vec3 = [1, 1, 1]
+
+export function instances(mesh: Mesh, capacity = 16): InstanceBatch {
+  if (!Number.isSafeInteger(capacity) || capacity <= 0) throw new RangeError('Invalid batch capacity')
+  let data = new Float32Array(capacity * INSTANCE_SIZE)
+  let count = 0
+  let revision = 0
+  const min = [Infinity, Infinity, Infinity]
+  const max = [-Infinity, -Infinity, -Infinity]
+  return {
+    mesh, min, max,
+    get data() { return data },
+    get count() { return count },
+    get revision() { return revision },
+    clear() {
+      count = 0
+      revision++
+      min.fill(Infinity)
+      max.fill(-Infinity)
+    },
+    add(position = origin, scale = uniformScale, rotation: number | Quaternion = 0, color: Vec3 | Color = white, unlit = 0) {
+      if (count * INSTANCE_SIZE === data.length) {
+        const enlarged = new Float32Array(data.length * 2)
+        enlarged.set(data)
+        data = enlarged
+      }
+      const [x, y, z] = position
+      const [sx, sy, sz] = scale
+      if (!(sx > 0 && sy > 0 && sz > 0 && Number.isFinite(sx + sy + sz))) {
+        throw new RangeError('Instance scale must contain three finite, positive values')
+      }
+      const [r, g, b] = color
+      const at = count * INSTANCE_SIZE
+      data[at] = x
+      data[at + 1] = y
+      data[at + 2] = z
+      data[at + 4] = sx
+      data[at + 5] = sy
+      data[at + 6] = sz
+      data[at + 8] = r
+      data[at + 9] = g
+      data[at + 10] = b
+      data[at + 11] = unlit
+      if (typeof rotation === 'number') {
+        data[at + 12] = 0
+        data[at + 13] = Math.sin(rotation / 2)
+        data[at + 14] = 0
+        data[at + 15] = Math.cos(rotation / 2)
+      } else {
+        const norm = Math.hypot(...rotation)
+        if (!Number.isFinite(norm) || !norm) throw new RangeError('Rotation requires a finite, nonzero quaternion')
+        for (let i = 0; i < 4; i++) data[at + 12 + i] = rotation[i] / norm
+      }
+      const reach = mesh.radius * Math.max(sx, sy, sz)
+      min[0] = Math.min(min[0], x - reach)
+      min[1] = Math.min(min[1], y - reach)
+      min[2] = Math.min(min[2], z - reach)
+      max[0] = Math.max(max[0], x + reach)
+      max[1] = Math.max(max[1], y + reach)
+      max[2] = Math.max(max[2], z + reach)
+      count++
+      revision++
+    }
+  }
+}
+
+export function frustum(matrix: Matrix, out = new Float32Array(24)) {
+  // left, right, bottom, top, near, far. Normalize only if distances are needed.
+  for (let i = 0; i < 4; i++) {
+    const k = i * 4
+    out[i] = matrix[k + 3] + matrix[k]
+    out[4 + i] = matrix[k + 3] - matrix[k]
+    out[8 + i] = matrix[k + 3] + matrix[k + 1]
+    out[12 + i] = matrix[k + 3] - matrix[k + 1]
+    out[16 + i] = matrix[k + 2]
+    out[20 + i] = matrix[k + 3] - matrix[k + 2]
+  }
+  return out
+}
+
+export function visible(batch: InstanceBatch, planes: Float32Array) {
+  if (!batch.count) return false
+  const { min, max } = batch
+  for (let i = 0; i < 24; i += 4) {
+    const x = planes[i]
+    const y = planes[i + 1]
+    const z = planes[i + 2]
+    if (x * (x >= 0 ? max[0] : min[0]) + y * (y >= 0 ? max[1] : min[1]) +
+        z * (z >= 0 ? max[2] : min[2]) + planes[i + 3] < 0) return false
+  }
+  return true
+}

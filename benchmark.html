@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Ridgetop renderer benchmark</title>
+  <link rel="stylesheet" href="/style.css">
+  <script type="module" src="/benchmark.js"></script>
+</head>
+<body>
+  <main>
+    <header class="masthead"><a class="identity" href="/"><span aria-hidden="true">◈</span> RIDGETOP</a><a class="text-link" href="/">Play Beacon Run</a></header>
+    <div class="intro"><div><h1>Low-poly benchmark</h1><p>Compare the same scene across all three renderers. Keep this tab visible.</p></div></div>
+    <form id="config">
+      <div class="benchmark-controls">
+        <label>Renderer
+          <select name="backend"><option value="webgpu">WebGPU</option><option value="webgl2">WebGL 2</option><option value="canvas">Canvas 2D</option></select>
+        </label>
+        <label>Instances
+          <select name="count"><option>144</option><option selected>1024</option><option>4096</option><option>16384</option></select>
+        </label>
+        <label>Workload
+          <select name="workload"><option value="static">Static batches</option><option value="dynamic">Animated batches</option></select>
+        </label>
+        <button id="run">Run benchmark</button>
+      </div>
+    </form>
+    <p id="result" role="status" aria-live="polite"></p>
+    <div id="viewport"></div>
+    <a id="download" download="ridgetop-benchmark.json" hidden>Download results</a>
+  </main>
+</body>
+</html>
