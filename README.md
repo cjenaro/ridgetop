@@ -14,6 +14,55 @@ From a source checkout, run `npm ci` and `npm run build`. The TypeScript compile
 
 Bun and Deno run the same server through their Node-compatible HTTP and filesystem APIs. The local runtime checks exercised Node 24.22, Bun 1.4.4, and Deno 2.9.6. Use `npm run typecheck` to check all TypeScript sources, including tools and tests. The project currently allows implicit any and uses relaxed null checks. With the development dependencies installed, Bun can invoke the compiler with `bun node_modules/typescript/bin/tsc -p tsconfig.build.json`. Deno can invoke it with `deno run --allow-read --allow-write --allow-env --allow-sys npm:typescript@5.9.3/tsc -p tsconfig.build.json`.
 
+To make artwork, open the [sprite workshop](http://localhost:3000/sprites) on the running server.
+
+For live low-poly art, open the [3D model viewer](http://localhost:3000/models), or open `dist/low-poly-models.html` directly after a build. Orbit the raincoat ranger, the Signal Drift rally car, or the headland lighthouse. **Open model file** previews your workshop’s `.art.json` at the canvas resolution. The lighthouse source in `models/headland.ts` shows how to assemble a scene with a custom cliff mesh and instanced props.
+
+## Start a game of your own
+
+From a prebuilt archive, run the commands below with Node 22.18 or later. From a source checkout, run `npm ci` and `npm run build` first.
+
+```sh
+npm run create-game -- ../my-game
+cd ../my-game
+npm start
+```
+
+Open http://localhost:3000. The new project contains a playable collection game, editable ES modules, public type declarations, and an offline copy of the workshop. It needs zero package installs, accounts, API keys, or art downloads. You can also [play the starter in the framework server](http://localhost:3000/starter/).
+
+Open **game/game.js** first. Edit the map, palette, art names, objective text, or the flower recipe and reload. **game/main.js** contains controls, movement, collection, and rendering. A prompt such as “Make the crystals amber, replace the crates with rocks, and add a second route to the lantern” maps to edits in the first file. The view selector lets you play the same state with 2D sprites or live 3D models.
+
+| Where the art appears | How to use it |
+| --- | --- |
+| 3D character, terrain, scenery, pickup or effect | `art.group().add(name, position)` places model parts into shared mesh batches. Retain groups for static scenery. GPU backends apply lighting and depth testing. |
+| Directional 2D sprite from a model | `art.sprite(name)` bakes the model's eight views on first use and caches the transparent sheet within the kit. Pass it directly to `createSpriteAtlas`. |
+| Hand-drawn sprite or animation | Load a PNG sheet and named-clip manifest. In a generated project, put both files in `game/art/`, set the role's `manifest` and `clip` in `sprites`, and reload the browser. |
+| HUD or inventory icon | Draw a selected clip on a small canvas. The starter draws its inventory icon from the pickup's art and displays a spark when the player collects it. |
+
+```js
+import { createArtKit, createSpriteAtlas } from './framework/index.js'
+
+const art = createArtKit({ palette: { glow: '#ffb764' } })
+const world = art.group()
+world.add('pine', [2, 0, -1])
+world.add('crystal', [0, 0, 0])
+renderer.render(camera, world.batches)
+
+const icon = await createSpriteAtlas(iconCanvas, art.sprite('crystal'))
+icon.begin(iconCanvas)
+icon.drawClip('front-right', 0, [0, 0], { height: 1, anchor: 0.5 })
+```
+
+The included recipes are `ranger`, `tile`, `pine`, `rock`, `crate`, `crystal`, `lantern`, and `spark`. Pass your own `models` to `createArtKit({ models, palette, frameSize })`. Each recipe has a camera `span`, vertical `centerY`, and parts with a mesh, local XYZ position, positive scale, and palette tone. Parts can also specify `yaw` in radians and `unlit` from 0 to 1. Configure the recipes and palette when creating the kit. Geometry and sprite generation use the same part definitions.
+
+To reskin a starter from a file, choose **Ranger** in the workshop and **Save editable model**. Keep its `.art.json` in `game/art/`. In `game/game.js`, set `modelFiles` to `{ ranger: 'art/ranger.art.json' }` and reload. A coding assistant can edit a named part such as `jacket` or `backpack`, or add a part in the same format. The live player and its directional sprites both read the change. Model-specific palette values override the kit for that asset. Other roles inherit the game palette.
+
+New projects include `game/art/rain-ranger.art.json`. Set `modelFiles` to `{ ranger: 'art/rain-ranger.art.json' }` to try a teal raincoat, a brimmed hat, and a roll-top pack with the original ranger’s camera and ground position.
+
+The sprite layer draws flat images in screen space. A projected sprite can follow a world point. Live 3D geometry participates in the scene's depth test. The workshop exports PNG and animation JSON for its pixel art, imported frames, and baked models. Its **Use in your game** panel also shows placement code when an asset has a 3D model.
+
+The offline workshop is generated by the regular build at `dist/sprite-workshop-offline.html`, using Node and the project's existing TypeScript compiler. Double-click the file to use it offline.
+
 ## Play Beacon Run
 
 Start any supported server and open [Beacon Run](http://localhost:3000).
@@ -26,6 +75,10 @@ Start any supported server and open [Beacon Run](http://localhost:3000).
 ## Play Signal Drift
 
 Open [Signal Drift](http://localhost:3000/racing) after starting the same server. The orthographic camera keeps an isometric angle on every screen. Desktop shows the full circuit. Narrow screens pan to follow the player.
+
+To give a player the single-player racer, run `npm run build` and distribute `dist/signal-drift.html`. Open that file in a modern desktop browser or serve it over HTTPS. Its circuits, art, garage, and synthesized audio are embedded. Players can use **Save backup** on the main menu to download their championship or restore it after a browser change or game update. A restore shows the credits and event count before the player chooses to replace their current progress.
+
+Run `npm run test:player` against local Chromium with remote debugging enabled to check the downloadable file. It opens copies in two temporary browser profiles with networking disabled, drives a race, and transfers a garage upgrade between them. The game server can stay stopped.
 
 - Race three AI rivals through Copper Basin, Brineworks, Cinder Switchback, and Midnight Relay. Finish in the top three in the first two events, then in the top two at Cinder Switchback. Win Midnight Relay to take the championship. Replay unlocked events from the schedule.
 - Race finishes earn credits. Select a part in the garage to inspect it on the live 3D car and compare the current stats with the next tier. Install up to three tiers each of the motor, tires, shield, and capacitor. The browser saves credits, installed upgrades, records, and event access.
@@ -105,7 +158,7 @@ renderer.render(camera, [cliffs], color('#22394b'))
 | `createRenderer(canvas, options)` | The original 2D rectangle batching API. |
 | `connectRoom({ endpoint, readInput, onStatus })` | A client for the platformer room protocol. Call `flush(now)` and `sample(now)` each frame. The server uses a 60 Hz fixed step and streams snapshots at 20 Hz. |
 
-GPU backends use a depth buffer, back-face culling, and opaque flat directional lighting. Static meshes are uploaded once per renderer. Instance buffers change only when a batch revision changes. Canvas 2D renders the same scene with clipped, depth-sorted polygons. Intersecting geometry can show ordering differences on that backend, and dense scenes should target WebGPU or WebGL 2.
+GPU backends use a depth buffer, back-face culling, and opaque flat directional lighting. Static meshes are uploaded once per renderer. Instance buffers change only when a batch revision changes. Canvas 2D normally sorts clipped polygons by depth. For overlapping model parts, set `canvasDepth: true` to depth-test individual pixels on the CPU. This mode writes one image to the canvas per draw and its cost scales with pixel count. The starter enables it for its live Canvas fallback. Sprite baking always uses it.
 
 ## Server and browser support
 
@@ -125,10 +178,58 @@ The room endpoint is `/rooms/{course}/{room}`. `GET /events` sends a welcome eve
 
 WebGPU and WebGL 2 render the 144-instance static benchmark in two draws and upload zero instance bytes after warm-up. The software-rendered Chromium checks verify behavior. Browser compatibility on Safari and Firefox and performance against Three.js on matched hardware still need validation. Compare equivalent geometry, lighting, instancing, resolution, overdraw, and update rates before drawing conclusions about speed.
 
+## Preparing a paid game
 
-## Sprite artwork
+Signal Drift is the first downloadable single-player example. The framework archive and the editable starter serve developers. Give playtesters the same player build you intend to distribute.
 
-The scout and signal chips are original 40×48 pixel sprites generated by `tools/generate-sprites.ts`. Run `npm run generate:sprites` to rebuild the transparent PNG atlas and the scout portrait. Every scout color has idle, run, jump, and fall frames. Beacon Run builds its masonry tiles and scenery from low-poly meshes. Signal Drift uses the same renderer for its triangulated terrain, track markings, and chamfered rally cars. Both games store scenery in retained instance batches and keep moving objects in separate batches. Sprite assets and synthesized Web Audio cues ship with the game and fetch no external content.
+| Priority | Evidence to collect |
+| --- | --- |
+| Commercial use | The rights holder chooses the terms for distributing the engine, starter, and bundled art in someone else's paid game. Record the source, permissions, and required credits for each imported asset. This checkout has no project license. |
+| Art production | Give a new creator a character brief. Have them reopen a workshop recipe, change its silhouette and palette, and regenerate the in-game art and icon. Time the second edit. A shared set of idle and walk poses with aligned feet is the next addition to test. |
+| Customer download and updates | Give the player a versioned build, keep the previous release, and exercise a fresh install and an update with an existing save. The racer provides an offline release check and portable garage backups. Extend that path to custom games, including their imported art and audio. |
+| Supported devices | Name the browsers, input methods, and minimum hardware you will advertise. Measure cold start, memory over repeated level changes, and 95th-percentile frame time in the busiest playable scene on each target. Test audio and pause/resume after switching away and returning. |
+| First-time player | Watch a new player start unaided, learn the controls, finish one event, spend the reward, quit, and find that upgrade on returning. Repeat with the control and sound settings you intend to ship. |
+
+On itch.io, an HTML game can accept donations. For a minimum purchase price on the game download, the platform documents the Downloadable project type. [itch.io HTML game guide](https://itch.io/docs/creators/html5)
+
+## Make a sprite
+
+Open the [sprite workshop](http://localhost:3000/sprites) or the generated project's offline `sprite-workshop.html`. Pick the Beacon Run scout or signal chip for pixel art. The 3D choices include Signal Drift's rally car and all eight built-in art models. Edit the palette and click a frame to inspect it. **Frame time** sets the duration of each pose in the selected animation. **Save PNG** exports the transparent sheet. **Save animation JSON** exports its frame dimensions, named animations, and timing. Keep both files together.
+
+The scout includes idle, run, jump, and fall. The chip has a four-frame sparkle. The car uses the same 3D model as the racer. The workshop renders it once from eight directions, so your game can draw a named view such as `front-left` or play the full `turntable`.
+
+**Compare model views** shows the front, right, and back from that same sheet. Add local reference images for visual comparison or switch to silhouettes to check the outline at the target resolution. For any of the eight art-kit models, **Edit model parts** changes the shape, position, size, or color role of one piece. **Save editable model** preserves part names, palette, framing, frame size, and clip timing in a versioned JSON file. Reopen it with **Open editable model**. The PNG and animation JSON are the files for drawing finished sprites.
+
+`createArtRecipe('ranger')` returns an independent editable source. `modelFromArtRecipe(json)` validates it and returns an `ArtModel` for `createArtKit({ models })`. Version 1 supports `box`, `prism`, `cylinder`, `cone`, and `octahedron`. Positions and sizes use world units. The +Z direction faces forward, +Y points up, and a character's origin is at its feet. Keep `span` and `centerY` fixed when comparing variants. Reference images serve as visual guides during authoring.
+
+For your own artwork, choose **Import PNG artwork**. A single image gets a four-frame `hover` and a `still` pose. The exporter adds transparent headroom so the moving sprite stays inside its cell. Select multiple equal-size PNGs for a `loop` in numeric filename order, such as `walk-2.png` before `walk-10.png`. Source pixels retain their size and alpha. The importer supports up to 64 frames, 8192 pixels per sheet edge, and 16 megapixels per sheet.
+
+### Play an exported animation
+
+Put the pair in your game's asset directory. When using `createGameHost`, include both paths in its `files` list. Stack a transparent canvas over the game as Beacon Run does. Load the manifest once, then draw the clip using elapsed milliseconds and a point in normalized screen coordinates.
+
+```js
+import { createSpriteAtlas, fixedLoop } from './framework/index.js'
+
+const stage = document.querySelector('#stage')
+const layer = document.querySelector('#sprites')
+const atlas = await createSpriteAtlas(layer, '/art/scout-sheet.json')
+
+fixedLoop({
+  update() {},
+  render(alpha, now) {
+    atlas.begin(stage)
+    atlas.drawClip('run', now, [0, 0], { height: 0.2 })
+  }
+})
+```
+
+`height` is a fraction of the canvas height. Set `flip` to face the opposite direction or override `row` to select a palette row. Pass elapsed time zero to hold the first pose. A clip uses `{ column, row?, frames, frameMs }` and advances horizontally. The manifest resolves its `src` relative to its own URL. Existing callers can also pass `{ src, frameWidth, frameHeight }` directly and use `atlas.draw(column, row, point, options)`.
+
+### Generate art in code
+
+- `createSpriteSheet(frameWidth, frameHeight, columns, rows = 1)` allocates transparent RGBA pixels. Use `sheet.frame(column, row)` to draw rectangles and filled polygons in cell-local coordinates. Read `sheet.pixels`, `sheet.width`, and `sheet.height` from Node or the browser. Beacon Run's palettes and poses live in `game/sprite-art.ts`. Run `npm run generate:sprites` to rebuild its atlas, portrait, and animation JSON.
+- `bakeSpriteDirections(batches, { span, center, frameSize, src })` renders a +Z-facing model into eight transparent views in the browser. It returns a sheet canvas as `image` and a matching `manifest`. Set `span` to the square camera width in world units. The default frame is 64 pixels square, centered at the origin with a 30-degree camera elevation. Pass `elevation` in radians or supply the same `lighting` options as the mesh renderer. Baking uses Canvas 2D and works without a GPU adapter.
 
 ## Verification for coding agents
 

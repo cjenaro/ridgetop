@@ -58,9 +58,20 @@
           <button id="race-garage" class="quiet" type="button" hidden>Garage</button>
           <button id="race-restart" class="quiet" type="button" hidden>Restart race</button>
           <button id="race-home" class="quiet" type="button" hidden>Main menu</button>
-          <a id="race-beacon" class="text-link" href="/">Play Beacon Run</a>
+          <!-- hosted navigation --><a id="race-beacon" class="text-link" href="/">Play Beacon Run</a><!-- end navigation -->
         </div>
         <p class="control-guide" id="race-guide"><kbd>W</kbd> Accelerate <kbd>A</kbd> <kbd>D</kbd> Steer <kbd>S</kbd> Brake <kbd>Space</kbd> Drift <kbd>J</kbd> Pulse <kbd>K</kbd> Snare</p>
+        <p id="race-save-warning" role="status" hidden>Automatic saving is unavailable. Download a backup to keep your progress.</p>
+        <details id="race-saves" hidden>
+          <summary>Save backup</summary>
+          <div class="save-actions">
+            <button id="race-save-export" class="quiet" type="button">Download backup</button>
+            <button id="race-save-import" class="quiet" type="button">Choose backup…</button>
+            <input id="race-save-file" type="file" accept=".json,application/json" hidden>
+            <button id="race-save-restore" type="button" hidden>Replace current progress</button>
+          </div>
+          <p role="status" id="race-save-status"></p>
+        </details>
       </div>
     </section>
     <section id="garage-screen" class="garage-screen" aria-labelledby="garage-heading" hidden>

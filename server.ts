@@ -9,10 +9,13 @@ import { createPlayer, restartPlayer, stepPlayer } from './game/simulation.ts'
 
 const files = [
   'index.html', 'style.css', 'game-ui.css', 'main.js', 'benchmark.html', 'benchmark.js', 'racing.html',
+  'starter/index.html', 'starter/style.css', 'starter/main.js', 'starter/game.js',
+  'models/index.html', 'models/style.css', 'models/main.js', 'models/headland.js',
+  'sprite-workshop.html', 'sprite-workshop.css', 'sprite-workshop.js', 'sprite-model-editor.js',
   'racing/style.css', 'racing/main.js', 'racing/race.js', 'racing/scene.js', 'racing/track.js', 'racing/progression.js',
-  'racing/car-art.js', 'racing/garage.js', 'racing/garage-art.js',
+  'racing/car-art.js', 'racing/garage.js', 'racing/garage-art.js', 'racing/save-menu.js',
   'game/level.js', 'game/simulation.js', 'game/scene.js', 'game/campaign.js', 'game/sprites.js',
-  'game/audio.js', 'game/expedition.js', 'game/assets/sprites.png', 'game/assets/scout.png'
+  'game/sprite-art.js', 'game/assets/sprites.json', 'game/audio.js', 'game/expedition.js', 'game/assets/sprites.png', 'game/assets/scout.png'
 ]
 const roomRoute = /^\/rooms(?:\/([a-z0-9-]+))?\/([a-z0-9-]{1,32})\/(events|input|leave)$/
 const expeditionRoute = /^\/expeditions\/([a-z0-9-]+)\/([a-z0-9-]{1,32})\/(events|input|leave)$/
@@ -50,11 +53,15 @@ export function createGameServer({ characters = createCharacterStore() } = {}) {
   return createGameHost({
     root: new URL(source ? '.' : '../', import.meta.url),
     moduleRoot: new URL(source ? 'dist/' : '.', import.meta.url),
-    files,
-    aliases: { '/': 'index.html', '/benchmark': 'benchmark.html', '/racing': 'racing.html' },
+    files, artDirectories: ['starter/art'],
+    aliases: { '/': 'index.html', '/benchmark': 'benchmark.html', '/racing': 'racing.html', '/sprites': 'sprite-workshop.html', '/models': 'models/index.html', '/starter/': 'starter/index.html' },
     stop: rooms.close,
     save: characters.save,
     async handle(req, res, pathname) {
+      if (pathname === '/starter') {
+        res.writeHead(308, { Location: '/starter/' + new URL(req.url, 'http://localhost').search }).end()
+        return true
+      }
       if (pathname === '/expeditions/character' && req.method === 'POST') {
         if (req.headers['sec-fetch-site'] === 'cross-site') sendText(res, 403)
         else {

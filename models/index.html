@@ -1,0 +1,53 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#faf9f4">
+  <title>Low-poly models · Ridgetop</title>
+  <link rel="stylesheet" href="/models/style.css">
+  <script type="application/json" id="rain-source" data-src="/starter/art/rain-ranger.art.json"></script>
+  <script type="module" src="/models/main.js"></script>
+</head>
+<body>
+  <header>
+    <div class="brand"><span class="ridge" aria-hidden="true"></span>Ridgetop <span class="tool-name">Low-poly viewer</span></div>
+    <button id="open" type="button">Open model file…</button>
+    <input id="source-file" type="file" accept=".json,application/json" hidden>
+  </header>
+  <main>
+    <section class="display" aria-label="3D model viewer">
+      <div id="orbit" role="group" tabindex="0" aria-label="Orbit the 3D model" aria-describedby="orbit-help">
+        <canvas id="model-canvas" aria-label="Live low-poly model"></canvas>
+      </div>
+      <div class="controls">
+        <button type="button" id="turn" aria-pressed="false">Auto-rotate</button>
+        <div class="zoom" role="group" aria-label="Zoom">
+          <button type="button" id="zoom-out" aria-label="Zoom out">−</button>
+          <button type="button" id="zoom-in" aria-label="Zoom in">+</button>
+        </div>
+        <button type="button" id="reset">Reset view</button>
+      </div>
+      <p id="orbit-help">Drag or use the arrow keys to orbit.</p>
+    </section>
+    <aside>
+      <div class="details">
+        <p class="category" id="kind">Environment</p>
+        <h1 id="model-title">Headland lighthouse</h1>
+        <p class="description" id="model-description">A striped watchtower above a cut-rock shoreline, with a keeper’s cottage and timber landing.</p>
+        <p id="stats" aria-label="Render statistics">Loading mesh…</p>
+      </div>
+      <section class="library" aria-labelledby="library-title">
+        <h2 id="library-title">Models</h2>
+        <div id="choices" role="group" aria-label="Choose a model">
+          <button id="headland" type="button" aria-pressed="true">Headland lighthouse</button>
+          <button id="ranger" type="button" aria-pressed="false">Raincoat ranger</button>
+          <button id="rally" type="button" aria-pressed="false">Signal Drift rally car</button>
+          <button id="custom" type="button" aria-pressed="false" hidden></button>
+        </div>
+      </section>
+      <p id="notice" role="status"></p>
+    </aside>
+  </main>
+</body>
+</html>

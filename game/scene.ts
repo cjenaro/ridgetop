@@ -194,6 +194,28 @@ export function createCourseScene(renderer: LowPolyRenderer, course: Course, red
   let previousWidth = 0
   let previousCenter = 0
 
+  const glint = blend(glow, sun, .56)
+  let previousTime = -1
+  let previousCrystals = -1
+
+  function updateShards(crystals: number, time: number) {
+    if (time === previousTime && crystals === previousCrystals) return
+    previousTime = time
+    previousCrystals = crystals
+    shards.clear()
+    for (const [i, crystal] of course.crystals.entries()) {
+      if (crystals & (1 << i)) continue
+      const y = worldY(crystal.y) + Math.sin(time * 3 + i) * .075
+      const x = worldX(crystal.x)
+      shards.add([x, y, .12], [.145, .25, .145], time * 1.7 + i, glow, .67)
+      shards.add([x, y + .31 + Math.sin(time * 4 + i) * .045, .15], [.029, .044, .029],
+        time + i, glint, 1)
+    }
+    const charged = crystals === (1 << course.crystals.length) - 1
+    shards.add([gateX, gateY + 1.38, -.06], [.165, .26, .165], time * 1.3, charged ? glow : sun, .75)
+    if (charged) shards.add([gateX, gateY + .55, -.16], [.23, .41, .06], 0, dim, .68)
+  }
+
   function drawScout(player: PlayerSnapshot, now: number, local: boolean) {
     const x = worldX(player.x + 12)
     const y = worldY(player.y + 32)
@@ -216,18 +238,7 @@ export function createCourseScene(renderer: LowPolyRenderer, course: Course, red
         previousCenter = center
       }
       const time = reducedMotion?.matches ? 0 : now / 1000
-      shards.clear()
-      for (const [i, crystal] of course.crystals.entries()) {
-        if (local?.crystals & (1 << i)) continue
-        const y = worldY(crystal.y) + Math.sin(time * 3 + i) * .075
-        const x = worldX(crystal.x)
-        shards.add([x, y, .12], [.145, .25, .145], time * 1.7 + i, glow, .67)
-        shards.add([x, y + .31 + Math.sin(time * 4 + i) * .045, .15], [.029, .044, .029],
-          time + i, blend(glow, sun, .56), 1)
-      }
-      const charged = local?.crystals === (1 << course.crystals.length) - 1
-      shards.add([gateX, gateY + 1.38, -.06], [.165, .26, .165], time * 1.3, charged ? glow : sun, .75)
-      if (charged) shards.add([gateX, gateY + .55, -.16], [.23, .41, .06], 0, dim, .68)
+      updateShards(local?.crystals ?? 0, time)
       const stats = renderer.render(camera, all, sky)
       sprites.begin(renderer.canvas)
       if (!local?.signal) {

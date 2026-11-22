@@ -6,6 +6,7 @@ import { circuits } from './track.ts'
 import { leadingEvent, loadChampionship, recordResult, saveChampionship, unlocked } from './progression.ts'
 import { createGaragePanel } from './garage.ts'
 import { createGarageBay } from './garage-art.ts'
+import { createSaveMenu } from './save-menu.ts'
 
 const page = createGamePage()
 const { element, text, show } = page
@@ -33,8 +34,17 @@ async function start() {
     podium: [[392, .18, 0], [523, .17, .12], [660, .24, .26], [784, .38, .42]]
   }, { volume: .13, waveform: { pulse: 'triangle', hit: 'triangle' } })
   const progress = loadChampionship(page.storage)
+  let saveFailed = !page.storage
   const bay = element('garage-bay')
-  const garage = createGaragePanel(element('garage-screen'), progress, () => saveChampionship(page.storage, progress))
+  const garage = createGaragePanel(element('garage-screen'), progress, persist)
+  const beaconLink = document.getElementById('race-beacon')
+  const saves = createSaveMenu(element<HTMLDetailsElement>('race-saves'), progress, next => {
+    Object.assign(progress, next)
+    prepare(Math.max(0, leadingEvent(progress)))
+    const saved = persist()
+    paintScreen()
+    return saved
+  })
   const preview = createGarageBay(renderer)
   const overlay = element('race-overlay')
   const choices = element('race-choices')
@@ -49,6 +59,12 @@ async function start() {
   let countdown = 0
   let queuedPulse = false
   let queuedSnare = false
+
+  function persist() {
+    saveFailed = !saveChampionship(page.storage, progress)
+    show('race-save-warning', saveFailed && screen === 'home')
+    return !saveFailed
+  }
 
   const controls = bindActionControls<Action>({
     keys: {
@@ -169,7 +185,9 @@ async function start() {
     show('race-garage', home || events || results)
     show('race-restart', paused)
     show('race-home', !home && !racing)
-    show('race-beacon', home)
+    if (beaconLink) beaconLink.hidden = !home
+    saves.show(home)
+    show('race-save-warning', home && saveFailed)
     show('race-guide', home || paused)
     overlay.classList.toggle('game-title', home)
     text('race-purse', progress.credits + ' credits')
@@ -256,7 +274,7 @@ async function start() {
         const qualified = place <= race.circuit.qualify
         const payout = recordResult(progress, race.circuit, place, player.finish)
         result = { place, seconds: player.finish, qualified, payout }
-        saveChampionship(page.storage, progress)
+        persist()
         if (qualified) audio.play('podium')
         setScreen('results')
         element(qualified && selected < circuits.length - 1 ? 'race-next' : 'race-start').focus()

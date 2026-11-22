@@ -9,3 +9,5 @@
 - Run `npm test` after changes to geometry, gameplay, or rooms. Build with `npm run build`, run `npm start`, and open two tabs with the same room URL after changing browser integration or transport. The browser smoke test automates this and exercises WebGPU, WebGL 2, and `?canvas=1`.
 - Check `npm run typecheck` and `npm run test:runtimes` when changing public types or hosting. Keep Signal Drift in `racing/` on the same renderer and simulation utilities.
 - Run `npm pack` and verify the contents before handing off a release.
+
+- For a new game, start with `npm run create-game -- <new-directory>` from a built checkout. Edit `starter/game.ts` for template defaults and `framework/art.ts` for shared art recipes. The generated project's `game/game.js` is directly editable.

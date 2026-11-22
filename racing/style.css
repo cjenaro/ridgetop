@@ -284,3 +284,8 @@
   .race-page .garage-tile[aria-pressed="true"] { border-color: Highlight; }
   .garage-pips i.fitted { background: Highlight; forced-color-adjust: none; }
 }
+#race-saves { margin-top: 14px; font-size: .85rem; }
+#race-saves summary { width: fit-content; cursor: pointer; }
+.save-actions { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+#race-save-status { margin: 8px 0 0; }
+#race-save-status:empty { display: none; }

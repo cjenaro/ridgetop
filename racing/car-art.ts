@@ -13,17 +13,18 @@ export const carTrim = color('2f3548')
 const lamps = color('ffeccc')
 const tail = color('ff464b')
 const shadow = color('271e29')
-export const carLivery = [
+export const liveryColors = [
   ['f8aa4e', 'ffd895', '952d43'],
   ['56bfae', 'b8f3d5', '245c69'],
   ['db78a6', 'ffc8d2', '753b67'],
   ['75a0e9', 'd3e6ff', '453d80']
-].map(colors => colors.map(color))
+]
+export const carLivery = liveryColors.map(colors => colors.map(color))
 const alloy = color('94aaa6')
 const highlight = color('8df5d5')
 const tread = color('282c36')
 
-export function createCarModels() {
+export function createCarModels(livery?: readonly Color[]) {
   const cars = instances(box)
   const bodies = instances(chassis)
   const windows = instances(canopy)
@@ -35,7 +36,7 @@ export function createCarModels() {
     simple: boolean, fitted?: Readonly<Build>) {
     const rotation = quaternionFromEuler(pitch, driver.yaw, roll)
     const wheelRotation = quaternionFromEuler(pitch, driver.yaw, roll + Math.PI / 2)
-    const [paint, stripe, accent] = carLivery[driver.slot]
+    const [paint, stripe, accent] = livery ?? carLivery[driver.slot]
     const hatch = driver.slot % 2 === 0
     function place(batch: InstanceBatch, offset: Vec3, scale: Vec3, tint: Color, emission = 0) {
       const [x, y, z] = rotateVec3(rotation, offset)

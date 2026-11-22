@@ -2,8 +2,37 @@ import type { AddressInfo } from 'node:net'
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { once } from 'node:events'
+import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { pathToFileURL } from 'node:url'
 import { createGameServer } from '../server.ts'
+import { createGameHost } from '../framework/server.ts'
 import { courses } from '../game/level.ts'
+
+test('game art folders serve PNG and JSON exports with encoded names', async t => {
+  const folder = await mkdtemp(join(tmpdir(), 'ridgetop-art-'))
+  t.after(() => rm(folder, { recursive: true, force: true }))
+  const art = join(folder, 'art')
+  await mkdir(art)
+  const app = createGameHost({ root: pathToFileURL(folder + '/'), files: [], artDirectories: ['art'] })
+  t.after(() => app.close())
+  app.server.listen(0, '127.0.0.1')
+  await once(app.server, 'listening')
+  const base = 'http://127.0.0.1:' + (app.server.address() as AddressInfo).port + '/art/'
+  assert.equal((await fetch(base + 'Coin.json')).status, 404)
+  await writeFile(join(art, 'Coin #1.PNG'), new Uint8Array([137, 80, 78, 71]))
+  await writeFile(join(art, 'Coin.json'), '{"src":"Coin%20%231.PNG"}')
+  await writeFile(join(art, 'notes.txt'), 'local notes')
+  const manifest = await fetch(base + 'Coin.json').then(r => r.json()) as { src: string }
+  const image = await fetch(base + manifest.src)
+  assert.equal(image.status, 200)
+  assert.equal(image.headers.get('content-type'), 'image/png')
+  assert.deepEqual([...new Uint8Array(await image.arrayBuffer())], [137, 80, 78, 71])
+  assert.equal((await fetch(base + 'notes.txt')).status, 404)
+  await rm(join(art, 'Coin.json'))
+  assert.equal((await fetch(base + 'Coin.json')).status, 404)
+})
 
 async function events(url, options = {}) {
   const abort = new AbortController()

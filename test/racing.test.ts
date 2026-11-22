@@ -3,7 +3,26 @@ import test from 'node:test'
 import { instances, box, quaternionFromEuler, rotateVec3, STEP } from '../framework/index.ts'
 import { createRace, recover, rivalInput, standings, stepRace } from '../racing/race.ts'
 import { circuits, route, roadMesh, trackWidth } from '../racing/track.ts'
-import { buyUpgrade, leadingEvent, loadChampionship, recordResult, saveChampionship, unlocked } from '../racing/progression.ts'
+import { buyUpgrade, championshipBackup, leadingEvent, loadChampionship, readChampionshipBackup,
+  recordResult, saveChampionship, unlocked } from '../racing/progression.ts'
+
+test('portable backups round-trip existing garage saves and reject damaged or incompatible files', () => {
+  const legacy = { credits: 134, build: { motor: 1, tires: 2, armor: 0, capacitor: 0 },
+    records: { copper: { place: 2, seconds: 49.4 } } }
+  const progress = loadChampionship({ getItem: () => JSON.stringify(legacy) })
+  const text = championshipBackup(progress)
+  assert.deepEqual(readChampionshipBackup(text), legacy)
+  assert.throws(() => readChampionshipBackup(text.replace('"version": 1', '"version": 2')), /version/)
+  assert.throws(() => readChampionshipBackup(text.replace('signal-drift', 'another-game')), /Signal Drift/)
+  for (const patch of [{ credits: -10 }, { build: { ...legacy.build, motor: 8 } },
+    { records: { copper: { place: 0, seconds: 12 } } }, { records: { unknown: legacy.records.copper } }]) {
+    assert.throws(() => readChampionshipBackup(championshipBackup({ ...progress, ...patch })), /invalid/)
+  }
+  assert.throws(() => readChampionshipBackup('{'), /JSON/)
+  assert.equal(saveChampionship(undefined, progress), false)
+  assert.equal(saveChampionship({ setItem() { throw new Error('Storage full') } }, progress), false)
+  assert.deepEqual(progress, legacy)
+})
 
 test('full-axis rotations preserve length and pack a unit quaternion into the batch', () => {
   const rotation = quaternionFromEuler(Math.PI / 2, 0, 0)

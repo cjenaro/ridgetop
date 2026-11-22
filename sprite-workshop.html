@@ -1,0 +1,83 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Sprite workshop · Ridgetop</title>
+  <link rel="icon" href="/game/assets/scout.png" type="image/png">
+  <link rel="stylesheet" href="/style.css">
+  <link rel="stylesheet" href="/sprite-workshop.css">
+  <script type="module" src="/sprite-workshop.js"></script>
+</head>
+<body>
+  <main>
+    <header class="masthead">
+      <!-- hosted navigation -->
+      <a class="identity" href="/"><span aria-hidden="true">◈</span> RIDGETOP</a>
+      <nav><a class="text-link" href="/models">Low-poly models</a> · <a class="text-link" href="/starter/">Play the starter</a> · <a class="text-link" href="/benchmark">Renderer benchmark</a></nav>
+      <!-- end navigation -->
+    </header>
+    <div class="intro"><div><h1>Sprite workshop</h1><p>Make a 2D sprite from PNG artwork or render eight views of a 3D model.</p></div></div>
+    <div class="workbench">
+      <section class="playback" aria-label="Animation preview">
+        <div class="preview-stage checker"><canvas id="preview" width="40" height="48" aria-label="Current sprite pose"></canvas></div>
+        <div class="transport">
+          <div><strong id="clip-name"></strong><span id="clip-details"></span></div>
+          <button class="quiet" type="button" id="play">Pause</button>
+        </div>
+        <div id="frames" role="group" aria-label="Select a frame"></div>
+        <details id="model-review" class="model-review" hidden>
+          <summary>Compare model views</summary>
+          <label class="outline-toggle"><input type="checkbox" id="silhouette"> Show model silhouettes</label>
+          <div id="view-comparison"></div>
+          <p class="hint">Add a reference beside any view to check its outline and proportions. Guides stay in this session.</p>
+        </details>
+        <div class="export">
+          <span id="sheet-details"></span>
+          <div><button type="button" id="save-png">Save PNG</button><button type="button" id="save-json" class="quiet">Save animation JSON</button><button type="button" id="save-recipe" class="quiet" hidden>Save editable model</button></div>
+          <details id="usage">
+            <summary>Use in your game</summary>
+            <p>Keep the PNG and animation JSON together in <code>game/art/</code>. In a starter game module, draw onto a transparent <code>layer</code> canvas over your game canvas, <code>stage</code>.</p>
+            <pre><code id="snippet"></code></pre>
+            <div id="live-model" hidden><p id="model-help"></p><pre><code id="model-snippet"></code></pre></div>
+          </details>
+        </div>
+      </section>
+      <section class="settings" aria-label="Sprite settings">
+        <label for="art">Artwork</label>
+        <select id="art">
+          <optgroup label="2D pixel art"><option value="scout">Beacon Run scout</option><option value="chip">Signal chip</option></optgroup>
+          <optgroup label="Signal Drift model"><option value="car">Rally car</option></optgroup>
+        </select>
+        <label for="import-files">Import PNG artwork</label>
+        <input id="import-files" type="file" accept="image/png,.png" multiple aria-describedby="import-help">
+        <p id="import-help">One image generates a hover animation. A set of equal-size images plays in numbered filename order.</p>
+        <button type="button" id="open-model" class="quiet">Open editable model…</button>
+        <input id="recipe-file" type="file" accept=".json,application/json" hidden>
+        <p id="import-status" role="status"></p>
+        <fieldset id="colors">
+          <legend>Palette</legend>
+          <div id="swatches"></div>
+          <button type="button" id="next-palette" class="quiet">Next palette</button>
+        </fieldset>
+        <details id="part-editor" hidden>
+          <summary>Edit model parts</summary>
+          <form id="part-form">
+            <label>Part <select id="part-name"></select></label>
+            <div class="part-pair"><label>Shape <select id="part-shape"></select></label><label>Palette color <select id="part-tone"></select></label></div>
+            <fieldset><legend>Position</legend><div id="part-position" class="part-vector"></div></fieldset>
+            <fieldset><legend>Size</legend><div id="part-scale" class="part-vector"></div></fieldset>
+            <label>Sprite size (px) <input id="model-frame-size" type="number" step="1" min="1" max="1024" required></label>
+            <button type="submit" class="quiet">Apply changes</button>
+            <output id="part-status" role="status"></output>
+          </form>
+        </details>
+        <div class="timing">
+          <div><label for="clip">Animation</label><select id="clip"></select></div>
+          <div><label for="frame-ms">Frame time (ms)</label><input id="frame-ms" type="number" min="1" step="1" required></div>
+        </div>
+      </section>
+    </div>
+  </main>
+</body>
+</html>

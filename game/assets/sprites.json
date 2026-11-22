@@ -1,0 +1,33 @@
+{
+  "src": "sprites.png",
+  "frameWidth": 40,
+  "frameHeight": 48,
+  "clips": {
+    "idle": {
+      "column": 0,
+      "frames": 2,
+      "frameMs": 650
+    },
+    "run": {
+      "column": 2,
+      "frames": 4,
+      "frameMs": 83
+    },
+    "jump": {
+      "column": 6,
+      "frames": 1,
+      "frameMs": 83
+    },
+    "fall": {
+      "column": 7,
+      "frames": 1,
+      "frameMs": 83
+    },
+    "sparkle": {
+      "column": 0,
+      "frames": 4,
+      "frameMs": 140,
+      "row": 8
+    }
+  }
+}

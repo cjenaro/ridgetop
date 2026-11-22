@@ -32,27 +32,57 @@ export function vehicleStats(build: Readonly<Build>) {
   }
 }
 
-export function loadChampionship(storage?: Pick<Storage, 'getItem'>): Championship {
+function validCredits(value: number) { return Number.isSafeInteger(value) && value >= 0 }
+function validTier(part: Upgrade, value: number) {
+  return Number.isInteger(value) && value >= 0 && value <= garage[part].costs.length
+}
+function validRecord(value) {
+  return Number.isInteger(value?.place) && value.place >= 1 && value.place <= 4 &&
+    Number.isFinite(value.seconds) && value.seconds > 0
+}
+
+function readProgress(saved): Championship {
   const progress: Championship = { credits: 100, build: { ...stock }, records: {} }
-  try {
-    const saved = JSON.parse(storage?.getItem(raceSaveKey) ?? 'null')
-    if (!saved) return progress
-    if (Number.isSafeInteger(saved.credits) && saved.credits >= 0) progress.credits = saved.credits
-    for (const part of garageParts) {
-      const level = saved.build?.[part]
-      if (Number.isInteger(level) && level >= 0 && level <= garage[part].costs.length) progress.build[part] = level
-    }
-    for (const { id } of circuits) {
-      const record = saved.records?.[id]
-      if (Number.isInteger(record?.place) && record.place >= 1 && record.place <= 4 &&
-          Number.isFinite(record.seconds) && record.seconds > 0) progress.records[id] = record
-    }
-  } catch { /* Play with a fresh profile when browser storage is unavailable. */ }
+  if (!saved) return progress
+  if (validCredits(saved.credits)) progress.credits = saved.credits
+  for (const part of garageParts) {
+    const level = saved.build?.[part]
+    if (validTier(part, level)) progress.build[part] = level
+  }
+  for (const { id } of circuits) {
+    const record = saved.records?.[id]
+    if (validRecord(record)) progress.records[id] = record
+  }
   return progress
 }
 
+export function loadChampionship(storage?: Pick<Storage, 'getItem'>): Championship {
+  try { return readProgress(JSON.parse(storage?.getItem(raceSaveKey) ?? 'null')) }
+  catch { return readProgress(null) }
+}
+
 export function saveChampionship(storage: Pick<Storage, 'setItem'> | undefined, progress: Championship) {
-  try { storage?.setItem(raceSaveKey, JSON.stringify(progress)) } catch { /* The session can continue in memory. */ }
+  if (!storage) return false
+  try { storage.setItem(raceSaveKey, JSON.stringify(progress)); return true }
+  catch { return false }
+}
+
+export function championshipBackup(progress: Championship) {
+  return JSON.stringify({ game: 'signal-drift', version: 1, progress }, null, 2)
+}
+
+export function readChampionshipBackup(text: string): Championship {
+  let file
+  try { file = JSON.parse(text) } catch { throw new Error('Choose a Signal Drift JSON backup.') }
+  if (file?.game !== 'signal-drift') throw new Error('Choose a backup made by Signal Drift.')
+  if (file.version !== 1) throw new Error('This version of Signal Drift cannot read that backup version.')
+  const p = file.progress
+  if (!validCredits(p?.credits) || !garageParts.every(part => validTier(part, p.build?.[part])) ||
+      !p.records || typeof p.records !== 'object' || Array.isArray(p.records) ||
+      !Object.entries(p.records).every(([id, record]) => circuits.some(c => c.id === id) && validRecord(record))) {
+    throw new Error('The backup contains incomplete or invalid championship progress.')
+  }
+  return readProgress(p)
 }
 
 export function unlocked(progress: Championship, index: number) {

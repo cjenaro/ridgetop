@@ -1,83 +1,18 @@
 import assert from 'node:assert/strict'
 import { writeFile } from 'node:fs/promises'
-import { setTimeout as wait } from 'node:timers/promises'
 import { courses } from '../game/level.ts'
 import { ROUTE, SAVE_KEY } from '../game/campaign.ts'
 import { courseRoute } from './course-route.ts'
+import { openTab, until, status, click, key } from './browser-driver.ts'
 
 const base = process.env.RIDGETOP_URL ?? 'http://localhost:3000'
-const debug = process.env.CHROMIUM_DEBUG ?? 'http://localhost:9222'
 const tabs = []
 const room = 'test-' + Date.now().toString(36)
-
 async function open(path: string, beforeLoad?: string) {
-  const target = await fetch(debug + '/json/new?about:blank', { method: 'PUT' }).then(response => response.json())
-  const socket = new WebSocket(target.webSocketDebuggerUrl)
-  await new Promise((resolve, reject) => {
-    socket.addEventListener('open', resolve, { once: true })
-    socket.addEventListener('error', reject, { once: true })
-  })
-  const pending = new Map()
-  const errors = []
-  let message = 0
-  socket.onmessage = ({ data }) => {
-    const packet = JSON.parse(data)
-    if (packet.id) {
-      const action = pending.get(packet.id)
-      if (!action) return
-      clearTimeout(action.timeout)
-      pending.delete(packet.id)
-      if (packet.error) action.reject(new Error(packet.error.message))
-      else action.resolve(packet.result)
-    }
-    if (packet.method === 'Runtime.exceptionThrown') errors.push(packet.params.exceptionDetails.text)
-    if (packet.method === 'Log.entryAdded' && packet.params.entry.level === 'error') {
-      errors.push(packet.params.entry.text)
-    }
-  }
-  const call = <T = any>(method: string, params?: object) => new Promise<T>((resolve, reject) => {
-    const id = ++message
-    const timeout = setTimeout(() => {
-      pending.delete(id)
-      reject(new Error('Timed out calling ' + method))
-    }, 45_000)
-    pending.set(id, { resolve, reject, timeout })
-    socket.send(JSON.stringify({ id, method, params }))
-  })
-  const tab = {
-    call, errors,
-    async evaluate(expression) {
-      const result = await call('Runtime.evaluate', { expression, returnByValue: true })
-      if (result.exceptionDetails) throw new Error(JSON.stringify(result.exceptionDetails))
-      return result.result?.value
-    },
-    async close() {
-      socket.close()
-      await fetch(debug + '/json/close/' + target.id)
-    }
-  }
+  const tab = await openTab(base + path, beforeLoad)
   tabs.push(tab)
-  await call('Page.enable')
-  await call('Runtime.enable')
-  await call('Log.enable')
-  if (beforeLoad) await call('Page.addScriptToEvaluateOnNewDocument', { source: beforeLoad })
-  await call('Page.navigate', { url: base + path })
-  await call('Page.bringToFront')
   return tab
 }
-
-async function until(read, expected, description, limit = 160) {
-  let actual
-  for (let i = 0; i < limit; i++) {
-    actual = await read()
-    if (typeof expected === 'function' ? expected(actual) : expected === actual) return actual
-    await wait(100)
-  }
-  assert.fail(description + '. Last value: ' + actual)
-}
-const status = (tab, id) => tab.evaluate(`document.querySelector('#${id}')?.textContent`)
-const click = (tab, id) => tab.evaluate(`document.querySelector('#${id}').click()`)
-const key = (tab, type, code, key) => tab.call('Input.dispatchKeyEvent', { type, key, code })
 const selected = process.env.RIDGETOP_BACKENDS?.split(',') ?? ['webgpu', 'webgl2', 'canvas']
 const rendererNames = { webgpu: 'WebGPU', webgl2: 'WebGL 2', canvas: 'Canvas 2D' }
 
@@ -101,6 +36,107 @@ async function assertGameViewport(tab, stage: string, hud: string, overlay: stri
 }
 
 try {
+  for (const backend of selected) {
+    const models = await open('/models?renderer=' + backend)
+    await until(() => status(models, 'stats'), s => s?.includes('triangles · ' + rendererNames[backend]), backend + ' live geometry')
+    await click(models, 'ranger')
+    await until(() => status(models, 'model-title'), 'Raincoat ranger', 'loaded the starter model')
+    await models.evaluate("document.querySelector('#orbit').focus()")
+    const clip = await models.evaluate(`(() => {
+      const {x,y,width,height} = document.querySelector('#orbit').getBoundingClientRect()
+      return {x,y,width,height,scale:1}
+    })()`)
+    async function renderedView() {
+      await models.evaluate('new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))')
+      return (await models.call('Page.captureScreenshot', { format: 'png', clip })).data
+    }
+    const first = await renderedView()
+    const rangerStats = await status(models, 'stats')
+    await key(models, 'keyDown', 'ArrowRight', 'ArrowRight')
+    await key(models, 'keyUp', 'ArrowRight', 'ArrowRight')
+    await until(async () => await renderedView() !== first, true, 'orbit redraws the mesh from a new angle', 16)
+    await click(models, 'rally')
+    await until(() => status(models, 'model-title'), 'Signal Drift rally car', 'selected the live game car')
+    await until(() => status(models, 'stats'), s => s?.includes('triangles') && s !== rangerStats, 'submitted the car geometry')
+    assert.deepEqual(models.errors, [])
+    await models.close()
+    tabs.pop()
+    console.log(backend + ' drew the three low-poly examples and changed the mesh view on keyboard input')
+  }
+
+  const workshop = await open('/sprites')
+  await until(() => workshop.evaluate("document.querySelector('#frames')?.children.length"), 4, 'scout run preview')
+  await workshop.evaluate("document.querySelector('#frames button').click()")
+  const preview = () => workshop.evaluate("document.querySelector('#preview').toDataURL()")
+  const original = await preview()
+  await click(workshop, 'next-palette')
+  assert.notEqual(await preview(), original, 'palette changes the rendered pose')
+  await workshop.evaluate("document.querySelector('#art').value='car';document.querySelector('#art').dispatchEvent(new Event('change'))")
+  assert.equal(await workshop.evaluate("document.querySelector('#frames').children.length"), 8)
+  const views = await workshop.evaluate(`[...document.querySelectorAll('#frames canvas')].map(frame => {
+    const pixels = frame.getContext('2d').getImageData(0, 0, frame.width, frame.height).data
+    if (pixels[3] !== 0 || !pixels.some((value, i) => i % 4 === 3 && value === 255)) return null
+    return frame.toDataURL()
+  })`)
+  assert.ok(views.every(Boolean))
+  assert.equal(new Set(views).size, 8, 'eight distinct car views on transparent backgrounds')
+  await workshop.evaluate(`(() => {
+    const art = document.querySelector('#art')
+    art.value = 'ranger'
+    art.dispatchEvent(new Event('change'))
+    const parts = document.querySelector('#part-name')
+    parts.value = 'backpack'
+    parts.dispatchEvent(new Event('change'))
+  })()`)
+  const backView = () => workshop.evaluate("document.querySelector('[aria-label=\"back model view\"]').toDataURL()")
+  const firstBack = await backView()
+  await workshop.evaluate(`(() => {
+    document.querySelector('#part-scale input').value = '.92'
+    document.querySelector('#part-form').requestSubmit()
+  })()`)
+  assert.match(await status(workshop, 'part-status'), /Updated backpack/)
+  const editedBack = await backView()
+  assert.notEqual(editedBack, firstBack, 'a named part edit reaches the rendered back view')
+  await click(workshop, 'silhouette')
+  assert.equal(await workshop.evaluate("document.querySelector('#view-comparison').classList.contains('silhouettes')"), true)
+  assert.equal(await backView(), editedBack, 'the silhouette overlay preserves the art pixels')
+  await workshop.evaluate(`(async () => {
+    const portrait = await fetch('/game/assets/scout.png').then(response => response.blob())
+    const transfer = new DataTransfer()
+    transfer.items.add(new File([portrait], 'scout.png', { type: 'image/png' }))
+    const input = document.querySelector('#import-files')
+    input.files = transfer.files
+    input.dispatchEvent(new Event('change'))
+  })()`)
+  await until(() => workshop.evaluate("document.querySelector('#clip').value"), 'hover', 'single PNG becomes a hover')
+  assert.equal(await workshop.evaluate("document.querySelector('#frames').children.length"), 4)
+  assert.equal(await workshop.evaluate("document.querySelector('#part-editor').hidden && document.querySelector('#model-review').hidden"), true)
+  assert.deepEqual(workshop.errors, [])
+  await workshop.close()
+  tabs.pop()
+  console.log('sprite workshop generated palette variants, eight car views, a named part edit, silhouettes, and an imported hover')
+
+  const starter = await open('/starter/?view=2d&renderer=' + selected[0])
+  await until(() => starter.evaluate(`(() => {
+    const layer = document.querySelector('#sprites')
+    if (!layer || layer.hidden) return false
+    const pixels = layer.getContext('2d').getImageData(0, 0, layer.width, layer.height).data
+    return pixels.some((v, i) => i % 4 === 3 && v > 0)
+  })()`), true, 'starter renders from the in-memory sprite sheets')
+  assert.equal(await status(starter, 'count'), '0 / 3')
+  await key(starter, 'keyDown', 'ArrowRight', 'ArrowRight')
+  await until(() => status(starter, 'count'), '1 / 3', 'starter collected a crystal')
+  await key(starter, 'keyUp', 'ArrowRight', 'ArrowRight')
+  await starter.evaluate("document.querySelector('#view').value='3d';document.querySelector('#view').dispatchEvent(new Event('change'))")
+  await until(() => starter.evaluate("!document.querySelector('#world').hidden && document.querySelector('#sprites').hidden"), true, 'live meshes selected')
+  assert.equal(await status(starter, 'count'), '1 / 3')
+  await click(starter, 'restart')
+  assert.equal(await status(starter, 'count'), '0 / 3')
+  assert.deepEqual(starter.errors, [])
+  await starter.close()
+  tabs.pop()
+  console.log('the playable starter collected a pickup in 2D, kept progress in 3D, and restarted')
+
   for (const backend of selected) {
     const tab = await open('/?mode=practice&renderer=' + backend)
     await until(() => status(tab, 'backend'), rendererNames[backend], backend + ' initialized')
