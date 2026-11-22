@@ -79,7 +79,17 @@ export async function createSpriteAtlas(canvas: HTMLCanvasElement, source: Sprit
   }
 
   return {
-    clips,
+    clips, frameWidth, frameHeight, src,
+    frame(column: number, row = 0) {
+      if (!Number.isInteger(column) || column < 0 || column >= columns || !Number.isInteger(row) || row < 0 || row >= rows) {
+        throw new RangeError('Sprite frame outside atlas')
+      }
+      const copy = document.createElement('canvas')
+      copy.width = frameWidth
+      copy.height = frameHeight
+      copy.getContext('2d').drawImage(image, column * frameWidth, row * frameHeight, frameWidth, frameHeight, 0, 0, frameWidth, frameHeight)
+      return copy
+    },
     begin(stage: HTMLCanvasElement) {
       if (canvas.width !== stage.width) canvas.width = stage.width
       if (canvas.height !== stage.height) canvas.height = stage.height

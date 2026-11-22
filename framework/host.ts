@@ -7,7 +7,7 @@ import { pathToFileURL } from 'node:url'
 const browserModules = [
   'index.js', 'verification.js', 'loop.js', 'renderer.js', 'room-client.js',
   'geometry.js', 'instances.js', 'low-poly.js', 'mesh-gpu.js', 'mesh-gl.js', 'mesh-canvas.js',
-  'input.js', 'vehicle.js', 'page.js', 'audio.js', 'hud.js', 'sprites.js', 'sprite-sheet.js', 'art.js', 'art-recipe.js', 'platformer.js'
+  'input.js', 'vehicle.js', 'page.js', 'audio.js', 'hud.js', 'sprites.js', 'sprite-sheet.js', 'art.js', 'art-recipe.js', 'art-review.js', 'platformer.js'
 ]
 const mime = { html: 'text/html', css: 'text/css', js: 'text/javascript', png: 'image/png', json: 'application/json' }
 

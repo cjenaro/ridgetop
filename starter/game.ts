@@ -26,9 +26,9 @@ export const game = {
 // Game-specific recipes work everywhere the built-in art does.
 export const models = {
   flower: { span: .95, centerY: .28, parts: [
-    { mesh: cylinder(5), position: [0, .16, 0], scale: [.035, .32, .035], tone: 'leaf' },
-    { mesh: octahedron, position: [0, .37, 0], scale: [.21, .14, .19], tone: 'accent' },
-    { mesh: octahedron, position: [0, .46, .02], scale: [.095, .085, .085], tone: 'light' }
+    { name: 'stem', mesh: cylinder(5), position: [0, .16, 0], scale: [.035, .32, .035], tone: 'leaf' },
+    { name: 'petals', mesh: octahedron, position: [0, .37, 0], scale: [.21, .14, .19], tone: 'accent' },
+    { name: 'center', mesh: octahedron, position: [0, .46, .02], scale: [.095, .085, .085], tone: 'light' }
   ] }
 } satisfies Record<string, ArtModel>
 

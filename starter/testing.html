@@ -1,0 +1,44 @@
+<div id="testing-bar" class="testing-bar">
+  <strong>Testing mode</strong>
+  <button type="button" id="inspect">Pause &amp; inspect</button>
+  <label>Reviews <select id="review-list"><option value="">Choose a review</option></select></label>
+  <button type="button" id="refresh-reviews">Refresh reviews</button>
+</div>
+<section id="inspection" aria-label="Art inspection" hidden>
+  <div class="pick-line"><label>Object <select id="object-list"></select></label><p>Click an object on the board or the inventory icon.</p></div>
+  <div id="pin-details" hidden>
+    <h2 id="pin-title"></h2><p id="pin-context"></p>
+    <div class="inspection-grid">
+      <div>
+        <div class="pin-views">
+          <figure id="before-wrap" hidden><figcaption>Before</figcaption><img id="before-image" alt="Saved view before the revision"></figure>
+          <figure><figcaption>Current</figcaption><canvas id="pin-image" aria-label="Select a part or drag a sprite region"></canvas></figure>
+        </div>
+        <figure class="game-size"><figcaption>At game size</figcaption><canvas id="game-size"></canvas></figure>
+        <p id="pin-instruction">Click to pin a point or drag to mark a region.</p>
+      </div>
+      <div class="pin-form">
+        <label>Apply feedback to <select id="pin-scope">
+          <option value="asset">Shared asset · all uses</option><option value="instance">This scene object</option>
+          <option value="sprite">This sprite frame</option><option value="hud">Inventory icon only</option>
+        </select><small id="edit-source"></small></label>
+        <label id="part-label">Model part <select id="pin-part"></select></label>
+        <details id="direct-edit"><summary>Edit this part</summary>
+          <fieldset><legend>Position</legend><div id="edit-position" class="axis-fields"></div></fieldset>
+          <fieldset><legend>Size</legend><div id="edit-scale" class="axis-fields"></div></fieldset>
+          <label><input id="move-part" type="checkbox"> Move selected part by dragging</label>
+          <div><button type="button" id="save-part" disabled>Save part to project</button>
+          <button type="button" id="discard-part" disabled>Discard edit</button></div>
+        </details>
+        <div class="review-thread" id="thread" hidden>
+          <strong id="thread-status"></strong><p id="thread-comment"></p><ul id="thread-replies"></ul>
+          <button type="button" id="compare-latest">Reload latest art</button>
+        </div>
+        <label><span id="comment-label">Comment for Codex</span><textarea id="review-text" rows="3" maxlength="8000"></textarea></label>
+        <div><button type="button" id="save-comment">Save comment</button>
+          <button type="button" id="resolve-review" hidden>Resolve</button></div>
+      </div>
+    </div>
+  </div>
+</section>
+<p id="testing-status" role="status"></p>

@@ -3,7 +3,7 @@ import { bakeSpriteDirections } from './low-poly.ts'
 import { color } from './renderer.ts'
 import { artPalette, artShapes, checkArtModel, checkArtPalette, checkFrameSize } from './art-recipe.ts'
 import type { ArtModel, ArtPart, ArtRecipe, ArtShape, ArtTone } from './art-recipe.ts'
-import type { InstanceBatch, Mesh, Vec3 } from './types.ts'
+import type { Color, InstanceBatch, Mesh, Vec3 } from './types.ts'
 export { artPalette, artShapes, modelFromArtRecipe } from './art-recipe.ts'
 export type { ArtModel, ArtPart, ArtRecipe, ArtRecipePart, ArtShape, ArtTone } from './art-recipe.ts'
 
@@ -112,10 +112,12 @@ export function createArtKit<Extra extends string = never>({
     return {
       batches: batches as readonly InstanceBatch[],
       clear() { for (const batch of batches) batch.clear() },
-      add(name: Name, [x, y, z]: Vec3, { yaw = 0, scale = 1 } = {}) {
+      add(name: Name, [x, y, z]: Vec3, { yaw = 0, scale = 1, partTint }:
+        { yaw?: number; scale?: number; partTint?: (part: ArtPart, index: number) => Color } = {}) {
         if (!(scale > 0 && [x, y, z, scale, yaw].every(Number.isFinite))) throw new RangeError('Invalid art transform')
         const cos = Math.cos(yaw), sin = Math.sin(yaw)
         const tones = overrides.get(name) ?? colors
+        let index = 0
         for (const piece of model(name).parts) {
           let batch = byMesh.get(piece.mesh)
           if (!batch) {
@@ -126,7 +128,8 @@ export function createArtKit<Extra extends string = never>({
           const [px, py, pz] = piece.position
           const [sx, sy, sz] = piece.scale
           batch.add([x + (px * cos + pz * sin) * scale, y + py * scale, z + (pz * cos - px * sin) * scale],
-            [sx * scale, sy * scale, sz * scale], yaw + (piece.yaw ?? 0), tones.get(piece.tone), piece.unlit)
+            [sx * scale, sy * scale, sz * scale], yaw + (piece.yaw ?? 0), partTint?.(piece, index) ?? tones.get(piece.tone), piece.unlit)
+          index++
         }
       }
     }
@@ -146,5 +149,5 @@ export function createArtKit<Extra extends string = never>({
     return sheet
   }
 
-  return { model, group, sprite }
+  return { model, group, sprite, palette: { ...rgb } }
 }

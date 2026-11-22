@@ -1,4 +1,4 @@
-import type { Backend, Color, InstanceBatch, LowPolyRenderer, MeshBackend, Vec3 } from './types.ts'
+import type { Backend, Color, InstanceBatch, LowPolyRenderer, Matrix, MeshBackend, Vec3 } from './types.ts'
 import type { SpriteClip } from './sprites.ts'
 import { multiply, orthographic, view } from './geometry.ts'
 import { canvasMeshes } from './mesh-canvas.ts'
@@ -113,6 +113,13 @@ export async function createLowPolyRenderer(canvas: HTMLCanvasElement,
 }
 
 export const spriteDirections = ['front', 'front-right', 'right', 'back-right', 'back', 'back-left', 'left', 'front-left'] as const
+
+/** Draw a transparent, depth-tested still at the supplied camera, including offscreen authoring passes. */
+export function renderMeshFrame(canvas: HTMLCanvasElement, camera: Matrix, batches: readonly InstanceBatch[], lighting?: Lighting) {
+  const renderer = canvasMeshes(canvas, packLighting(lighting), { transparent: true, depthTest: true })
+  try { renderer.draw(camera, defaultClear, batches, { drawCalls: 0, triangles: 0, instances: 0, uploadBytes: 0, culledBatches: 0 }) }
+  finally { renderer.dispose() }
+}
 
 /** Bake eight camera views of a +Z-facing model into one transparent horizontal sprite sheet. */
 export function bakeSpriteDirections(batches: readonly InstanceBatch[], {
