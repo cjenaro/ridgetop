@@ -18,6 +18,8 @@ To make artwork, open the [sprite workshop](http://localhost:3000/sprites) on th
 
 For live low-poly art, open the [3D model viewer](http://localhost:3000/models), or open `dist/low-poly-models.html` directly after a build. Orbit the raincoat ranger, the Signal Drift rally car, or the headland lighthouse. **Open model file** previews your workshop’s `.art.json` at the canvas resolution. The lighthouse source in `models/headland.ts` shows how to assemble a scene with a custom cliff mesh and instanced props.
 
+Compare how GPT-5.6 Sol, Terra and Luna handled 20 identical low-poly game-art briefs. The study includes a blind gallery, the editable recipes and six part-specific revisions. [Low-poly art trial](benchmarks/asset-authoring/README.md)
+
 ## Start a game of your own
 
 From a prebuilt archive, run the commands below with Node 22.18 or later. From a source checkout, run `npm ci` and `npm run build` first.

@@ -1,0 +1,22 @@
+[
+  {"id":"01-camp-kettle","group":"Camp props","title":"Camp kettle","brief":"A squat tea kettle with an open overhead handle and a distinct side spout."},
+  {"id":"02-storm-lantern","group":"Camp props","title":"Storm lantern","brief":"A portable storm lantern with a warm glowing chamber and a carry loop above the cap."},
+  {"id":"03-watering-can","group":"Camp props","title":"Watering can","brief":"A garden watering can with a long pouring spout and a handle opposite it."},
+  {"id":"04-camp-stove","group":"Camp props","title":"Camp stove","brief":"A single-burner camp stove with a visible cooking grate and a side-mounted fuel tank."},
+  {"id":"05-berry-basket","group":"Camp props","title":"Berry basket","brief":"A harvest basket with a high arch handle and a heap of distinct berries peeking over the rim."},
+  {"id":"06-trail-pack","group":"Inventory","title":"Trail pack","brief":"A freestanding ranger backpack with a horizontal bedroll across its top and two contrasting straps."},
+  {"id":"07-tide-compass","group":"Inventory","title":"Tide compass","brief":"An open pocket compass with a hinged lid and a bold directional needle on its face."},
+  {"id":"08-field-camera","group":"Inventory","title":"Field camera","brief":"A field camera with a prominent front lens barrel and a raised off-center viewfinder."},
+  {"id":"09-rain-boot","group":"Inventory","title":"Rain boot","brief":"A single rain boot with an open cuff and a projecting toe above a dark sole."},
+  {"id":"10-field-radio","group":"Inventory","title":"Field radio","brief":"A handheld radio with a long antenna and a front speaker grille beneath a small screen."},
+  {"id":"11-ferry-kiosk","group":"World props","title":"Ferry kiosk","brief":"A ticket kiosk with an overhanging roof and a service window with a projecting counter."},
+  {"id":"12-handcart","group":"World props","title":"Handcart","brief":"A two-wheeled box handcart with two long tow handles extending from the open load bed."},
+  {"id":"13-trail-gate","group":"World props","title":"Trail gate","brief":"A walk-through trail gate with a broad open passage and an off-center hanging trail marker."},
+  {"id":"14-signal-buoy","group":"World props","title":"Signal buoy","brief":"A floating navigation buoy with a wide banded float and a small beacon on a narrow mast."},
+  {"id":"15-footbridge","group":"World props","title":"Footbridge","brief":"A short plank footbridge with low railings on both sides and open approaches at both ends."},
+  {"id":"16-marsh-heron","group":"Characters","title":"Marsh heron","brief":"A long-legged heron with a bent neck and long bill, standing in profile or three-quarter view."},
+  {"id":"17-pack-turtle","group":"Characters","title":"Pack turtle","brief":"A low four-legged turtle with a domed shell and a cargo parcel visibly strapped on top."},
+  {"id":"18-fox-courier","group":"Characters","title":"Fox courier","brief":"A standing fox courier with pointed ears, a large pale-tipped tail and a side mailbag."},
+  {"id":"19-crab-bot","group":"Characters","title":"Survey crab","brief":"A low survey robot with splayed crab legs, two raised front pincers and one bright sensor."},
+  {"id":"20-lighthouse-keeper","group":"Characters","title":"Lighthouse keeper","brief":"A standing lighthouse keeper wearing a brimmed rain hat and holding a glowing hand lantern clear of the coat."}
+]

@@ -1,0 +1,2852 @@
+{
+  "frameworkCommit": "0377cce355d4bf02cb2fc74b147f07a86a0ce5c6",
+  "date": "2026-11-22",
+  "models": {
+    "Sol": "gpt-5.6-sol",
+    "Luna": "gpt-5.6-luna",
+    "Terra": "gpt-5.6-terra"
+  },
+  "reasoningEffort": "medium",
+  "blindScoreSha256": "55d33c75d323a2bcd33d2bd3188f5db1cd0f024dc858def1454ff10e8c2230d7",
+  "dimensions": [
+    "recognition32",
+    "briefFidelity",
+    "construction3d"
+  ],
+  "usage": null,
+  "totals": {
+    "Sol": {
+      "rendered": 20,
+      "technicalPass": 10,
+      "visualPass": 18,
+      "accepted": 10,
+      "revisionsPassed": 2,
+      "cameraBordersCleared": 10,
+      "byGroup": {
+        "Camp props": {
+          "visualPass": 3,
+          "accepted": 2
+        },
+        "Inventory": {
+          "visualPass": 5,
+          "accepted": 4
+        },
+        "World props": {
+          "visualPass": 5,
+          "accepted": 2
+        },
+        "Characters": {
+          "visualPass": 5,
+          "accepted": 2
+        }
+      }
+    },
+    "Luna": {
+      "rendered": 20,
+      "technicalPass": 0,
+      "visualPass": 4,
+      "accepted": 0,
+      "revisionsPassed": 2,
+      "cameraBordersCleared": 11,
+      "byGroup": {
+        "Camp props": {
+          "visualPass": 1,
+          "accepted": 0
+        },
+        "Inventory": {
+          "visualPass": 1,
+          "accepted": 0
+        },
+        "World props": {
+          "visualPass": 2,
+          "accepted": 0
+        },
+        "Characters": {
+          "visualPass": 0,
+          "accepted": 0
+        }
+      }
+    },
+    "Terra": {
+      "rendered": 20,
+      "technicalPass": 8,
+      "visualPass": 11,
+      "accepted": 5,
+      "revisionsPassed": 2,
+      "cameraBordersCleared": 12,
+      "byGroup": {
+        "Camp props": {
+          "visualPass": 4,
+          "accepted": 2
+        },
+        "Inventory": {
+          "visualPass": 3,
+          "accepted": 1
+        },
+        "World props": {
+          "visualPass": 3,
+          "accepted": 2
+        },
+        "Characters": {
+          "visualPass": 1,
+          "accepted": 0
+        }
+      }
+    }
+  },
+  "briefs": [
+    {
+      "id": "01-camp-kettle",
+      "group": "Camp props",
+      "title": "Camp kettle",
+      "brief": "A squat tea kettle with an open overhead handle and a distinct side spout.",
+      "submissions": [
+        {
+          "column": "A",
+          "model": "Terra",
+          "scores": [
+            2,
+            2,
+            1
+          ],
+          "visualPass": true,
+          "accepted": false,
+          "observation": "The low faceted pot, overhead gap and short side outlet read together. The dark handle almost vanishes head-on.",
+          "technical": {
+            "failures": [
+              "sprite touches frame edge"
+            ],
+            "parts": 10,
+            "triangles": 198,
+            "minY": 0,
+            "span": 2.2,
+            "margins": [
+              0,
+              2,
+              2,
+              2,
+              0,
+              2,
+              2,
+              2
+            ]
+          },
+          "sha256": "9554be799cd6325d93035e8de236d5c07cf7eda209bd778de72ddcaf2e198637",
+          "cameraOnlyTrial": {
+            "span": 2.31,
+            "fivePercentSteps": 1,
+            "margins": [
+              1,
+              3,
+              3,
+              3,
+              1,
+              3,
+              3,
+              3
+            ]
+          }
+        },
+        {
+          "column": "B",
+          "model": "Luna",
+          "scores": [
+            2,
+            2,
+            2
+          ],
+          "visualPass": true,
+          "accepted": false,
+          "observation": "A broad squat body, raised lid knob and angled pouring mouth stay distinct through the turn.",
+          "technical": {
+            "failures": [
+              "palette override",
+              "sprite touches frame edge",
+              "ground offset"
+            ],
+            "parts": 8,
+            "triangles": 132,
+            "minY": 0.19,
+            "span": 1.65,
+            "margins": [
+              2,
+              2,
+              0,
+              0,
+              4,
+              2,
+              0,
+              0
+            ]
+          },
+          "sha256": "564435a1e23bcc21e2a7727b337d1bdf10851758d1aaf433d01d82b533f11b77",
+          "cameraOnlyTrial": {
+            "span": 2.21115781,
+            "fivePercentSteps": 6,
+            "margins": [
+              6,
+              6,
+              1,
+              4,
+              7,
+              6,
+              1,
+              4
+            ]
+          }
+        },
+        {
+          "column": "C",
+          "model": "Sol",
+          "scores": [
+            1,
+            1,
+            1
+          ],
+          "visualPass": false,
+          "accepted": false,
+          "observation": "The upright body reads as a pail. The square pieces beside it scarcely read as a connected spout at 32 px.",
+          "technical": {
+            "failures": [
+              "sprite touches frame edge"
+            ],
+            "parts": 9,
+            "triangles": 190,
+            "minY": 0,
+            "span": 2.5,
+            "margins": [
+              4,
+              3,
+              0,
+              3,
+              4,
+              3,
+              0,
+              3
+            ]
+          },
+          "sha256": "49f8797b8ba859f6c40720cd38bc1971d4f60035204555a4232c9ffb73b75171",
+          "cameraOnlyTrial": {
+            "span": 2.625,
+            "fivePercentSteps": 1,
+            "margins": [
+              5,
+              3,
+              1,
+              3,
+              5,
+              3,
+              1,
+              3
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "id": "02-storm-lantern",
+      "group": "Camp props",
+      "title": "Storm lantern",
+      "brief": "A portable storm lantern with a warm glowing chamber and a carry loop above the cap.",
+      "submissions": [
+        {
+          "column": "A",
+          "model": "Sol",
+          "scores": [
+            2,
+            2,
+            2
+          ],
+          "visualPass": true,
+          "accepted": false,
+          "observation": "Warm chamber, dark cage, bright roof and open loop give a clear portable-lantern silhouette.",
+          "technical": {
+            "failures": [
+              "sprite touches frame edge"
+            ],
+            "parts": 13,
+            "triangles": 250,
+            "minY": 0,
+            "span": 2.1,
+            "margins": [
+              1,
+              1,
+              0,
+              1,
+              1,
+              1,
+              0,
+              1
+            ]
+          },
+          "sha256": "5d493dc0879eace69140b565cdbf07424d506bec0ce51e8891a45774cbecf10a",
+          "cameraOnlyTrial": {
+            "span": 2.205,
+            "fivePercentSteps": 1,
+            "margins": [
+              1,
+              1,
+              1,
+              1,
+              1,
+              2,
+              1,
+              2
+            ]
+          }
+        },
+        {
+          "column": "B",
+          "model": "Luna",
+          "scores": [
+            2,
+            1,
+            2
+          ],
+          "visualPass": false,
+          "accepted": false,
+          "observation": "A clean narrow lamp and an unmistakable loop, but the luminous chamber is cool turquoise.",
+          "technical": {
+            "failures": [
+              "palette override",
+              "sprite touches frame edge"
+            ],
+            "parts": 9,
+            "triangles": 140,
+            "minY": 0,
+            "span": 1.55,
+            "margins": [
+              1,
+              0,
+              0,
+              0,
+              1,
+              0,
+              0,
+              0
+            ]
+          },
+          "sha256": "ca32d1dd6bb333fb4a4d2b442a5281e2de4a971c69dd636befc0b36ad605a7df",
+          "cameraOnlyTrial": {
+            "span": 1.708875,
+            "fivePercentSteps": 2,
+            "margins": [
+              2,
+              1,
+              2,
+              1,
+              2,
+              1,
+              2,
+              1
+            ]
+          }
+        },
+        {
+          "column": "C",
+          "model": "Terra",
+          "scores": [
+            2,
+            2,
+            1
+          ],
+          "visualPass": true,
+          "accepted": false,
+          "observation": "The wide warm chamber and loop read clearly. The oversized chamber nearly swallows the cage and base.",
+          "technical": {
+            "failures": [
+              "sprite touches frame edge"
+            ],
+            "parts": 11,
+            "triangles": 198,
+            "minY": 0,
+            "span": 1.8,
+            "margins": [
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0
+            ]
+          },
+          "sha256": "d82a225ce1de1ec1d124702d0aadac8b41b46895da9bd549781c8ca783116d73",
+          "cameraOnlyTrial": {
+            "span": 2.083725,
+            "fivePercentSteps": 3,
+            "margins": [
+              1,
+              1,
+              1,
+              1,
+              1,
+              1,
+              1,
+              1
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "id": "03-watering-can",
+      "group": "Camp props",
+      "title": "Watering can",
+      "brief": "A garden watering can with a long pouring spout and a handle opposite it.",
+      "submissions": [
+        {
+          "column": "A",
+          "model": "Sol",
+          "scores": [
+            2,
+            1,
+            1
+          ],
+          "visualPass": false,
+          "accepted": false,
+          "observation": "The green body and long stepped spout suggest a watering can. Its handle sits over the opening instead of opposite the spout.",
+          "technical": {
+            "failures": [
+              "sprite touches frame edge"
+            ],
+            "parts": 9,
+            "triangles": 204,
+            "minY": 0,
+            "span": 2.8,
+            "margins": [
+              6,
+              1,
+              0,
+              1,
+              3,
+              1,
+              0,
+              1
+            ]
+          },
+          "sha256": "39cf9b4a5948ce1ae1eb5c22f82bb4f6050a35b726da152e770f9d55d2ead5a1",
+          "cameraOnlyTrial": {
+            "span": 3.24135,
+            "fivePercentSteps": 3,
+            "margins": [
+              7,
+              3,
+              1,
+              3,
+              5,
+              3,
+              1,
+              3
+            ]
+          }
+        },
+        {
+          "column": "B",
+          "model": "Terra",
+          "scores": [
+            1,
+            1,
+            0
+          ],
+          "visualPass": false,
+          "accepted": false,
+          "observation": "The pot and handle look like a bucket; the upright cone and separate disk do not make a continuous pouring spout.",
+          "technical": {
+            "failures": [
+              "sprite touches frame edge"
+            ],
+            "parts": 9,
+            "triangles": 190,
+            "minY": 0,
+            "span": 2.6,
+            "margins": [
+              0,
+              3,
+              3,
+              2,
+              0,
+              3,
+              6,
+              2
+            ]
+          },
+          "sha256": "e7edd33bcf4fb663397baacf5f63993458b420a9c5593cc8ef6738d1bae5f3fe",
+          "cameraOnlyTrial": {
+            "span": 3.16031625,
+            "fivePercentSteps": 4,
+            "margins": [
+              1,
+              5,
+              6,
+              4,
+              1,
+              5,
+              8,
+              4
+            ]
+          }
+        },
+        {
+          "column": "C",
+          "model": "Luna",
+          "scores": [
+            2,
+            1,
+            2
+          ],
+          "visualPass": false,
+          "accepted": false,
+          "observation": "The long bright spout and rose read well in profile. The tall grip bridges the center of the pot.",
+          "technical": {
+            "failures": [
+              "palette override",
+              "sprite touches frame edge",
+              "ground offset"
+            ],
+            "parts": 7,
+            "triangles": 118,
+            "minY": 0.21,
+            "span": 1.8,
+            "margins": [
+              2,
+              0,
+              0,
+              0,
+              3,
+              0,
+              0,
+              0
+            ]
+          },
+          "sha256": "a801b657c451076620122cd22068322e804cb1023ccf5ecb8899583d1ddbbbc3",
+          "cameraOnlyTrial": {
+            "span": 2.6594198,
+            "fivePercentSteps": 8,
+            "margins": [
+              7,
+              5,
+              1,
+              4,
+              7,
+              5,
+              1,
+              4
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "id": "04-camp-stove",
+      "group": "Camp props",
+      "title": "Camp stove",
+      "brief": "A single-burner camp stove with a visible cooking grate and a side-mounted fuel tank.",
+      "submissions": [
+        {
+          "column": "A",
+          "model": "Luna",
+          "scores": [
+            2,
+            1,
+            1
+          ],
+          "visualPass": false,
+          "accepted": false,
+          "observation": "A side tank and hotplate are visible. The apparently solid orange disk offers little evidence of a cooking grate.",
+          "technical": {
+            "failures": [
+              "palette override",
+              "sprite touches frame edge"
+            ],
+            "parts": 7,
+            "triangles": 116,
+            "minY": -0.04,
+            "span": 1.65,
+            "margins": [
+              0,
+              3,
+              4,
+              3,
+              0,
+              3,
+              5,
+              3
+            ]
+          },
+          "sha256": "93291d49ebef3746965c011a4d2aadd5fa8892f082e731403629cfeeccc7a3f0",
+          "cameraOnlyTrial": {
+            "span": 1.819125,
+            "fivePercentSteps": 2,
+            "margins": [
+              1,
+              4,
+              5,
+              4,
+              1,
+              4,
+              6,
+              4
+            ]
+          }
+        },
+        {
+          "column": "B",
+          "model": "Terra",
+          "scores": [
+            2,
+            2,
+            2
+          ],
+          "visualPass": true,
+          "accepted": true,
+          "observation": "The grate, exposed burner, side canister and control knob have separable shapes at small size.",
+          "technical": {
+            "failures": [],
+            "parts": 10,
+            "triangles": 196,
+            "minY": 0,
+            "span": 2.3,
+            "margins": [
+              3,
+              5,
+              6,
+              5,
+              3,
+              4,
+              3,
+              4
+            ]
+          },
+          "sha256": "b2822b4306fc00e6ea7db58867138df6eb8c41ec6fd4d7db408e12f09f89f317"
+        },
+        {
+          "column": "C",
+          "model": "Sol",
+          "scores": [
+            2,
+            2,
+            1
+          ],
+          "visualPass": true,
+          "accepted": true,
+          "observation": "A dark raised grate spans an orange burner with the tank clear to one side. The stove body loses definition against the ground color.",
+          "technical": {
+            "failures": [],
+            "parts": 10,
+            "triangles": 200,
+            "minY": 0,
+            "span": 2.7,
+            "margins": [
+              2,
+              4,
+              3,
+              4,
+              2,
+              5,
+              6,
+              5
+            ]
+          },
+          "sha256": "eba51eba14add69860ae6284594330f11d6a378e4b461377c26fb5c7f8d5c033"
+        }
+      ]
+    },
+    {
+      "id": "05-berry-basket",
+      "group": "Camp props",
+      "title": "Berry basket",
+      "brief": "A harvest basket with a high arch handle and a heap of distinct berries peeking over the rim.",
+      "submissions": [
+        {
+          "column": "A",
+          "model": "Luna",
+          "scores": [
+            2,
+            1,
+            1
+          ],
+          "visualPass": false,
+          "accepted": false,
+          "observation": "The container and tall open handle read as a basket. Most of the fruit merges into the solid orange rim.",
+          "technical": {
+            "failures": [
+              "palette override"
+            ],
+            "parts": 8,
+            "triangles": 100,
+            "minY": 0.05,
+            "span": 1.8,
+            "margins": [
+              4,
+              3,
+              3,
+              3,
+              4,
+              3,
+              3,
+              3
+            ]
+          },
+          "sha256": "ccaafb8a6cc02d66d4f32a1d340cf6434aca60665d30c9aab224734bfb06c6fc"
+        },
+        {
+          "column": "B",
+          "model": "Sol",
+          "scores": [
+            2,
+            2,
+            2
+          ],
+          "visualPass": true,
+          "accepted": true,
+          "observation": "Separate orange and green berries rise above the rim; the handle and tapered basket stay coherent around the turn.",
+          "technical": {
+            "failures": [],
+            "parts": 11,
+            "triangles": 164,
+            "minY": 0,
+            "span": 2.4,
+            "margins": [
+              4,
+              3,
+              3,
+              3,
+              4,
+              3,
+              3,
+              3
+            ]
+          },
+          "sha256": "8db8d130235ef7ddf7899d43fb454bfc6a76b01e4a02525315d8c249782e3bc6"
+        },
+        {
+          "column": "C",
+          "model": "Terra",
+          "scores": [
+            2,
+            2,
+            1
+          ],
+          "visualPass": true,
+          "accepted": true,
+          "observation": "The arch and group of bright berries are legible. A side strip projects past the basket and the fruit looks particularly angular.",
+          "technical": {
+            "failures": [],
+            "parts": 11,
+            "triangles": 150,
+            "minY": 0,
+            "span": 2.1,
+            "margins": [
+              3,
+              2,
+              2,
+              2,
+              3,
+              2,
+              2,
+              2
+            ]
+          },
+          "sha256": "fdc486504ee850e63cda5f1a40807dfb4250cae82ea064cdf1a31acf84f432c9"
+        }
+      ]
+    },
+    {
+      "id": "06-trail-pack",
+      "group": "Inventory",
+      "title": "Trail pack",
+      "brief": "A freestanding ranger backpack with a horizontal bedroll across its top and two contrasting straps.",
+      "submissions": [
+        {
+          "column": "A",
+          "model": "Sol",
+          "scores": [
+            2,
+            2,
+            1
+          ],
+          "visualPass": true,
+          "accepted": true,
+          "observation": "The front pocket, strap pair and rolled top form a recognizable hiking pack. The roll resembles a flap from the front.",
+          "technical": {
+            "failures": [],
+            "parts": 10,
+            "triangles": 184,
+            "minY": 0,
+            "span": 2.2,
+            "margins": [
+              3,
+              1,
+              2,
+              1,
+              3,
+              1,
+              2,
+              1
+            ]
+          },
+          "sha256": "543fbca26cc829c73c76359d292b770e9b56cebb1784e721a16bae9c2f16f186",
+          "revision": {
+            "passed": true,
+            "changes": [
+              {
+                "part": "strap-left",
+                "widthBefore": 0.1,
+                "widthAfter": 0.2,
+                "toneBefore": "light",
+                "toneAfter": "glow"
+              },
+              {
+                "part": "strap-right",
+                "widthBefore": 0.1,
+                "widthAfter": 0.2,
+                "toneBefore": "light",
+                "toneAfter": "glow"
+              }
+            ],
+            "changedPixelCountsByDirection": {
+              "32": [
+                40,
+                24,
+                0,
+                3,
+                0,
+                3,
+                0,
+                24
+              ],
+              "128": [
+                512,
+                496,
+                171,
+                100,
+                0,
+                119,
+                171,
+                496
+              ]
+            },
+            "sha256": "f3b21faaa2b4ffdb9ae85c40d673702ac1282f712e081780d598fd4a64dc12f1"
+          }
+        },
+        {
+          "column": "B",
+          "model": "Luna",
+          "scores": [
+            1,
+            1,
+            1
+          ],
+          "visualPass": false,
+          "accepted": false,
+          "observation": "The two long straps are legible but the exaggerated thin top reads like a board balanced on a column.",
+          "technical": {
+            "failures": [
+              "palette override"
+            ],
+            "parts": 6,
+            "triangles": 104,
+            "minY": 0.07,
+            "span": 1.8,
+            "margins": [
+              3,
+              3,
+              2,
+              3,
+              4,
+              3,
+              2,
+              3
+            ]
+          },
+          "sha256": "6b38ac7bd4ef98c980b11673033474c01298c1ba3c25be1f4cc36ed3e4423a6b",
+          "revision": {
+            "passed": true,
+            "changes": [
+              {
+                "part": "left-strap",
+                "widthBefore": 0.09,
+                "widthAfter": 0.18,
+                "toneBefore": "accent",
+                "toneAfter": "glow"
+              },
+              {
+                "part": "right-strap",
+                "widthBefore": 0.09,
+                "widthAfter": 0.18,
+                "toneBefore": "accent",
+                "toneAfter": "glow"
+              }
+            ],
+            "changedPixelCountsByDirection": {
+              "32": [
+                66,
+                49,
+                13,
+                19,
+                14,
+                29,
+                13,
+                54
+              ],
+              "128": [
+                1142,
+                780,
+                60,
+                227,
+                174,
+                366,
+                100,
+                799
+              ]
+            },
+            "sha256": "2d1f89f478288b26cb93536f6c8ee45d912231dc0f11385a2a544832966ef5b9"
+          }
+        },
+        {
+          "column": "C",
+          "model": "Terra",
+          "scores": [
+            2,
+            1,
+            1
+          ],
+          "visualPass": false,
+          "accepted": false,
+          "observation": "The front buckles and contrasting straps sell the pack. Its broad flat gray top reads as a metal plate rather than bedding.",
+          "technical": {
+            "failures": [
+              "sprite touches frame edge"
+            ],
+            "parts": 10,
+            "triangles": 168,
+            "minY": 0,
+            "span": 1.9,
+            "margins": [
+              0,
+              0,
+              0,
+              0,
+              2,
+              0,
+              0,
+              0
+            ]
+          },
+          "sha256": "61ea088e8d87a7deff36ea1e13e439d0f50824219c6172d8b4b1b483a8ce4b8d",
+          "cameraOnlyTrial": {
+            "span": 1.995,
+            "fivePercentSteps": 1,
+            "margins": [
+              1,
+              1,
+              1,
+              1,
+              3,
+              1,
+              1,
+              1
+            ]
+          },
+          "revision": {
+            "passed": true,
+            "changes": [
+              {
+                "part": "left-strap",
+                "widthBefore": 0.09,
+                "widthAfter": 0.18,
+                "toneBefore": "ink",
+                "toneAfter": "glow"
+              },
+              {
+                "part": "right-strap",
+                "widthBefore": 0.09,
+                "widthAfter": 0.18,
+                "toneBefore": "light",
+                "toneAfter": "glow"
+              }
+            ],
+            "changedPixelCountsByDirection": {
+              "32": [
+                82,
+                80,
+                19,
+                37,
+                0,
+                37,
+                19,
+                80
+              ],
+              "128": [
+                1332,
+                1170,
+                316,
+                486,
+                0,
+                486,
+                316,
+                1170
+              ]
+            },
+            "sha256": "066e4589e6c35decb77ae8a60ba7cc9e46707c55ba850a1e898f1274ec144fa5"
+          }
+        }
+      ]
+    },
+    {
+      "id": "07-tide-compass",
+      "group": "Inventory",
+      "title": "Tide compass",
+      "brief": "An open pocket compass with a hinged lid and a bold directional needle on its face.",
+      "submissions": [
+        {
+          "column": "A",
+          "model": "Luna",
+          "scores": [
+            1,
+            1,
+            0
+          ],
+          "visualPass": false,
+          "accepted": false,
+          "observation": "The two arms on the dial suggest clock hands and the narrow lid visibly floats clear of the body.",
+          "technical": {
+            "failures": [
+              "palette override",
+              "ground offset"
+            ],
+            "parts": 6,
+            "triangles": 120,
+            "minY": 0.09,
+            "span": 1.5,
+            "margins": [
+              4,
+              3,
+              4,
+              3,
+              4,
+              3,
+              4,
+              3
+            ]
+          },
+          "sha256": "d9bf33a26ec5fdc48d7c52bcf55b58f36ed8a51f9aae71a0f6d9c6c49b41a02a"
+        },
+        {
+          "column": "B",
+          "model": "Terra",
+          "scores": [
+            2,
+            1,
+            1
+          ],
+          "visualPass": false,
+          "accepted": false,
+          "observation": "The double-ended needle and pivot survive downsampling. The broad hovering disk scarcely reads as a hinged lid.",
+          "technical": {
+            "failures": [
+              "sprite touches frame edge"
+            ],
+            "parts": 10,
+            "triangles": 216,
+            "minY": 0,
+            "span": 1.8,
+            "margins": [
+              2,
+              0,
+              0,
+              0,
+              3,
+              0,
+              0,
+              0
+            ]
+          },
+          "sha256": "982e6725afb1d49e32f937fdb2d44c146eb3836d3fda72955f431054851657ea",
+          "cameraOnlyTrial": {
+            "span": 2.18791125,
+            "fivePercentSteps": 4,
+            "margins": [
+              5,
+              3,
+              1,
+              3,
+              5,
+              3,
+              1,
+              3
+            ]
+          }
+        },
+        {
+          "column": "C",
+          "model": "Sol",
+          "scores": [
+            2,
+            2,
+            2
+          ],
+          "visualPass": true,
+          "accepted": true,
+          "observation": "The open cover rises from a recognizable hinge and a bold needle crosses the light dial. The face remains legible at game size.",
+          "technical": {
+            "failures": [],
+            "parts": 9,
+            "triangles": 236,
+            "minY": 0,
+            "span": 2.6,
+            "margins": [
+              5,
+              4,
+              5,
+              5,
+              8,
+              5,
+              5,
+              4
+            ]
+          },
+          "sha256": "f00086d0860c155ebf4bd99d00c0b911dba05a4cfee7eb51f0597f503673344d"
+        }
+      ]
+    },
+    {
+      "id": "08-field-camera",
+      "group": "Inventory",
+      "title": "Field camera",
+      "brief": "A field camera with a prominent front lens barrel and a raised off-center viewfinder.",
+      "submissions": [
+        {
+          "column": "A",
+          "model": "Terra",
+          "scores": [
+            2,
+            2,
+            1
+          ],
+          "visualPass": true,
+          "accepted": true,
+          "observation": "The turquoise front rim and offset finder read as a camera. Thin loose-looking side and top details add noise.",
+          "technical": {
+            "failures": [],
+            "parts": 9,
+            "triangles": 184,
+            "minY": 0,
+            "span": 2,
+            "margins": [
+              3,
+              3,
+              2,
+              3,
+              5,
+              3,
+              2,
+              3
+            ]
+          },
+          "sha256": "0dfc5be261f84e518fd53cc0061ec2cb6710b38a18b632172f43f46d7dcf4cf1"
+        },
+        {
+          "column": "B",
+          "model": "Luna",
+          "scores": [
+            2,
+            2,
+            1
+          ],
+          "visualPass": true,
+          "accepted": false,
+          "observation": "The projecting barrel and small offset finder identify it. The barrel looks separated from its mount in profile.",
+          "technical": {
+            "failures": [
+              "palette override",
+              "ground offset"
+            ],
+            "parts": 7,
+            "triangles": 148,
+            "minY": 0.205,
+            "span": 1.65,
+            "margins": [
+              5,
+              5,
+              3,
+              5,
+              7,
+              5,
+              3,
+              5
+            ]
+          },
+          "sha256": "485245517133a033ccfa7243266ad5d05261f3c4d09e92038a7e33cd3efeac8b"
+        },
+        {
+          "column": "C",
+          "model": "Sol",
+          "scores": [
+            2,
+            2,
+            2
+          ],
+          "visualPass": true,
+          "accepted": true,
+          "observation": "The clear finder, substantial lens and asymmetric handgrip form a convincing compact camera around the turn.",
+          "technical": {
+            "failures": [],
+            "parts": 8,
+            "triangles": 156,
+            "minY": 0,
+            "span": 2.3,
+            "margins": [
+              6,
+              6,
+              3,
+              6,
+              6,
+              6,
+              3,
+              6
+            ]
+          },
+          "sha256": "5615c0634477ca5fd64ff233cda0b6486c79bf5098b66c3432ee9b3537d692c4"
+        }
+      ]
+    },
+    {
+      "id": "09-rain-boot",
+      "group": "Inventory",
+      "title": "Rain boot",
+      "brief": "A single rain boot with an open cuff and a projecting toe above a dark sole.",
+      "submissions": [
+        {
+          "column": "A",
+          "model": "Luna",
+          "scores": [
+            2,
+            1,
+            1
+          ],
+          "visualPass": false,
+          "accepted": false,
+          "observation": "The profile unmistakably has a boot toe and sole, but the pale solid cap closes the cuff.",
+          "technical": {
+            "failures": [
+              "palette override"
+            ],
+            "parts": 5,
+            "triangles": 92,
+            "minY": 0.02,
+            "span": 1.55,
+            "margins": [
+              2,
+              1,
+              2,
+              2,
+              4,
+              4,
+              2,
+              1
+            ]
+          },
+          "sha256": "17a6d2f6b50890add37686f1683f9aebccd5fdf2e9a7d759057723e64050086c"
+        },
+        {
+          "column": "B",
+          "model": "Terra",
+          "scores": [
+            2,
+            2,
+            2
+          ],
+          "visualPass": true,
+          "accepted": false,
+          "observation": "A dark recessed-looking cuff, bright rim, substantial toe and rubber sole read together from several angles.",
+          "technical": {
+            "failures": [
+              "sprite touches frame edge"
+            ],
+            "parts": 7,
+            "triangles": 180,
+            "minY": 0,
+            "span": 1.7,
+            "margins": [
+              0,
+              0,
+              0,
+              0,
+              2,
+              1,
+              0,
+              0
+            ]
+          },
+          "sha256": "c724e0645f305d770a47a7e48b9d137b6a2a894350c005d587b109954a7795c9",
+          "cameraOnlyTrial": {
+            "span": 1.87425,
+            "fivePercentSteps": 2,
+            "margins": [
+              1,
+              1,
+              2,
+              1,
+              3,
+              2,
+              2,
+              1
+            ]
+          }
+        },
+        {
+          "column": "C",
+          "model": "Sol",
+          "scores": [
+            2,
+            2,
+            1
+          ],
+          "visualPass": true,
+          "accepted": true,
+          "observation": "The dark cuff inside the bright rim and block toe are clear. The very upright shaft makes the front view stiff.",
+          "technical": {
+            "failures": [],
+            "parts": 6,
+            "triangles": 136,
+            "minY": 0,
+            "span": 2.1,
+            "margins": [
+              1,
+              1,
+              3,
+              3,
+              3,
+              3,
+              3,
+              1
+            ]
+          },
+          "sha256": "6a521dfe2982662c6f71ea94e88a6fe45e0785634741cc11f8568dd8854e011b"
+        }
+      ]
+    },
+    {
+      "id": "10-field-radio",
+      "group": "Inventory",
+      "title": "Field radio",
+      "brief": "A handheld radio with a long antenna and a front speaker grille beneath a small screen.",
+      "submissions": [
+        {
+          "column": "A",
+          "model": "Sol",
+          "scores": [
+            2,
+            2,
+            2
+          ],
+          "visualPass": true,
+          "accepted": false,
+          "observation": "The antenna, turquoise screen and horizontal speaker slats read even in the front 32-pixel view.",
+          "technical": {
+            "failures": [
+              "sprite touches frame edge"
+            ],
+            "parts": 10,
+            "triangles": 184,
+            "minY": 0,
+            "span": 2.15,
+            "margins": [
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0
+            ]
+          },
+          "sha256": "b30a13d3d9a21cf24a713e6d03181015c2ffe1cfbba6201a8b5c0083997da53a",
+          "cameraOnlyTrial": {
+            "span": 3.1765292,
+            "fivePercentSteps": 8,
+            "margins": [
+              2,
+              1,
+              1,
+              1,
+              2,
+              3,
+              4,
+              3
+            ]
+          }
+        },
+        {
+          "column": "B",
+          "model": "Terra",
+          "scores": [
+            2,
+            2,
+            2
+          ],
+          "visualPass": true,
+          "accepted": false,
+          "observation": "The tall antenna and stacked screen and grille make an economical, coherent handheld radio.",
+          "technical": {
+            "failures": [
+              "sprite touches frame edge"
+            ],
+            "parts": 10,
+            "triangles": 180,
+            "minY": 0,
+            "span": 1.8,
+            "margins": [
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0
+            ]
+          },
+          "sha256": "8b60164c44d4b7ff9cf7eba69108a80fb2604530883433b2d48c62223fcf0fe0",
+          "cameraOnlyTrial": {
+            "span": 2.41217215,
+            "fivePercentSteps": 6,
+            "margins": [
+              2,
+              1,
+              1,
+              1,
+              2,
+              2,
+              2,
+              2
+            ]
+          }
+        },
+        {
+          "column": "C",
+          "model": "Luna",
+          "scores": [
+            2,
+            1,
+            1
+          ],
+          "visualPass": false,
+          "accepted": false,
+          "observation": "The antenna and display suggest a radio; the two small vertical marks below look like buttons rather than a speaker grille.",
+          "technical": {
+            "failures": [
+              "palette override"
+            ],
+            "parts": 8,
+            "triangles": 144,
+            "minY": 0.07,
+            "span": 1.6,
+            "margins": [
+              4,
+              4,
+              4,
+              4,
+              4,
+              3,
+              2,
+              3
+            ]
+          },
+          "sha256": "0f593a138e4164b00a19bd4631e5d550a10b797b656076973438835c1fab38f7"
+        }
+      ]
+    },
+    {
+      "id": "11-ferry-kiosk",
+      "group": "World props",
+      "title": "Ferry kiosk",
+      "brief": "A ticket kiosk with an overhanging roof and a service window with a projecting counter.",
+      "submissions": [
+        {
+          "column": "A",
+          "model": "Luna",
+          "scores": [
+            2,
+            2,
+            2
+          ],
+          "visualPass": true,
+          "accepted": false,
+          "observation": "The contrasting overhang, dark service opening and projecting shelf make a clear compact kiosk.",
+          "technical": {
+            "failures": [
+              "palette override",
+              "sprite touches frame edge"
+            ],
+            "parts": 6,
+            "triangles": 104,
+            "minY": 0,
+            "span": 2,
+            "margins": [
+              1,
+              0,
+              0,
+              0,
+              1,
+              0,
+              0,
+              0
+            ]
+          },
+          "sha256": "23701c0263663619c983b60530c41bd83cd8c8b773180436dd866ee86e8aa2bb",
+          "cameraOnlyTrial": {
+            "span": 2.205,
+            "fivePercentSteps": 2,
+            "margins": [
+              2,
+              1,
+              1,
+              1,
+              2,
+              1,
+              1,
+              1
+            ]
+          }
+        },
+        {
+          "column": "B",
+          "model": "Sol",
+          "scores": [
+            2,
+            2,
+            2
+          ],
+          "visualPass": true,
+          "accepted": false,
+          "observation": "The window, framed service opening, counter and deep roof form a recognizable booth even at sprite scale.",
+          "technical": {
+            "failures": [
+              "sprite touches frame edge"
+            ],
+            "parts": 10,
+            "triangles": 152,
+            "minY": 0,
+            "span": 4.1,
+            "margins": [
+              2,
+              0,
+              0,
+              0,
+              2,
+              0,
+              0,
+              0
+            ]
+          },
+          "sha256": "1f8c231834c1e2fab0fa23b46a0a829b56c47d7186e2c947a39a9e96cff65822",
+          "cameraOnlyTrial": {
+            "span": 4.305,
+            "fivePercentSteps": 1,
+            "margins": [
+              2,
+              1,
+              1,
+              1,
+              2,
+              1,
+              1,
+              1
+            ]
+          }
+        },
+        {
+          "column": "C",
+          "model": "Terra",
+          "scores": [
+            1,
+            2,
+            1
+          ],
+          "visualPass": false,
+          "accepted": false,
+          "observation": "The window and shelf can be found in the large view, but the conspicuous layered stone-like roof dominates the tiny silhouette.",
+          "technical": {
+            "failures": [],
+            "parts": 11,
+            "triangles": 182,
+            "minY": 0,
+            "span": 3.4,
+            "margins": [
+              3,
+              2,
+              1,
+              2,
+              3,
+              2,
+              1,
+              2
+            ]
+          },
+          "sha256": "cfd5b29b4717e8d9637b0b445c2e55711151579da1444ca66cc566e9533c1ca5"
+        }
+      ]
+    },
+    {
+      "id": "12-handcart",
+      "group": "World props",
+      "title": "Handcart",
+      "brief": "A two-wheeled box handcart with two long tow handles extending from the open load bed.",
+      "submissions": [
+        {
+          "column": "A",
+          "model": "Terra",
+          "scores": [
+            2,
+            1,
+            1
+          ],
+          "visualPass": false,
+          "accepted": false,
+          "observation": "The open bed and two shafts suggest a cart. Its wheel disks sit almost flat like feet.",
+          "technical": {
+            "failures": [
+              "sprite touches frame edge"
+            ],
+            "parts": 11,
+            "triangles": 212,
+            "minY": 0,
+            "span": 3.4,
+            "margins": [
+              3,
+              0,
+              0,
+              0,
+              5,
+              0,
+              0,
+              0
+            ]
+          },
+          "sha256": "78296d02412f9a613939476d2cce4f548f26ff9397176443e15524d6d02e1c1a",
+          "cameraOnlyTrial": {
+            "span": 4.33935731,
+            "fivePercentSteps": 5,
+            "margins": [
+              6,
+              3,
+              1,
+              3,
+              7,
+              3,
+              1,
+              3
+            ]
+          }
+        },
+        {
+          "column": "B",
+          "model": "Sol",
+          "scores": [
+            2,
+            2,
+            1
+          ],
+          "visualPass": true,
+          "accepted": false,
+          "observation": "The two contrasting handles, open load bed and paired upright wheels read as a handcart. The side wheels are distinctly diamond-shaped.",
+          "technical": {
+            "failures": [
+              "sprite touches frame edge"
+            ],
+            "parts": 11,
+            "triangles": 140,
+            "minY": 0,
+            "span": 4.3,
+            "margins": [
+              2,
+              0,
+              0,
+              0,
+              7,
+              0,
+              0,
+              0
+            ]
+          },
+          "sha256": "b73f8995502ce393a5cd555a7648d7c7745979abf410253ba1dd75329530ee1c",
+          "cameraOnlyTrial": {
+            "span": 6.05053182,
+            "fivePercentSteps": 7,
+            "margins": [
+              6,
+              3,
+              1,
+              3,
+              10,
+              3,
+              1,
+              3
+            ]
+          }
+        },
+        {
+          "column": "C",
+          "model": "Luna",
+          "scores": [
+            2,
+            1,
+            1
+          ],
+          "visualPass": false,
+          "accepted": false,
+          "observation": "The paired bright handles identify the load carrier, but its wide flat wheel forms look like skids in profile.",
+          "technical": {
+            "failures": [
+              "palette override",
+              "sprite touches frame edge",
+              "ground offset"
+            ],
+            "parts": 6,
+            "triangles": 120,
+            "minY": 0.12,
+            "span": 2,
+            "margins": [
+              2,
+              0,
+              0,
+              0,
+              5,
+              0,
+              0,
+              0
+            ]
+          },
+          "sha256": "44622bed7d86c4d200fbf87bd31e1b708577db0e854a9182c3dc8f9136b5a2c8",
+          "cameraOnlyTrial": {
+            "span": 2.68019128,
+            "fivePercentSteps": 6,
+            "margins": [
+              6,
+              3,
+              1,
+              3,
+              8,
+              3,
+              1,
+              3
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "id": "13-trail-gate",
+      "group": "World props",
+      "title": "Trail gate",
+      "brief": "A walk-through trail gate with a broad open passage and an off-center hanging trail marker.",
+      "submissions": [
+        {
+          "column": "A",
+          "model": "Luna",
+          "scores": [
+            2,
+            2,
+            2
+          ],
+          "visualPass": true,
+          "accepted": false,
+          "observation": "A broad opening and a pale off-center tag on a visible hanger read cleanly from both faces.",
+          "technical": {
+            "failures": [
+              "palette override",
+              "sprite touches frame edge"
+            ],
+            "parts": 6,
+            "triangles": 88,
+            "minY": 0,
+            "span": 2.1,
+            "margins": [
+              3,
+              0,
+              0,
+              0,
+              3,
+              0,
+              0,
+              0
+            ]
+          },
+          "sha256": "41dba79ba0f3dcf49f9a56f8c3e8de11f5df6e03f44de47dbb7faa61ab019486",
+          "cameraOnlyTrial": {
+            "span": 2.55256313,
+            "fivePercentSteps": 4,
+            "margins": [
+              6,
+              2,
+              1,
+              2,
+              6,
+              2,
+              1,
+              2
+            ]
+          }
+        },
+        {
+          "column": "B",
+          "model": "Terra",
+          "scores": [
+            2,
+            2,
+            2
+          ],
+          "visualPass": true,
+          "accepted": true,
+          "observation": "The low-hanging diamond marker, cap details and wide portal form a legible trail entrance.",
+          "technical": {
+            "failures": [],
+            "parts": 11,
+            "triangles": 164,
+            "minY": 0,
+            "span": 4,
+            "margins": [
+              3,
+              2,
+              1,
+              2,
+              3,
+              2,
+              1,
+              2
+            ]
+          },
+          "sha256": "5da3e473f8715eb04968bff3eb62117203a115a6c899c1b5f799fe1924bace4f"
+        },
+        {
+          "column": "C",
+          "model": "Sol",
+          "scores": [
+            2,
+            2,
+            2
+          ],
+          "visualPass": true,
+          "accepted": false,
+          "observation": "The heavy timber arch and small suspended marker are legible; the distinct footings ground the posts.",
+          "technical": {
+            "failures": [
+              "sprite touches frame edge"
+            ],
+            "parts": 8,
+            "triangles": 156,
+            "minY": 0,
+            "span": 4.6,
+            "margins": [
+              4,
+              0,
+              0,
+              0,
+              4,
+              0,
+              0,
+              0
+            ]
+          },
+          "sha256": "f76e4094709cc9a4ca089acf8d352d0b9c176137772e2e69eb7cccb0bcd45f80",
+          "cameraOnlyTrial": {
+            "span": 5.0715,
+            "fivePercentSteps": 2,
+            "margins": [
+              5,
+              2,
+              1,
+              2,
+              5,
+              2,
+              1,
+              2
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "id": "14-signal-buoy",
+      "group": "World props",
+      "title": "Signal buoy",
+      "brief": "A floating navigation buoy with a wide banded float and a small beacon on a narrow mast.",
+      "submissions": [
+        {
+          "column": "A",
+          "model": "Terra",
+          "scores": [
+            2,
+            2,
+            2
+          ],
+          "visualPass": true,
+          "accepted": false,
+          "observation": "A broad striped float, thin mast and small bright beacon make a clear navigation marker.",
+          "technical": {
+            "failures": [
+              "sprite touches frame edge"
+            ],
+            "parts": 8,
+            "triangles": 210,
+            "minY": 0,
+            "span": 2.1,
+            "margins": [
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0
+            ]
+          },
+          "sha256": "8ea3b8e7ed1cb7aa8da642e2e35e2d37aebbb6d80d902f499dcf0040ed7221e3",
+          "cameraOnlyTrial": {
+            "span": 2.81420085,
+            "fivePercentSteps": 6,
+            "margins": [
+              1,
+              2,
+              2,
+              2,
+              2,
+              2,
+              2,
+              2
+            ]
+          }
+        },
+        {
+          "column": "B",
+          "model": "Luna",
+          "scores": [
+            2,
+            1,
+            1
+          ],
+          "visualPass": false,
+          "accepted": false,
+          "observation": "The oversized orange float has a clear beacon, but isolated pale spots replace a legible continuous band.",
+          "technical": {
+            "failures": [
+              "palette override",
+              "sprite touches frame edge"
+            ],
+            "parts": 6,
+            "triangles": 122,
+            "minY": 0.01,
+            "span": 1.7,
+            "margins": [
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0
+            ]
+          },
+          "sha256": "8623dc676e3d9edd8bb0e84c4202cf2b27cc1301a6ebf9258582d3ef4528629f",
+          "cameraOnlyTrial": {
+            "span": 1.9679625,
+            "fivePercentSteps": 3,
+            "margins": [
+              1,
+              1,
+              1,
+              1,
+              1,
+              1,
+              1,
+              1
+            ]
+          }
+        },
+        {
+          "column": "C",
+          "model": "Sol",
+          "scores": [
+            2,
+            2,
+            2
+          ],
+          "visualPass": true,
+          "accepted": true,
+          "observation": "Two broad contrasting bands and a framed beacon survive at 32 px. The mast cleanly joins float and light.",
+          "technical": {
+            "failures": [],
+            "parts": 11,
+            "triangles": 232,
+            "minY": 0,
+            "span": 3,
+            "margins": [
+              1,
+              1,
+              1,
+              1,
+              1,
+              1,
+              2,
+              1
+            ]
+          },
+          "sha256": "e67caa209537a36d7a1948d3f399bd74c4a3b50ea2851ca837d51f07dffde07a"
+        }
+      ]
+    },
+    {
+      "id": "15-footbridge",
+      "group": "World props",
+      "title": "Footbridge",
+      "brief": "A short plank footbridge with low railings on both sides and open approaches at both ends.",
+      "submissions": [
+        {
+          "column": "A",
+          "model": "Terra",
+          "scores": [
+            2,
+            2,
+            2
+          ],
+          "visualPass": true,
+          "accepted": true,
+          "observation": "Plank divisions, two open-ended approaches and slender paired rails read from both across and along the bridge.",
+          "technical": {
+            "failures": [],
+            "parts": 15,
+            "triangles": 180,
+            "minY": 0,
+            "span": 4.4,
+            "margins": [
+              6,
+              3,
+              4,
+              3,
+              6,
+              3,
+              4,
+              3
+            ]
+          },
+          "sha256": "4aae11ae85dca02357928ece50a24b67fdc1551fac90576582a655a3c6f785e8"
+        },
+        {
+          "column": "B",
+          "model": "Sol",
+          "scores": [
+            2,
+            2,
+            2
+          ],
+          "visualPass": true,
+          "accepted": true,
+          "observation": "Contrasting raised rails flank an open walkable deck with clear transverse planks and posts.",
+          "technical": {
+            "failures": [],
+            "parts": 16,
+            "triangles": 192,
+            "minY": 0,
+            "span": 5.2,
+            "margins": [
+              5,
+              4,
+              6,
+              4,
+              5,
+              4,
+              6,
+              4
+            ]
+          },
+          "sha256": "6ff87204283c164a6acadf43f42d7523612f88c44086a86f8f38f00b3be5822c"
+        },
+        {
+          "column": "C",
+          "model": "Luna",
+          "scores": [
+            1,
+            1,
+            1
+          ],
+          "visualPass": false,
+          "accepted": false,
+          "observation": "The three large boards and tall solid side walls resemble a tray. The openings at its ends do not give a clear bridge silhouette.",
+          "technical": {
+            "failures": [
+              "palette override"
+            ],
+            "parts": 7,
+            "triangles": 84,
+            "minY": 0.075,
+            "span": 2.4,
+            "margins": [
+              4,
+              2,
+              4,
+              2,
+              4,
+              2,
+              4,
+              2
+            ]
+          },
+          "sha256": "d93d4e87f00d0e36e486453766a3409604e8940b6bbf92ad6c7f2cd1bee99ff0"
+        }
+      ]
+    },
+    {
+      "id": "16-marsh-heron",
+      "group": "Characters",
+      "title": "Marsh heron",
+      "brief": "A long-legged heron with a bent neck and long bill, standing in profile or three-quarter view.",
+      "submissions": [
+        {
+          "column": "A",
+          "model": "Luna",
+          "scores": [
+            1,
+            1,
+            1
+          ],
+          "visualPass": false,
+          "accepted": false,
+          "observation": "The two legs are clear. The green neck merges into the body and the orange bill crosses or hangs away from the head in several views.",
+          "technical": {
+            "failures": [
+              "palette override",
+              "sprite touches frame edge"
+            ],
+            "parts": 8,
+            "triangles": 174,
+            "minY": 0.03,
+            "span": 1.8,
+            "margins": [
+              2,
+              2,
+              2,
+              2,
+              1,
+              0,
+              0,
+              0
+            ]
+          },
+          "sha256": "3b4071df0a63ce68df9eb2568a59db8505353608961b005e2e56cf13ed0ff8fe",
+          "cameraOnlyTrial": {
+            "span": 2.083725,
+            "fivePercentSteps": 3,
+            "margins": [
+              4,
+              4,
+              4,
+              4,
+              3,
+              1,
+              1,
+              2
+            ]
+          }
+        },
+        {
+          "column": "B",
+          "model": "Sol",
+          "scores": [
+            2,
+            2,
+            1
+          ],
+          "visualPass": true,
+          "accepted": false,
+          "observation": "The bill, long legs and bend in the neck identify a wading bird in profile. Its upright boxy torso is stiff.",
+          "technical": {
+            "failures": [
+              "sprite touches frame edge"
+            ],
+            "parts": 12,
+            "triangles": 238,
+            "minY": 0,
+            "span": 3,
+            "margins": [
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0
+            ]
+          },
+          "sha256": "3f1f28759fca2752c6c95c8e4f16eb28527aa65658c35e6fcb79619ddcf0bd89",
+          "cameraOnlyTrial": {
+            "span": 3.472875,
+            "fivePercentSteps": 3,
+            "margins": [
+              2,
+              3,
+              2,
+              3,
+              1,
+              3,
+              2,
+              2
+            ]
+          }
+        },
+        {
+          "column": "C",
+          "model": "Terra",
+          "scores": [
+            1,
+            1,
+            0
+          ],
+          "visualPass": false,
+          "accepted": false,
+          "observation": "The legs and kinked neck are visible. The vertical spike beside the head looks detached and never reads as a heron's long bill.",
+          "technical": {
+            "failures": [
+              "sprite touches frame edge"
+            ],
+            "parts": 12,
+            "triangles": 236,
+            "minY": 0,
+            "span": 2.9,
+            "margins": [
+              0,
+              0,
+              0,
+              1,
+              1,
+              1,
+              0,
+              0
+            ]
+          },
+          "sha256": "fb54ba57b5220217f1aa5e0bbc69dfa948071a3170710ee2062175f413101fc5",
+          "cameraOnlyTrial": {
+            "span": 3.19725,
+            "fivePercentSteps": 2,
+            "margins": [
+              1,
+              1,
+              2,
+              2,
+              3,
+              2,
+              2,
+              1
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "id": "17-pack-turtle",
+      "group": "Characters",
+      "title": "Pack turtle",
+      "brief": "A low four-legged turtle with a domed shell and a cargo parcel visibly strapped on top.",
+      "submissions": [
+        {
+          "column": "A",
+          "model": "Sol",
+          "scores": [
+            2,
+            2,
+            1
+          ],
+          "visualPass": true,
+          "accepted": true,
+          "observation": "The low green head and feet read beneath the rounded brown shell. Crossed straps secure the pale load, which dominates the small silhouette.",
+          "technical": {
+            "failures": [],
+            "parts": 13,
+            "triangles": 276,
+            "minY": 0,
+            "span": 3.3,
+            "margins": [
+              6,
+              5,
+              6,
+              5,
+              6,
+              5,
+              6,
+              5
+            ]
+          },
+          "sha256": "403421d18b73503e7485ac246a4ca8ab8ecc1a9f301742c8281b3b657536691a"
+        },
+        {
+          "column": "B",
+          "model": "Terra",
+          "scores": [
+            1,
+            1,
+            1
+          ],
+          "visualPass": false,
+          "accepted": false,
+          "observation": "The small diamond head and splayed feet suggest a turtle in the larger view. The parcel rides high on posts that obscure its attachment.",
+          "technical": {
+            "failures": [],
+            "parts": 14,
+            "triangles": 234,
+            "minY": 0,
+            "span": 2.6,
+            "margins": [
+              5,
+              4,
+              4,
+              4,
+              5,
+              4,
+              4,
+              4
+            ]
+          },
+          "sha256": "89dbc24070aa45eee06bbb36dfd81cc5e91ce25c9fc52f93a39c93cbee5530df"
+        },
+        {
+          "column": "C",
+          "model": "Luna",
+          "scores": [
+            1,
+            1,
+            0
+          ],
+          "visualPass": false,
+          "accepted": false,
+          "observation": "The shell and cargo merge into a broad roof shape. Several gray feet appear detached and the parcel shows little evidence of a strap over it.",
+          "technical": {
+            "failures": [
+              "palette override"
+            ],
+            "parts": 9,
+            "triangles": 116,
+            "minY": -0.02,
+            "span": 1.65,
+            "margins": [
+              2,
+              2,
+              1,
+              2,
+              2,
+              2,
+              1,
+              2
+            ]
+          },
+          "sha256": "fbd59425ad64833484aac72b7ff8742ba80fd7a43b21f379e5a2b818f5d0299d"
+        }
+      ]
+    },
+    {
+      "id": "18-fox-courier",
+      "group": "Characters",
+      "title": "Fox courier",
+      "brief": "A standing fox courier with pointed ears, a large pale-tipped tail and a side mailbag.",
+      "submissions": [
+        {
+          "column": "A",
+          "model": "Sol",
+          "scores": [
+            2,
+            2,
+            1
+          ],
+          "visualPass": true,
+          "accepted": false,
+          "observation": "The pointed ears, pale muzzle, coat and side satchel make a fox courier. The large tail has a visible pale tip, though its blocky segments join awkwardly.",
+          "technical": {
+            "failures": [
+              "sprite touches frame edge"
+            ],
+            "parts": 18,
+            "triangles": 384,
+            "minY": 0,
+            "span": 2.7,
+            "margins": [
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0
+            ]
+          },
+          "sha256": "98ea309a55c0044bb82896265a0211b840062ece90c6869189d7c21ba2f2f4d6",
+          "cameraOnlyTrial": {
+            "span": 3.79917114,
+            "fivePercentSteps": 7,
+            "margins": [
+              5,
+              3,
+              2,
+              1,
+              2,
+              3,
+              5,
+              4
+            ]
+          }
+        },
+        {
+          "column": "B",
+          "model": "Luna",
+          "scores": [
+            2,
+            1,
+            1
+          ],
+          "visualPass": false,
+          "accepted": false,
+          "observation": "The ears, muzzle and side bag are clear. The pale tail tip floats beside the tall orange cone in the side and rear views.",
+          "technical": {
+            "failures": [
+              "palette override",
+              "sprite touches frame edge"
+            ],
+            "parts": 11,
+            "triangles": 200,
+            "minY": 0,
+            "span": 1.85,
+            "margins": [
+              0,
+              2,
+              0,
+              2,
+              0,
+              3,
+              2,
+              2
+            ]
+          },
+          "sha256": "dd9dad768481f9eff6b35824410f14cb71961005cc5c9983e5ce6a05229cd943",
+          "cameraOnlyTrial": {
+            "span": 1.9425,
+            "fivePercentSteps": 1,
+            "margins": [
+              1,
+              3,
+              1,
+              2,
+              1,
+              3,
+              3,
+              3
+            ]
+          }
+        },
+        {
+          "column": "C",
+          "model": "Terra",
+          "scores": [
+            2,
+            1,
+            1
+          ],
+          "visualPass": false,
+          "accepted": false,
+          "observation": "The ears and muzzle read at sprite size and the hip bag is visible. A separate pale cone alongside the orange tail breaks its outline through the turn.",
+          "technical": {
+            "failures": [
+              "sprite touches frame edge"
+            ],
+            "parts": 15,
+            "triangles": 252,
+            "minY": 0,
+            "span": 2.3,
+            "margins": [
+              2,
+              0,
+              0,
+              0,
+              0,
+              2,
+              1,
+              1
+            ]
+          },
+          "sha256": "4e195643ce7fb54f27fd3a0c44e0e7a803eb0a5d1ace344a33c8345a1c589f3e",
+          "cameraOnlyTrial": {
+            "span": 2.79566438,
+            "fivePercentSteps": 4,
+            "margins": [
+              4,
+              3,
+              1,
+              1,
+              3,
+              4,
+              4,
+              4
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "id": "19-crab-bot",
+      "group": "Characters",
+      "title": "Survey crab",
+      "brief": "A low survey robot with splayed crab legs, two raised front pincers and one bright sensor.",
+      "submissions": [
+        {
+          "column": "A",
+          "model": "Terra",
+          "scores": [
+            2,
+            1,
+            1
+          ],
+          "visualPass": false,
+          "accepted": false,
+          "observation": "The splayed orange legs and bright mast sensor read as a crab robot. The small block pincers sit low and blend into the legs in profile.",
+          "technical": {
+            "failures": [],
+            "parts": 14,
+            "triangles": 224,
+            "minY": 0,
+            "span": 2.8,
+            "margins": [
+              3,
+              1,
+              4,
+              1,
+              3,
+              1,
+              4,
+              1
+            ]
+          },
+          "sha256": "97b0471050f021bd742bf37bcdda25163d0ac1482577d56309a34b925822d1cd",
+          "revision": {
+            "passed": true,
+            "changes": [
+              {
+                "part": "bright-sensor",
+                "widthBefore": 0.18,
+                "widthAfter": 0.27,
+                "toneBefore": "glow",
+                "toneAfter": "light"
+              }
+            ],
+            "changedPixelCountsByDirection": {
+              "32": [
+                8,
+                7,
+                5,
+                7,
+                10,
+                7,
+                5,
+                7
+              ],
+              "128": [
+                156,
+                116,
+                75,
+                115,
+                156,
+                114,
+                75,
+                116
+              ]
+            },
+            "sha256": "0c7a3660939e0b1002d8823ea1604431f892ceb9dff220710df113150fe0b540"
+          }
+        },
+        {
+          "column": "B",
+          "model": "Sol",
+          "scores": [
+            2,
+            2,
+            2
+          ],
+          "visualPass": true,
+          "accepted": true,
+          "observation": "Two raised articulated claws, a low splayed chassis and a single bright front sensor give it a clear silhouette from several directions.",
+          "technical": {
+            "failures": [],
+            "parts": 17,
+            "triangles": 308,
+            "minY": 0,
+            "span": 3.5,
+            "margins": [
+              4,
+              7,
+              5,
+              5,
+              4,
+              5,
+              5,
+              7
+            ]
+          },
+          "sha256": "6d0984d2ee8c83a1d1e925dc017fff50db2b08711954e6e45f3991764c4c51b3",
+          "revision": {
+            "passed": true,
+            "changes": [
+              {
+                "part": "bright-sensor",
+                "widthBefore": 0.18,
+                "widthAfter": 0.27,
+                "toneBefore": "glow",
+                "toneAfter": "light"
+              }
+            ],
+            "changedPixelCountsByDirection": {
+              "32": [
+                6,
+                5,
+                3,
+                2,
+                0,
+                2,
+                3,
+                5
+              ],
+              "128": [
+                112,
+                79,
+                39,
+                28,
+                8,
+                28,
+                39,
+                79
+              ]
+            },
+            "sha256": "ad930b349471b5ebe1ae347339662bd65c90834e5ca2e2009b91d965a5078634"
+          }
+        },
+        {
+          "column": "C",
+          "model": "Luna",
+          "scores": [
+            1,
+            1,
+            0
+          ],
+          "visualPass": false,
+          "accepted": false,
+          "observation": "The bright sensor survives at game size, but the narrow dark leg pieces appear disconnected and the blunt orange blocks scarcely read as pincers.",
+          "technical": {
+            "failures": [
+              "palette override",
+              "sprite touches frame edge"
+            ],
+            "parts": 10,
+            "triangles": 132,
+            "minY": 0.04,
+            "span": 1.85,
+            "margins": [
+              1,
+              0,
+              1,
+              0,
+              1,
+              0,
+              1,
+              0
+            ]
+          },
+          "sha256": "cba3d8a69306542adb83a0d5eb3f842fc1ff6e0a810204ea13d7df15f3c82735",
+          "cameraOnlyTrial": {
+            "span": 1.9425,
+            "fivePercentSteps": 1,
+            "margins": [
+              2,
+              1,
+              2,
+              1,
+              2,
+              1,
+              2,
+              1
+            ]
+          },
+          "revision": {
+            "passed": true,
+            "changes": [
+              {
+                "part": "eye",
+                "widthBefore": 0.13,
+                "widthAfter": 0.195,
+                "toneBefore": "glow",
+                "toneAfter": "light"
+              }
+            ],
+            "changedPixelCountsByDirection": {
+              "32": [
+                21,
+                22,
+                17,
+                18,
+                14,
+                18,
+                16,
+                22
+              ],
+              "128": [
+                358,
+                345,
+                247,
+                279,
+                266,
+                285,
+                241,
+                339
+              ]
+            },
+            "sha256": "3a6931f19f643e0882673194736e013a7ff723e74b4ad62fd28fd207bda1ec6a"
+          }
+        }
+      ]
+    },
+    {
+      "id": "20-lighthouse-keeper",
+      "group": "Characters",
+      "title": "Lighthouse keeper",
+      "brief": "A standing lighthouse keeper wearing a brimmed rain hat and holding a glowing hand lantern clear of the coat.",
+      "submissions": [
+        {
+          "column": "A",
+          "model": "Sol",
+          "scores": [
+            2,
+            2,
+            2
+          ],
+          "visualPass": true,
+          "accepted": false,
+          "observation": "The brim, long coat and separate luminous hand lantern read at game size. The lantern has a dark handle, cap and base visible through the turn.",
+          "technical": {
+            "failures": [
+              "sprite touches frame edge"
+            ],
+            "parts": 20,
+            "triangles": 422,
+            "minY": 0,
+            "span": 3.2,
+            "margins": [
+              2,
+              1,
+              0,
+              2,
+              3,
+              2,
+              2,
+              2
+            ]
+          },
+          "sha256": "23c7a263a96f53fee3ac28e5ac04349ad4617a7cff2e9b7425f658b851303e66",
+          "cameraOnlyTrial": {
+            "span": 3.36,
+            "fivePercentSteps": 1,
+            "margins": [
+              3,
+              2,
+              1,
+              3,
+              4,
+              3,
+              3,
+              2
+            ]
+          }
+        },
+        {
+          "column": "B",
+          "model": "Terra",
+          "scores": [
+            2,
+            2,
+            1
+          ],
+          "visualPass": true,
+          "accepted": false,
+          "observation": "The wide brim and bright low-hanging lantern are legible beside the coat. The arm reads as a thin diagonal bar in profile.",
+          "technical": {
+            "failures": [
+              "sprite touches frame edge"
+            ],
+            "parts": 15,
+            "triangles": 338,
+            "minY": 0,
+            "span": 2.3,
+            "margins": [
+              1,
+              0,
+              1,
+              1,
+              2,
+              1,
+              1,
+              0
+            ]
+          },
+          "sha256": "bd37e4bcc105ca0c35842ba6dd5aac186261078c352e65ab79086c3bfede15f8",
+          "cameraOnlyTrial": {
+            "span": 2.415,
+            "fivePercentSteps": 1,
+            "margins": [
+              2,
+              1,
+              1,
+              2,
+              3,
+              2,
+              1,
+              1
+            ]
+          }
+        },
+        {
+          "column": "C",
+          "model": "Luna",
+          "scores": [
+            2,
+            1,
+            1
+          ],
+          "visualPass": false,
+          "accepted": false,
+          "observation": "The brim and coat identify the figure. The bright block beside the sleeve has little visible grip or framing to identify it as a hand lantern.",
+          "technical": {
+            "failures": [
+              "palette override"
+            ],
+            "parts": 10,
+            "triangles": 198,
+            "minY": 0,
+            "span": 1.85,
+            "margins": [
+              2,
+              1,
+              1,
+              1,
+              1,
+              1,
+              1,
+              1
+            ]
+          },
+          "sha256": "a6a36fa8cc66c481262b5ba82d27ee8eb5c94e0a58fbd1478c6442e7ea8d8d6c"
+        }
+      ]
+    }
+  ]
+}
