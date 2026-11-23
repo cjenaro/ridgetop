@@ -622,6 +622,7 @@ function renderMainGd(name: string) {
 
 var game_data: Dictionary = {}
 var models_cache: Dictionary = {}
+var audio_cache: Dictionary = {}
 var sound_enabled: bool = true
 var sfx_player: AudioStreamPlayer
 var ui: Control
@@ -726,6 +727,11 @@ func _ready() -> void:
 \t_rebuild_ui()
 
 func _exit_tree() -> void:
+\tfor val in models_cache.values():
+\t\tif val is Node and is_instance_valid(val):
+\t\t\t(val as Node).free()
+\tmodels_cache.clear()
+\taudio_cache.clear()
 \tif rt_script:
 \t\trt_script.clear_modules()
 
@@ -758,7 +764,7 @@ func _init_fx_meshes() -> void:
 \t_hit_mat.emission = Color("#ffdcaa")
 \t_hit_mat.emission_energy_multiplier = 1.8
 
-func _load_model(model_name: String) -> PackedScene:
+func _load_model_template(model_name: String):
 \tif models_cache.has(model_name):
 \t\treturn models_cache[model_name]
 \tvar path := "res://assets/models/%s.glb" % model_name
@@ -767,27 +773,61 @@ func _load_model(model_name: String) -> PackedScene:
 \t\tif packed is PackedScene:
 \t\t\tmodels_cache[model_name] = packed
 \t\t\treturn packed
+\t# Runtime GLTF loader fallback so fresh exports work immediately without Godot editor --import!
+\tif FileAccess.file_exists(path):
+\t\tvar bytes := FileAccess.get_file_as_bytes(path)
+\t\tif bytes.size() > 0:
+\t\t\tvar doc := GLTFDocument.new()
+\t\t\tvar state := GLTFState.new()
+\t\t\tif doc.append_from_buffer(bytes, "", state) == OK:
+\t\t\t\tvar scene := doc.generate_scene(state)
+\t\t\t\tif scene is Node3D:
+\t\t\t\t\tmodels_cache[model_name] = scene
+\t\t\t\t\treturn scene
 \treturn null
 
 func _spawn_model(model_name: String, pos: Vector3, parent: Node = self) -> Node3D:
-\tvar packed := _load_model(model_name)
-\tif packed == null:
+\tvar tpl = _load_model_template(model_name)
+\tif tpl == null:
 \t\treturn null
-\tvar node := packed.instantiate() as Node3D
+\tvar node: Node3D = null
+\tif tpl is PackedScene:
+\t\tnode = (tpl as PackedScene).instantiate() as Node3D
+\telif tpl is Node3D:
+\t\tnode = (tpl as Node3D).duplicate() as Node3D
 \tif node:
 \t\tnode.position = pos
 \t\tparent.add_child(node)
 \treturn node
 
-func _play_sfx(clip_name: String) -> void:
-\tif not sound_enabled:
-\t\treturn
+func _load_audio(clip_name: String) -> AudioStream:
+\tif audio_cache.has(clip_name):
+\t\treturn audio_cache[clip_name]
 \tvar path := "res://assets/audio/%s.wav" % clip_name
 \tif ResourceLoader.exists(path):
 \t\tvar stream = load(path)
 \t\tif stream is AudioStream:
-\t\t\tsfx_player.stream = stream
-\t\t\tsfx_player.play()
+\t\t\taudio_cache[clip_name] = stream
+\t\t\treturn stream
+\tif FileAccess.file_exists(path):
+\t\tvar bytes := FileAccess.get_file_as_bytes(path)
+\t\tif bytes.size() > 44:
+\t\t\tvar wav := AudioStreamWAV.new()
+\t\t\twav.format = AudioStreamWAV.FORMAT_16_BITS
+\t\t\twav.mix_rate = bytes.decode_u32(24)
+\t\t\twav.stereo = bytes.decode_u16(22) == 2
+\t\t\twav.data = bytes.slice(44)
+\t\t\taudio_cache[clip_name] = wav
+\t\t\treturn wav
+\treturn null
+
+func _play_sfx(clip_name: String) -> void:
+\tif not sound_enabled:
+\t\treturn
+\tvar stream := _load_audio(clip_name)
+\tif stream:
+\t\tsfx_player.stream = stream
+\t\tsfx_player.play()
 
 func _input(event: InputEvent) -> void:
 \tif event.is_action_pressed("action_pause"):
@@ -922,6 +962,13 @@ func _load_circuit(index: int) -> void:
 \t\t\tvar car := _spawn_model("car-%d" % slot, Vector3(float(d["x"]), 0.0, float(d["z"])), track_root)
 \t\t\tif car:
 \t\t\t\tcar.rotation.y = float(d["yaw"])
+\t\t\t\tif slot == 0:
+\t\t\t\t\tvar beacon := MeshInstance3D.new()
+\t\t\t\t\tbeacon.mesh = _pulse_mesh
+\t\t\t\t\tbeacon.material_override = _hit_mat
+\t\t\t\t\tbeacon.scale = Vector3(0.55, 0.45, 0.55)
+\t\t\t\t\tbeacon.position = Vector3(0.0, 1.85, 0.0)
+\t\t\t\t\tcar.add_child(beacon)
 \t\t\tcar_nodes.append(car)
 \t\t_sync_race_fx()
 \t_update_race_camera(false)
@@ -1001,9 +1048,9 @@ func _step_racing(delta: float) -> void:
 \tvar prev_snares := int(player["snares"])
 \tvar prev_shield := int(player["shield"])
 
-\tvar throttle := (1.0 if (Input.is_action_pressed("move_up") or Input.is_action_pressed("action_confirm")) else 0.0) - (1.0 if Input.is_action_pressed("move_down") else 0.0)
-\tvar steer := (1.0 if Input.is_action_pressed("move_right") else 0.0) - (1.0 if Input.is_action_pressed("move_left") else 0.0)
-\tvar drift := Input.is_key_pressed(KEY_SPACE) or Input.is_action_pressed("action_cancel")
+\tvar throttle := (1.0 if (Input.is_action_pressed("move_up") or Input.is_joy_button_pressed(0, JOY_BUTTON_A)) else 0.0) - (1.0 if Input.is_action_pressed("move_down") else 0.0)
+\tvar steer := (1.0 if Input.is_action_pressed("move_left") else 0.0) - (1.0 if Input.is_action_pressed("move_right") else 0.0)
+\tvar drift := Input.is_key_pressed(KEY_SPACE) or Input.is_joy_button_pressed(0, JOY_BUTTON_B)
 
 \twhile race_accum >= step_dt:
 \t\trace_accum -= step_dt
