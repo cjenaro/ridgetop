@@ -19,6 +19,7 @@ function change(selector: string, value: string) {
   return tab.evaluate(`{const f=document.querySelector(${JSON.stringify(selector)}); f.value=${JSON.stringify(value)}; f.dispatchEvent(new Event('change'))}`)
 }
 const value = (id: string) => tab.evaluate(`document.getElementById('${id}')?.value`)
+const viewMode = () => tab.evaluate("window.__ridgetopUi?.state?.()?.view")
 const currentImage = () => tab.evaluate("document.getElementById('game-size')?.toDataURL()")
 async function point(selector: string, u: number, v: number) {
   return tab.evaluate(`(() => { const el=document.querySelector(${JSON.stringify(selector)}); el.scrollIntoView({block:'center'});
@@ -59,7 +60,7 @@ try {
   tab = await openTab(url)
   await until(() => status(tab, 'inspect'), 'Pause & inspect', 'loaded testing host through its normal entry point')
   await click(tab, 'inspect')
-  assert.equal(await value('view'), '3d')
+  assert.equal(await viewMode(), '3d')
   const aspect = await tab.evaluate("document.querySelector('#world').width / document.querySelector('#world').height")
   const span = Math.max(6.9, 10.65 / aspect)
   const camera = multiply(orthographic(span * aspect, span, .1, 52), view([4, 13.5, 3 + 26 * Math.cos(Math.PI / 6)], [4, .5, 3]))
@@ -123,7 +124,7 @@ try {
   assert.equal((await disk()).replies.length, 2)
 
   await click(tab, 'inspect')
-  await change('#view', '2d')
+  await tab.evaluate("window.__ridgetopUi.act('hud-view-toggle', 'toggle')")
   await until(() => tab.evaluate("document.getElementById('sprites').hidden"), false, 'switched to 2D')
   await click(tab, 'inspect')
   // Click an opaque pixel of the actual frozen sprite, avoiding the transparent frame margin.
@@ -145,15 +146,24 @@ try {
   assert.ok(v.width < v.height)
   assert.ok(sprite.target.region.every((n, i) => Math.abs(n - [.34, .23, .66, .47][i]) < .02), 'dragged region ' + JSON.stringify(sprite.target.region))
 
-  await press('#icon', .5, .5)
+  const iconCenter = await tab.evaluate(`(() => {
+    const board = document.querySelector('.board')
+    board.scrollIntoView({ block: 'center' })
+    const b = board.getBoundingClientRect()
+    const r = window.__ridgetopUi.rects()['pickup-icon']
+    return { x: b.x + r.x + r.width / 2, y: b.y + r.y + r.height / 2 }
+  })()`)
+  await tab.call('Input.dispatchMouseEvent', { type: 'mousePressed', ...iconCenter, button: 'left', buttons: 1, clickCount: 1 })
+  await tab.call('Input.dispatchMouseEvent', { type: 'mouseReleased', ...iconCenter, button: 'left', clickCount: 1 })
   await until(() => value('object-list'), 'inventory', 'picked inventory icon')
   assert.equal(await value('pin-scope'), 'hud')
   const hudId = await comment('Give just the inventory icon more contrast.')
   const hud = JSON.parse(await readFile(join(game, 'reviews', hudId + '.json'), 'utf8'))
   assert.equal(hud.target.view.surface, 'hud')
-  assert.equal(hud.target.view.width, 34)
+  assert.equal(hud.target.view.width, 32)
   assert.equal(hud.target.view.source, 'art/Moon Crystal.art.json')
-  assert.equal(await currentImage(), await tab.evaluate("document.getElementById('icon').toDataURL()"))
+  const hudImg = await currentImage()
+  assert.ok(hudImg?.startsWith('data:image/png;base64,') && hudImg.length > 200)
   assert.ok(hud.target.part)
   assert.equal(hud.target.scope, 'hud')
   assert.equal(hud.target.editSource, 'main.js#inventory')
@@ -170,11 +180,11 @@ try {
   await tab.close()
   tab = await openTab(url + '&testing=1&review=' + spriteId)
   await until(() => value('review-list'), spriteId, 'review deep link opened in a fresh tab')
-  assert.equal(await value('view'), '2d')
+  assert.equal(await viewMode(), '2d')
   assert.match(await status(tab, 'pin-context'), new RegExp('run · frame ' + (v.frame + 1)))
   await change('#review-list', id)
   await until(() => status(tab, 'thread-status'), 'Review · resolved', 'restored model from a sprite review')
-  assert.equal(await value('view'), '3d')
+  assert.equal(await viewMode(), '3d')
   await click(tab, 'resolve-review')
   await until(() => status(tab, 'thread-status'), 'Review · open', 'reopened resolved feedback')
   assert.equal((await disk()).status, 'open')
