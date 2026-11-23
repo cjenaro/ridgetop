@@ -615,12 +615,10 @@ func _draw() -> void:
 function renderMainGd(name: string) {
   return `extends Node3D
 
-# Auto-generated Ridgetop -> Godot 4 playable runtime.
-# Uses custom CanvasItem UI (scripts/ridgetop_ui.gd) — zero ugly default Godot widgets!
-# Supports:
-#   1. Playable Signal Drift 3D arcade racer (all 4 circuits, AI rivals, drift, Pulse/Snare, HUD & menus)
-#   2. Playable Lantern Grove / starter grid games (full tile map, movement, pickups, audio & menus)
-#   3. Interactive 3D showcase fallback for other exports
+# Auto-generated Ridgetop -> Godot 4 thin runtime host.
+# Executes the game's REAL compiled TypeScript logic from res://scripts/compiled/
+# (produced by tools/ts-to-gd.ts) and renders with custom CanvasItem UI (scripts/ridgetop_ui.gd)
+# — zero duplicated game rules and zero default Godot UI widgets!
 
 var game_data: Dictionary = {}
 var models_cache: Dictionary = {}
@@ -629,6 +627,11 @@ var sfx_player: AudioStreamPlayer
 var ui: Control
 var world_env: WorldEnvironment
 var camera: Camera3D
+
+var rt_script: GDScript = null
+var race_mod: Object = null
+var track_mod: Object = null
+var prog_mod: Object = null
 
 var mode: String = "showcase" # "racing" | "grid" | "showcase"
 
@@ -650,17 +653,27 @@ var travel: float = 0.0
 var grid_won: bool = false
 var grid_paused: bool = false
 
-# --- Signal Drift racing state ---
+# --- Signal Drift racing state (driven by compiled res://scripts/compiled/racing/race.gd) ---
 var circuits: Array = []
 var circuit_index: int = 0
 var race_screen: String = "home" # "home" | "events" | "racing" | "paused" | "results"
 var track_root: Node3D
+var fx_root: Node3D
 var car_nodes: Array = []
-var drivers: Array = []
+var race_state: Dictionary = {}
+var championship: Dictionary = {}
 var race_countdown: float = 0.0
-var race_elapsed: float = 0.0
+var race_accum: float = 0.0
 var race_result: Dictionary = {}
-var snares: Array = []
+var queued_pulse: bool = false
+var queued_snare: bool = false
+var _pulse_mesh: SphereMesh
+var _snare_mesh: CylinderMesh
+var _supply_mesh: BoxMesh
+var _pulse_mat: StandardMaterial3D
+var _snare_mat: StandardMaterial3D
+var _supply_mat: StandardMaterial3D
+var _hit_mat: StandardMaterial3D
 
 # --- Showcase state ---
 var showcase_root: Node3D
@@ -691,9 +704,18 @@ func _ready() -> void:
 
 \tget_viewport().size_changed.connect(_rebuild_ui)
 
+\tif ResourceLoader.exists("res://scripts/compiled/rt.gd"):
+\t\trt_script = load("res://scripts/compiled/rt.gd")
+
 \tif str(game_data.get("game", "")) == "signal-drift" and typeof(game_data.get("circuits", [])) == TYPE_ARRAY and (game_data["circuits"] as Array).size() > 0:
 \t\tmode = "racing"
 \t\tcircuits = game_data["circuits"]
+\t\t_init_fx_meshes()
+\t\tif rt_script and ResourceLoader.exists("res://scripts/compiled/racing/race.gd"):
+\t\t\trace_mod = rt_script.mod("res://scripts/compiled/racing/race.gd")
+\t\t\ttrack_mod = rt_script.mod("res://scripts/compiled/racing/track.gd")
+\t\t\tprog_mod = rt_script.mod("res://scripts/compiled/racing/progression.gd")
+\t\t\tchampionship = prog_mod.loadChampionship(null)
 \t\t_load_circuit(0)
 \telif typeof(game_data.get("map", [])) == TYPE_ARRAY and (game_data["map"] as Array).size() > 0:
 \t\tmode = "grid"
@@ -702,6 +724,39 @@ func _ready() -> void:
 \t\tmode = "showcase"
 \t\t_setup_showcase()
 \t_rebuild_ui()
+
+func _exit_tree() -> void:
+\tif rt_script:
+\t\trt_script.clear_modules()
+
+func _init_fx_meshes() -> void:
+\t_pulse_mesh = SphereMesh.new()
+\t_pulse_mesh.radius = 0.42
+\t_pulse_mesh.height = 0.84
+\t_snare_mesh = CylinderMesh.new()
+\t_snare_mesh.top_radius = 0.65
+\t_snare_mesh.bottom_radius = 0.78
+\t_snare_mesh.height = 0.35
+\t_supply_mesh = BoxMesh.new()
+\t_supply_mesh.size = Vector3(0.95, 0.95, 0.95)
+\t_pulse_mat = StandardMaterial3D.new()
+\t_pulse_mat.albedo_color = Color("#7bf9e8")
+\t_pulse_mat.emission_enabled = true
+\t_pulse_mat.emission = Color("#7bf9e8")
+\t_pulse_mat.emission_energy_multiplier = 1.4
+\t_snare_mat = StandardMaterial3D.new()
+\t_snare_mat.albedo_color = Color("#ffaf68")
+\t_snare_mat.emission_enabled = true
+\t_snare_mat.emission = Color("#ffaf68")
+\t_supply_mat = StandardMaterial3D.new()
+\t_supply_mat.albedo_color = Color("#8df5d5")
+\t_supply_mat.emission_enabled = true
+\t_supply_mat.emission = Color("#56bfae")
+\t_hit_mat = StandardMaterial3D.new()
+\t_hit_mat.albedo_color = Color("#ffdcaa")
+\t_hit_mat.emission_enabled = true
+\t_hit_mat.emission = Color("#ffdcaa")
+\t_hit_mat.emission_energy_multiplier = 1.8
 
 func _load_model(model_name: String) -> PackedScene:
 \tif models_cache.has(model_name):
@@ -743,11 +798,11 @@ func _input(event: InputEvent) -> void:
 \t\tif event is InputEventKey and event.pressed and not event.echo:
 \t\t\tvar ke := event as InputEventKey
 \t\t\tif ke.physical_keycode == KEY_J:
-\t\t\t\t_fire_pulse(0)
+\t\t\t\tqueued_pulse = true
 \t\t\telif ke.physical_keycode == KEY_K:
-\t\t\t\t_drop_snare(0)
+\t\t\t\tqueued_snare = true
 \t\t\telif ke.physical_keycode == KEY_R:
-\t\t\t\t_recover_driver(0)
+\t\t\t\t_recover_player()
 \t\treturn
 \tif ui and _menu_is_active():
 \t\tif ui.handle_menu_input(event):
@@ -802,7 +857,7 @@ func _on_ui_action(id: String) -> void:
 \t\telif id == "race-pause":
 \t\t\trace_screen = "paused"
 \t\telif id == "race-recover":
-\t\t\t_recover_driver(0)
+\t\t\t_recover_player()
 \t\telif id == "race-next":
 \t\t\t_start_race((circuit_index + 1) % circuits.size())
 \t\telif id.begins_with("event-"):
@@ -833,7 +888,7 @@ func _on_ui_action(id: String) -> void:
 \t_rebuild_ui()
 
 # ==============================================================================
-# SIGNAL DRIFT — PLAYABLE 3D ARCADE RACER
+# SIGNAL DRIFT — THIN VIEW HOST OVER COMPILED racing/race.ts (ZERO DUPLICATED PHYSICS)
 # ==============================================================================
 
 func _load_circuit(index: int) -> void:
@@ -843,6 +898,9 @@ func _load_circuit(index: int) -> void:
 \ttrack_root = Node3D.new()
 \ttrack_root.name = "CircuitRoot"
 \tadd_child(track_root)
+\tfx_root = Node3D.new()
+\tfx_root.name = "FxRoot"
+\ttrack_root.add_child(fx_root)
 
 \tvar c: Dictionary = circuits[circuit_index]
 \t_spawn_model("circuit-%s" % str(c["id"]), Vector3.ZERO, track_root)
@@ -851,104 +909,79 @@ func _load_circuit(index: int) -> void:
 \t\tworld_env.environment.background_color = Color(float(cl[0]), float(cl[1]), float(cl[2]), 1.0)
 
 \tcar_nodes.clear()
-\tdrivers.clear()
-\tsnares.clear()
-\tvar samples: Array = c["samples"]
-\tvar n := samples.size()
-\tfor slot in range(4):
-\t\tvar si := (n - 2 - slot * 2) % n
-\t\tvar pt: Array = samples[si]
-\t\tvar px := float(pt[0])
-\t\tvar pz := float(pt[1])
-\t\tvar yaw := float(pt[2])
-\t\tvar lat := -1.8 if (slot % 2 == 0) else 1.8
-\t\tpx += cos(yaw) * lat
-\t\tpz -= sin(yaw) * lat
-\t\tvar car := _spawn_model("car-%d" % slot, Vector3(px, 0.0, pz), track_root)
-\t\tif car:
-\t\t\tcar.rotation.y = yaw
-\t\tcar_nodes.append(car)
-\t\tdrivers.append({
-\t\t\t"slot": slot, "x": px, "z": pz, "vx": 0.0, "vz": 0.0, "yaw": yaw,
-\t\t\t"speed": 0.0, "lap": 0, "checkpoint": 0, "progress": 0.0, "total": -float(slot) * 0.02,
-\t\t\t"shield": 100, "max_shield": 100, "pulses": 4, "snares": 2, "disabled": 0.0,
-\t\t\t"drift": false, "offroad": false, "finish": -1.0, "ai_lane": lat, "ai_pace": float(c.get("pace", 16.5)) * (0.95 + slot * 0.03)
-\t\t})
+\tqueued_pulse = false
+\tqueued_snare = false
+\trace_accum = 0.0
+\tif race_mod and track_mod:
+\t\tvar ts_circuit = track_mod.circuits[circuit_index]
+\t\tvar build = championship.get("build", prog_mod.stock) if prog_mod else null
+\t\trace_state = race_mod.createRace(ts_circuit, build)
+\t\tvar ts_drivers: Array = race_state["drivers"]
+\t\tfor slot in range(ts_drivers.size()):
+\t\t\tvar d: Dictionary = ts_drivers[slot]
+\t\t\tvar car := _spawn_model("car-%d" % slot, Vector3(float(d["x"]), 0.0, float(d["z"])), track_root)
+\t\t\tif car:
+\t\t\t\tcar.rotation.y = float(d["yaw"])
+\t\t\tcar_nodes.append(car)
+\t\t_sync_race_fx()
 \t_update_race_camera(false)
 
 func _start_race(index: int) -> void:
 \t_load_circuit(index)
 \trace_countdown = 2.4
-\trace_elapsed = 0.0
 \trace_result = {}
 \trace_screen = "racing"
 \t_rebuild_ui()
 
-func _nearest_sample(samples: Array, x: float, z: float) -> Dictionary:
-\tvar best_i := 0
-\tvar best_d := 1e9
-\tfor i in range(samples.size()):
-\t\tvar pt: Array = samples[i]
-\t\tvar dx := x - float(pt[0])
-\t\tvar dz := z - float(pt[1])
-\t\tvar d := dx * dx + dz * dz
-\t\tif d < best_d:
-\t\t\tbest_d = d
-\t\t\tbest_i = i
-\tvar bp: Array = samples[best_i]
-\treturn { "index": best_i, "distance": sqrt(best_d), "x": float(bp[0]), "z": float(bp[1]), "yaw": float(bp[2]), "t": float(best_i) / float(samples.size()) }
+func _recover_player() -> void:
+\tif race_mod and not race_state.is_empty() and race_countdown <= 0.0:
+\t\trace_mod.recover(race_state["drivers"][0], race_state["circuit"])
 
-func _recover_driver(slot: int) -> void:
-\tif slot < 0 or slot >= drivers.size():
-\t\treturn
-\tvar c: Dictionary = circuits[circuit_index]
-\tvar samples: Array = c["samples"]
-\tvar d: Dictionary = drivers[slot]
-\tvar near := _nearest_sample(samples, float(d["x"]), float(d["z"]))
-\td["x"] = near["x"]
-\td["z"] = near["z"]
-\td["yaw"] = near["yaw"]
-\td["vx"] = 0.0
-\td["vz"] = 0.0
-\td["speed"] = 0.0
+func _driver_place(slot: int) -> int:
+\tif race_mod == null or race_state.is_empty():
+\t\treturn 1
+\tvar order: Array = race_mod.standings(race_state)
+\tfor i in range(order.size()):
+\t\tif int(order[i]["slot"]) == slot:
+\t\t\treturn i + 1
+\treturn 1
 
-func _fire_pulse(slot: int) -> void:
-\tif race_countdown > 0.0 or slot >= drivers.size():
+func _sync_race_fx() -> void:
+\tif fx_root == null or race_state.is_empty():
 \t\treturn
-\tvar d: Dictionary = drivers[slot]
-\tif int(d["pulses"]) <= 0 or float(d["disabled"]) > 0.0:
-\t\treturn
-\td["pulses"] = int(d["pulses"]) - 1
-\t_play_sfx("pulse")
-\tvar fx := sin(float(d["yaw"]))
-\tvar fz := cos(float(d["yaw"]))
-\tfor other in drivers:
-\t\tif int(other["slot"]) == slot:
+\tfor child in fx_root.get_children():
+\t\tchild.queue_free()
+\tfor sup in race_state["supplies"]:
+\t\tif float(sup["cooldown"]) > 0.0:
 \t\t\tcontinue
-\t\tvar dx := float(other["x"]) - float(d["x"])
-\t\tvar dz := float(other["z"]) - float(d["z"])
-\t\tvar dist := sqrt(dx * dx + dz * dz)
-\t\tif dist < 16.0 and dist > 0.1 and (dx * fx + dz * fz) / dist > 0.82:
-\t\t\tother["shield"] = maxi(0, int(other["shield"]) - 35)
-\t\t\tother["speed"] = float(other["speed"]) * 0.45
-\t\t\t_play_sfx("hit")
-\t\t\tif int(other["shield"]) <= 0:
-\t\t\t\tother["shield"] = int(other["max_shield"])
-\t\t\t\tother["disabled"] = 1.2
-\t\t\t\t_recover_driver(int(other["slot"]))
-
-func _drop_snare(slot: int) -> void:
-\tif race_countdown > 0.0 or slot >= drivers.size():
-\t\treturn
-\tvar d: Dictionary = drivers[slot]
-\tif int(d["snares"]) <= 0 or float(d["disabled"]) > 0.0:
-\t\treturn
-\td["snares"] = int(d["snares"]) - 1
-\tsnares.append({ "owner": slot, "x": float(d["x"]) - sin(float(d["yaw"])) * 2.4, "z": float(d["z"]) - cos(float(d["yaw"])) * 2.4, "ttl": 14.0 })
-\t_play_sfx("snare")
+\t\tvar m := MeshInstance3D.new()
+\t\tm.mesh = _supply_mesh
+\t\tm.material_override = _supply_mat
+\t\tm.position = Vector3(float(sup["x"]), 0.55, float(sup["z"]))
+\t\tm.rotation.y = float(sup["yaw"]) + float(race_state["elapsed"]) * 1.4
+\t\tfx_root.add_child(m)
+\tfor w in race_state["weapons"]:
+\t\tvar m := MeshInstance3D.new()
+\t\tif str(w["kind"]) == "pulse":
+\t\t\tm.mesh = _pulse_mesh
+\t\t\tm.material_override = _pulse_mat
+\t\t\tm.position = Vector3(float(w["x"]), 0.65, float(w["z"]))
+\t\telse:
+\t\t\tm.mesh = _snare_mesh
+\t\t\tm.material_override = _snare_mat
+\t\t\tm.position = Vector3(float(w["x"]), 0.2, float(w["z"]))
+\t\tfx_root.add_child(m)
+\tfor h in race_state["hits"]:
+\t\tvar m := MeshInstance3D.new()
+\t\tm.mesh = _pulse_mesh
+\t\tm.material_override = _hit_mat
+\t\tvar s := 1.0 + float(h["age"]) * 5.0
+\t\tm.scale = Vector3(s, s, s)
+\t\tm.position = Vector3(float(h["x"]), 0.8, float(h["z"]))
+\t\tfx_root.add_child(m)
 
 func _step_racing(delta: float) -> void:
-\tif race_screen != "racing":
+\tif race_screen != "racing" or race_mod == null or race_state.is_empty():
 \t\t_update_race_camera(false)
 \t\treturn
 \tif race_countdown > 0.0:
@@ -961,124 +994,67 @@ func _step_racing(delta: float) -> void:
 \t\t_rebuild_ui()
 \t\treturn
 
-\trace_elapsed += delta
-\tvar c: Dictionary = circuits[circuit_index]
-\tvar samples: Array = c["samples"]
-\tvar n := samples.size()
-\tvar half_w := float(c["width"]) * 0.5
-\tvar laps := int(c["laps"])
-\tvar grip := float(c.get("grip", 1.0))
+\tvar step_dt := 1.0 / 60.0
+\trace_accum = minf(race_accum + delta, 0.1)
+\tvar player: Dictionary = race_state["drivers"][0]
+\tvar prev_pulses := int(player["pulses"])
+\tvar prev_snares := int(player["snares"])
+\tvar prev_shield := int(player["shield"])
 
-\tfor i in range(snares.size() - 1, -1, -1):
-\t\tsnares[i]["ttl"] = float(snares[i]["ttl"]) - delta
-\t\tif float(snares[i]["ttl"]) <= 0.0:
-\t\t\tsnares.remove_at(i)
+\tvar throttle := (1.0 if (Input.is_action_pressed("move_up") or Input.is_action_pressed("action_confirm")) else 0.0) - (1.0 if Input.is_action_pressed("move_down") else 0.0)
+\tvar steer := (1.0 if Input.is_action_pressed("move_right") else 0.0) - (1.0 if Input.is_action_pressed("move_left") else 0.0)
+\tvar drift := Input.is_key_pressed(KEY_SPACE) or Input.is_action_pressed("action_cancel")
 
-\tfor i in range(drivers.size()):
-\t\tvar d: Dictionary = drivers[i]
-\t\tif float(d["disabled"]) > 0.0:
-\t\t\td["disabled"] = maxf(0.0, float(d["disabled"]) - delta)
-\t\t\tcontinue
-\t\tvar near := _nearest_sample(samples, float(d["x"]), float(d["z"]))
-\t\tvar offroad := float(near["distance"]) > half_w + 0.5
-\t\td["offroad"] = offroad
+\twhile race_accum >= step_dt:
+\t\trace_accum -= step_dt
+\t\tvar control := {
+\t\t\t"throttle": throttle,
+\t\t\t"steer": steer,
+\t\t\t"drift": drift,
+\t\t\t"pulse": queued_pulse or Input.is_key_pressed(KEY_J),
+\t\t\t"snare": queued_snare or Input.is_key_pressed(KEY_K)
+\t\t}
+\t\tqueued_pulse = false
+\t\tqueued_snare = false
+\t\trace_mod.stepRace(race_state, control, step_dt)
 
-\t\tvar throttle := 0.0
-\t\tvar steer := 0.0
-\t\tvar drift := false
-\t\tif i == 0:
-\t\t\tthrottle = (1.0 if (Input.is_action_pressed("move_up") or Input.is_action_pressed("action_confirm")) else 0.0) - (1.0 if Input.is_action_pressed("move_down") else 0.0)
-\t\t\tsteer = (1.0 if Input.is_action_pressed("move_right") else 0.0) - (1.0 if Input.is_action_pressed("move_left") else 0.0)
-\t\t\tdrift = Input.is_key_pressed(KEY_SPACE) or Input.is_action_pressed("action_cancel")
-\t\telse:
-\t\t\tvar look_idx := (int(near["index"]) + 4) % n
-\t\t\tvar target_pt: Array = samples[look_idx]
-\t\t\tvar tx := float(target_pt[0]) + cos(float(target_pt[2])) * float(d["ai_lane"])
-\t\t\tvar tz := float(target_pt[1]) - sin(float(target_pt[2])) * float(d["ai_lane"])
-\t\t\tvar desired := atan2(tx - float(d["x"]), tz - float(d["z"]))
-\t\t\tvar diff := wrapf(desired - float(d["yaw"]), -PI, PI)
-\t\t\tsteer = clampf(-diff * 2.4, -1.0, 1.0)
-\t\t\tthrottle = 1.0 if absf(diff) < 0.7 else 0.45
+\tif int(player["pulses"]) < prev_pulses:
+\t\t_play_sfx("pulse")
+\tif int(player["snares"]) < prev_snares:
+\t\t_play_sfx("snare")
+\tif int(player["shield"]) < prev_shield:
+\t\t_play_sfx("hit")
 
-\t\td["drift"] = drift and absf(float(d["speed"])) > 8.0
-\t\tvar max_spd := (24.5 if i == 0 else float(d["ai_pace"])) * (0.64 if offroad else 1.0)
-\t\tvar accel := 22.0 if throttle > 0.0 else (26.0 if throttle < 0.0 else 0.0)
-\t\tvar spd := float(d["speed"])
-\t\tspd += throttle * accel * delta
-\t\tspd = move_toward(spd, 0.0, (9.5 if offroad else 5.2) * delta)
-\t\tspd = clampf(spd, -7.0, max_spd)
-\t\tvar turn_rate := (2.95 if bool(d["drift"]) else 2.25) * grip
-\t\tvar turn_factor := clampf(absf(spd) / 6.0, 0.0, 1.0) * (-1.0 if spd < 0.0 else 1.0)
-\t\tvar yaw := float(d["yaw"]) - steer * turn_rate * turn_factor * delta
-\t\tvar fx := sin(yaw)
-\t\tvar fz := cos(yaw)
-\t\tvar lat_grip := (2.6 if bool(d["drift"]) else 7.2) * (0.55 if offroad else grip)
-\t\tvar vx := lerpf(float(d["vx"]), fx * spd, clampf(lat_grip * delta, 0.0, 1.0))
-\t\tvar vz := lerpf(float(d["vz"]), fz * spd, clampf(lat_grip * delta, 0.0, 1.0))
-\t\td["x"] = float(d["x"]) + vx * delta
-\t\td["z"] = float(d["z"]) + vz * delta
-\t\td["vx"] = vx
-\t\td["vz"] = vz
-\t\td["yaw"] = yaw
-\t\td["speed"] = spd
-
-\t\t# Snare collision check
-\t\tfor si in range(snares.size() - 1, -1, -1):
-\t\t\tvar sn: Dictionary = snares[si]
-\t\t\tif int(sn["owner"]) == i:
-\t\t\t\tcontinue
-\t\t\tif Vector2(float(d["x"]) - float(sn["x"]), float(d["z"]) - float(sn["z"])).length() < 2.2:
-\t\t\t\td["speed"] = float(d["speed"]) * 0.35
-\t\t\t\td["shield"] = maxi(0, int(d["shield"]) - 30)
-\t\t\t\tsnares.remove_at(si)
-\t\t\t\t_play_sfx("hit")
-
-\t\t# Checkpoint & lap progression
-\t\tvar prog := float(near["t"])
-\t\tvar cp := int(d["checkpoint"])
-\t\tif cp == 0 and prog > 0.2 and prog < 0.45:
-\t\t\td["checkpoint"] = 1
-\t\telif cp == 1 and prog > 0.45 and prog < 0.72:
-\t\t\td["checkpoint"] = 2
-\t\telif cp == 2 and prog > 0.72:
-\t\t\td["checkpoint"] = 3
-\t\telif cp == 3 and prog < 0.18:
-\t\t\td["checkpoint"] = 0
-\t\t\td["lap"] = int(d["lap"]) + 1
-\t\t\tif i == 0 and int(d["lap"]) >= laps and float(d["finish"]) < 0.0:
-\t\t\t\td["finish"] = race_elapsed
-\t\t\t\tvar place := _driver_place(0)
-\t\t\t\tvar qual := place <= int(c["qualify"])
-\t\t\t\trace_result = { "place": place, "seconds": race_elapsed, "qualified": qual }
-\t\t\t\tif qual:
-\t\t\t\t\t_play_sfx("podium")
-\t\t\t\trace_screen = "results"
-\t\td["progress"] = prog
-\t\td["total"] = float(d["lap"]) + prog
-
+\tvar ts_drivers: Array = race_state["drivers"]
+\tfor i in range(mini(car_nodes.size(), ts_drivers.size())):
+\t\tvar d: Dictionary = ts_drivers[i]
 \t\tvar car: Node3D = car_nodes[i]
 \t\tif car:
 \t\t\tcar.position = Vector3(float(d["x"]), 0.0, float(d["z"]))
-\t\t\tcar.rotation.y = yaw
-\t\t\tcar.rotation.z = lerpf(car.rotation.z, steer * (0.12 if bool(d["drift"]) else 0.06), clampf(delta * 10.0, 0.0, 1.0))
+\t\t\tcar.rotation.y = float(d["yaw"])
+\t\t\tcar.rotation.z = lerpf(car.rotation.z, float(d["steer"]) * (0.12 if bool(d["drift"]) else 0.06), clampf(delta * 10.0, 0.0, 1.0))
+
+\t_sync_race_fx()
+
+\tif player["finish"] != null:
+\t\tvar place := _driver_place(0)
+\t\tvar ts_circuit: Dictionary = race_state["circuit"]
+\t\tvar qual := place <= int(ts_circuit["qualify"])
+\t\tvar payout := int(prog_mod.recordResult(championship, ts_circuit, place, float(player["finish"]))) if prog_mod else 0
+\t\trace_result = { "place": place, "seconds": float(player["finish"]), "qualified": qual, "payout": payout }
+\t\tif qual:
+\t\t\t_play_sfx("podium")
+\t\trace_screen = "results"
 
 \t_update_race_camera(true)
 \t_rebuild_ui()
 
-func _driver_place(slot: int) -> int:
-\tvar target_total := float(drivers[slot]["total"])
-\tvar rank := 1
-\tfor d in drivers:
-\t\tif int(d["slot"]) != slot and float(d["total"]) > target_total:
-\t\t\trank += 1
-\treturn rank
-
 func _update_race_camera(follow: bool) -> void:
-\tif camera == null or drivers.is_empty():
+\tif camera == null or race_state.is_empty():
 \t\treturn
 \tcamera.projection = Camera3D.PROJECTION_ORTHOGONAL
 \tif follow:
-\t\tvar p: Dictionary = drivers[0]
+\t\tvar p: Dictionary = race_state["drivers"][0]
 \t\tvar target := Vector3(float(p["x"]), 0.0, float(p["z"]))
 \t\tcamera.size = 38.0
 \t\tcamera.position = target + Vector3(58.0, 58.0, 58.0)
@@ -1240,9 +1216,9 @@ func _rebuild_ui() -> void:
 
 \tif mode == "racing":
 \t\tvar c: Dictionary = circuits[circuit_index]
-\t\tif race_screen == "racing":
-\t\t\tvar p: Dictionary = drivers[0]
-\t\t\tvar pos := "%d / 4" % _driver_place(0)
+\t\tif race_screen == "racing" and not race_state.is_empty():
+\t\t\tvar p: Dictionary = race_state["drivers"][0]
+\t\t\tvar pos := "%d / %d" % [_driver_place(0), (race_state["drivers"] as Array).size()]
 \t\t\tvar lap_txt := "LAP %d / %d" % [mini(int(c["laps"]), int(p["lap"]) + 1), int(c["laps"])]
 \t\t\tvar kmh := "%d" % roundi(Vector2(float(p["vx"]), float(p["vz"])).length() * 3.6)
 \t\t\tvar surf := "REBOOTING" if float(p["disabled"]) > 0.0 else ("OFF TRACK" if bool(p["offroad"]) else ("DRIFTING" if bool(p["drift"]) else "ON TRACK"))
@@ -1250,15 +1226,15 @@ func _rebuild_ui() -> void:
 \t\t\titems.append({ "type": "text", "rect": Rect2(30, 26, 90, 16), "text": "POSITION", "size": 11, "color": Color("#f3bd88") })
 \t\t\titems.append({ "type": "text", "rect": Rect2(118, 26, 98, 16), "text": lap_txt, "size": 11, "align": "right", "color": Color("#f3bd88") })
 \t\t\titems.append({ "type": "text", "rect": Rect2(30, 44, 100, 32), "text": pos, "size": 26 })
-\t\t\titems.append({ "type": "text", "rect": Rect2(118, 52, 98, 20), "text": _fmt_time(race_elapsed), "size": 13, "align": "right" })
+\t\t\titems.append({ "type": "text", "rect": Rect2(118, 52, 98, 20), "text": _fmt_time(float(race_state["elapsed"])), "size": 13, "align": "right" })
 \t\t\titems.append({ "type": "text", "rect": Rect2(30, 82, 186, 18), "text": str(c["name"]).to_upper(), "size": 11, "color": Color("#f3bd88") })
 
 \t\t\titems.append({ "type": "panel", "rect": Rect2(18, h - 126, 210, 108) })
 \t\t\titems.append({ "type": "text", "rect": Rect2(30, h - 118, 110, 34), "text": kmh, "size": 30 })
 \t\t\titems.append({ "type": "text", "rect": Rect2(138, h - 106, 78, 18), "text": "KM/H", "size": 12, "align": "right", "color": Color("#f3bd88") })
 \t\t\titems.append({ "type": "text", "rect": Rect2(30, h - 78, 186, 16), "text": surf, "size": 11, "color": Color("#ff957c") if bool(p["offroad"]) else Color("#f3bd88") })
-\t\t\titems.append({ "type": "text", "rect": Rect2(30, h - 60, 186, 16), "text": "SHIELD %d / %d" % [int(p["shield"]), int(p["max_shield"])], "size": 11, "color": Color("#f3bd88") })
-\t\t\titems.append({ "type": "bar", "rect": Rect2(30, h - 42, 186, 5), "ratio": float(p["shield"]) / maxf(1.0, float(p["max_shield"])) })
+\t\t\titems.append({ "type": "text", "rect": Rect2(30, h - 60, 186, 16), "text": "SHIELD %d / %d" % [int(p["shield"]), int(p["maxShield"])], "size": 11, "color": Color("#f3bd88") })
+\t\t\titems.append({ "type": "bar", "rect": Rect2(30, h - 42, 186, 5), "ratio": float(p["shield"]) / maxf(1.0, float(p["maxShield"])) })
 \t\t\titems.append({ "type": "text", "rect": Rect2(30, h - 32, 186, 16), "text": "PULSE %d  ·  SNARE %d" % [int(p["pulses"]), int(p["snares"])], "size": 11 })
 
 \t\t\titems.append({ "type": "button", "id": "race-recover", "rect": Rect2(w - 190, 18, 86, 38), "label": "Recover" })

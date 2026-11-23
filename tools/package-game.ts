@@ -1,8 +1,52 @@
 import { join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { formatPackageSummary, isMain, packageGame, parsePackageArgs } from '../framework/server.ts'
+import { compileTsProjectToGodot } from './ts-to-gd.ts'
 
 const repoRoot = fileURLToPath(new URL('../', import.meta.url))
+
+function godotEntriesFor(game: string | undefined, projectDir: string | undefined): { rootDir: string; entries: string[] } | null {
+  if (projectDir) {
+    return {
+      rootDir: resolve(projectDir),
+      entries: [join(resolve(projectDir), 'game', 'game.js')]
+    }
+  }
+  if (game === 'signal-drift') {
+    return {
+      rootDir: repoRoot,
+      entries: [
+        join(repoRoot, 'racing', 'race.ts'),
+        join(repoRoot, 'racing', 'progression.ts'),
+        join(repoRoot, 'framework', 'ui-layout.ts'),
+        join(repoRoot, 'framework', 'ui-button.ts'),
+        join(repoRoot, 'framework', 'ui-toggle.ts')
+      ]
+    }
+  }
+  if (game === 'beacon-run') {
+    return {
+      rootDir: repoRoot,
+      entries: [
+        join(repoRoot, 'game', 'simulation.ts'),
+        join(repoRoot, 'game', 'campaign.ts'),
+        join(repoRoot, 'framework', 'ui-layout.ts'),
+        join(repoRoot, 'framework', 'ui-button.ts'),
+        join(repoRoot, 'framework', 'ui-toggle.ts')
+      ]
+    }
+  }
+  if (game === 'starter') {
+    return {
+      rootDir: repoRoot,
+      entries: [
+        join(repoRoot, 'starter', 'game.ts'),
+        join(repoRoot, 'framework', 'ui-layout.ts')
+      ]
+    }
+  }
+  return null
+}
 
 function usage() {
   console.log([
@@ -48,6 +92,17 @@ if (isMain(import.meta.url)) {
         orientation: parsed.orientation,
         backgroundColor: parsed.backgroundColor
       })
+      for (const output of result.outputs) {
+        if (output.target !== 'godot') continue
+        const spec = godotEntriesFor(game, parsed.projectDir)
+        if (!spec) continue
+        const compiled = await compileTsProjectToGodot({
+          entries: spec.entries,
+          rootDir: spec.rootDir,
+          outDir: join(output.dir, 'scripts', 'compiled')
+        })
+        console.log(`Compiled ${compiled.files.length} TypeScript module(s) -> ${join(output.dir, 'scripts', 'compiled')}`)
+      }
       console.log(formatPackageSummary(result))
     }
   } catch (error) {

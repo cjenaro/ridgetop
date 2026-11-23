@@ -13,6 +13,7 @@
     "test:player": "node tools/player-smoke.ts",
     "create-game": "node tools/create-game.ts",
     "package": "node tools/package-game.ts",
+    "compile:godot": "node tools/ts-to-gd.ts",
     "generate:sprites": "node tools/generate-sprites.ts",
     "verify": "node tools/verify-game.ts",
     "feel": "node tools/tune-jumps.ts",
