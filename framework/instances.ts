@@ -47,14 +47,21 @@ export function instances(mesh: Mesh, capacity = 16): InstanceBatch {
       data[at + 10] = b
       data[at + 11] = unlit
       if (typeof rotation === 'number') {
+        const half = rotation * .5
         data[at + 12] = 0
-        data[at + 13] = Math.sin(rotation / 2)
+        data[at + 13] = Math.sin(half)
         data[at + 14] = 0
-        data[at + 15] = Math.cos(rotation / 2)
+        data[at + 15] = Math.cos(half)
       } else {
-        const norm = Math.hypot(...rotation)
+        const qx = rotation[0], qy = rotation[1], qz = rotation[2], qw = rotation[3]
+        const sq = qx * qx + qy * qy + qz * qz + qw * qw
+        const norm = sq > 0 && Number.isFinite(sq) ? Math.sqrt(sq) : Math.hypot(qx, qy, qz, qw)
         if (!Number.isFinite(norm) || !norm) throw new RangeError('Rotation requires a finite, nonzero quaternion')
-        for (let i = 0; i < 4; i++) data[at + 12 + i] = rotation[i] / norm
+        const inv = 1 / norm
+        data[at + 12] = qx * inv
+        data[at + 13] = qy * inv
+        data[at + 14] = qz * inv
+        data[at + 15] = qw * inv
       }
       const reach = mesh.radius * Math.max(sx, sy, sz)
       min[0] = Math.min(min[0], x - reach)

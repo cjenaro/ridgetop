@@ -64,7 +64,8 @@ export async function gpuMeshes(canvas: HTMLCanvasElement, light: Float32Array<A
     const buffers = new Map()
     let depth
     let depthView
-    let lastCamera
+    const lastCamera = new Float32Array(16)
+    let hasCamera = false
     function vertexBuffer(mesh) {
       if (!meshes.has(mesh)) {
         const buffer = device.createBuffer({
@@ -81,9 +82,16 @@ export async function gpuMeshes(canvas: HTMLCanvasElement, light: Float32Array<A
       lost: device.lost,
       maxDimension: device.limits.maxTextureDimension2D,
       draw(matrix, clear, visible, stats) {
-        if (!lastCamera || matrix.some((value, index) => value !== lastCamera[index])) {
+        let cameraChanged = !hasCamera
+        if (!cameraChanged) {
+          for (let i = 0; i < 16; i++) {
+            if (matrix[i] !== lastCamera[i]) { cameraChanged = true; break }
+          }
+        }
+        if (cameraChanged) {
           device.queue.writeBuffer(camera, 0, matrix)
-          lastCamera = new Float32Array(matrix)
+          lastCamera.set(matrix)
+          hasCamera = true
         }
         if (!depth || depth.width !== canvas.width || depth.height !== canvas.height) {
           depth?.destroy()
@@ -108,11 +116,14 @@ export async function gpuMeshes(canvas: HTMLCanvasElement, light: Float32Array<A
         for (const batch of visible) {
           let entry = buffers.get(batch)
           const size = batch.count * INSTANCE_SIZE * 4
+          if (size > device.limits.maxBufferSize) {
+            throw new RangeError('Instance batch exceeds WebGPU maxBufferSize')
+          }
           if (!entry || entry.buffer.size < size) {
             entry?.buffer.destroy()
-            const capacity = Math.min(device.limits.maxBufferSize, batch.data.byteLength)
+            const capacity = Math.min(device.limits.maxBufferSize, Math.max(batch.data.byteLength, size))
             entry = {
-              buffer: device.createBuffer({ size: Math.max(capacity, size), usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST }),
+              buffer: device.createBuffer({ size: capacity, usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST }),
               revision: -1
             }
             buffers.set(batch, entry)
@@ -137,10 +148,20 @@ export async function gpuMeshes(canvas: HTMLCanvasElement, light: Float32Array<A
         buffers.delete(batch)
       },
       releaseMesh(mesh) {
+        for (const [batch, entry] of buffers) {
+          if (batch.mesh === mesh) {
+            entry.buffer.destroy()
+            buffers.delete(batch)
+          }
+        }
         meshes.get(mesh)?.destroy()
         meshes.delete(mesh)
       },
       dispose() {
+        meshes.clear()
+        buffers.clear()
+        depth = undefined
+        depthView = undefined
         context.unconfigure()
         device.destroy()
       }

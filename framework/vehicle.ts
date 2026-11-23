@@ -68,13 +68,18 @@ export function createCircuit(points: readonly TrackPoint[], subdivisions = 8) {
     nearest(x: number, z: number) {
       let best = Infinity
       let progress = 0
-      for (const [index, segment] of segments.entries()) {
+      const count = segments.length
+      for (let index = 0; index < count; index++) {
+        const segment = segments[index]
         const px = x - segment.x, pz = z - segment.z
-        const t = Math.max(0, Math.min(1, (px * segment.dx + pz * segment.dz) / segment.lengthSquared))
-        const distance = (px - t * segment.dx) ** 2 + (pz - t * segment.dz) ** 2
+        const rawT = (px * segment.dx + pz * segment.dz) / segment.lengthSquared
+        const t = rawT <= 0 ? 0 : rawT >= 1 ? 1 : rawT
+        const ex = px - t * segment.dx
+        const ez = pz - t * segment.dz
+        const distance = ex * ex + ez * ez
         if (distance < best) {
           best = distance
-          progress = ((index + t) / segments.length) % 1
+          progress = ((index + t) / count) % 1
         }
       }
       return { distance: Math.sqrt(best), progress }

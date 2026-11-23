@@ -41,14 +41,14 @@ export function verifyTrace<S, A>({ initial, step, actions, checks, goal }: Veri
   if (initialRule) return violation(initialRule, origin, [])
   let frame: VerificationFrame<S, A> = origin
   for (let tick = 1; tick <= actions.length; tick++) {
-    const action = copy(actions[tick - 1])
+    const action = actions[tick - 1]
     const before = after
     after = advance(step, before, action)
     frame = { tick, before, after, action }
     const rule = failed(checks, frame)
-    if (rule) return violation(rule, frame, actions.slice(0, tick))
+    if (rule) return violation(rule, { ...frame, action: copy(action) }, copy(actions.slice(0, tick)))
   }
-  if (goal && failed([goal], frame)) return violation(goal.id, frame, actions.slice())
+  if (goal && failed([goal], frame)) return violation(goal.id, frame, copy(actions.slice()))
   return { status: 'pass', ticks: frame.tick, final: after }
 }
 
@@ -67,6 +67,7 @@ export function verifyBounded<S, A>({ initial, step, alphabet, checks, depth, ma
   if (initialRule) return { ...violation(initialRule, origin, []), transitions: 0 }
   if (!depth) return { status: 'pass', depth, transitions: 0 }
 
+  const safeAlphabet = alphabet.map(copy)
   let transitions = 0
   // Traverse in breadth-first order so the first failure has a shortest input sequence.
   type Node = { state: S; parent: Node | null; action?: A }
@@ -74,21 +75,20 @@ export function verifyBounded<S, A>({ initial, step, alphabet, checks, depth, ma
   for (let tick = 1; tick <= depth; tick++) {
     const next: Node[] = []
     for (const node of frontier) {
-      for (const input of alphabet) {
+      for (const action of safeAlphabet) {
         if (transitions === maxTransitions) {
           return { status: 'inconclusive', checkedDepth: tick - 1, depth, transitions }
         }
-        const action = copy(input)
         const after = advance(step, node.state, action)
         transitions++
         const frame = { tick, before: node.state, after, action }
         const rule = failed(checks, frame)
         if (rule) {
-          const actions = [action]
+          const actions = [copy(action)]
           for (let ancestor = node; ancestor.parent; ancestor = ancestor.parent) {
-            actions.push(ancestor.action)
+            actions.push(copy(ancestor.action))
           }
-          return { ...violation(rule, frame, actions.reverse()), transitions }
+          return { ...violation(rule, { ...frame, action: copy(action) }, actions.reverse()), transitions }
         }
         if (tick < depth) next.push({ state: after, parent: node, action })
       }

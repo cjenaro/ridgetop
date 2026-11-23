@@ -60,6 +60,10 @@ export function glMeshes(canvas: HTMLCanvasElement, light: Float32Array<ArrayBuf
   gl.uniform4fv(gl.getUniformLocation(program, 'lighting'), light)
   const meshes = new Map()
   const batches = new Map()
+  const lastCamera = new Float32Array(16)
+  let hasCamera = false
+  let lastWidth = -1
+  let lastHeight = -1
   let lostHandler
   const lost = new Promise<void>(resolve => {
     lostHandler = event => {
@@ -82,10 +86,24 @@ export function glMeshes(canvas: HTMLCanvasElement, light: Float32Array<ArrayBuf
     lost,
     maxDimension: gl.getParameter(gl.MAX_RENDERBUFFER_SIZE),
     draw(matrix, clear, visible, stats) {
-      gl.viewport(0, 0, canvas.width, canvas.height)
-      gl.clearColor(...clear)
+      if (canvas.width !== lastWidth || canvas.height !== lastHeight) {
+        gl.viewport(0, 0, canvas.width, canvas.height)
+        lastWidth = canvas.width
+        lastHeight = canvas.height
+      }
+      gl.clearColor(clear[0], clear[1], clear[2], clear[3])
       gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT)
-      gl.uniformMatrix4fv(camera, false, matrix)
+      let cameraChanged = !hasCamera
+      if (!cameraChanged) {
+        for (let i = 0; i < 16; i++) {
+          if (matrix[i] !== lastCamera[i]) { cameraChanged = true; break }
+        }
+      }
+      if (cameraChanged) {
+        gl.uniformMatrix4fv(camera, false, matrix)
+        lastCamera.set(matrix)
+        hasCamera = true
+      }
       for (const batch of visible) {
         let entry = batches.get(batch)
         if (!entry) {
@@ -135,6 +153,7 @@ export function glMeshes(canvas: HTMLCanvasElement, light: Float32Array<ArrayBuf
       canvas.removeEventListener('webglcontextlost', lostHandler)
       for (const batch of batches.keys()) release(batch)
       for (const buffer of meshes.values()) gl.deleteBuffer(buffer)
+      meshes.clear()
       gl.deleteProgram(program)
     }
   }
