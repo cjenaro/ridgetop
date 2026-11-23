@@ -119,7 +119,8 @@ export const selectPrimitive = definePrimitive<SelectProps, SelectApi>({
         const chosen = value !== undefined
           ? (options.some(o => o.value === value && !o.disabled) ? value : fallback)
           : (options.some(o => o.value === machine.context.value && !o.disabled) ? machine.context.value : fallback)
-        if (machine.state !== 'disabled' && chosen && chosen !== machine.context.value) {
+        const hasChosen = options.some(o => o.value === chosen && !o.disabled)
+        if (machine.state !== 'disabled' && hasChosen && chosen !== machine.context.value) {
           machine.send({ type: 'SELECT', value: chosen })
         } else if (chosen !== machine.context.value) {
           machine.send({ type: 'SYNC', value: chosen })
@@ -157,9 +158,10 @@ export const selectPrimitive = definePrimitive<SelectProps, SelectApi>({
         }
       },
       act(action, payload) {
-        if (action === 'next' || action === 'press' || action === 'click') { api.next(); return machine.state !== 'disabled' }
-        if (action === 'prev') { api.prev(); return machine.state !== 'disabled' }
-        if (action === 'select' && typeof payload === 'string') { api.select(payload); return machine.state !== 'disabled' }
+        if (machine.state === 'disabled') return false
+        if (action === 'next' || action === 'press' || action === 'click') { api.next(); return true }
+        if (action === 'prev') { api.prev(); return true }
+        if (action === 'select' && typeof payload === 'string') { api.select(payload); return true }
         if (action === 'open') { api.open(); return true }
         if (action === 'close') { api.close(); return true }
         return false

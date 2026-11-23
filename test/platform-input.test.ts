@@ -171,19 +171,27 @@ test('bindActionControls and bindPlatformControls poll standard gamepads with de
     assert.ok(gestures >= 2)
     platform.dispose()
 
-    // Action controls also respect analog triggers (RT = button 7)
+    // Action controls also respect analog triggers (RT = button 7) and tolerate re-entrant active() in onPress
     enabled = true
+    let reentrantChecks = 0
     const racer = bindActionControls<'throttle' | 'brake' | 'pulse'>({
       keys: { KeyW: 'throttle', KeyS: 'brake', KeyJ: 'pulse' },
       buttons: [],
       enabled: () => enabled,
-      onPress: action => pressed.push(action)
+      onPress(action) {
+        pressed.push(action)
+        if (action === 'pulse') {
+          reentrantChecks++
+          racer.active('brake')
+        }
+      }
     })
     currentPad = makePad({ 7: 0.4, 2: true })
     assert.equal(racer.active('throttle'), true)
     assert.equal(racer.active('pulse'), true)
     assert.equal(racer.active('brake'), false)
     assert.deepEqual(pressed, ['throttle', 'pulse'])
+    assert.equal(reentrantChecks, 1)
     racer.dispose()
   })
 })

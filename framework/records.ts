@@ -3,6 +3,7 @@ import type { Records } from './server-types.ts'
 import { randomUUID } from 'node:crypto'
 import { mkdir, readFile, rename, unlink, writeFile } from 'node:fs/promises'
 import { dirname } from 'node:path'
+import process from 'node:process'
 
 export function createRecords<T>(file?: string, saved: Iterable<readonly [string, T]> = []): Records<T> {
   const records = new Map(saved)
@@ -40,7 +41,7 @@ export async function openRecords<T>(file: string): Promise<Records<T>> {
   try {
     saved = JSON.parse(await readFile(file, 'utf8'))
   } catch (error) {
-    if (error.code !== 'ENOENT') throw error
+    if ((error as NodeJS.ErrnoException | undefined)?.code !== 'ENOENT') throw error
   }
   return createRecords<T>(file, saved)
 }

@@ -26,12 +26,13 @@ export function createRoomService<World, Player, Snapshot extends object>({
   const rooms = new Map<string, { world: World; members: Map<string, Member> }>()
 
   function join(req: IncomingMessage, res: ServerResponse, { key, world, identity }: { key: string; world: World; identity?: string }) {
+    if (res.destroyed || res.writableEnded) return
     const resume = String(req.headers['last-event-id'] ?? '')
     let room = rooms.get(key)
+    const isNewRoom = !room
     if (!room) {
       if (rooms.size >= 128) return sendText(res, 503, 'Server is full')
       room = { world, members: new Map() }
-      rooms.set(key, room)
     }
     let member = room.members.get(resume)
     if (member && member.identity !== identity) return sendText(res, 401)
@@ -49,6 +50,7 @@ export function createRoomService<World, Player, Snapshot extends object>({
       }
       room.members.set(token, member)
     }
+    if (isNewRoom) rooms.set(key, room)
     member.res = res
     member.expiresAt = Infinity
     member.lastInput = performance.now()
@@ -59,13 +61,15 @@ export function createRoomService<World, Player, Snapshot extends object>({
       'X-Accel-Buffering': 'no'
     })
     res.write(`retry: 800\nid: ${token}\nevent: welcome\ndata: ${JSON.stringify({ id: member.id, token })}\n\n`)
-    res.on('close', () => {
+    const detach = () => {
       if (member.res === res) {
         member.res = null
         member.expiresAt = performance.now() + resumeMs
         member.input = { ...emptyInput, jump: member.input.jump }
       }
-    })
+    }
+    if (res.destroyed || res.writableEnded) detach()
+    else res.on('close', detach)
   }
 
   async function receive(req: IncomingMessage, res: ServerResponse, key: string, action: 'input' | 'leave') {
@@ -169,9 +173,17 @@ export function createRoomService<World, Player, Snapshot extends object>({
           }
           const packet = 'data: ' + JSON.stringify({ tick, players }) + '\n\n'
           for (let i = 0; i < connected.length; i++) {
-            const res = connected[i].res!
-            if (res.writableLength >= frameBudget) res.destroy()
-            else res.write(packet)
+            const member = connected[i]
+            const res = member.res!
+            if (res.destroyed || res.writableEnded) {
+              member.res = null
+              member.expiresAt = now + resumeMs
+              member.input = { ...emptyInput, jump: member.input.jump }
+            } else if (res.writableLength >= frameBudget) {
+              res.destroy()
+            } else {
+              res.write(packet)
+            }
           }
         }
         if (!rooms.size) {

@@ -104,8 +104,17 @@ export const menuPrimitive = definePrimitive<MenuProps, MenuApi>({
       act(action, payload) {
         if (action === 'next') { api.move(1); return true }
         if (action === 'prev') { api.move(-1); return true }
-        if (action === 'focus' && typeof payload === 'string') { api.focus(payload); return true }
-        if (action === 'confirm') { api.confirm(); return Boolean(focused) }
+        if (action === 'focus' && typeof payload === 'string') {
+          if (!items.some(item => item.id === payload && !item.disabled)) return false
+          api.focus(payload)
+          return true
+        }
+        if (action === 'confirm') {
+          recoverFocus()
+          if (!focused) return false
+          api.confirm()
+          return true
+        }
         if (action === 'back') { api.back(); return true }
         return false
       },

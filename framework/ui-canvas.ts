@@ -162,8 +162,13 @@ export function createCanvasUi(canvas: HTMLCanvasElement, options: {
   let nodes: LayoutNode[] = []
   let hoveredId: string | null = null
   let focusedId: string | null = null
-  const activePointers = new Map<number, { id: string; isHold: boolean; onHold?: (active: boolean) => void }>()
-  let draggingSlider: { id: string; pointerId: number } | null = null
+  const activePointers = new Map<number, {
+    id: string
+    isHold: boolean
+    onHold?: (active: boolean) => void
+    isSlider?: boolean
+    onDragEnd?: () => void
+  }>()
   let viewportW = 0
   let viewportH = 0
   let disposed = false
@@ -182,9 +187,24 @@ export function createCanvasUi(canvas: HTMLCanvasElement, options: {
     } catch { return [] }
   }
 
-  function interactiveHits(includeDisabled = false): CanvasUiHit[] {
+  function interactiveHits(includeDisabled = false, respectScrim = true): CanvasUiHit[] {
+    let startIndex = 0
+    if (respectScrim) {
+      for (let i = nodes.length - 1; i >= 0; i--) {
+        const node = nodes[i]
+        const widget = node.widget as CanvasWidget | undefined
+        if (widget?.type === 'panel' && widget.scrim && node.id) {
+          const rect = rects.get(node.id)
+          if (rect && rect.width > 0 && rect.height > 0) {
+            startIndex = i + 1
+            break
+          }
+        }
+      }
+    }
     const hits: CanvasUiHit[] = []
-    for (const node of nodes) {
+    for (let i = startIndex; i < nodes.length; i++) {
+      const node = nodes[i]
       const widget = node.widget as CanvasWidget | undefined
       if (!node.id || !isInteractive(widget)) continue
       if (!includeDisabled && isDisabled(widget)) continue
@@ -253,15 +273,17 @@ export function createCanvasUi(canvas: HTMLCanvasElement, options: {
     const entry = activePointers.get(pointerId)
     if (!entry) return
     activePointers.delete(pointerId)
-    if (draggingSlider && draggingSlider.pointerId === pointerId) {
-      const existing = interactiveHits(true).find(h => h.id === draggingSlider!.id)
-      draggingSlider = null
-      if (existing?.widget.type === 'slider') existing.widget.primitive?.api.dragEnd?.()
+    if (entry.isSlider) {
+      let stillDragging = false
+      for (const other of activePointers.values()) {
+        if (other.isSlider && other.id === entry.id) { stillDragging = true; break }
+      }
+      if (!stillDragging) entry.onDragEnd?.()
       dirty = true
       return
     }
     if (entry.isHold) {
-      entry.onHold?.(false)
+      if (!isPressed(entry.id)) entry.onHold?.(false)
       dirty = true
       return
     }
@@ -288,9 +310,9 @@ export function createCanvasUi(canvas: HTMLCanvasElement, options: {
 
   canvas.addEventListener('pointermove', event => {
     const { x, y } = canvasPoint(event)
-    if (draggingSlider) {
-      if (event.pointerId !== draggingSlider.pointerId) return
-      const hit = interactiveHits().find(h => h.id === draggingSlider!.id)
+    const active = activePointers.get(event.pointerId)
+    if (active?.isSlider) {
+      const hit = interactiveHits(false, false).find(h => h.id === active.id)
       if (hit && hit.widget.type === 'slider') {
         const ratio = Math.max(0, Math.min(1, (x - hit.rect.x) / Math.max(1, hit.rect.width)))
         driveSlider(hit.widget, ratio, 'move')
@@ -316,14 +338,22 @@ export function createCanvasUi(canvas: HTMLCanvasElement, options: {
     event.stopPropagation()
     try { canvas.setPointerCapture?.(event.pointerId) } catch { /* Synthetic or detached pointer events cannot be captured. */ }
     focusedId = hit.id
+    const wasPressed = isPressed(hit.id)
     const holdCb = hit.widget.type === 'button' && typeof hit.widget.onHold === 'function' ? hit.widget.onHold : undefined
     const isHold = Boolean(holdCb)
-    activePointers.set(event.pointerId, { id: hit.id, isHold, onHold: holdCb })
+    const isSlider = hit.widget.type === 'slider'
+    const sliderPrimitiveRef = isSlider ? hit.widget.primitive : undefined
+    activePointers.set(event.pointerId, {
+      id: hit.id,
+      isHold,
+      onHold: holdCb,
+      isSlider,
+      onDragEnd: sliderPrimitiveRef ? () => sliderPrimitiveRef.api.dragEnd?.() : undefined
+    })
     if (isHold && hit.widget.type === 'button') {
-      holdCb!(true)
+      if (!wasPressed) holdCb!(true)
       hit.widget.onPress?.()
     } else if (hit.widget.type === 'slider') {
-      draggingSlider = { id: hit.id, pointerId: event.pointerId }
       const ratio = Math.max(0, Math.min(1, (x - hit.rect.x) / Math.max(1, hit.rect.width)))
       driveSlider(hit.widget, ratio, 'start')
     }
@@ -397,7 +427,13 @@ export function createCanvasUi(canvas: HTMLCanvasElement, options: {
     const vDir = vNext ? 1 : vPrev ? -1 : 0
     const hDir = hNext ? 1 : hPrev ? -1 : 0
     const dir = vDir || hDir
-    if (dir && (dir !== padDir || now - padMoveAt >= 200)) {
+    const shouldMove = dir !== 0 && (dir !== padDir || now - padMoveAt >= 200)
+    const shouldConfirm = confirm && !padConfirm
+    const shouldBack = back && !padBack
+    padDir = dir
+    padConfirm = confirm
+    padBack = back
+    if (shouldMove) {
       const focused = hits.find(h => h.id === focusedId)
       if (!vDir && hDir && focused && (focused.widget.type === 'select' || focused.widget.type === 'slider')) {
         activateHit(focused, hDir)
@@ -406,14 +442,11 @@ export function createCanvasUi(canvas: HTMLCanvasElement, options: {
       }
       padMoveAt = now
     }
-    padDir = dir
-    if (confirm && !padConfirm) {
+    if (shouldConfirm) {
       const hit = hits.find(h => h.id === focusedId) ?? hits[0]
       if (hit) { focusedId = hit.id; activateHit(hit) }
     }
-    padConfirm = confirm
-    if (back && !padBack) options.onBack?.()
-    padBack = back
+    if (shouldBack) options.onBack?.()
   }
 
   function ensurePadLoop() {
@@ -499,9 +532,11 @@ export function createCanvasUi(canvas: HTMLCanvasElement, options: {
         let textRight = rect.x + rect.width - 10
         if (widget.type === 'button' && widget.icon) {
           const iconSize = Math.min(28, rect.height - 12)
-          ctx.imageSmoothingEnabled = false
-          ctx.drawImage(widget.icon, textLeft, rect.y + offsetY + (rect.height - iconSize) / 2, iconSize, iconSize)
-          textLeft += iconSize + 10
+          if (iconSize > 0) {
+            ctx.imageSmoothingEnabled = false
+            ctx.drawImage(widget.icon, textLeft, rect.y + offsetY + (rect.height - iconSize) / 2, iconSize, iconSize)
+            textLeft += iconSize + 10
+          }
         }
 
         const label = widget.type === 'button'
@@ -621,6 +656,8 @@ export function createCanvasUi(canvas: HTMLCanvasElement, options: {
     },
     dispose() {
       disposed = true
+      hoveredId = null
+      canvas.style.cursor = ''
       clearHolds()
       controller.abort()
       if (padFrame !== undefined) {

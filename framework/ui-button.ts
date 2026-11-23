@@ -125,7 +125,8 @@ export const buttonPrimitive = definePrimitive<ButtonProps, ButtonApi>({
         return { id: props.id, kind: 'button', state: machine.state, label, disabled: machine.state === 'disabled', slots: { root: rootSlot() } }
       },
       act(action) {
-        if (action === 'press' || action === 'click') { api.press(); return machine.state !== 'disabled' }
+        if (machine.state === 'disabled') return false
+        if (action === 'press' || action === 'click') { api.press(); return true }
         if (action === 'focus') { api.focus(); return true }
         if (action === 'blur') { api.blur(); return true }
         return false

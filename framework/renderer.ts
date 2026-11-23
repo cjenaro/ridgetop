@@ -122,7 +122,7 @@ function canvasBackend(canvas) {
     draw(data, count, clear) {
       const width = canvas.width / 2
       const height = canvas.height / 2
-      context.fillStyle = css(clear[0], clear[1], clear[2], clear[3])
+      context.fillStyle = css(clear[0], clear[1], clear[2], 1)
       context.fillRect(0, 0, canvas.width, canvas.height)
       let prevR = -1, prevG = -1, prevB = -1, prevA = -1
       const end = count * STRIDE
@@ -188,6 +188,7 @@ export async function createRenderer(canvas: HTMLCanvasElement, { width, height,
       data.set(tint, index)
     },
     end(clear) {
+      if (disposed) throw new Error('The renderer has been disposed')
       const w = Math.max(1, canvas.clientWidth)
       const h = Math.max(1, canvas.clientHeight)
       const ratio = Math.min(globalThis.devicePixelRatio || 1, 2, backend.maxDimension / Math.max(w, h))
@@ -199,6 +200,7 @@ export async function createRenderer(canvas: HTMLCanvasElement, { width, height,
       return count
     },
     dispose() {
+      if (disposed) return
       disposed = true
       backend.dispose()
     }

@@ -196,6 +196,48 @@ test('createMachine preserves re-entrant transitions and select/slider handle ed
   sl.api.setRatio(Number.NaN)
   assert.equal(sl.api.value(), 5)
   assert.equal(sliderChanges, 0)
+
+  // Re-entrant transition inside exit() must not be clobbered
+  const exitMachine = createMachine<'a' | 'b' | 'c', Record<string, never>, { type: 'GO_B' } | { type: 'GO_C' }>({
+    initial: 'a',
+    context: {},
+    states: {
+      a: { exit: () => { exitMachine.send('GO_C') }, on: { GO_B: 'b', GO_C: 'c' } },
+      b: {},
+      c: {}
+    }
+  })
+  assert.equal(exitMachine.send('GO_B'), 'c')
+
+  // One-shot button act('press') returns true even when onPress disables it; disabled actions return false
+  const oneShot = buttonPrimitive.create({ id: 'oneshot', label: 'Once', onPress() { oneShot.api.setDisabled(true) } })
+  assert.equal(oneShot.act('press'), true)
+  assert.equal(oneShot.state, 'disabled')
+  assert.equal(oneShot.act('press'), false)
+  assert.equal(oneShot.act('focus'), false)
+
+  // selectPrimitive.setOptions fires onChange and closes dropdown when choosing empty-string value ''
+  let emptySelected: string | undefined
+  const emptySel = selectPrimitive.create({
+    id: 'empty-sel', label: 'Empty',
+    options: [{ value: 'x', label: 'X' }, { value: '', label: 'None' }],
+    value: 'x',
+    onChange(v) { emptySelected = v }
+  })
+  emptySel.api.open()
+  emptySel.api.setOptions([{ value: 'x', label: 'X' }, { value: '', label: 'None' }], '')
+  assert.equal(emptySelected, '')
+  assert.equal(emptySel.state, 'closed')
+  emptySel.api.select('')
+  const disabledSel = selectPrimitive.create({ id: 'ds', label: 'D', options: [{ value: 'a', label: 'A' }], disabled: true })
+  assert.equal(disabledSel.act('open'), false)
+  assert.equal(disabledSel.act('close'), false)
+
+  // menuPrimitive.act('focus', ...) returns false for disabled/missing items
+  const m = menuPrimitive.create({ id: 'm', items: [{ id: 'ok' }, { id: 'no', disabled: true }] })
+  assert.equal(m.act('focus', 'no'), false)
+  assert.equal(m.act('focus', 'missing'), false)
+  assert.equal(m.act('focus', 'ok'), true)
 })
 
 test('createCanvasUi handles non-Array GamepadList, hidden hold release, scrim blocking, slider primitive drag, and viewport scaling', () => {
@@ -245,13 +287,16 @@ test('createCanvasUi handles non-Array GamepadList, hidden hold release, scrim b
 
     ui.render(buildTree(false, true), { width: 800, height: 400, pixelRatio: 1 })
     assert.equal(ui.hitTest(50, 50), undefined, 'scrim must block hits to controls underneath')
+    assert.equal(ui.activate('vol'), false, 'scrim must block programmatic/keyboard activation underneath')
 
     ui.render(buildTree(false, false), { width: 800, height: 400, pixelRatio: 1 })
-    // Click at CSS (50, 25) -> scaled virtual (100, 50) hits hold-btn (0..200, 0..100)
-    const down = Object.assign(new Event('pointerdown'), { button: 0, pointerType: 'touch', pointerId: 7, clientX: 50, clientY: 25 })
-    canvas.dispatchEvent(down)
+    // Multi-touch onHold: lifting one of two fingers must not fire onHold(false) early
+    canvas.dispatchEvent(Object.assign(new Event('pointerdown'), { button: 0, pointerType: 'touch', pointerId: 7, clientX: 50, clientY: 25 }))
+    canvas.dispatchEvent(Object.assign(new Event('pointerdown'), { button: 0, pointerType: 'touch', pointerId: 8, clientX: 55, clientY: 25 }))
     assert.deepEqual(holdStates, [true])
-    // Hide the hold button while held, then release pointer -> onHold(false) must still fire
+    canvas.dispatchEvent(Object.assign(new Event('pointerup'), { pointerId: 8, clientX: 55, clientY: 25 }))
+    assert.deepEqual(holdStates, [true], 'second finger lifting must keep hold active')
+    // Hide the hold button while held, then release last pointer -> onHold(false) must still fire
     ui.render(buildTree(true, false), { width: 800, height: 400, pixelRatio: 1 })
     const up = Object.assign(new Event('pointerup'), { pointerId: 7, clientX: 50, clientY: 25 })
     canvas.dispatchEvent(up)
@@ -267,10 +312,17 @@ test('createCanvasUi handles non-Array GamepadList, hidden hold release, scrim b
     const slMove = Object.assign(new Event('pointermove'), { pointerId: 1, clientX: 160, clientY: 185 })
     canvas.dispatchEvent(slMove) // CSS x=160 -> virtual x=320 of 400 = 80% -> 80
     assert.equal(sl.api.value(), 80)
+    // Even if a scrim opens mid-drag (hiding the slider), releasing pointer 1 must still call dragEnd()
+    ui.render(buildTree(true, true), { width: 800, height: 400, pixelRatio: 1 })
     canvas.dispatchEvent(Object.assign(new Event('pointerup'), { pointerId: 1, clientX: 160, clientY: 185 }))
     assert.equal(sl.state, 'focused')
 
+    // Dispose resets cursor style
+    ui.render(buildTree(false, false), { width: 800, height: 400, pixelRatio: 1 })
+    canvas.dispatchEvent(Object.assign(new Event('pointermove'), { pointerId: 9, clientX: 50, clientY: 25 }))
+    assert.equal(canvas.style.cursor, 'pointer')
     ui.dispose()
+    assert.equal(canvas.style.cursor, '')
   } finally {
     if (prevNav) Object.defineProperty(globalThis, 'navigator', prevNav)
     if (prevWin) Object.defineProperty(globalThis, 'window', prevWin)

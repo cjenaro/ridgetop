@@ -35,16 +35,25 @@ export function createMachine<S extends string, C extends Record<string, unknown
   let current: S = config.initial
   const context: C = { ...config.context }
   const listeners = new Set<(state: S, context: Readonly<C>) => void>()
+  const exiting = new Set<S>()
   config.states[current]?.enter?.(context)
 
   function notify() {
     for (const listener of listeners) listener(current, context)
   }
 
+  function runExit(prev: S, event: E) {
+    if (exiting.has(prev)) return false
+    exiting.add(prev)
+    try { config.states[prev]?.exit?.(context, event) }
+    finally { exiting.delete(prev) }
+    return current !== prev
+  }
+
   function applyTransition(candidate: S | MachineTransition<S, C, E>, event: E) {
     if (typeof candidate === 'string') {
       const prev = current
-      if (prev !== candidate) config.states[prev]?.exit?.(context, event)
+      if (prev !== candidate && runExit(prev, event)) return true
       current = candidate
       if (prev !== candidate) config.states[current]?.enter?.(context, event)
       return true
@@ -53,7 +62,7 @@ export function createMachine<S extends string, C extends Record<string, unknown
     const prev = current
     const next = candidate.target ?? prev
     const changed = next !== prev
-    if (changed) config.states[prev]?.exit?.(context, event)
+    if (changed && runExit(prev, event)) return true
     current = next
     candidate.action?.(context, event)
     if (changed && current === next) config.states[next]?.enter?.(context, event)

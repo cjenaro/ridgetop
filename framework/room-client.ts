@@ -12,7 +12,7 @@ export function connectRoom<T extends RoomPlayer = RoomPlayer>({ endpoint, readI
   let latest: Snapshot | undefined
   let previous: Snapshot | undefined
   let lastSent: (RoomInput & { restart: number }) | undefined
-  let sentAt = 0
+  let sentAt = -Infinity
   let inFlight = false
   let restart = 0
   let jumpOffset = 0
@@ -21,6 +21,7 @@ export function connectRoom<T extends RoomPlayer = RoomPlayer>({ endpoint, readI
   const events = new EventSource(endpoint + '/events')
 
   events.addEventListener('welcome', event => {
+    if (closed) return
     const welcome = JSON.parse((event as MessageEvent<string>).data) as { id: string; token: string }
     if (id !== welcome.id) {
       restart = 0
@@ -33,6 +34,7 @@ export function connectRoom<T extends RoomPlayer = RoomPlayer>({ endpoint, readI
     onStatus('connected')
   })
   events.onmessage = event => {
+    if (closed) return
     previous = latest
     latest = { ...JSON.parse(event.data), received: performance.now() }
   }
@@ -73,7 +75,7 @@ export function connectRoom<T extends RoomPlayer = RoomPlayer>({ endpoint, readI
     sample(now: number): T[] {
       if (!latest) return []
       const interval = previous ? (latest.tick - previous.tick) * STEP * 1000 : 0
-      const alpha = interval ? Math.max(0, Math.min(1, (now - latest.received) / interval)) : 1
+      const alpha = interval > 0 ? Math.max(0, Math.min(1, (now - latest.received) / interval)) : 1
       return latest.players.map(player => {
         const old = previous?.players.find(candidate => candidate.id === player.id)
         if (!old || old.revision !== player.revision || old.falls !== player.falls || Math.abs(old.x - player.x) > 100 ||

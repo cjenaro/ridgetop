@@ -171,16 +171,23 @@ test('host HEAD sets Content-Length, records avoid temp-file races, and connectR
       onStatus() {}
     })
     fakeEs!.dispatchEvent(Object.assign(new Event('welcome'), { data: JSON.stringify({ id: 'p1', token: 't1' }) }))
-    await room.flush(100)
+    // Initial flush at now=0 must not be dropped by sentAt throttle
+    await room.flush(0)
+    assert.equal(sent.length, 1)
     assert.equal(sent[0].jump, 0)
     jump = 6
-    await room.flush(200)
+    await room.flush(100)
     assert.equal(sent[1].jump, 1)
     // Reconnect with a new player ID (expired session) must rebase jump back to 0
     fakeEs!.dispatchEvent(Object.assign(new Event('welcome'), { data: JSON.stringify({ id: 'p2', token: 't2' }) }))
-    await room.flush(300)
+    await room.flush(200)
     assert.equal(sent[2].jump, 0)
     room.close()
+    // Messages arriving after close() must be ignored
+    const prevCount = sent.length
+    fakeEs!.dispatchEvent(Object.assign(new Event('welcome'), { data: JSON.stringify({ id: 'p3', token: 't3' }) }))
+    assert.equal(room.id, 'p2')
+    assert.equal(sent.length, prevCount)
   } finally {
     if (prevES) Object.defineProperty(globalThis, 'EventSource', prevES)
     else delete (globalThis as Record<string, unknown>).EventSource

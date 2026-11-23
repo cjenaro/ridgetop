@@ -104,8 +104,9 @@ export const togglePrimitive = definePrimitive<ToggleProps, ToggleApi>({
         }
       },
       act(action, payload) {
-        if (action === 'toggle' || action === 'press' || action === 'click') { api.toggle(); return machine.state !== 'disabled' }
-        if (action === 'set' && typeof payload === 'boolean') { api.set(payload); return machine.state !== 'disabled' }
+        if (machine.state === 'disabled') return false
+        if (action === 'toggle' || action === 'press' || action === 'click') { api.toggle(); return true }
+        if (action === 'set' && typeof payload === 'boolean') { api.set(payload); return true }
         return false
       },
       subscribe(listener) { return machine.subscribe(() => listener()) }

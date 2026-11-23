@@ -2,6 +2,7 @@ import type { IncomingMessage, ServerResponse } from 'node:http'
 import type { GameHost } from './server-types.ts'
 import { createServer } from 'node:http'
 import { lstat, readFile, stat } from 'node:fs/promises'
+import process from 'node:process'
 import { pathToFileURL } from 'node:url'
 
 const browserModules = [
@@ -22,7 +23,10 @@ async function artFile(pathname: string, folders: Map<string, URL>) {
   if (!/\.(png|json)$/i.test(name) || /[/\\\0]/.test(name)) return
   const file = new URL(encodeURIComponent(name), folder)
   try { if ((await lstat(file)).isFile()) return file }
-  catch (error) { if (error.code !== 'ENOENT' && error.code !== 'ENOTDIR') throw error }
+  catch (error) {
+    const code = (error as NodeJS.ErrnoException | undefined)?.code
+    if (code !== 'ENOENT' && code !== 'ENOTDIR') throw error
+  }
 }
 
 export function sendText(res: ServerResponse, status: number, message = '') {
@@ -85,10 +89,11 @@ export function createGameHost({ root, moduleRoot = root, files, artDirectories 
         'Cache-Control': 'no-cache'
       }).end(body)
     } catch (error) {
-      if (!res.headersSent && error.code === 'ENOENT') return sendText(res, 404, 'Not found')
+      const code = (error as NodeJS.ErrnoException | undefined)?.code
+      if (!res.headersSent && code === 'ENOENT') return sendText(res, 404, 'Not found')
       if (!res.headersSent) sendText(res, 500, 'Server error')
       else res.destroy()
-      if (error.code !== 'ECONNRESET') console.error(error)
+      if (code !== 'ECONNRESET') console.error(error)
     }
   })
   server.maxConnections = 1536

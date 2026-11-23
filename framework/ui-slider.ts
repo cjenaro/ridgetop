@@ -135,8 +135,9 @@ export const sliderPrimitive = definePrimitive<SliderProps, SliderApi>({
         }
       },
       act(action, payload) {
-        if (action === 'set' && typeof payload === 'number') { api.set(payload); return machine.state !== 'disabled' }
-        if (action === 'step' && typeof payload === 'number') { api.step(payload); return machine.state !== 'disabled' }
+        if (machine.state === 'disabled') return false
+        if (action === 'set' && typeof payload === 'number') { api.set(payload); return true }
+        if (action === 'step' && typeof payload === 'number') { api.step(payload); return true }
         return false
       },
       subscribe(listener) { return machine.subscribe(() => listener()) }
