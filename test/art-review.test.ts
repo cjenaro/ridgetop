@@ -5,7 +5,10 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import test from 'node:test'
 import { pathToFileURL } from 'node:url'
-import { createArtRecipe } from '../framework/art.ts'
+import { createArtKit, createArtRecipe } from '../framework/art.ts'
+import { modelFromArtRecipe } from '../framework/art-recipe.ts'
+import { pickArtScene, spritePartVisibility } from '../framework/art-review.ts'
+import { box, multiply, orthographic, view } from '../framework/geometry.ts'
 import { createGameHost } from '../framework/host.ts'
 import { createArtReviewHandler } from '../framework/review-store.ts'
 
@@ -22,7 +25,7 @@ async function host(folder: string, testing = true) {
   assert.ok(address && typeof address === 'object')
   const origin = 'http://127.0.0.1:' + address.port
   const request = (path: string, method = 'GET', data?: unknown) => fetch(origin + '/__testing/' + path, {
-    method, headers: { Origin: origin, 'Content-Type': 'application/json' }, body: data && JSON.stringify(data)
+    method, headers: { Origin: origin, 'Content-Type': 'application/json' }, body: data !== undefined ? JSON.stringify(data) : undefined
   })
   return { close: app.close, request }
 }
@@ -94,4 +97,45 @@ test('part edits preserve other roles and reject an outdated or invalid recipe w
   assert.equal((await app.request('recipe', 'POST', { ...change, base: edited, recipe: broken })).status, 400)
   assert.deepEqual(JSON.parse(await readFile(join(folder, bound), 'utf8')), edited)
   assert.deepEqual(JSON.parse(await readFile(file, 'utf8')), { ranger, crate })
+
+  // Non-object JSON bodies and corrupted overrides.json return 400 (not 500)
+  assert.equal((await app.request('reviews', 'POST', null)).status, 400)
+  assert.equal((await app.request('recipe', 'POST', null)).status, 400)
+  await writeFile(file, 'null')
+  assert.equal((await app.request('recipe', 'POST', { asset: 'ranger', file: null, base: null, recipe: ranger })).status, 400)
+})
+
+test('pickArtScene, spritePartVisibility, and art-recipe validation handle bounds, duplicates, and malformed values', () => {
+  // Sparse arrays and JSON null angles/unlit must be rejected
+  const badSparse = createArtRecipe('ranger')
+  const sparse = new Array(3)
+  sparse[0] = 1
+  badSparse.parts[0].scale = sparse as unknown as [number, number, number]
+  assert.throws(() => modelFromArtRecipe(badSparse), RangeError)
+
+  const badNull = createArtRecipe('ranger')
+  ;(badNull.parts[0] as unknown as Record<string, unknown>).pitch = null
+  assert.throws(() => modelFromArtRecipe(badNull), RangeError)
+
+  // spritePartVisibility preserves duplicate part names instead of overwriting
+  const kit = createArtKit<string>({
+    models: {
+      dup: {
+        span: 2, centerY: 0, parts: [
+          { name: 'leg', mesh: box, position: [-.4, 0, 0], scale: [.4, .4, .4], tone: 'accent' },
+          { name: 'leg', mesh: box, position: [.4, 0, 0], scale: [.4, .4, .4], tone: 'glow' }
+        ]
+      }
+    }
+  })
+  const vis = spritePartVisibility(kit, 'dup', 32)
+  assert.deepEqual(Object.keys(vis.parts), ['leg', 'leg#2'])
+  assert.ok(vis.parts.leg[0] > 0 && vis.parts['leg#2'][0] > 0)
+
+  // Headless pickArtScene (no DOM document) rejects out-of-range u/v and hits centered object
+  const cam = multiply(orthographic(4, 4, .1, 20), view([0, 0, 5], [0, 0, 0]))
+  const hit = pickArtScene(kit, [{ id: 'd1', name: 'dup', x: 0, z: 0 }], cam, 100, 100, .4, .5)
+  assert.equal(hit?.object.id, 'd1')
+  assert.equal(pickArtScene(kit, [{ id: 'd1', name: 'dup', x: 5, z: 0 }], cam, 100, 100, 1.5, .5), undefined)
+  assert.equal(pickArtScene(kit, [{ id: 'd1', name: 'dup', x: 0, z: 0 }], cam, 100, 100, 1, 1), undefined)
 })

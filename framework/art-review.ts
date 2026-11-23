@@ -1,6 +1,7 @@
 import { createArtKit } from './art.ts'
 import { multiply, orthographic, view } from './geometry.ts'
-import { bakeSpritePixels, renderMeshFrame, spriteDirections } from './low-poly.ts'
+import { frustum, visible } from './instances.ts'
+import { bakeSpritePixels, renderMeshFrame, renderMeshPixels, spriteDirections } from './low-poly.ts'
 import type { ArtModel, ArtPart } from './art-recipe.ts'
 import type { Color, InstanceBatch, Matrix, Vec3 } from './types.ts'
 
@@ -45,12 +46,21 @@ export function spritePartVisibility<Name extends string>(kit: {
     const direction = Math.floor((i/4 % width)/frameSize)
     counts[id-1][direction]++
   }
-  return { frameSize, directions: spriteDirections,
-    parts: Object.fromEntries(model.parts.map((part, i) => [partName(part, i), counts[i]])) }
+  const named: Record<string, number[]> = {}
+  for (let i = 0; i < model.parts.length; i++) {
+    const base = partName(model.parts[i], i)
+    let key = base
+    let suffix = 2
+    while (Object.hasOwn(named, key)) key = `${base}#${suffix++}`
+    named[key] = counts[i]
+  }
+  return { frameSize, directions: spriteDirections, parts: named }
 }
 export function pickId(image: HTMLCanvasElement, u: number, v: number) {
-  if (!(u >= 0 && u < 1 && v >= 0 && v < 1)) return 0
-  const [r, g, b, a] = image.getContext('2d').getImageData(Math.floor(u * image.width), Math.floor(v * image.height), 1, 1).data
+  if (!(u >= 0 && u <= 1 && v >= 0 && v <= 1) || image.width <= 0 || image.height <= 0) return 0
+  const px = Math.min(image.width - 1, Math.floor(u * image.width))
+  const py = Math.min(image.height - 1, Math.floor(v * image.height))
+  const [r, g, b, a] = image.getContext('2d').getImageData(px, py, 1, 1).data
   return a ? r + (g << 8) + (b << 16) : 0
 }
 export function reviewCanvas(width: number, height = width) {
@@ -62,6 +72,7 @@ export function reviewCanvas(width: number, height = width) {
 
 /** Uses the same transforms and depth test as the playfield, so the frontmost visible part wins. */
 export function pickArtScene(kit: ReviewKit, objects: ReviewObject[], camera: Matrix, width: number, height: number, u: number, v: number) {
+  if (!(width > 0 && height > 0 && Number.isFinite(width + height) && u >= 0 && u <= 1 && v >= 0 && v <= 1)) return undefined
   const group = kit.group()
   const parts: { object: ReviewObject; part: string }[] = []
   for (const object of objects) {
@@ -71,19 +82,38 @@ export function pickArtScene(kit: ReviewKit, objects: ReviewObject[], camera: Ma
     } })
   }
   // Crop the orthographic camera to the clicked pixel. Depth and winding stay identical.
-  const x = (Math.floor(u * width) + .5) * 2 / width - 1
-  const y = 1 - (Math.floor(v * height) + .5) * 2 / height
+  const px = Math.min(width - 1, Math.floor(u * width))
+  const py = Math.min(height - 1, Math.floor(v * height))
+  const x = (px + .5) * 2 / width - 1
+  const y = 1 - (py + .5) * 2 / height
   const crop = new Float32Array([width,0,0,0, 0,height,0,0, 0,0,1,0, -width*x,-height*y,0,1])
-  const pixel = reviewCanvas(1)
-  renderMeshFrame(pixel, multiply(crop, camera), group.batches, { ambient: 1 })
-  return parts[pickId(pixel, .5, .5) - 1]
+  const cropped = multiply(crop, camera)
+  const planes = frustum(cropped)
+  const culled = group.batches.filter(batch => visible(batch, planes))
+  if (!culled.length) return undefined
+  const { pixels } = renderMeshPixels(cropped, culled, 1, { ambient: 1 })
+  const id = pixels[3] ? pixels[0] + (pixels[1] << 8) + (pixels[2] << 16) : 0
+  return parts[id - 1]
 }
 
 /** Recreate an asset at the saved yaw, elevation and framing. IDs use unlit colors for part picking. */
 export function modelReviewFrame(kit: ReviewKit, pose: ArtView, size: number, ids = false) {
+  if (!(Number.isFinite(pose.elevation) && Math.abs(pose.elevation) < Math.PI / 2)) {
+    throw new RangeError('Review elevation must be strictly between -pi/2 and pi/2')
+  }
   const group = kit.group(), canvas = reviewCanvas(size)
   const sprite = pose.surface !== 'model'
-  const angle = sprite ? spriteDirections.indexOf(pose.clip as typeof spriteDirections[number]) * Math.PI / 4 : 0
+  let angle = 0
+  if (sprite) {
+    if (pose.clip === 'turntable') {
+      const frame = Number.isFinite(pose.frame) ? Math.floor(pose.frame!) : 0
+      angle = (((frame % spriteDirections.length) + spriteDirections.length) % spriteDirections.length) * Math.PI / 4
+    } else {
+      const idx = spriteDirections.indexOf(pose.clip as typeof spriteDirections[number])
+      if (idx < 0) throw new RangeError('Unknown sprite direction clip: ' + pose.clip)
+      angle = idx * Math.PI / 4
+    }
+  }
   const r = pose.span * 4, horizontal = r * Math.cos(pose.elevation)
   const camera = multiply(orthographic(pose.span, pose.span, pose.span / 100, pose.span * 8),
     view([horizontal * Math.sin(angle), pose.centerY + r * Math.sin(pose.elevation), horizontal * Math.cos(angle)], [0, pose.centerY, 0]))

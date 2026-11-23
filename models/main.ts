@@ -97,10 +97,15 @@ async function start() {
     for (const button of choiceButtons) button.setAttribute('aria-pressed', String(button.id === id))
     reset()
   }
+  let rangerPending: Promise<Study> | undefined
   async function select(id: string) {
     const current = ++request
     try {
-      if (id === 'ranger' && !studies.has(id)) studies.set(id, await rangerStudy())
+      if (id === 'ranger' && !studies.has(id)) {
+        rangerPending ??= rangerStudy().then(study => { studies.set(id, study); return study })
+          .finally(() => { rangerPending = undefined })
+        await rangerPending
+      }
       if (current === request && studies.has(id)) show(id, studies.get(id))
     } catch (error) { if (current === request) element('notice').textContent = error.message }
   }

@@ -130,12 +130,12 @@ async function importPngs(input: File[]): Promise<Asset> {
   return { image, manifest: { src: name + '-sheet.png', frameWidth: width, frameHeight: image.height, clips } }
 }
 
-function paintFrame(target: HTMLCanvasElement, column: number) {
+function paintFrame(target: HTMLCanvasElement, column: number, row = 0) {
   const { frameWidth: w, frameHeight: h } = asset.manifest
   const ctx = target.getContext('2d')
   ctx.clearRect(0, 0, target.width, target.height)
   ctx.imageSmoothingEnabled = false
-  ctx.drawImage(asset.image, column * w, 0, w, h, 0, 0, target.width, target.height)
+  ctx.drawImage(asset.image, column * w, row * h, w, h, 0, 0, target.width, target.height)
 }
 
 function display(frame: number) {
@@ -143,7 +143,7 @@ function display(frame: number) {
   frames.children[index]?.setAttribute('aria-pressed', 'false')
   index = frame
   frames.children[index]?.setAttribute('aria-pressed', 'true')
-  paintFrame(preview, clip.column + index)
+  paintFrame(preview, clip.column + index, clip.row ?? 0)
 }
 
 function startPlayback(first = 0) {
@@ -210,7 +210,7 @@ function showClip(first = 0) {
   const scale = Math.min(1, 64 / Math.max(w, h))
   for (let frame = 0; frame < clip.frames; frame++) {
     const thumbnail = canvas(Math.max(1, Math.round(w * scale)), Math.max(1, Math.round(h * scale)))
-    paintFrame(thumbnail, clip.column + frame)
+    paintFrame(thumbnail, clip.column + frame, clip.row ?? 0)
     const button = document.createElement('button')
     button.className = 'checker'
     const direction = clipSelect.value === 'turntable' ? spriteDirections[frame] : undefined
@@ -231,6 +231,15 @@ function recolor(template: Template) {
   showClip(index)
 }
 
+let pendingRecolor = 0
+function scheduleRecolor(template: Template) {
+  if (pendingRecolor) return
+  pendingRecolor = requestAnimationFrame(() => {
+    pendingRecolor = 0
+    if (templates[art.value] === template) recolor(template)
+  })
+}
+
 function showPalette(template: Template | undefined) {
   element('colors').hidden = !template
   element('next-palette').hidden = !template?.palettes
@@ -243,7 +252,7 @@ function showPalette(template: Template | undefined) {
     input.oninput = () => {
       template.palette[i] = input.value.slice(1)
       if (template.recipe) template.recipe.palette[role as ArtTone] = input.value
-      recolor(template)
+      scheduleRecolor(template)
     }
     const label = document.createElement('label')
     label.append(input, role)

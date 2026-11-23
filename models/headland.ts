@@ -6,6 +6,9 @@ const roof = mesh([
   -.5, 0, -.5,  .5, 0, -.5,  -.5, 0, .5,  .5, 0, .5,  -.5, 1, 0,  .5, 1, 0
 ], [2, 3, 5, 2, 5, 4, 0, 4, 5, 0, 5, 1, 0, 2, 4, 1, 5, 3, 0, 1, 3, 0, 3, 2])
 const drum = cylinder(10), cone = cylinder(10, 0)
+const towerCourses = [[.20, .435], [.55, .400], [.85, .370], [1.16, .339], [1.46, .309], [1.82, .273]] as const
+const towerDrums = Array.from({ length: towerCourses.length - 1 }, (_, i) =>
+  cylinder(10, towerCourses[i + 1][1] / towerCourses[i][1]))
 
 // Follow the shoreline clockwise on a map with +Z pointing down.
 const shore = [
@@ -61,10 +64,9 @@ export function createHeadland(): readonly InstanceBatch[] {
   const cream = 'fff0ca', red = 'e87655', iron = '334e58'
   put(drum, [tx, .15, tz], [.49, .13, .49], 'a1a49a')
   // Keep the taper continuous through the painted bands.
-  const courses = [[.20, .435], [.55, .400], [.85, .370], [1.16, .339], [1.46, .309], [1.82, .273]]
-  for (let i = 1; i < courses.length; i++) {
-    const [low, base] = courses[i - 1], [high, end] = courses[i]
-    put(cylinder(10, end / base), [tx, (low + high) / 2, tz], [base, high - low, base], i % 2 ? cream : red)
+  for (let i = 1; i < towerCourses.length; i++) {
+    const [low, base] = towerCourses[i - 1], [high] = towerCourses[i]
+    put(towerDrums[i - 1], [tx, (low + high) / 2, tz], [base, high - low, base], i % 2 ? cream : red)
   }
   put(box, [tx, .33, tz + .415], [.15, .26, .055], iron)
   put(box, [tx, 1.04, tz + .34], [.13, .18, .05], iron)

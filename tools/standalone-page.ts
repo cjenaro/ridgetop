@@ -22,7 +22,7 @@ export async function standalonePage(page: string, assets: URL, modules: URL) {
   }
 
   for (const [link, path] of page.matchAll(/<link rel="stylesheet" href="\/([^"]+)">/g)) {
-    const css = await readFile(new URL(path, assets), 'utf8')
+    const css = (await readFile(new URL(path, assets), 'utf8')).replace(/<\/style/gi, '<\\/style')
     page = page.replace(link, () => '<style>\n' + css + '</style>')
   }
   const entries = [...page.matchAll(/<script type="module" src="\/([^"]+)"><\/script>/g)]

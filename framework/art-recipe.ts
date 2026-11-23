@@ -70,6 +70,18 @@ export function checkFrameSize(size: number) {
 }
 const clips = new Set<string>(['turntable', ...spriteDirections])
 
+function isVec3(value: unknown, positive = false): value is Vec3 {
+  if (!Array.isArray(value) || value.length !== 3) return false
+  for (let i = 0; i < 3; i++) {
+    const n = value[i]
+    if (typeof n !== 'number' || !Number.isFinite(n) || (positive && n <= 0)) return false
+  }
+  return true
+}
+function isOptionalFinite(value: unknown): value is number | undefined {
+  return value === undefined || (typeof value === 'number' && Number.isFinite(value))
+}
+
 export function checkArtModel(model: ArtModel, name: string, palette: Palette = artPalette) {
   if (!(model?.span > 0 && Number.isFinite(model.span) && Number.isFinite(model.centerY) && Array.isArray(model.parts) && model.parts.length)) {
     throw new RangeError('Expected a camera span, centerY and model parts for ' + name)
@@ -79,9 +91,12 @@ export function checkArtModel(model: ArtModel, name: string, palette: Palette = 
   if (model.timings !== undefined && (!record(model.timings) || Object.entries(model.timings).some(([clip, ms]) =>
     !clips.has(clip) || !Number.isSafeInteger(ms) || ms < 1))) throw new RangeError('Invalid direction or frame time in ' + name)
   for (const p of model.parts) {
-    if (!p?.mesh?.vertexCount || !(Object.hasOwn(palette, p.tone) || Object.hasOwn(model.palette ?? {}, p.tone)) ||
-        p.position?.length !== 3 || !p.position.every?.(Number.isFinite) || p.scale?.length !== 3 || !p.scale.every?.(n => n > 0 && Number.isFinite(n)) ||
-        ![p.pitch ?? 0, p.yaw ?? 0, p.roll ?? 0].every(Number.isFinite) || !Number.isFinite(p.unlit ?? 0) || (p.unlit ?? 0) < 0 || (p.unlit ?? 0) > 1) {
+    const validMesh = Boolean(p?.mesh && Number.isSafeInteger(p.mesh.vertexCount) && p.mesh.vertexCount > 0 &&
+      p.mesh.data && p.mesh.data.length === p.mesh.vertexCount * 6)
+    if (!validMesh || !(Object.hasOwn(palette, p.tone) || Object.hasOwn(model.palette ?? {}, p.tone)) ||
+        !isVec3(p.position) || !isVec3(p.scale, true) ||
+        !isOptionalFinite(p.pitch) || !isOptionalFinite(p.yaw) || !isOptionalFinite(p.roll) ||
+        !isOptionalFinite(p.unlit) || (p.unlit !== undefined && (p.unlit < 0 || p.unlit > 1))) {
       throw new RangeError('Invalid mesh, palette tone or transform in ' + name + (p?.name ? ' / ' + p.name : ''))
     }
   }
