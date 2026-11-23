@@ -1,6 +1,6 @@
 import { access, cp, mkdir, readdir, readFile, rm, stat, writeFile } from 'node:fs/promises'
-import { basename, dirname, join, relative, resolve } from 'node:path'
-import { pathToFileURL } from 'node:url'
+import { basename, dirname, join, relative, resolve, sep } from 'node:path'
+import { fileURLToPath, pathToFileURL } from 'node:url'
 import type { ArtModel, ArtRecipe } from './art.ts'
 import type { InstanceBatch } from './types.ts'
 import type { LayoutNode } from './ui-layout.ts'
@@ -185,59 +185,249 @@ export function bakeIconPng({
   return encodePng(size, size, pixels)
 }
 
-function parseStaticImports(code: string) {
-  const results: { specifier: string; names: Set<string> | '*' }[] = []
-  const pattern = /(?:^|\n)\s*(?:import|export)\s+([\s\S]*?)\s+from\s+['"]([^'"]+)['"]\s*;?/g
-  for (const match of code.matchAll(pattern)) {
-    const clause = match[1].trim()
-    const specifier = match[2]
-    if (!specifier.startsWith('.')) continue
-    if (clause.startsWith('*')) {
-      results.push({ specifier, names: '*' })
+interface ModuleStatement {
+  kind: 'import' | 'export'
+  start: number
+  end: number
+  specifier: string
+  names: Set<string> | '*'
+  exportedNames?: string[]
+}
+
+/** Zero-dependency scanner for top-level static ES import/export-from statements, skipping comments, strings, and templates. */
+function scanStaticModuleStatements(code: string): ModuleStatement[] {
+  const results: ModuleStatement[] = []
+  const len = code.length
+  let i = 0
+  let braceDepth = 0
+  let parenDepth = 0
+  let prevToken = ''
+
+  function skipWsAndComments() {
+    while (i < len) {
+      const c = code.charCodeAt(i)
+      if (c === 32 || c === 9 || c === 10 || c === 13) { i++; continue }
+      if (c === 47 && code.charCodeAt(i + 1) === 47) {
+        i += 2
+        while (i < len && code.charCodeAt(i) !== 10) i++
+        continue
+      }
+      if (c === 47 && code.charCodeAt(i + 1) === 42) {
+        i += 2
+        while (i + 1 < len && !(code.charCodeAt(i) === 42 && code.charCodeAt(i + 1) === 47)) i++
+        i = Math.min(len, i + 2)
+        continue
+      }
+      break
+    }
+  }
+
+  function readString(): string | null {
+    const quote = code.charCodeAt(i)
+    if (quote !== 39 && quote !== 34) return null
+    i++
+    let out = ''
+    while (i < len) {
+      const c = code.charCodeAt(i++)
+      if (c === 92 && i < len) { out += code[i++]; continue }
+      if (c === quote) return out
+      out += String.fromCharCode(c)
+    }
+    return out
+  }
+
+  function skipTemplate() {
+    i++ // opening `
+    while (i < len) {
+      const c = code.charCodeAt(i++)
+      if (c === 92) { i++; continue }
+      if (c === 96) return
+      if (c === 36 && code.charCodeAt(i) === 123) {
+        i++
+        let depth = 1
+        while (i < len && depth > 0) {
+          skipWsAndComments()
+          if (i >= len) break
+          const ch = code.charCodeAt(i)
+          if (ch === 39 || ch === 34) { readString(); continue }
+          if (ch === 96) { skipTemplate(); continue }
+          if (ch === 123) depth++
+          else if (ch === 125) depth--
+          i++
+        }
+      }
+    }
+  }
+
+  function readIdent(): string {
+    const start = i
+    while (i < len) {
+      const c = code.charCodeAt(i)
+      if ((c >= 65 && c <= 90) || (c >= 97 && c <= 122) || (c >= 48 && c <= 57) || c === 95 || c === 36) i++
+      else break
+    }
+    return code.slice(start, i)
+  }
+
+  function parseNamedList(): { localOrOrig: Set<string>; exported: string[] } | null {
+    if (code.charCodeAt(i) !== 123) return null
+    i++ // '{'
+    const localOrOrig = new Set<string>()
+    const exported: string[] = []
+    while (i < len) {
+      skipWsAndComments()
+      if (i >= len) return null
+      if (code.charCodeAt(i) === 125) { i++; return { localOrOrig, exported } }
+      const first = readString() ?? readIdent()
+      if (!first) return null
+      skipWsAndComments()
+      let second = first
+      if (code.startsWith('as', i) && !/[A-Za-z0-9_$]/.test(code[i + 2] ?? '')) {
+        i += 2
+        skipWsAndComments()
+        second = readString() ?? readIdent()
+      }
+      localOrOrig.add(first)
+      exported.push(second)
+      skipWsAndComments()
+      if (code.charCodeAt(i) === 44) i++
+      else if (code.charCodeAt(i) === 125) { i++; return { localOrOrig, exported } }
+      else return null
+    }
+    return null
+  }
+
+  while (i < len) {
+    skipWsAndComments()
+    if (i >= len) break
+    const ch = code.charCodeAt(i)
+    if (ch === 39 || ch === 34) { readString(); prevToken = 'str'; continue }
+    if (ch === 96) { skipTemplate(); prevToken = 'tpl'; continue }
+    if (ch === 123) { braceDepth++; i++; prevToken = '{'; continue }
+    if (ch === 125) { braceDepth = Math.max(0, braceDepth - 1); i++; prevToken = '}'; continue }
+    if (ch === 40) { parenDepth++; i++; prevToken = '('; continue }
+    if (ch === 41) { parenDepth = Math.max(0, parenDepth - 1); i++; prevToken = ')'; continue }
+    if ((ch >= 65 && ch <= 90) || (ch >= 97 && ch <= 122) || ch === 95 || ch === 36) {
+      const start = i
+      const word = readIdent()
+      if ((word === 'import' || word === 'export') && braceDepth === 0 && parenDepth === 0 && prevToken !== '.') {
+        const saved = i
+        skipWsAndComments()
+        // Side-effect import: import './foo.js'
+        if (word === 'import' && (code.charCodeAt(i) === 39 || code.charCodeAt(i) === 34)) {
+          const spec = readString()
+          if (spec !== null) {
+            skipWsAndComments()
+            if (code.charCodeAt(i) === 59) i++
+            results.push({ kind: 'import', start, end: i, specifier: spec, names: '*' })
+            prevToken = ';'
+            continue
+          }
+        }
+        // Skip dynamic import(...) or import.meta
+        if (word === 'import' && (code.charCodeAt(i) === 40 || code.charCodeAt(i) === 46)) {
+          i = saved
+          prevToken = word
+          continue
+        }
+        // Parse import/export clause up to `from`
+        let names: Set<string> | '*' = '*'
+        let exportedNames: string[] | undefined
+        let hasClause = false
+        let valid = true
+        if (code.charCodeAt(i) === 42) {
+          // * [as ns]
+          hasClause = true
+          i++
+          skipWsAndComments()
+          if (code.startsWith('as', i) && !/[A-Za-z0-9_$]/.test(code[i + 2] ?? '')) {
+            i += 2
+            skipWsAndComments()
+            readIdent()
+          }
+          names = '*'
+        } else if (code.charCodeAt(i) === 123) {
+          const list = parseNamedList()
+          if (!list) valid = false
+          else {
+            hasClause = true
+            names = list.localOrOrig
+            exportedNames = list.exported
+          }
+        } else if (word === 'import') {
+          const defName = readIdent()
+          if (defName) {
+            hasClause = true
+            names = '*'
+            skipWsAndComments()
+            if (code.charCodeAt(i) === 44) {
+              i++
+              skipWsAndComments()
+              if (code.charCodeAt(i) === 42) {
+                i++
+                skipWsAndComments()
+                if (code.startsWith('as', i) && !/[A-Za-z0-9_$]/.test(code[i + 2] ?? '')) {
+                  i += 2
+                  skipWsAndComments()
+                  readIdent()
+                }
+              } else if (code.charCodeAt(i) === 123) {
+                if (!parseNamedList()) valid = false
+              }
+            }
+          }
+        }
+        if (valid && hasClause) {
+          skipWsAndComments()
+          if (code.startsWith('from', i) && !/[A-Za-z0-9_$]/.test(code[i + 4] ?? '')) {
+            i += 4
+            skipWsAndComments()
+            const spec = readString()
+            if (spec !== null) {
+              skipWsAndComments()
+              if (code.charCodeAt(i) === 59) i++
+              results.push({ kind: word, start, end: i, specifier: spec, names, exportedNames })
+              prevToken = ';'
+              continue
+            }
+          }
+        }
+        i = saved
+      }
+      prevToken = word
       continue
     }
-    const brace = /\{([\s\S]*?)\}/.exec(clause)
-    if (brace) {
-      const names = new Set<string>()
-      for (const part of brace[1].split(',')) {
-        const token = part.trim().split(/\s+as\s+/)[0]?.trim()
-        if (token) names.add(token)
-      }
-      results.push({ specifier, names })
-    } else {
-      results.push({ specifier, names: '*' })
-    }
+    prevToken = code[i++]
   }
   return results
 }
 
+function parseStaticImports(code: string) {
+  return scanStaticModuleStatements(code)
+    .filter(s => s.specifier.startsWith('.'))
+    .map(s => ({ specifier: s.specifier, names: s.names }))
+}
+
 function pruneBarrelSource(code: string, usedNames: Set<string> | '*') {
-  const lines = code.split('\n')
-  const kept: string[] = []
-  for (const line of lines) {
-    const star = /^\s*export\s+\*\s+from\s+['"]([^'"]+)['"]\s*;?\s*$/.exec(line)
-    if (star) {
-      if (!blockedStudioFiles.has(basename(star[1]))) kept.push(line)
+  const stmts = scanStaticModuleStatements(code).filter(s => s.kind === 'export')
+  if (!stmts.length) return code
+  let out = ''
+  let cursor = 0
+  for (const stmt of stmts) {
+    out += code.slice(cursor, stmt.start)
+    cursor = stmt.end
+    const targetFile = basename(stmt.specifier)
+    if (blockedStudioFiles.has(targetFile)) continue
+    if (stmt.names === '*' || usedNames === '*') {
+      out += code.slice(stmt.start, stmt.end)
       continue
     }
-    const named = /^\s*export\s+\{([^}]+)\}\s+from\s+['"]([^'"]+)['"]\s*;?\s*$/.exec(line)
-    if (named) {
-      const targetFile = basename(named[2])
-      if (blockedStudioFiles.has(targetFile)) continue
-      if (usedNames === '*') {
-        kept.push(line)
-        continue
-      }
-      const exported = named[1].split(',').map(part => {
-        const pieces = part.trim().split(/\s+as\s+/)
-        return (pieces[1] ?? pieces[0])?.trim()
-      }).filter(Boolean)
-      if (exported.some(name => usedNames.has(name))) kept.push(line)
-      continue
+    if (stmt.exportedNames?.some(name => usedNames.has(name))) {
+      out += code.slice(stmt.start, stmt.end)
     }
-    if (line.trim()) kept.push(line)
   }
-  return kept.join('\n') + '\n'
+  out += code.slice(cursor)
+  return out.replace(/\n{3,}/g, '\n\n').trim() + '\n'
 }
 
 /** Trace only statically reachable runtime ES modules, pruning unused barrel exports and dropping all studio/testing files. */
@@ -255,20 +445,31 @@ async function emitShakenModules({
   const barrelNames = new Map<string, Set<string> | '*'>()
   const rawSources = new Map<string, string>()
 
-  function recordBarrelUsage(targetRel: string, names: Set<string> | '*') {
+  function recordBarrelUsage(targetRel: string, names: Set<string> | '*'): boolean {
+    const existing = barrelNames.get(targetRel)
+    if (existing === '*') return false
     if (names === '*') {
       barrelNames.set(targetRel, '*')
-      return
+      return true
     }
-    const existing = barrelNames.get(targetRel)
-    if (existing === '*') return
     const set = existing ?? new Set<string>()
-    for (const name of names) set.add(name)
+    let changed = !existing
+    for (const name of names) {
+      if (!set.has(name)) {
+        set.add(name)
+        changed = true
+      }
+    }
     barrelNames.set(targetRel, set)
+    return changed
   }
 
   function isBarrel(relPath: string) {
     return relPath === 'framework/index.js' || relPath === 'framework/ui.js'
+  }
+
+  function normalizeRel(fromRel: string, specifier: string) {
+    return join(dirname(fromRel), specifier).replace(/\\/g, '/')
   }
 
   async function loadModule(relPath: string): Promise<string> {
@@ -288,7 +489,7 @@ async function emitShakenModules({
     visitedNonBarrel.add(relPath)
     const code = await loadModule(relPath)
     for (const imp of parseStaticImports(code)) {
-      const nextRel = join(dirname(relPath), imp.specifier).replace(/\\/g, '/')
+      const nextRel = normalizeRel(relPath, imp.specifier)
       if (blockedStudioFiles.has(basename(nextRel))) continue
       if (isBarrel(nextRel)) recordBarrelUsage(nextRel, imp.names)
       else await scan(nextRel)
@@ -297,7 +498,7 @@ async function emitShakenModules({
 
   await scan(entryRelPath)
 
-  // Pass 2: prune any reached barrels to ONLY imported symbols, then trace their surviving re-exports.
+  // Pass 2: prune any reached barrels to ONLY imported symbols, then trace their surviving re-exports (including transitive barrels).
   const finalSources = new Map<string, string>()
   for (const relPath of visitedNonBarrel) finalSources.set(relPath, rawSources.get(relPath))
 
@@ -310,29 +511,39 @@ async function emitShakenModules({
     }
     finalSources.set(relPath, code)
     for (const imp of parseStaticImports(code)) {
-      const nextRel = join(dirname(relPath), imp.specifier).replace(/\\/g, '/')
+      const nextRel = normalizeRel(relPath, imp.specifier)
       if (blockedStudioFiles.has(basename(nextRel))) continue
-      if (!finalSources.has(nextRel)) await traceFinal(nextRel)
+      if (isBarrel(nextRel)) {
+        const changed = recordBarrelUsage(nextRel, imp.names)
+        if (!finalSources.has(nextRel) || changed) await traceFinal(nextRel)
+      } else if (!finalSources.has(nextRel)) {
+        await traceFinal(nextRel)
+      }
     }
   }
 
-  for (const barrelRel of barrelNames.keys()) await traceFinal(barrelRel)
+  for (const barrelRel of Array.from(barrelNames.keys())) await traceFinal(barrelRel)
 
+  const resolvedRoot = resolve(wwwDir)
   for (const [relPath, code] of finalSources) {
-    const dst = join(wwwDir, relPath)
+    const dst = resolve(resolvedRoot, relPath)
+    if (dst !== resolvedRoot && !dst.startsWith(resolvedRoot + sep)) {
+      throw new Error('Module path escapes bundle root: ' + relPath)
+    }
     await mkdir(dirname(dst), { recursive: true })
     await writeFile(dst, code)
   }
 }
 
-async function copyDirFiltered(src: string, dst: string) {
+async function copyDirFiltered(src: string, dst: string, { skipJs = false } = {}) {
   await mkdir(dst, { recursive: true })
   for (const entry of await readdir(src, { withFileTypes: true })) {
     if (entry.isDirectory()) {
       if (blockedStudioDirs.has(entry.name)) continue
-      await copyDirFiltered(join(src, entry.name), join(dst, entry.name))
+      await copyDirFiltered(join(src, entry.name), join(dst, entry.name), { skipJs })
     } else if (entry.isFile()) {
       if (blockedStudioFiles.has(entry.name)) continue
+      if (skipJs && entry.name.endsWith('.js')) continue
       await cp(join(src, entry.name), join(dst, entry.name))
     }
   }
@@ -498,7 +709,9 @@ async function resolveBuiltInAssets(kind: 'signal-drift' | 'beacon-run' | 'start
           })
         }
       }
-    } catch {}
+    } catch (error) {
+      throw new Error('Failed to load built Signal Drift assets from dist/. Run npm run build first: ' + (error instanceof Error ? error.message : String(error)))
+    }
     const kit = createArtKit({ palette: { accent: '#f8aa4e', glow: '#8df5d5', leaf: '#56bfae' } })
     if (!iconBatches) {
       const g = kit.group(); g.add('crystal', [0, 0, 0])
@@ -548,6 +761,26 @@ async function resolveBuiltInAssets(kind: 'signal-drift' | 'beacon-run' | 'start
   }
 }
 
+function rewriteFrameworkImports(relPath: string, code: string) {
+  if (relPath.startsWith('framework/')) return code
+  const depth = relPath.split('/').length - 1
+  const expectedPrefix = '../'.repeat(depth + 1) + 'framework/'
+  const targetPrefix = (depth === 0 ? './' : '../'.repeat(depth)) + 'framework/'
+  return code
+    .replaceAll(`'${expectedPrefix}`, `'${targetPrefix}`)
+    .replaceAll(`"${expectedPrefix}`, `"${targetPrefix}`)
+}
+
+function findModuleEntryScript(html: string): string {
+  for (const tag of html.matchAll(/<script\b([^>]*)>/gi)) {
+    const attrs = tag[1]
+    if (!/\btype\s*=\s*["']module["']/i.test(attrs)) continue
+    const src = /\bsrc\s*=\s*["']\.?\/?([^"']+)["']/i.exec(attrs)
+    if (src) return src[1]
+  }
+  return 'main.js'
+}
+
 async function assembleWebBundle(options: PackageGameOptions, wwwDir: string, {
   themeColor, extraHead = ''
 }: { themeColor: string; extraHead?: string }): Promise<{ detectedName: string }> {
@@ -567,14 +800,13 @@ async function assembleWebBundle(options: PackageGameOptions, wwwDir: string, {
     for (const entry of await readdir(gameDir, { withFileTypes: true })) {
       if (entry.isDirectory()) {
         if (blockedStudioDirs.has(entry.name)) continue
-        await copyDirFiltered(join(gameDir, entry.name), join(wwwDir, entry.name))
+        await copyDirFiltered(join(gameDir, entry.name), join(wwwDir, entry.name), { skipJs: true })
       } else if (entry.isFile() && !entry.name.endsWith('.js') && entry.name !== 'index.html' && !blockedStudioFiles.has(entry.name)) {
         await cp(join(gameDir, entry.name), join(wwwDir, entry.name))
       }
     }
 
-    const entryMatch = /<script\s+type="module"\s+src="\.?\/?([^"]+)"/.exec(rawHtml)
-    const entryRel = entryMatch ? entryMatch[1] : 'main.js'
+    const entryRel = findModuleEntryScript(rawHtml)
     await emitShakenModules({
       entryRelPath: entryRel,
       wwwDir,
@@ -582,12 +814,7 @@ async function assembleWebBundle(options: PackageGameOptions, wwwDir: string, {
         if (relPath.startsWith('framework/')) return join(fwDir, relPath.slice('framework/'.length))
         return join(gameDir, relPath)
       },
-      rewriteSource(relPath, code) {
-        if (!relPath.startsWith('framework/')) {
-          return code.replaceAll("'../framework/", "'./framework/").replaceAll('"../framework/', '"./framework/')
-        }
-        return code
-      }
+      rewriteSource: rewriteFrameworkImports
     })
 
     let detectedName = basename(project)
@@ -598,7 +825,7 @@ async function assembleWebBundle(options: PackageGameOptions, wwwDir: string, {
     return { detectedName }
   }
 
-  const repoRoot = resolve(options.repoRoot ?? new URL('..', import.meta.url).pathname)
+  const repoRoot = resolve(options.repoRoot ?? fileURLToPath(new URL('..', import.meta.url)))
   const distDir = join(repoRoot, 'dist')
   await access(join(distDir, 'framework', 'index.js')).catch(() => {
     throw new Error('Build the repository with npm run build before packaging built-in games.')
@@ -654,12 +881,7 @@ async function assembleWebBundle(options: PackageGameOptions, wwwDir: string, {
       if (relPath.startsWith('framework/')) return join(distDir, relPath)
       return join(distDir, 'starter', relPath)
     },
-    rewriteSource(relPath, code) {
-      if (!relPath.startsWith('framework/')) {
-        return code.replaceAll("'../framework/", "'./framework/").replaceAll('"../framework/', '"./framework/')
-      }
-      return code
-    }
+    rewriteSource: rewriteFrameworkImports
   })
   return { detectedName: 'Lantern Grove' }
 }
@@ -684,7 +906,13 @@ const MIME = {
   '.svg': 'image/svg+xml',
   '.ico': 'image/x-icon',
   '.webp': 'image/webp',
-  '.wasm': 'application/wasm'
+  '.wasm': 'application/wasm',
+  '.wav': 'audio/wav',
+  '.mp3': 'audio/mpeg',
+  '.ogg': 'audio/ogg',
+  '.glb': 'model/gltf-binary',
+  '.woff2': 'font/woff2',
+  '.ttf': 'font/ttf'
 }
 
 protocol.registerSchemesAsPrivileged([
@@ -717,11 +945,17 @@ function loadSaves() {
 }
 
 let saveCache = null
+let saveSeq = 0
 function persistSaves(data) {
-  fs.mkdirSync(saveDir, { recursive: true })
-  const temp = saveFile + '.tmp.' + process.pid
-  fs.writeFileSync(temp, JSON.stringify(data, null, 2) + '\\n', 'utf8')
-  fs.renameSync(temp, saveFile)
+  let temp = ''
+  try {
+    fs.mkdirSync(saveDir, { recursive: true })
+    temp = saveFile + '.tmp.' + process.pid + '.' + (++saveSeq)
+    fs.writeFileSync(temp, JSON.stringify(data, null, 2) + '\\n', 'utf8')
+    fs.renameSync(temp, saveFile)
+  } catch {
+    if (temp) { try { fs.unlinkSync(temp) } catch {} }
+  }
 }
 
 function getSaves() {
@@ -744,7 +978,7 @@ function createWindow() {
       preload: path.join(__dirname, 'preload.cjs'),
       contextIsolation: true,
       nodeIntegration: false,
-      sandbox: false,
+      sandbox: true,
       backgroundThrottling: false
     }
   })
@@ -772,8 +1006,12 @@ if (!singleLock) {
     steam.init(path.resolve(__dirname, '..'))
 
     protocol.handle(SCHEME, request => {
-      const url = new URL(request.url)
-      let pathname = decodeURIComponent(url.pathname)
+      let pathname
+      try {
+        pathname = decodeURIComponent(new URL(request.url).pathname)
+      } catch {
+        return new Response('Bad Request', { status: 400 })
+      }
       if (!pathname || pathname === '/') pathname = '/index.html'
       const target = path.resolve(WWW_ROOT, '.' + pathname)
       if (target !== WWW_ROOT && !target.startsWith(WWW_ROOT + path.sep)) {
@@ -824,10 +1062,13 @@ if (!singleLock) {
     ipcMain.on('ridgetop:steam-presence', (_event, key, value) => steam.setRichPresence(String(key), String(value)))
     ipcMain.on('ridgetop:steam-overlay', (_event, dialog) => steam.activateOverlay(String(dialog || 'Achievements')))
 
-    const win = createWindow()
+    createWindow()
     app.on('second-instance', () => {
-      if (win.isMinimized()) win.restore()
-      win.focus()
+      const active = BrowserWindow.getAllWindows()[0]
+      if (active && !active.isDestroyed()) {
+        if (active.isMinimized()) active.restore()
+        active.focus()
+      }
     })
     app.on('activate', () => {
       if (BrowserWindow.getAllWindows().length === 0) createWindow()
@@ -943,6 +1184,10 @@ files:
 asar: true
 asarUnpack:
   - "**/node_modules/steamworks.js/**"
+  - "steam_appid.txt"
+extraFiles:
+  - from: steam_appid.txt
+    to: steam_appid.txt
 win:
   icon: build/icon.png
   target:
@@ -1002,6 +1247,8 @@ function renderMobileBridgeJs(orientation: PackageOrientation) {
 
   const PREFIX = 'ridgetop.native.'
   const lifecycleListeners = new Set()
+  const mutatedKeys = new Set()
+  let clearedAll = false
 
   if (plugins.App && typeof plugins.App.addListener === 'function') {
     plugins.App.addListener('appStateChange', function (state) {
@@ -1018,16 +1265,28 @@ function renderMobileBridgeJs(orientation: PackageOrientation) {
     try {
       if (action === 'set') void prefs.set({ key: PREFIX + key, value: String(value) })
       else if (action === 'remove') void prefs.remove({ key: PREFIX + key })
-      else if (action === 'clear') void prefs.clear()
+      else if (action === 'clear') {
+        if (typeof prefs.keys === 'function' && typeof prefs.remove === 'function') {
+          prefs.keys().then(function (result) {
+            const keys = result && Array.isArray(result.keys) ? result.keys : []
+            return Promise.all(keys.filter(function (k) { return k.startsWith(PREFIX) }).map(function (k) {
+              return prefs.remove({ key: k })
+            }))
+          }).catch(function () {})
+        }
+      }
     } catch {}
   }
 
   if (plugins.Preferences && typeof plugins.Preferences.keys === 'function') {
     plugins.Preferences.keys().then(function (result) {
+      if (clearedAll) return
       const keys = result && Array.isArray(result.keys) ? result.keys : []
       return Promise.all(keys.filter(function (k) { return k.startsWith(PREFIX) }).map(function (fullKey) {
         const bare = fullKey.slice(PREFIX.length)
+        if (mutatedKeys.has(bare)) return
         return plugins.Preferences.get({ key: fullKey }).then(function (item) {
+          if (clearedAll || mutatedKeys.has(bare)) return
           if (item && typeof item.value === 'string' && globalThis.localStorage?.getItem(bare) === null) {
             try { globalThis.localStorage.setItem(bare, item.value) } catch {}
           }
@@ -1054,14 +1313,18 @@ function renderMobileBridgeJs(orientation: PackageOrientation) {
         return out
       },
       set: function (key, value) {
+        mutatedKeys.add(String(key))
         try { globalThis.localStorage.setItem(key, String(value)) } catch {}
         mirrorToPreferences('set', key, value)
       },
       remove: function (key) {
+        mutatedKeys.add(String(key))
         try { globalThis.localStorage.removeItem(key) } catch {}
         mirrorToPreferences('remove', key)
       },
       clear: function () {
+        clearedAll = true
+        mutatedKeys.clear()
         try { globalThis.localStorage.clear() } catch {}
         mirrorToPreferences('clear')
       }
@@ -1124,12 +1387,76 @@ npm run open:android
 `
 }
 
+async function tryCompileGodotScripts(options: PackageGameOptions, repoRoot: string, godotDir: string): Promise<number> {
+  const candidates = [
+    join(repoRoot, 'tools', 'ts-to-gd.ts'),
+    join(repoRoot, 'dist', 'tools', 'ts-to-gd.js')
+  ]
+  let compilerPath: string | null = null
+  for (const candidate of candidates) {
+    try { await access(candidate); compilerPath = candidate; break } catch {}
+  }
+  if (!compilerPath) return 0
+
+  let spec: { rootDir: string; entries: string[] } | null = null
+  if (options.projectDir) {
+    const project = resolve(options.projectDir)
+    spec = { rootDir: project, entries: [join(project, 'game', 'game.js')] }
+  } else {
+    const game = options.game ?? 'signal-drift'
+    if (game === 'signal-drift') {
+      spec = {
+        rootDir: repoRoot,
+        entries: [
+          join(repoRoot, 'racing', 'race.ts'),
+          join(repoRoot, 'racing', 'progression.ts'),
+          join(repoRoot, 'framework', 'ui-layout.ts'),
+          join(repoRoot, 'framework', 'ui-button.ts'),
+          join(repoRoot, 'framework', 'ui-toggle.ts')
+        ]
+      }
+    } else if (game === 'beacon-run') {
+      spec = {
+        rootDir: repoRoot,
+        entries: [
+          join(repoRoot, 'game', 'simulation.ts'),
+          join(repoRoot, 'game', 'campaign.ts'),
+          join(repoRoot, 'framework', 'ui-layout.ts'),
+          join(repoRoot, 'framework', 'ui-button.ts'),
+          join(repoRoot, 'framework', 'ui-toggle.ts')
+        ]
+      }
+    } else if (game === 'starter') {
+      spec = {
+        rootDir: repoRoot,
+        entries: [
+          join(repoRoot, 'starter', 'game.ts'),
+          join(repoRoot, 'framework', 'ui-layout.ts')
+        ]
+      }
+    }
+  }
+  if (!spec) return 0
+  try {
+    const mod = await import(pathToFileURL(compilerPath).href)
+    if (typeof mod.compileTsProjectToGodot !== 'function') return 0
+    const compiled = await mod.compileTsProjectToGodot({
+      entries: spec.entries,
+      rootDir: spec.rootDir,
+      outDir: join(godotDir, 'scripts', 'compiled')
+    })
+    return Array.isArray(compiled?.files) ? compiled.files.length : 0
+  } catch {
+    return 0
+  }
+}
+
 export async function packageGame(options: PackageGameOptions): Promise<PackageResult> {
   const targets: ('web' | 'steam' | 'mobile' | 'godot')[] = options.target === 'all'
     ? ['web', 'steam', 'mobile', 'godot']
     : [options.target]
   const outRoot = resolve(options.outDir)
-  const repoRoot = options.repoRoot ? resolve(options.repoRoot) : resolve(new URL('..', import.meta.url).pathname)
+  const repoRoot = options.repoRoot ? resolve(options.repoRoot) : resolve(fileURLToPath(new URL('..', import.meta.url)))
 
   let projectVersion = options.version ?? '1.0.0'
   if (options.projectDir && !options.version) {
@@ -1150,9 +1477,29 @@ export async function packageGame(options: PackageGameOptions): Promise<PackageR
   const steamAppId = options.steamAppId ?? '480'
   const orientation = options.orientation ?? 'landscape'
   const outputs: PackagedOutput[] = []
-  let resolvedName = options.name ?? assets.title ?? 'Ridgetop Game'
+  const fallbackName = options.projectDir ? basename(resolve(options.projectDir)) : 'Ridgetop Game'
+  let resolvedName = options.name ?? assets.title ?? fallbackName
   let resolvedSlug = slugify(resolvedName)
   let resolvedAppId = options.appId ?? defaultAppId(resolvedSlug)
+
+  const iconCache = new Map<string, Buffer>()
+  function getIconPng(size: number, modelScale = 0.78) {
+    const key = `${size}:${modelScale}`
+    let png = iconCache.get(key)
+    if (!png) {
+      png = bakeIconPng({
+        batches: iconSource.batches,
+        span: iconSource.span,
+        centerY: iconSource.centerY,
+        size,
+        background: themeColor,
+        accent: iconSource.accent,
+        modelScale
+      })
+      iconCache.set(key, png)
+    }
+    return png
+  }
 
   for (const target of targets) {
     const dir = options.target === 'all' ? join(outRoot, target) : outRoot
@@ -1203,14 +1550,7 @@ export async function packageGame(options: PackageGameOptions): Promise<PackageR
       }, null, 2) + '\n')
 
       const iconPath = join(dir, 'build', 'icon.png')
-      await writeFile(iconPath, bakeIconPng({
-        batches: iconSource.batches,
-        span: iconSource.span,
-        centerY: iconSource.centerY,
-        size: 512,
-        background: themeColor,
-        accent: iconSource.accent
-      }))
+      await writeFile(iconPath, getIconPng(512))
       const stats = await measureDirectory(wwwDir)
       outputs.push({ target, dir, wwwDir, iconPath, ...stats })
     } else if (target === 'mobile') {
@@ -1271,23 +1611,8 @@ export async function packageGame(options: PackageGameOptions): Promise<PackageR
 
       const resourcesDir = join(dir, 'resources')
       await mkdir(resourcesDir, { recursive: true })
-      const iconPng = bakeIconPng({
-        batches: iconSource.batches,
-        span: iconSource.span,
-        centerY: iconSource.centerY,
-        size: 1024,
-        background: themeColor,
-        accent: iconSource.accent
-      })
-      const splashPng = bakeIconPng({
-        batches: iconSource.batches,
-        span: iconSource.span,
-        centerY: iconSource.centerY,
-        size: 1024,
-        background: themeColor,
-        accent: iconSource.accent,
-        modelScale: 0.44
-      })
+      const iconPng = getIconPng(1024)
+      const splashPng = getIconPng(1024, 0.44)
       const iconPath = join(resourcesDir, 'icon.png')
       await writeFile(iconPath, iconPng)
       await writeFile(join(resourcesDir, 'icon-only.png'), iconPng)
@@ -1298,14 +1623,7 @@ export async function packageGame(options: PackageGameOptions): Promise<PackageR
     } else {
       await rm(dir, { recursive: true, force: true })
       await mkdir(dir, { recursive: true })
-      const iconPng = bakeIconPng({
-        batches: iconSource.batches,
-        span: iconSource.span,
-        centerY: iconSource.centerY,
-        size: 512,
-        background: themeColor,
-        accent: iconSource.accent
-      })
+      const iconPng = getIconPng(512)
       await exportGodotProject({
         outDir: dir,
         name: resolvedName,
@@ -1316,6 +1634,7 @@ export async function packageGame(options: PackageGameOptions): Promise<PackageR
         uiTree: assets.uiTree,
         iconPng
       })
+      await tryCompileGodotScripts(options, repoRoot, dir)
       const stats = await measureDirectory(dir)
       outputs.push({ target, dir, iconPath: join(dir, 'icon.png'), ...stats })
     }

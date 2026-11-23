@@ -1,3 +1,4 @@
+import { access } from 'node:fs/promises'
 import { join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { formatPackageSummary, isMain, packageGame, parsePackageArgs } from '../framework/server.ts'
@@ -94,14 +95,17 @@ if (isMain(import.meta.url)) {
       })
       for (const output of result.outputs) {
         if (output.target !== 'godot') continue
+        const compiledDir = join(output.dir, 'scripts', 'compiled')
+        const alreadyCompiled = await access(join(compiledDir, 'rt.gd')).then(() => true, () => false)
+        if (alreadyCompiled) continue
         const spec = godotEntriesFor(game, parsed.projectDir)
         if (!spec) continue
         const compiled = await compileTsProjectToGodot({
           entries: spec.entries,
           rootDir: spec.rootDir,
-          outDir: join(output.dir, 'scripts', 'compiled')
+          outDir: compiledDir
         })
-        console.log(`Compiled ${compiled.files.length} TypeScript module(s) -> ${join(output.dir, 'scripts', 'compiled')}`)
+        console.log(`Compiled ${compiled.files.length} TypeScript module(s) -> ${compiledDir}`)
       }
       console.log(formatPackageSummary(result))
     }

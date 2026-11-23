@@ -39,7 +39,7 @@ export async function createGame(destination: string) {
     await cp(new URL('sprite-workshop-offline.html', dist), join(temporary, 'sprite-workshop.html'))
     await cp(new URL('low-poly-models.html', dist), join(temporary, 'low-poly-models.html'))
     await writeFile(join(temporary, 'package.json'), JSON.stringify({
-      name: basename(target).toLowerCase().replace(/[^a-z0-9-]+/g, '-') || 'ridgetop-game',
+      name: basename(target).toLowerCase().replace(/[^a-z0-9-]+/g, '-').replace(/^-+|-+$/g, '') || 'ridgetop-game',
       private: true, type: 'module', scripts: {
         start: 'node game/serve.js',
         playtest: 'node game/serve.js --testing',

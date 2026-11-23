@@ -201,6 +201,8 @@ test('packageGame builds tree-shaken Web, Steam, Mobile, and Godot outputs for S
   assert.ok(uiTscn.includes('ridgetop_ui.gd'), 'Godot UI scene should render via custom Canvas UI script, not default Controls')
   await access(join(godotDir, 'scripts', 'ridgetop_ui.gd'))
   await access(join(godotDir, 'scripts', 'main.gd'))
+  await access(join(godotDir, 'scripts', 'compiled', 'rt.gd'))
+  await access(join(godotDir, 'scripts', 'compiled', 'racing', 'race.gd'))
 })
 
 test('packageGame rewrites Beacon Run asset paths for offline native bundles', async t => {
@@ -316,4 +318,86 @@ test('export-godot fixes Float32 accessor bounds, unlit PBR attenuation, WAV saf
   assert.ok(tscn.includes('anchors_preset = 2'))
   assert.ok(tscn.includes('offset_left = 10.0'))
   assert.ok(tscn.includes('offset_bottom = -30.0'))
+})
+
+test('packager handles nested game subdirs, comment/template imports, scoped mobile clear, Electron hardening, and slug trimming', async t => {
+  const work = await mkdtemp(join(tmpdir(), 'ridgetop-pkg-edge-'))
+  t.after(() => rm(work, { recursive: true, force: true }))
+
+  // Leading/trailing punctuation in directory name produces a clean npm package name
+  const projectDir = await createGame(join(work, '---My Game!---'))
+  const pkg = JSON.parse(await readFile(join(projectDir, 'package.json'), 'utf8'))
+  assert.equal(pkg.name, 'my-game')
+
+  // Add nested subdir module with ../../framework/ import, comments/templates with fake imports, and an unused sibling JS file
+  await mkdir(join(projectDir, 'game', 'sub'), { recursive: true })
+  await writeFile(join(projectDir, 'game', 'sub', 'helper.js'), `
+// import { fake } from './does-not-exist.js'
+export function note() { return \`import { nope } from './nope.js'\` }
+import { color } from '../../framework/index.js'
+export const accent = color('#efac62')
+`)
+  await writeFile(join(projectDir, 'game', 'sub', 'unused.js'), `export const dead = 1\n`)
+  const origMain = await readFile(join(projectDir, 'game', 'main.js'), 'utf8')
+  await writeFile(join(projectDir, 'game', 'main.js'), `import { accent } from './sub/helper.js'\nvoid accent\n` + origMain)
+  const origHtml = await readFile(join(projectDir, 'game', 'index.html'), 'utf8')
+  await writeFile(join(projectDir, 'game', 'index.html'), origHtml.replace('<script type="module" src="./main.js">', '<script defer src="./main.js" type="module">'))
+
+  const outDir = join(work, 'out')
+  await packageGame({ target: 'all', projectDir, outDir })
+
+  const helperOut = await readFile(join(outDir, 'web', 'sub', 'helper.js'), 'utf8')
+  assert.ok(helperOut.includes("'../framework/index.js'"), 'nested game subdir should rewrite ../../framework/ -> ../framework/')
+  await assert.rejects(access(join(outDir, 'web', 'sub', 'unused.js')), 'unused nested JS should not be copied')
+
+  const electronMain = await readFile(join(outDir, 'steam', 'electron', 'main.cjs'), 'utf8')
+  assert.ok(electronMain.includes('sandbox: true'))
+  assert.ok(electronMain.includes('isDestroyed()'))
+  const builderYml = await readFile(join(outDir, 'steam', 'electron-builder.yml'), 'utf8')
+  assert.ok(builderYml.includes('steam_appid.txt'))
+
+  // Mobile bridge clear() only removes ridgetop.native.* keys and respects pre-hydration writes
+  const bridgeCode = await readFile(join(outDir, 'mobile', 'www', 'ridgetop-mobile-bridge.js'), 'utf8')
+  const prefStore = new Map<string, string>([
+    ['ridgetop.native.save', 'old'],
+    ['other.plugin.token', 'keep-me']
+  ])
+  let releaseKeys!: () => void
+  const keysGate = new Promise<void>(r => { releaseKeys = r })
+  const local = new Map<string, string>()
+  const sandbox: Record<string, unknown> = {
+    Capacitor: {
+      getPlatform: () => 'android',
+      Plugins: {
+        Preferences: {
+          keys: async () => { await keysGate; return { keys: Array.from(prefStore.keys()) } },
+          get: async ({ key }: { key: string }) => ({ value: prefStore.get(key) ?? null }),
+          set: async ({ key, value }: { key: string; value: string }) => { prefStore.set(key, value) },
+          remove: async ({ key }: { key: string }) => { prefStore.delete(key) },
+          clear: async () => { throw new Error('must not call global Preferences.clear()') }
+        }
+      }
+    },
+    localStorage: {
+      get length() { return local.size },
+      key: (i: number) => Array.from(local.keys())[i] ?? null,
+      getItem: (k: string) => local.get(k) ?? null,
+      setItem: (k: string, v: string) => { local.set(k, v) },
+      removeItem: (k: string) => { local.delete(k) },
+      clear: () => { local.clear() }
+    },
+    addEventListener: () => {}
+  }
+  sandbox.globalThis = sandbox
+  vm.runInNewContext(bridgeCode, sandbox)
+  const bridge = sandbox.__ridgetopPlatform as { storage: { remove(k: string): void; clear(): void } }
+  bridge.storage.remove('save')
+  releaseKeys()
+  await new Promise(r => setTimeout(r, 15))
+  assert.equal(local.get('save'), undefined, 'hydration must not restore a key removed before hydration finished')
+  prefStore.set('ridgetop.native.extra', 'v')
+  bridge.storage.clear()
+  await new Promise(r => setTimeout(r, 15))
+  assert.equal(prefStore.get('other.plugin.token'), 'keep-me', 'clear() must not wipe non-ridgetop Preferences keys')
+  assert.equal(prefStore.has('ridgetop.native.extra'), false)
 })
