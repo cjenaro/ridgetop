@@ -69,6 +69,7 @@
     "test",
     "tools",
     "dist",
+    "!dist/packages",
     "racing",
     "models",
     "starter",
