@@ -18,7 +18,9 @@ test('pixel art stays within its cell and preserves transparent pixels and RGB c
   assert.throws(() => sheet.frame(2, 0), /outside/)
   assert.throws(() => cell.rect(2, 0, 2, 1, 'ffffff'), /outside/)
   assert.throws(() => cell.polygon([[0, 0], [4, 0], [0, 2]], 'ffffff'), /within/)
+  assert.throws(() => cell.polygon([[null as unknown as number, 0], [2, 0], [0, 2]], 'ffffff'), /within/)
   assert.throws(() => cell.rect(0, 0, 1, 1, 'sand'), /RGB/)
+  assert.throws(() => cell.rect(0, 0, 1, 1, 123456 as unknown as string), RangeError)
 })
 
 test('regenerating a scout changes its palette while preserving its animated silhouette', () => {

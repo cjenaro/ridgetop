@@ -43,37 +43,53 @@ function checkVector(v: Vec3, label: string, positive = false) {
 }
 function extent(b: Bounds, i: number) { return b.max[i] - b.min[i] }
 const shapeBounds = new Map<ArtShape, Bounds>()
-const angles = Array.from({ length: 8 }, (_, i) => [Math.sin(i*Math.PI/4), Math.cos(i*Math.PI/4)])
-const elevation = Math.PI/6
+const angles = Array.from({ length: 8 }, (_, i) => [Math.sin(i * Math.PI / 4), Math.cos(i * Math.PI / 4)] as const)
+const elevation = Math.PI / 6
+const cosElevation = Math.cos(elevation)
+const sinElevation = Math.sin(elevation)
 
 /** Center the footprint, ground the lowest vertex, and frame all eight sprite directions. */
 export function fitArtRecipe(input: ArtRecipe): ArtRecipe {
-  const model = modelFromArtRecipe(input)
   const source = structuredClone(input)
+  const model = modelFromArtRecipe(source)
   const bounds = emptyBounds()
-  for (const part of model.parts) {
-    const b = artPartBounds(part)
-    for (let i = 0; i < 3; i++) {
-      bounds.min[i] = Math.min(bounds.min[i], b.min[i])
-      bounds.max[i] = Math.max(bounds.max[i], b.max[i])
+  for (let i = 0; i < model.parts.length; i++) {
+    const b = artPartBounds(model.parts[i])
+    for (let axis = 0; axis < 3; axis++) {
+      if (b.min[axis] < bounds.min[axis]) bounds.min[axis] = b.min[axis]
+      if (b.max[axis] > bounds.max[axis]) bounds.max[axis] = b.max[axis]
     }
   }
-  const cx = (bounds.min[0]+bounds.max[0])/2, floor = bounds.min[1], cz = (bounds.min[2]+bounds.max[2])/2
+  const cx = (bounds.min[0] + bounds.max[0]) / 2, floor = bounds.min[1], cz = (bounds.min[2] + bounds.max[2]) / 2
   let halfWidth = 0, low = Infinity, high = -Infinity
-  for (const [i, part] of model.parts.entries()) {
-    const [x,y,z] = part.position
-    source.parts[i].position = [x-cx,y-floor,z-cz]
-    visitVertices({ ...part, position: source.parts[i].position }, (px,py,pz) => {
-      for (const [sin,cos] of angles) {
-        halfWidth = Math.max(halfWidth, Math.abs(cos*px-sin*pz))
-        const vertical = Math.cos(elevation)*py-Math.sin(elevation)*(sin*px+cos*pz)
-        low = Math.min(low,vertical); high = Math.max(high,vertical)
+  for (let i = 0; i < model.parts.length; i++) {
+    const part = model.parts[i]
+    const [x, y, z] = part.position
+    const shifted: Vec3 = [x - cx, y - floor, z - cz]
+    source.parts[i].position = shifted
+    const m = rotationMatrix(quaternionFromEuler(part.pitch, part.yaw, part.roll))
+    const data = part.mesh.data
+    const sx = part.scale[0], sy = part.scale[1], sz = part.scale[2]
+    const ox = shifted[0], oy = shifted[1], oz = shifted[2]
+    for (let k = 0; k < data.length; k += 6) {
+      const vx = data[k] * sx, vy = data[k + 1] * sy, vz = data[k + 2] * sz
+      const px = ox + m[0] * vx + m[1] * vy + m[2] * vz
+      const py = oy + m[3] * vx + m[4] * vy + m[5] * vz
+      const pz = oz + m[6] * vx + m[7] * vy + m[8] * vz
+      const cyTerm = cosElevation * py
+      for (let d = 0; d < 8; d++) {
+        const sin = angles[d][0], cos = angles[d][1]
+        const u = Math.abs(cos * px - sin * pz)
+        if (u > halfWidth) halfWidth = u
+        const vertical = cyTerm - sinElevation * (sin * px + cos * pz)
+        if (vertical < low) low = vertical
+        if (vertical > high) high = vertical
       }
-    })
+    }
   }
-  source.centerY = (low+high)/(2*Math.cos(elevation))
-  const padding = Math.min(2, source.frameSize*.1)
-  source.span = Math.max(2*halfWidth, high-low) / (1-2*padding/source.frameSize)
+  source.centerY = (low + high) / (2 * cosElevation)
+  const padding = Math.min(2, source.frameSize * .1)
+  source.span = Math.max(2 * halfWidth, high - low) / (1 - 2 * padding / source.frameSize)
   return source
 }
 
@@ -157,6 +173,8 @@ export function createArtBuilder(name: string, { base = 'empty', reference, fram
     return vec(i => (b.min[i]+b.max[i]+normals[face][i]*extent(b,i))/2+offset[i])
   }
   function attach(id: string, parent: string, face: Surface, shape: ArtShape, size: Vec3, tone: ArtTone, offset: Vec3 = origin) {
+    if ((face as string) === 'center') throw new Error('Attach requires a surface face, not center')
+    checkVector(size, id, true)
     const anchor = point(parent, face, offset)
     return solid(id, shape, size, tone, vec(i => anchor[i]+normals[face][i]*size[i]*.42))
   }
@@ -192,7 +210,9 @@ export function createArtBuilder(name: string, { base = 'empty', reference, fram
     solid(id,shape,scaled(size),tone,scaled(at))
   }
   function limb(id: string, a: Vec3, b: Vec3, width: number, tone: ArtTone, shape: ArtShape = 'taper') {
-    between(id,scaled(a),scaled(b),[width*proportions[0],width*proportions[2]],tone,shape)
+    const dy = Math.abs(b[1] - a[1]), dz = Math.abs(b[2] - a[2])
+    const depthScale = dz > dy ? proportions[1] : proportions[2]
+    between(id, scaled(a), scaled(b), [width * proportions[0], width * depthScale], tone, shape)
   }
   if (base === 'case') {
     mass('body','prism',[1,.75,.58],primary,[0,.40,0])

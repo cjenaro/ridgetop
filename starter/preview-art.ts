@@ -18,7 +18,7 @@ if (!file || extra.length || file === '--help') {
   const camera = { span: model.span, center: [0,model.centerY,0] as const }
   const native = bakeSpritePixels(group.batches, { ...camera, frameSize: model.frameSize })
   const size = 128
-  const large = bakeSpritePixels(group.batches, { ...camera, frameSize: size })
+  const large = model.frameSize === size ? native : bakeSpritePixels(group.batches, { ...camera, frameSize: size })
   const width = 4 * size
   const grid = new Uint8ClampedArray(width * 2 * size * 4)
   for (let y = 0; y < size; y++) {

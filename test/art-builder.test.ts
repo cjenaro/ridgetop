@@ -70,6 +70,8 @@ test('invalid placements fail without appending parts and edits reject invalid r
   const art = createArtBuilder('test', {base:'case'})
   const before = art.finish()
   assert.throws(() => art.attach('handle','missing','top','arch',[1,1,1],'wood'), /missing/)
+  assert.throws(() => art.attach('bad-face','body','center' as 'top','box',[1,1,1],'wood'), /surface face/)
+  assert.throws(() => art.attach('bad-size','body','top','box',null as unknown as Vec3,'wood'), RangeError)
   assert.throws(() => art.between('arm',[1,0,0],[1,0,0],.1,'wood'), /endpoints/)
   assert.throws(() => art.solid('body','oval',[1,1,1],'wood'), /unique/)
   assert.throws(() => art.solid('bad','ring',[1,0,1],'ink'), /positive/)
