@@ -364,9 +364,9 @@ interface ResolvedGameAssets {
   uiTree: LayoutNode
 }
 
-function defaultMenuLayout(title: string, actions: readonly string[]): LayoutNode {
+function defaultMenuLayout(title: string, actions: readonly string[], anchor: 'center' | 'top-left' = 'center'): LayoutNode {
   return overlay({ id: 'root', style: { anchor: 'fill' } }, [
-    column({ id: 'menu-card', style: { anchor: 'center', width: 320, padding: 20, gap: 10 }, widget: { type: 'panel' } }, [
+    column({ id: 'menu-card', style: { anchor, width: 320, inset: anchor === 'top-left' ? 40 : 16, padding: 20, gap: 10 }, widget: { type: 'panel' } }, [
       boxNode({ id: 'menu-title', style: { height: 34 }, widget: { type: 'text', text: title, size: 24, weight: 800, align: 'center' } }),
       ...actions.map((label, index) => boxNode({
         id: 'action-' + slugify(label),
@@ -482,7 +482,7 @@ async function resolveBuiltInAssets(kind: 'signal-drift' | 'beacon-run' | 'start
         podium: { notes: [[392, .18, 0], [523, .17, .12], [660, .24, .26], [784, .38, .42]], waveform: 'sine' }
       },
       gameData: { game: 'signal-drift', circuits: ['copper-basin', 'brineworks', 'cinder-switchback', 'midnight-relay'] },
-      uiTree: defaultMenuLayout('Signal Drift', ['Start Race', 'Events', 'Garage'])
+      uiTree: defaultMenuLayout('Signal Drift', ['Start Race', 'Events', 'Garage'], 'top-left')
     }
   }
 

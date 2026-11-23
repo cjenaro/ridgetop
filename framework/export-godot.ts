@@ -12,19 +12,18 @@ function srgbToLinear(c: number) {
   return c <= 0.04045 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4)
 }
 
-/** Encode one or more Ridgetop InstanceBatches into a valid binary glTF 2.0 (.glb) mesh with flat normals and linear vertex colors. */
+/** Encode one or more Ridgetop InstanceBatches into a valid binary glTF 2.0 (.glb) mesh with flat normals and per-color PBR/emissive materials. */
 export function encodeGlb(batches: readonly InstanceBatch[], name = 'RidgetopModel'): Buffer {
-  let totalVerts = 0
-  for (const batch of batches) totalVerts += batch.count * batch.mesh.vertexCount
-  if (!totalVerts) throw new RangeError('Cannot encode an empty glTF mesh')
+  // Group geometry by quantized (r, g, b, unlit) so every glTF viewer (Godot 4, Blender, Switch) renders exact colors & glow natively.
+  type Bucket = {
+    r: number; g: number; b: number; unlit: number
+    positions: number[]
+    normals: number[]
+    min: [number, number, number]
+    max: [number, number, number]
+  }
+  const buckets = new Map<string, Bucket>()
 
-  const positions = new Float32Array(totalVerts * 3)
-  const normals = new Float32Array(totalVerts * 3)
-  const colors = new Float32Array(totalVerts * 3)
-  const min = [Infinity, Infinity, Infinity]
-  const max = [-Infinity, -Infinity, -Infinity]
-
-  let cursor = 0
   for (const batch of batches) {
     const vData = batch.mesh.data
     const vCount = batch.mesh.vertexCount
@@ -33,11 +32,19 @@ export function encodeGlb(batches: readonly InstanceBatch[], name = 'RidgetopMod
       const base = i * 16
       const px = iData[base], py = iData[base + 1], pz = iData[base + 2]
       const sx = iData[base + 4], sy = iData[base + 5], sz = iData[base + 6]
-      const qx = iData[base + 8], qy = iData[base + 9], qz = iData[base + 10], qw = iData[base + 11]
-      const r = srgbToLinear(iData[base + 12])
-      const g = srgbToLinear(iData[base + 13])
-      const b = srgbToLinear(iData[base + 14])
+      const r = srgbToLinear(Math.max(0, Math.min(1, iData[base + 8])))
+      const g = srgbToLinear(Math.max(0, Math.min(1, iData[base + 9])))
+      const b = srgbToLinear(Math.max(0, Math.min(1, iData[base + 10])))
+      const unlit = Math.max(0, Math.min(1, iData[base + 11]))
+      const qx = iData[base + 12], qy = iData[base + 13], qz = iData[base + 14], qw = iData[base + 15]
       const q: readonly [number, number, number, number] = [qx, qy, qz, qw]
+
+      const key = `${Math.round(r * 1000)}:${Math.round(g * 1000)}:${Math.round(b * 1000)}:${Math.round(unlit * 100)}`
+      let bucket = buckets.get(key)
+      if (!bucket) {
+        bucket = { r, g, b, unlit, positions: [], normals: [], min: [Infinity, Infinity, Infinity], max: [-Infinity, -Infinity, -Infinity] }
+        buckets.set(key, bucket)
+      }
 
       for (let v = 0; v < vCount; v++) {
         const vb = v * 6
@@ -45,22 +52,63 @@ export function encodeGlb(batches: readonly InstanceBatch[], name = 'RidgetopMod
         const wx = px + rx, wy = py + ry, wz = pz + rz
         const [nx, ny, nz] = rotateVec3(q, [vData[vb + 3] / sx, vData[vb + 4] / sy, vData[vb + 5] / sz])
         const nLen = Math.hypot(nx, ny, nz) || 1
-        const out = cursor * 3
-        positions[out] = wx; positions[out + 1] = wy; positions[out + 2] = wz
-        normals[out] = nx / nLen; normals[out + 1] = ny / nLen; normals[out + 2] = nz / nLen
-        colors[out] = r; colors[out + 1] = g; colors[out + 2] = b
-        if (wx < min[0]) min[0] = wx; if (wx > max[0]) max[0] = wx
-        if (wy < min[1]) min[1] = wy; if (wy > max[1]) max[1] = wy
-        if (wz < min[2]) min[2] = wz; if (wz > max[2]) max[2] = wz
-        cursor++
+        bucket.positions.push(wx, wy, wz)
+        bucket.normals.push(nx / nLen, ny / nLen, nz / nLen)
+        if (wx < bucket.min[0]) bucket.min[0] = wx; if (wx > bucket.max[0]) bucket.max[0] = wx
+        if (wy < bucket.min[1]) bucket.min[1] = wy; if (wy > bucket.max[1]) bucket.max[1] = wy
+        if (wz < bucket.min[2]) bucket.min[2] = wz; if (wz > bucket.max[2]) bucket.max[2] = wz
       }
     }
   }
 
-  const posBytes = Buffer.from(positions.buffer, positions.byteOffset, positions.byteLength)
-  const normBytes = Buffer.from(normals.buffer, normals.byteOffset, normals.byteLength)
-  const colBytes = Buffer.from(colors.buffer, colors.byteOffset, colors.byteLength)
-  const binRaw = Buffer.concat([posBytes, normBytes, colBytes])
+  if (!buckets.size) throw new RangeError('Cannot encode an empty glTF mesh')
+
+  const chunks: Buffer[] = []
+  const materials: Record<string, unknown>[] = []
+  const primitives: Record<string, unknown>[] = []
+  const bufferViews: Record<string, unknown>[] = []
+  const accessors: Record<string, unknown>[] = []
+  let byteOffset = 0
+
+  for (const bucket of buckets.values()) {
+    const vertCount = bucket.positions.length / 3
+    const posArr = new Float32Array(bucket.positions)
+    const normArr = new Float32Array(bucket.normals)
+    const posBuf = Buffer.from(posArr.buffer, posArr.byteOffset, posArr.byteLength)
+    const normBuf = Buffer.from(normArr.buffer, normArr.byteOffset, normArr.byteLength)
+
+    const posView = bufferViews.length
+    bufferViews.push({ buffer: 0, byteOffset, byteLength: posBuf.length, target: 34962 })
+    byteOffset += posBuf.length
+    chunks.push(posBuf)
+
+    const normView = bufferViews.length
+    bufferViews.push({ buffer: 0, byteOffset, byteLength: normBuf.length, target: 34962 })
+    byteOffset += normBuf.length
+    chunks.push(normBuf)
+
+    const posAcc = accessors.length
+    accessors.push({ bufferView: posView, componentType: 5126, count: vertCount, type: 'VEC3', min: bucket.min, max: bucket.max })
+    const normAcc = accessors.length
+    accessors.push({ bufferView: normView, componentType: 5126, count: vertCount, type: 'VEC3' })
+
+    const matIndex = materials.length
+    const mat: Record<string, unknown> = {
+      name: `Flat_${matIndex}`,
+      pbrMetallicRoughness: {
+        baseColorFactor: [bucket.r, bucket.g, bucket.b, 1],
+        metallicFactor: 0,
+        roughnessFactor: 0.92
+      }
+    }
+    if (bucket.unlit > 0.02) {
+      mat.emissiveFactor = [bucket.r * bucket.unlit, bucket.g * bucket.unlit, bucket.b * bucket.unlit]
+    }
+    materials.push(mat)
+    primitives.push({ attributes: { POSITION: posAcc, NORMAL: normAcc }, material: matIndex })
+  }
+
+  const binRaw = Buffer.concat(chunks)
   const binPad = Buffer.alloc(pad4(binRaw.length), 0)
   const binChunk = Buffer.concat([binRaw, binPad])
 
@@ -69,32 +117,11 @@ export function encodeGlb(batches: readonly InstanceBatch[], name = 'RidgetopMod
     scene: 0,
     scenes: [{ name, nodes: [0] }],
     nodes: [{ name, mesh: 0 }],
-    materials: [{
-      name: 'RidgetopFlat',
-      pbrMetallicRoughness: {
-        baseColorFactor: [1, 1, 1, 1],
-        metallicFactor: 0,
-        roughnessFactor: 1
-      }
-    }],
-    meshes: [{
-      name,
-      primitives: [{
-        attributes: { POSITION: 0, NORMAL: 1, COLOR_0: 2 },
-        material: 0
-      }]
-    }],
+    materials,
+    meshes: [{ name, primitives }],
     buffers: [{ byteLength: binChunk.length }],
-    bufferViews: [
-      { buffer: 0, byteOffset: 0, byteLength: posBytes.length, target: 34962 },
-      { buffer: 0, byteOffset: posBytes.length, byteLength: normBytes.length, target: 34962 },
-      { buffer: 0, byteOffset: posBytes.length + normBytes.length, byteLength: colBytes.length, target: 34962 }
-    ],
-    accessors: [
-      { bufferView: 0, componentType: 5126, count: totalVerts, type: 'VEC3', min, max },
-      { bufferView: 1, componentType: 5126, count: totalVerts, type: 'VEC3' },
-      { bufferView: 2, componentType: 5126, count: totalVerts, type: 'VEC3' }
-    ]
+    bufferViews,
+    accessors
   }
 
   const jsonRaw = Buffer.from(JSON.stringify(gltf), 'utf8')
@@ -259,7 +286,7 @@ function anchorLines(node: LayoutNode): string[] {
       'grow_vertical = 0'
     ]
   }
-  return ['layout_mode = 1', `offset_left = ${inset}.0`, `offset_top = ${inset}.0`]
+  return ['layout_mode = 1', `offset_left = ${inset}.0`, `offset_top = ${Math.max(56, inset)}.0`]
 }
 
 /** Translate a Ridgetop pure-math LayoutNode UI tree into a styled Godot 4 `.tscn` Control scene. */
@@ -568,6 +595,10 @@ func _setup_showcase() -> void:
 \tvar names: Array = game_data.get("models", [])
 \tfor i in range(names.size()):
 \t\t_spawn_model(str(names[i]), Vector3((i - (names.size() - 1) * 0.5) * 2.4, 0.0, 0.0), showcase_root)
+\tvar cam := get_node_or_null("Camera3D") as Camera3D
+\tif cam:
+\t\tcam.position = Vector3(-1.2, 2.2, 4.8)
+\t\tcam.look_at(Vector3(-0.35, 0.45, 0.0), Vector3.UP)
 \t_update_hud()
 
 func _unhandled_input(event: InputEvent) -> void:
