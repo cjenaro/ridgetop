@@ -1,12 +1,11 @@
 body.beacon, body.race-page {
+  margin: 0;
   overflow: hidden;
   overscroll-behavior: none;
+  background: #101b20;
 }
 
 main.game-viewport {
-  --inset: clamp(10px, 2vw, 24px);
-  --caption: #bacac4;
-  --panel: #17272b;
   position: relative;
   isolation: isolate;
   width: 100%;
@@ -16,147 +15,21 @@ main.game-viewport {
   padding: 0;
   overflow: hidden;
   background: #142431;
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-touch-callout: none;
 }
 
-.playfield, .game-layer {
+.playfield, .game-layer, .ui-layer {
   position: absolute;
   inset: 0;
   width: 100%;
   height: 100%;
   aspect-ratio: auto;
+  display: block;
   outline: none;
 }
 
 .game-layer { pointer-events: none; }
+.ui-layer { touch-action: none; }
 .sprite-layer { image-rendering: pixelated; }
-
-.game-readout {
-  position: absolute;
-  inset: 0 auto auto 0;
-  width: 1px;
-  height: 1px;
-  overflow: hidden;
-  clip-path: inset(50%);
-  white-space: nowrap;
-}
-
-.play-controls { position: absolute; inset: 0; pointer-events: none; }
-.game-actions, .touch-deck {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 7px;
-  position: absolute;
-}
-.game-actions {
-  top: var(--inset);
-  right: var(--inset);
-  justify-content: flex-end;
-}
-.game-actions button, .touch-deck button {
-  pointer-events: auto;
-  border-color: #cee9d653;
-  background: #111d26e8;
-  color: #f4fff7;
-  min-height: 40px;
-}
-.game-actions button:hover, .touch-deck button:active { background: #354940; }
-.touch-deck {
-  display: none;
-  left: var(--inset);
-  right: var(--inset);
-  bottom: var(--inset);
-  justify-content: space-between;
-}
-.touch-deck > div { display: flex; gap: 6px; }
-.touch-deck button { min-width: 47px; min-height: 48px; padding-inline: 10px; touch-action: none; }
-@media (any-pointer: coarse) { .touch-deck { display: flex; } }
-
-.game-overlay {
-  position: absolute;
-  z-index: 2;
-  inset: 0;
-  display: grid;
-  align-items: safe center;
-  justify-items: center;
-  overflow: auto;
-  overscroll-behavior: contain;
-  padding: max(var(--inset), 16px);
-  background: #0a121ac2;
-}
-.game-title {
-  justify-items: start;
-  padding-inline: clamp(20px, 8vw, 120px);
-  background: linear-gradient(90deg, #0b161ff5 0%, #131e26d9 38%, #131e2633 76%, #131e2619 100%);
-}
-.hero-card, .game-card { width: min(100%, 460px); }
-.hero-card h1 {
-  margin: 3px 0 18px;
-  font-size: clamp(3.2rem, 10vw, 8rem);
-  line-height: .82;
-  text-transform: uppercase;
-}
-.hero-card > p { max-width: 32ch; }
-.hero-mark, .chapter, .campaign-progress {
-  color: var(--accent);
-  font: 700 .76rem var(--mono);
-  letter-spacing: .09em;
-}
-.hero-mark { display: flex; gap: 8px; align-items: center; text-transform: uppercase; }
-.hero-mark img, .ending-card img, .character img { image-rendering: pixelated; object-fit: contain; }
-.chapter { margin: 0 0 10px; text-transform: uppercase; }
-.title-actions, .menu-buttons, .menu-row {
-  display: flex;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: 8px;
-}
-.title-actions, .menu-buttons { margin-top: 18px; }
-.hero-card .campaign-progress { margin-block: 14px; }
-.game-card {
-  padding: clamp(14px, 3.5vw, 28px);
-  background: var(--panel);
-  border: 1px solid var(--border);
-  border-radius: 10px;
-}
-.game-card h2 { margin: 0; font-size: clamp(1.5rem, 4vw, 2.5rem); letter-spacing: -.04em; }
-.game-card p, .hero-card p { color: var(--caption); }
-.game-card .chapter, .hero-card .chapter, .hero-card .campaign-progress { color: var(--accent); }
-.menu-row { margin: 12px 0 4px; justify-content: space-between; }
-.journal-card .menu-row { margin-top: 0; }
-.control-guide { margin: 14px 0 0; font-size: .78rem; line-height: 1.8; }
-.centered { text-align: center; }
-.centered .menu-buttons { justify-content: center; }
-.journal, .journal-card .results { display: grid; gap: 12px; margin-top: 12px; }
-.journal .character { display: flex; align-items: center; gap: 8px; }
-.journal h3, .results h3 { font-size: .88rem; color: var(--accent); margin: 0; }
-.journal p, .results li { font-size: .83rem; margin-top: 4px; }
-.results ol { margin: 0; padding-left: 22px; }
-
-.game-toast {
-  position: absolute;
-  z-index: 3;
-  bottom: calc(var(--inset) + 60px);
-  left: 50%;
-  transform: translateX(-50%);
-  width: max-content;
-  max-width: calc(100% - 24px);
-  margin: 0;
-  overflow-wrap: anywhere;
-  background: #0b1821f5;
-  color: #eaf1e9;
-  border: 1px solid var(--border);
-  border-radius: 6px;
-  font-size: .85rem;
-  padding: 8px 12px;
-}
-.game-toast:empty { display: none; }
-
-@media (max-width: 520px) {
-  .game-actions { gap: 4px; }
-  .game-actions button { padding-inline: 7px; font-size: .74rem; min-height: 36px; }
-  .game-title { background: #0e1921b6; align-items: safe center; }
-  .title-actions { gap: 6px; }
-  .title-actions button { padding-inline: 9px; }
-  .hero-mark img { width: 35px; height: 44px; }
-}

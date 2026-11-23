@@ -106,7 +106,7 @@ Both example games import their own game modules and Ridgetop's public APIs. The
 
 | Layer | Ridgetop supplies | Beacon Run supplies |
 | --- | --- | --- |
-| Browser and controls | `createGamePage`, `createHud`, keyboard and pointer input, clipboard and lifecycle handling, the fixed-step loop, sprite atlases, and a Web Audio synthesizer | HUD design, menus, quest journal, input availability by screen, sprite poses, sound motifs, and artwork |
+| Browser and controls | `createGamePage`, `createPlatform`, `createHud`, keyboard, pointer, and gamepad input (`bindActionControls`, `bindMenuGamepad`), clipboard and lifecycle handling, the fixed-step loop, sprite atlases, and a Web Audio synthesizer | HUD design, menus, quest journal, input availability by screen, sprite poses, sound motifs, and artwork |
 | Rendering | WebGPU, WebGL 2, and Canvas 2D backends, flat-shaded meshes, hardware instancing where available, culling, and camera projection | Island meshes, course colors, and the placement of terrain, pickups, and characters |
 | Simulation | A fixed 60 Hz step and `createPlatformer` for horizontal movement, gravity, jump timing, launch pads, and platform landing | Course geometry, movement constants, hazards, crystals, checkpoints, finish rules, and XP and loot |
 | Online play | HTTP hosting, authoritative room ticks, input validation, stream authentication and reconnects, and browser-side snapshot interpolation | Race and expedition routes, region access, quest rewards, and public fields in each snapshot |
@@ -202,6 +202,37 @@ Signal Drift is the first downloadable single-player example. The framework arch
 | First-time player | Watch a new player start unaided, learn the controls, finish one event, spend the reward, quit, and find that upgrade on returning. Repeat with the control and sound settings you intend to ship. |
 
 On itch.io, an HTML game can accept donations. For a minimum purchase price on the game download, the platform documents the Downloadable project type. [itch.io HTML game guide](https://itch.io/docs/creators/html5)
+
+### Package for Web, Steam (Desktop / Steam Deck), Mobile (iOS / Android), and Godot (Switch / Consoles)
+
+Ridgetop includes a zero-dependency packager that **tree-shakes only the ES modules your game actually imports** and **drops all studio/authoring/testing artifacts** (`reviews/`, `art/library/`, `testing*.js`, `serve.js`, `art-review.js`, `verification.js`, and unused framework or UI modules). All non-web targets are strictly opt-in:
+
+```sh
+# Minimal tree-shaken static web bundle (zero native wrappers, zero studio tools)
+npm run package -- --target web --game signal-drift
+
+# Package Signal Drift for Steam (Electron), Mobile (Capacitor), Web, and Godot 4
+npm run package -- --target all --game signal-drift
+
+# Export a Godot 4 project (GLB 3D meshes, WAV audio, Control UI scene, joypad map) for Switch / consoles
+npm run package -- --target godot --project ../my-game
+```
+
+Generated projects created with `npm run create-game` include `npm run package:web`, `npm run package:steam`, `npm run package:mobile`, and `npm run package:godot` directly inside their own `package.json`.
+
+- **Web (`--target web`)**: Clean, tree-shaken static web bundle with zero wrappers and zero studio files.
+- **Steam / Desktop (`--target steam`)**: Electron project with a privileged `ridgetop://app/` secure protocol (WebGPU, ES modules, and `fetch()` without a local port), atomic filesystem saves ready for Steam Cloud Auto-Cloud, Steam Deck fullscreen auto-detection, optional `steamworks.js` integration (`steam_appid.txt`, achievements, overlay), `electron-builder.yml` (Win/Mac/Linux/AppImage), and a 512×512 baked `build/icon.png`.
+- **Mobile (`--target mobile`)**: Capacitor project with `viewport-fit=cover`, native bridge (`www/ridgetop-mobile-bridge.js`) connecting saves to `@capacitor/preferences`, haptics to `@capacitor/haptics`, lifecycle pause/audio suspend to `@capacitor/app`, orientation lock, and 1024×1024 baked `resources/icon.png` and `resources/splash.png`.
+- **Godot 4 (`--target godot`)**: Exports binary glTF 2.0 (`.glb`) flat-shaded vertex-colored 3D models, offline-baked 16-bit PCM `.wav` sound effects, `data/game.json`, a Godot `Control` UI scene (`scenes/ui.tscn`) translated from Ridgetop's Layout SDK, and a joypad/Switch-mapped `project.godot` ready for console export templates.
+
+### Cross-platform Canvas UI & Layout SDK (`ridgetop/ui`)
+
+Instead of HTML/CSS menus, Ridgetop ships a zero-dependency, state-machine-driven UI and pure-math Layout SDK designed to match your game's low-poly art and run identically across Web, Steam Deck, Mobile, and Godot exports. Each primitive lives in its own module so unused widgets are dropped at package time:
+
+- `framework/ui-machine.ts` — `createMachine`, `definePrimitive`, and `createUiAgent` (`snapshot`, `query`, `act` for headless tests and coding agents)
+- `framework/ui-layout.ts` — pure-math `resolveLayout` (`column`, `row`, `overlay`, `boxNode`, `spacerNode`, safe-area insets, zero DOM)
+- Opt-in element primitives: `framework/ui-button.ts`, `framework/ui-toggle.ts`, `framework/ui-select.ts`, `framework/ui-slider.ts`, `framework/ui-menu.ts` (`menuPrimitive`, `dialogPrimitive`)
+- `framework/ui-canvas.ts` — `createCanvasUi` and `createUiTheme(game.palette)` for faceted low-poly Canvas rendering with unified pointer, touch, keyboard, and gamepad input (starter games use this directly with zero HTML/CSS menus)
 
 ## Make a sprite
 

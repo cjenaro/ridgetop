@@ -121,6 +121,12 @@ export function renderMeshFrame(canvas: HTMLCanvasElement, camera: Matrix, batch
   finally { renderer.dispose() }
 }
 
+/** Render a single transparent, depth-tested RGBA frame without a DOM canvas. */
+export function renderMeshPixels(camera: Matrix, batches: readonly InstanceBatch[], size: number, lighting?: Lighting) {
+  if (!Number.isInteger(size) || size < 1 || size > 2048) throw new RangeError('Render size must be 1–2048 pixels')
+  return meshViewPixels([camera], batches, size, packLighting(lighting))
+}
+
 type SpriteCamera = { span: number; center?: Vec3; frameSize?: number; elevation?: number; lighting?: Lighting }
 
 /** Bake the same eight mesh views on the server or in the browser, without a canvas. */

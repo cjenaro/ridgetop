@@ -1,3 +1,39 @@
+<style>
+  html, body { height: auto; overflow: auto; font-family: "Avenir Next", system-ui, sans-serif; }
+  .board { width: min(100%, 1000px); height: clamp(270px, 62vh, 610px); margin: 16px auto; border: 1px solid #52716a; border-radius: 14px; }
+  .testing-bar, .pick-line { width: min(100%, 1000px); margin: 12px auto; display: flex; align-items: center; gap: 10px; flex-wrap: wrap; padding: 0 12px; }
+  .testing-bar strong { color: #ffcd82; }
+  .testing-bar button, .testing-bar select, #inspection button, #inspection select { border: 1px solid #54716c; background: #213a3a; border-radius: 6px; color: inherit; font: inherit; padding: .45em .75em; cursor: pointer; }
+  .testing-bar select, #object-list { max-width: min(60vw, 275px); }
+  .testing-paused .board { cursor: crosshair; }
+  .picked-object { position: absolute; pointer-events: none; border: 1px solid #ffcc76; border-radius: 4px; }
+  #inspection { width: min(100%, 1000px); padding: 14px clamp(10px, 2vw, 22px); margin: 16px auto; border: 1px solid #53726a; border-radius: 10px; background: #1a3031; }
+  #inspection h2 { margin: 12px 0 3px; }
+  #pin-context, #pin-instruction, #testing-status, .pick-line p, figcaption { color: #b5ccbf; font-size: .86rem; }
+  #testing-status { width: min(100%, 1000px); margin: 8px auto; padding: 0 12px; overflow-wrap: anywhere; }
+  #edit-source { color: #b5ccbf; overflow-wrap: anywhere; }
+  .inspection-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; margin-top: 12px; }
+  .pin-views { display: flex; gap: 8px; align-items: flex-start; }
+  .pin-views figure { flex: 1; min-width: 0; }
+  #inspection figure { margin: 0 0 8px; }
+  .pin-views canvas, .pin-views img, .game-size canvas { display: block; background: #21393e; }
+  .pin-views canvas, .pin-views img { width: 100%; height: auto; }
+  #pin-image { touch-action: none; cursor: crosshair; }
+  .game-size canvas { max-width: 100%; }
+  .pin-form { display: grid; align-content: start; gap: 10px; }
+  .pin-form label { display: grid; gap: 4px; }
+  .pin-form input, .pin-form textarea { width: 100%; background: #142628; color: inherit; border: 1px solid #637e75; border-radius: 4px; padding: 5px; font: inherit; }
+  .pin-form input[type=checkbox] { width: auto; }
+  .pin-form details > label { display: block; margin: 6px 0; }
+  .pin-form summary { cursor: pointer; color: #ffcd82; }
+  .pin-form fieldset { border: 0; padding: 0; margin: 6px 0; }
+  .axis-fields { display: grid; grid-template-columns: repeat(3, minmax(0,1fr)); gap: 6px; }
+  .axis-fields label, .pin-form legend { font-size: .8rem; }
+  .review-thread { border-top: 1px solid #53726a; padding-top: 8px; }
+  .review-thread p, .review-thread li { white-space: pre-wrap; overflow-wrap: anywhere; }
+  .review-thread ul:empty { display: none; }
+  @media (max-width: 650px) { .inspection-grid { grid-template-columns: 1fr; } }
+</style>
 <div id="testing-bar" class="testing-bar">
   <strong>Testing mode</strong>
   <button type="button" id="inspect">Pause &amp; inspect</button>

@@ -25,7 +25,7 @@ export async function createGame(destination: string) {
     await cp(new URL('starter/art/library/', root), join(game, 'art', 'library'), { recursive: true })
     await writeFile(join(game, 'art', 'overrides.json'), '{}\n')
     for (const file of ['index.html', 'style.css', 'testing.html']) await cp(new URL('starter/' + file, root), join(game, file))
-    for (const name of ['game', 'main', 'serve', 'testing', 'testing-scene', 'preview-art', 'art-library']) {
+    for (const name of ['game', 'main', 'serve', 'testing', 'testing-scene', 'preview-art', 'art-library', 'package']) {
       await copyModule(new URL('starter/' + name + '.js', dist), join(game, name + '.js'))
     }
     for (const file of ['README.md', 'AGENTS.md', 'ART.md']) await cp(new URL('starter/' + file, root), join(temporary, file))
@@ -40,8 +40,17 @@ export async function createGame(destination: string) {
     await cp(new URL('low-poly-models.html', dist), join(temporary, 'low-poly-models.html'))
     await writeFile(join(temporary, 'package.json'), JSON.stringify({
       name: basename(target).toLowerCase().replace(/[^a-z0-9-]+/g, '-') || 'ridgetop-game',
-      private: true, type: 'module', scripts: { start: 'node game/serve.js', playtest: 'node game/serve.js --testing',
-        'preview-art': 'node game/preview-art.js', 'art-library': 'node game/art-library.js' }, engines: { node: '>=22.18' }
+      private: true, type: 'module', scripts: {
+        start: 'node game/serve.js',
+        playtest: 'node game/serve.js --testing',
+        'preview-art': 'node game/preview-art.js',
+        'art-library': 'node game/art-library.js',
+        package: 'node game/package.js',
+        'package:web': 'node game/package.js --target web',
+        'package:steam': 'node game/package.js --target steam',
+        'package:mobile': 'node game/package.js --target mobile',
+        'package:godot': 'node game/package.js --target godot'
+      }, engines: { node: '>=22.18' }
     }, null, 2) + '\n')
     // Reserve the destination exclusively. A concurrent invocation or an existing project keeps its directory.
     await mkdir(target)

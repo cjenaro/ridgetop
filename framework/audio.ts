@@ -43,6 +43,10 @@ export function createSynthAudio<Name extends string>(motifs: Record<Name, reado
       muted = value
       if (output) output.gain.value = muted ? 0 : volume
     },
+    suspend() { context?.suspend?.().catch(() => {}) },
+    resume() {
+      if (!muted && context?.state === 'suspended') context.resume().catch(() => {})
+    },
     close() { context?.close().catch(() => {}) }
   }
 }

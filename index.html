@@ -2,125 +2,19 @@
 <html lang="en">
 <head>
   <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <meta name="theme-color" content="#111c20">
   <title>Beacon Run · Ridgetop</title>
   <link rel="icon" href="/game/assets/scout.png" type="image/png">
-  <link rel="stylesheet" href="/style.css">
   <link rel="stylesheet" href="/game-ui.css">
   <script type="module" src="/main.js"></script>
 </head>
-<body class="beacon">
+<body class="beacon" data-hosted="1">
   <main class="game-viewport" aria-label="Beacon Run">
-    <canvas id="stage" class="playfield" width="960" height="540" aria-label="Beacon Run course"></canvas>
+    <canvas id="stage" class="playfield" width="960" height="540" tabindex="-1" aria-label="Beacon Run course"></canvas>
     <canvas id="sprites" class="game-layer sprite-layer" width="960" height="540" aria-hidden="true"></canvas>
     <canvas id="beacon-hud" class="game-layer" width="960" height="540" aria-hidden="true"></canvas>
-
-    <div id="hud" class="game-readout" hidden>
-      <span>Crystals <span id="crystals">0 / 5</span></span>
-      <span id="chip">Signal chip</span>
-      <span id="checkpoint" hidden>Checkpoint saved</span>
-      <span id="time" aria-label="Elapsed time">0:00.00</span>
-      <span id="falls">0 falls</span>
-      <span id="best" hidden>Best —</span>
-    </div>
-    <div class="game-readout">
-      <span id="chapter"></span>
-      <span id="connection" role="status">Loading</span>
-      <span id="backend">Starting renderer</span>
-    </div>
-
-    <div id="controls" class="play-controls" hidden>
-      <div class="game-actions">
-        <button id="journal-open" class="quiet" type="button" hidden>Journal</button>
-        <button id="pause" class="quiet" type="button">Menu</button>
-      </div>
-      <div class="touch touch-deck platform-touch" aria-label="Touch controls">
-        <div>
-          <button type="button" data-control="left" aria-label="Move left">←</button>
-          <button type="button" data-control="right" aria-label="Move right">→</button>
-        </div>
-        <button type="button" data-control="jump">Jump</button>
-      </div>
-    </div>
-
-    <section id="title-screen" class="game-overlay game-title">
-      <div class="hero-card">
-        <div class="hero-mark"><img src="/game/assets/scout.png" alt="" width="48" height="60"><span>Wayfarers’ Guild</span></div>
-        <h1>Beacon<br>Run</h1>
-        <p>Join the Wayfarers’ Guild and bring six island beacons back online.</p>
-        <div class="title-actions">
-          <button type="button" id="expedition" disabled>Join expedition</button>
-          <button type="button" id="campaign" class="quiet" disabled>Start campaign</button>
-          <button type="button" id="practice" class="quiet" disabled>Practice</button>
-          <button type="button" id="view-ending" class="quiet" hidden>View ending</button>
-        </div>
-        <p id="campaign-progress" class="campaign-progress">0 / 6 relays online</p>
-        <a class="text-link" href="/racing">Play Signal Drift</a>
-      </div>
-    </section>
-
-    <section id="pause-screen" class="game-overlay" role="dialog" aria-label="Game menu" hidden>
-      <div class="game-card">
-        <p class="chapter" id="menu-status">Paused</p>
-        <h2 id="course-heading">Moss Ridge</h2>
-        <p id="briefing"></p>
-        <div class="menu-row">
-          <label for="course">Course</label>
-          <select id="course"></select>
-        </div>
-        <p class="control-guide">Move with <kbd>A</kbd> <kbd>D</kbd> or the arrows. Jump with <kbd>Space</kbd>.</p>
-        <div class="menu-buttons">
-          <button id="resume" type="button">Resume</button>
-          <button id="reset" class="quiet" type="button">Restart</button>
-          <button id="invite" class="quiet" type="button">Invite players</button>
-          <button id="sound" class="quiet" type="button" aria-pressed="true">Sound on</button>
-          <button id="mode" class="quiet" type="button" hidden>Solo practice</button>
-          <button id="pause-menu" class="quiet" type="button">Main menu</button>
-        </div>
-      </div>
-    </section>
-    <section id="journal-screen" class="game-overlay" role="dialog" aria-label="Expedition journal" hidden>
-      <div class="game-card journal-card">
-        <div class="menu-row">
-          <h2>Journal</h2>
-          <button id="journal-close" class="quiet" type="button">Close</button>
-        </div>
-        <div id="journal" class="journal" hidden>
-          <div class="character">
-            <img src="/game/assets/scout.png" alt="" width="40" height="50">
-            <div><h3 id="character-name">Wayfarer</h3><p id="character-rank"></p></div>
-          </div>
-          <div><h3>Zone quests</h3><p id="zone-quest"></p><p id="guild-quest"></p></div>
-          <div><h3>Relic collection</h3><p id="relics"></p></div>
-        </div>
-        <div id="results" class="results" hidden>
-          <h3 id="roster-heading">Room standings</h3>
-          <ol id="standings"></ol>
-        </div>
-      </div>
-    </section>
-    <section id="finish" class="game-overlay" role="dialog" aria-label="Relay results" hidden>
-      <div class="game-card centered">
-        <p class="chapter">Relay restored</p>
-        <h2 id="finish-time"></h2>
-        <p id="finish-medal"></p>
-        <div class="menu-buttons">
-          <button id="again" class="quiet" type="button">Play again</button>
-          <button id="next" type="button">Next course</button>
-        </div>
-      </div>
-    </section>
-    <section id="ending" class="game-overlay" role="dialog" aria-label="Campaign complete" hidden>
-      <div class="game-card centered ending-card">
-        <img src="/game/assets/scout.png" width="48" height="60" alt="">
-        <h2>Signal restored</h2>
-        <p>All six relays are lit. The valley can see its way home.</p>
-        <p id="ending-stats" class="campaign-progress"></p>
-        <div class="menu-buttons"><button id="ending-menu" type="button">Main menu</button></div>
-      </div>
-    </section>
-    <p id="message" class="game-toast" role="status"></p>
+    <canvas id="ui" class="ui-layer" width="960" height="540" aria-label="Beacon Run interface"></canvas>
   </main>
 </body>
 </html>

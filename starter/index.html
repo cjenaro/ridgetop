@@ -2,28 +2,16 @@
 <html lang="en">
 <head>
   <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <title>Ridgetop game starter</title>
   <link rel="stylesheet" href="./style.css">
   <script type="module" src="./main.js"></script>
 </head>
 <body>
-  <main>
-    <header><div><h1 id="title">Ridgetop</h1><p id="objective" role="status">Loading game art…</p></div>
-      <div class="tools"><label>View <select id="view"><option value="3d">3D models</option><option value="2d">2D sprites</option></select></label>
-      <button id="restart" type="button">Restart</button></div>
-    </header>
-    <section class="board" aria-label="Game board">
-      <canvas id="world" aria-label="3D playfield"></canvas>
-      <canvas id="sprites" hidden aria-label="2D playfield"></canvas>
-      <div class="score"><canvas id="icon" width="34" height="34" aria-hidden="true"></canvas><output id="count" aria-label="Pickups collected"></output></div>
-    </section>
-    <footer><p>Move with the arrow keys, WASD, or the direction buttons.</p>
-      <div class="pad" aria-label="Movement">
-        <button data-control="left" aria-label="Move left">←</button><button data-control="up" aria-label="Move up">↑</button>
-        <button data-control="down" aria-label="Move down">↓</button><button data-control="right" aria-label="Move right">→</button>
-      </div>
-    </footer>
+  <main class="board" aria-label="Game viewport">
+    <canvas id="world" aria-label="3D playfield"></canvas>
+    <canvas id="sprites" hidden aria-label="2D playfield"></canvas>
+    <canvas id="ui" aria-label="Game interface"></canvas>
   </main>
 </body>
 </html>

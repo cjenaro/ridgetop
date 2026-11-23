@@ -1,6 +1,8 @@
+import { createPlatform, resolveStorage } from './platform.ts'
+
 export function createGamePage() {
-  let storage: Storage | undefined
-  try { storage = window.localStorage } catch { /* The game can use session state. */ }
+  const storage = resolveStorage()
+  const platform = createPlatform()
 
   function element<T extends HTMLElement = HTMLElement>(id: string): T {
     const node = document.getElementById(id)
@@ -11,6 +13,7 @@ export function createGamePage() {
     element,
     url: new URL(window.location.href),
     storage,
+    platform,
     reducedMotion: window.matchMedia('(prefers-reduced-motion: reduce)'),
     text(id: string, value: string) {
       const node = element(id)

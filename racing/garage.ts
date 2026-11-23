@@ -5,6 +5,7 @@ const pixels = {
   '#': '#0a1621', a: '#2c4454', b: '#59788a', c: '#a3c1c5', d: '#e4f4e7',
   g: '#64dbb5', h: '#30826e', y: '#ffc978', o: '#a96c40', v: '#a58df2', w: '#6552a7'
 }
+
 const icons: Record<Upgrade, readonly string[]> = {
   motor: [
     '................', '......####......', '...####yy##.....', '..#cyyyyyy##....',
@@ -32,10 +33,9 @@ const icons: Record<Upgrade, readonly string[]> = {
   ]
 }
 
-function icon(part: Upgrade) {
+export function renderPartIcon(part: Upgrade) {
   const canvas = document.createElement('canvas')
   canvas.width = canvas.height = 16
-  canvas.setAttribute('aria-hidden', 'true')
   const ctx = canvas.getContext('2d')
   if (ctx) {
     icons[part].forEach((row, y) => Array.from(row).forEach((pixel, x) => {
@@ -68,100 +68,68 @@ const stats: Record<Upgrade, Stat[]> = {
   ]
 }
 
-const credits = new Intl.NumberFormat('en')
+const creditsFormat = new Intl.NumberFormat('en')
 
-export function createGaragePanel(root: HTMLElement, progress: Championship, onPurchase: () => void) {
-  const parts = root.querySelector<HTMLElement>('#garage-parts')
-  const install = root.querySelector<HTMLButtonElement>('#garage-install')
-  const balance = root.querySelector<HTMLElement>('#garage-credits')
-  const tier = root.querySelector<HTMLElement>('#garage-tier')
-  const heading = root.querySelector<HTMLElement>('#garage-part-name')
-  const comparison = root.querySelector<HTMLElement>('#garage-stats')
-  const feedback = root.querySelector<HTMLElement>('#garage-feedback')
+/** Headless Garage state + pixel-art icons consumed by Signal Drift's Canvas UI (zero HTML menus). */
+export function createGarageState(progress: Championship, onPurchase: () => void) {
   let selected: Upgrade = garageParts[0]
   let message = ''
-  const tiles = garageParts.map(part => {
-    const button = document.createElement('button')
-    const name = document.createElement('strong')
-    const pips = Array.from({ length: garage[part].costs.length }, () => document.createElement('i'))
-    const pipsRow = document.createElement('span')
-    const info = document.createElement('span')
-    const cost = document.createElement('small')
-    button.type = 'button'
-    button.className = 'garage-tile'
-    button.dataset.upgrade = part
-    name.textContent = garage[part].name
-    pipsRow.className = 'garage-pips'
-    pipsRow.setAttribute('aria-hidden', 'true')
-    pipsRow.append(...pips)
-    info.className = 'garage-tile-info'
-    info.append(name, pipsRow, cost)
-    button.append(icon(part), info)
-    button.onclick = () => {
-      selected = part
-      message = ''
-      paint()
-    }
-    parts.append(button)
-    return { part, button, pips, cost }
-  })
-
-  function paint() {
-    const part = garage[selected]
-    const level = progress.build[selected]
-    const cost = part.costs[level]
-    const shortage = cost === undefined ? 0 : Math.max(0, cost - progress.credits)
-    balance.textContent = credits.format(progress.credits)
-    heading.textContent = part.name
-    tier.textContent = level === 0 ? 'Stock part' : 'Tier ' + level + ' of ' + part.costs.length + ' fitted'
-    install.textContent = cost === undefined ? 'Fully upgraded' : 'Install · ' + credits.format(cost) + ' credits'
-    install.setAttribute('aria-disabled', String(cost === undefined || shortage > 0))
-    feedback.textContent = message || (shortage ? credits.format(shortage) + ' more credits needed' : '')
-    if (message && shortage) feedback.textContent += ' ' + credits.format(shortage) + ' more credits for the next tier.'
-
-    const current = vehicleStats(progress.build)
-    const after = cost === undefined ? undefined : vehicleStats({ ...progress.build, [selected]: level + 1 })
-    comparison.replaceChildren()
-    for (const { name, read } of stats[selected]) {
-      const label = document.createElement('dt')
-      const line = document.createElement('dd')
-      const before = document.createElement('span')
-      label.textContent = name
-      before.textContent = read(current)
-      line.append(before)
-      if (after) {
-        const arrow = document.createElement('span')
-        const upgrade = document.createElement('strong')
-        arrow.textContent = '→'
-        upgrade.textContent = read(after)
-        line.append(arrow, upgrade)
-      }
-      comparison.append(label, line)
-    }
-    for (const tile of tiles) {
-      const fitted = progress.build[tile.part]
-      const next = garage[tile.part].costs[fitted]
-      tile.button.setAttribute('aria-pressed', String(tile.part === selected))
-      tile.button.setAttribute('aria-label', garage[tile.part].name + ', ' + (fitted ? 'tier ' + fitted : 'stock') +
-        (next === undefined ? ', fully upgraded' : ', next tier costs ' + credits.format(next) + ' credits'))
-      tile.cost.textContent = next === undefined ? 'Maxed' : credits.format(next) + ' CR'
-      tile.pips.forEach((pip, i) => pip.classList.toggle('fitted', i < fitted))
-    }
-  }
-
-  install.onclick = () => {
-    if (install.getAttribute('aria-disabled') === 'true' || !buyUpgrade(progress, selected)) return
-    onPurchase()
-    message = garage[selected].name + ' tier ' + progress.build[selected] + ' installed.'
-    paint()
-  }
+  const iconCanvases = Object.fromEntries(garageParts.map(part => [part, renderPartIcon(part)])) as Record<Upgrade, HTMLCanvasElement>
 
   return {
     get part() { return selected },
+    icon(part: Upgrade) { return iconCanvases[part] },
+    select(part: Upgrade) {
+      selected = part
+      message = ''
+    },
     open() {
       message = ''
-      paint()
-      tiles.find(tile => tile.part === selected)?.button.focus({ preventScroll: true })
+    },
+    install() {
+      const level = progress.build[selected]
+      const cost = garage[selected].costs[level]
+      if (cost === undefined || progress.credits < cost || !buyUpgrade(progress, selected)) return false
+      onPurchase()
+      message = garage[selected].name + ' tier ' + progress.build[selected] + ' installed.'
+      return true
+    },
+    view() {
+      const part = garage[selected]
+      const level = progress.build[selected]
+      const cost = part.costs[level]
+      const shortage = cost === undefined ? 0 : Math.max(0, cost - progress.credits)
+      const current = vehicleStats(progress.build)
+      const after = cost === undefined ? undefined : vehicleStats({ ...progress.build, [selected]: level + 1 })
+      const statLines = stats[selected].map(({ name, read }) =>
+        after ? `${name}: ${read(current)}→${read(after)}` : `${name}: ${read(current)}`
+      )
+      const feedback = message
+        ? (shortage ? `${message} ${creditsFormat.format(shortage)} more credits for the next tier.` : message)
+        : (shortage ? `${creditsFormat.format(shortage)} more credits needed` : '')
+      return {
+        part: selected,
+        partName: part.name,
+        creditsText: creditsFormat.format(progress.credits),
+        tierText: level === 0 ? 'Stock part' : `Tier ${level} of ${part.costs.length} fitted`,
+        installLabel: cost === undefined ? 'Fully upgraded' : `Install · ${creditsFormat.format(cost)} credits`,
+        canInstall: cost !== undefined && shortage === 0,
+        feedback,
+        statLines,
+        tiles: garageParts.map(id => {
+          const fitted = progress.build[id]
+          const next = garage[id].costs[fitted]
+          return {
+            id,
+            name: garage[id].name,
+            fitted,
+            total: garage[id].costs.length,
+            costLabel: next === undefined ? 'Maxed' : `${creditsFormat.format(next)} CR`,
+            selected: id === selected,
+            icon: iconCanvases[id]
+          }
+        })
+      }
     }
   }
 }

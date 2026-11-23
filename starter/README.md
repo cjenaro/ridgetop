@@ -34,3 +34,17 @@ export const sprites = {
 Reload the browser to see the new art. A sprite override supplies the flat view and any HUD use of that asset. Its model recipe supplies the live 3D view. The 3D renderer tests depth for each pixel. Sprite mode draws transparent images from the back of the board to the front.
 
 The built-in models are `ranger`, `tile`, `pine`, `rock`, `crate`, `crystal`, `lantern`, and `spark`. The vendored framework includes the public ES modules and TypeScript declarations.
+
+## Package for Web, Steam, Mobile, and Godot (Switch / Consoles)
+
+The starter renders all in-game HUD and menus on Canvas using Ridgetop's zero-dependency UI & Layout SDK (`framework/ui-*.js`) — no HTML/CSS menus are shipped. All packaging targets automatically drop studio/testing files (`reviews/`, `art/library/`, `testing*.js`, `serve.js`, `verification.js`, `art-review.js`) and unused UI widgets:
+
+```sh
+npm run package:web       # minimal tree-shaken static web bundle
+npm run package:steam     # Electron + Steamworks bridge + atomic Cloud saves + 512x512 icon
+npm run package:mobile    # Capacitor iOS/Android project + native bridge + 1024x1024 icons
+npm run package:godot     # Godot 4 project (.glb 3D models, .wav audio, Control UI .tscn, joypad map)
+npm run package -- --target all --app-id com.studio.mygame --steam-app-id 480
+```
+
+See the generated `README.md` inside each output directory for `npm install` and store build steps.

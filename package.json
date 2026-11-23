@@ -12,6 +12,7 @@
     "test:review": "node tools/art-review-smoke.ts",
     "test:player": "node tools/player-smoke.ts",
     "create-game": "node tools/create-game.ts",
+    "package": "node tools/package-game.ts",
     "generate:sprites": "node tools/generate-sprites.ts",
     "verify": "node tools/verify-game.ts",
     "feel": "node tools/tune-jumps.ts",
@@ -35,6 +36,10 @@
     "./server": {
       "types": "./dist/framework/server.d.ts",
       "default": "./dist/framework/server.js"
+    },
+    "./ui": {
+      "types": "./dist/framework/ui.d.ts",
+      "default": "./dist/framework/ui.js"
     },
     "./art-review": {
       "types": "./dist/framework/art-review.d.ts",

@@ -1,7 +1,45 @@
 import type { RoomInput } from './types.ts'
 
+export type GamepadBinding =
+  | { button: number; threshold?: number }
+  | { axis: number; direction: -1 | 1; threshold?: number }
+
+const defaultGamepadBindings: Record<string, readonly GamepadBinding[]> = {
+  left: [{ button: 14 }, { axis: 0, direction: -1, threshold: .35 }],
+  right: [{ button: 15 }, { axis: 0, direction: 1, threshold: .35 }],
+  up: [{ button: 12 }, { axis: 1, direction: -1, threshold: .35 }],
+  down: [{ button: 13 }, { axis: 1, direction: 1, threshold: .35 }],
+  jump: [{ button: 0 }, { button: 12 }, { axis: 1, direction: -1, threshold: .55 }],
+  throttle: [{ button: 7, threshold: .2 }, { button: 0 }, { button: 12 }],
+  brake: [{ button: 6, threshold: .2 }, { button: 13 }],
+  drift: [{ button: 4 }, { button: 1 }],
+  pulse: [{ button: 5 }, { button: 2 }],
+  snare: [{ button: 3 }],
+  recover: [{ button: 8 }]
+}
+
+function readPads(): readonly Gamepad[] {
+  const getGamepads = globalThis.navigator?.getGamepads
+  if (typeof getGamepads !== 'function') return []
+  try {
+    return Array.from(getGamepads.call(globalThis.navigator) ?? []).filter((pad): pad is Gamepad => Boolean(pad && pad.connected))
+  } catch { return [] }
+}
+
+function bindingActive(pad: Gamepad, binding: GamepadBinding) {
+  if ('button' in binding) {
+    const button = pad.buttons?.[binding.button]
+    if (!button) return false
+    return button.pressed || button.value >= (binding.threshold ?? .5)
+  }
+  const value = pad.axes?.[binding.axis] ?? 0
+  const threshold = binding.threshold ?? .35
+  return binding.direction < 0 ? value <= -threshold : value >= threshold
+}
+
 export function bindActionControls<Action extends string>({
-  keys, buttons, enabled, onPause = () => {}, onGesture = () => {}, onPress = () => {}
+  keys, buttons, enabled, onPause = () => {}, onGesture = () => {}, onPress = () => {},
+  gamepad, pauseButtons = [9]
 }: {
   keys: Readonly<Record<string, Action>>
   buttons: Iterable<HTMLElement>
@@ -9,15 +47,82 @@ export function bindActionControls<Action extends string>({
   onPause?(): void
   onGesture?(): void
   onPress?(action: Action): void
+  gamepad?: false | Partial<Record<Action, readonly GamepadBinding[]>>
+  pauseButtons?: readonly number[]
 }) {
   const down = new Map<string, Action>()
   const pointers = new Map<number, Action>()
+  const padDown = new Set<Action>()
+  let padPauseDown = false
+  let padFrame: number | undefined
+  let disposed = false
   const controller = new AbortController()
   const listeners = { signal: controller.signal }
+
+  const actions = Array.from(new Set(Object.values(keys))) as Action[]
+  const padBindings = new Map<Action, readonly GamepadBinding[]>()
+  if (gamepad !== false) {
+    for (const action of actions) {
+      const explicit = gamepad?.[action]
+      const chosen = explicit ?? defaultGamepadBindings[action]
+      if (chosen?.length) padBindings.set(action, chosen)
+    }
+    if (gamepad) {
+      for (const [action, list] of Object.entries(gamepad) as [Action, readonly GamepadBinding[] | undefined][]) {
+        if (list?.length) padBindings.set(action, list)
+      }
+    }
+  }
 
   function clear() {
     down.clear()
     pointers.clear()
+    padDown.clear()
+  }
+
+  function poll() {
+    if (disposed || gamepad === false) return
+    const pads = readPads()
+    if (!pads.length) {
+      padDown.clear()
+      padPauseDown = false
+      return
+    }
+    const pausePressed = pads.some(pad => pauseButtons.some(index => bindingActive(pad, { button: index })))
+    if (pausePressed && !padPauseDown) {
+      onGesture()
+      onPause()
+    }
+    padPauseDown = pausePressed
+
+    const allow = enabled()
+    for (const [action, bindings] of padBindings) {
+      const pressed = allow && pads.some(pad => bindings.some(binding => bindingActive(pad, binding)))
+      if (pressed && !padDown.has(action)) {
+        onGesture()
+        onPress(action)
+      }
+      if (pressed) padDown.add(action)
+      else padDown.delete(action)
+    }
+  }
+
+  function stopPadLoop() {
+    if (padFrame !== undefined) {
+      globalThis.cancelAnimationFrame?.(padFrame)
+      padFrame = undefined
+    }
+  }
+
+  function ensurePadLoop() {
+    if (disposed || gamepad === false || padFrame !== undefined || typeof globalThis.requestAnimationFrame !== 'function') return
+    const step = () => {
+      padFrame = undefined
+      if (disposed) return
+      poll()
+      if (readPads().length) padFrame = globalThis.requestAnimationFrame(step)
+    }
+    padFrame = globalThis.requestAnimationFrame(step)
   }
 
   window.addEventListener('keydown', event => {
@@ -39,6 +144,17 @@ export function bindActionControls<Action extends string>({
   document.addEventListener('visibilitychange', () => {
     if (document.hidden) clear()
   }, listeners)
+  if (gamepad !== false) {
+    window.addEventListener('gamepadconnected', () => ensurePadLoop(), listeners)
+    window.addEventListener('gamepaddisconnected', () => {
+      if (!readPads().length) {
+        padDown.clear()
+        padPauseDown = false
+        stopPadLoop()
+      }
+    }, listeners)
+    if (readPads().length) ensurePadLoop()
+  }
 
   for (const button of buttons) {
     const action = button.dataset.control as Action
@@ -63,12 +179,19 @@ export function bindActionControls<Action extends string>({
 
   return {
     clear,
+    poll,
     active(action: Action) {
+      if (gamepad !== false && readPads().length) {
+        ensurePadLoop()
+        poll()
+      }
       for (const held of down.values()) if (held === action) return true
       for (const held of pointers.values()) if (held === action) return true
-      return false
+      return padDown.has(action)
     },
     dispose() {
+      disposed = true
+      stopPadLoop()
       controller.abort()
       clear()
     }
@@ -88,13 +211,115 @@ export function bindPlatformControls(options: {
       ArrowLeft: 'left', KeyA: 'left', ArrowRight: 'right', KeyD: 'right',
       Space: 'jump', ArrowUp: 'jump', KeyW: 'jump'
     },
+    gamepad: {
+      left: [{ button: 14 }, { axis: 0, direction: -1, threshold: .35 }],
+      right: [{ button: 15 }, { axis: 0, direction: 1, threshold: .35 }],
+      jump: [{ button: 0 }, { button: 12 }, { axis: 1, direction: -1, threshold: .55 }]
+    },
     onPress(action) { if (action === 'jump') jump++ }
   })
   return {
     clear: controls.clear,
+    poll: controls.poll,
     dispose: controls.dispose,
     read(): RoomInput {
       return { left: controls.active('left'), right: controls.active('right'), jump }
+    }
+  }
+}
+
+function visibleFocusables(root: ParentNode): HTMLElement[] {
+  const selector = 'button:not([disabled]), a[href], select:not([disabled]), summary, input:not([type="hidden"]):not([disabled])'
+  return Array.from(root.querySelectorAll<HTMLElement>(selector)).filter(el => {
+    if (el.hidden || el.closest('[hidden]')) return false
+    const style = globalThis.getComputedStyle?.(el)
+    if (style && (style.display === 'none' || style.visibility === 'hidden')) return false
+    return true
+  })
+}
+
+/** Enable D-pad / Left Stick menu navigation and A/B confirm/back on gamepads and Steam Deck. */
+export function bindMenuGamepad({
+  enabled, container = () => document, onBack
+}: {
+  enabled(): boolean
+  container?(): ParentNode | null
+  onBack?(): void
+}) {
+  let disposed = false
+  let frame: number | undefined
+  let lastDir = 0
+  let lastMoveAt = 0
+  let confirmDown = false
+  let backDown = false
+  const controller = new AbortController()
+  const listeners = { signal: controller.signal }
+
+  function step(now = performance.now()) {
+    if (disposed) return
+    const pads = readPads()
+    if (!pads.length || !enabled()) {
+      lastDir = 0
+      confirmDown = false
+      backDown = false
+      return
+    }
+    const prev = pads.some(p => bindingActive(p, { button: 12 }) || bindingActive(p, { button: 14 }) ||
+      bindingActive(p, { axis: 1, direction: -1, threshold: .5 }) || bindingActive(p, { axis: 0, direction: -1, threshold: .5 }))
+    const next = pads.some(p => bindingActive(p, { button: 13 }) || bindingActive(p, { button: 15 }) ||
+      bindingActive(p, { axis: 1, direction: 1, threshold: .5 }) || bindingActive(p, { axis: 0, direction: 1, threshold: .5 }))
+    const dir = next ? 1 : prev ? -1 : 0
+    const root = container()
+    const items = root ? visibleFocusables(root) : []
+    if (dir && items.length && (dir !== lastDir || now - lastMoveAt >= 200)) {
+      const current = document.activeElement instanceof HTMLElement ? items.indexOf(document.activeElement) : -1
+      const index = current < 0 ? (dir > 0 ? 0 : items.length - 1) : (current + dir + items.length) % items.length
+      items[index]?.focus()
+      lastMoveAt = now
+    }
+    lastDir = dir
+
+    const confirm = pads.some(p => bindingActive(p, { button: 0 }))
+    if (confirm && !confirmDown) {
+      const active = document.activeElement instanceof HTMLElement && items.includes(document.activeElement)
+        ? document.activeElement : items[0]
+      if (active) {
+        active.focus()
+        if (active instanceof HTMLSelectElement) {
+          active.selectedIndex = (active.selectedIndex + 1) % Math.max(1, active.options.length)
+          active.dispatchEvent(new Event('change', { bubbles: true }))
+        } else {
+          active.click()
+        }
+      }
+    }
+    confirmDown = confirm
+
+    const back = pads.some(p => bindingActive(p, { button: 1 }))
+    if (back && !backDown) onBack?.()
+    backDown = back
+  }
+
+  function ensureLoop() {
+    if (disposed || frame !== undefined || typeof globalThis.requestAnimationFrame !== 'function') return
+    const tick = (now: number) => {
+      frame = undefined
+      if (disposed) return
+      step(now)
+      if (readPads().length) frame = globalThis.requestAnimationFrame(tick)
+    }
+    frame = globalThis.requestAnimationFrame(tick)
+  }
+
+  window.addEventListener('gamepadconnected', () => ensureLoop(), listeners)
+  if (readPads().length) ensureLoop()
+
+  return {
+    poll: step,
+    dispose() {
+      disposed = true
+      if (frame !== undefined) globalThis.cancelAnimationFrame?.(frame)
+      controller.abort()
     }
   }
 }
