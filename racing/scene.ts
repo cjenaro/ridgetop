@@ -298,10 +298,8 @@ export function createRaceScene(renderer: LowPolyRenderer, circuit: Circuit) {
       return renderer.render(camera, simple ? simpleBatches : all, clear)
     },
     dispose() {
-      for (const batch of all) {
-        renderer.release(batch)
-        renderer.releaseMesh(batch.mesh)
-      }
+      for (const batch of all) renderer.release(batch)
+      for (const batch of [...ground, shoulder, road, ...line]) renderer.releaseMesh(batch.mesh)
     }
   }
 }

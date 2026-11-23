@@ -100,7 +100,8 @@ async function start() {
     onPause: togglePause,
     onGesture: audio.unlock,
     onPress(action) {
-      if (action === 'recover' && !countdown) recover(race.drivers[0], race.circuit)
+      if (countdown) return
+      if (action === 'recover') recover(race.drivers[0], race.circuit)
       else if (action === 'pulse') queuedPulse = true
       else if (action === 'snare') queuedSnare = true
     }
@@ -252,8 +253,8 @@ async function start() {
       // Multi-touch driving controls (only on touch devices during racing)
       column({ id: 'touch-left-deck', hidden: !showTouch, style: { anchor: 'bottom-left', inset: 12, gap: 8, respectSafeArea: true } }, [
         row({ id: 'touch-weapons', style: { gap: 8 } }, [
-          boxNode({ id: 'touch-pulse', style: { width: 66, height: 46 }, widget: { type: 'button', label: 'Pulse', onHold: on => { touchHeld.pulse = on; if (on) { audio.unlock(); queuedPulse = true } } } }),
-          boxNode({ id: 'touch-snare', style: { width: 66, height: 46 }, widget: { type: 'button', label: 'Snare', onHold: on => { touchHeld.snare = on; if (on) { audio.unlock(); queuedSnare = true } } } })
+          boxNode({ id: 'touch-pulse', style: { width: 66, height: 46 }, widget: { type: 'button', label: 'Pulse', onHold: on => { touchHeld.pulse = on; if (on) { audio.unlock(); if (!countdown) queuedPulse = true } } } }),
+          boxNode({ id: 'touch-snare', style: { width: 66, height: 46 }, widget: { type: 'button', label: 'Snare', onHold: on => { touchHeld.snare = on; if (on) { audio.unlock(); if (!countdown) queuedSnare = true } } } })
         ]),
         row({ id: 'touch-steer', style: { gap: 8 } }, [
           boxNode({ id: 'touch-left', style: { width: 66, height: 54 }, widget: { type: 'button', label: '←', onHold: on => { touchHeld.left = on; if (on) audio.unlock() } } }),
@@ -471,7 +472,10 @@ async function start() {
       if (screen !== 'racing') return
       if (countdown > 0) {
         countdown = Math.max(0, countdown - dt)
-        if (!countdown) audio.play('go')
+        if (!countdown) {
+          queuedPulse = queuedSnare = false
+          audio.play('go')
+        }
         return
       }
       const player = race.drivers[0]

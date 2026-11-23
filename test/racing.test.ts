@@ -132,3 +132,34 @@ test('pulse, snare, supply and shield rules use finite charges and respawn after
   assert.equal(player.snares, 2)
   assert.ok(supply.cooldown > 0)
 })
+
+test('checkpoints tolerate curb/apex shoulder margin, exact boundary crossings, and lap >= 3 standings wrap-around', () => {
+  const circuit = circuits[0]
+  const race = createRace(circuit)
+  const player = race.drivers[0]
+  // Crossing gate 1 (0.25) slightly past road edge (distance ~5.2 vs width*0.5 = 4.5, within width*0.85 = 7.65)
+  const before = circuit.route.sample(.248)
+  const nx = Math.cos(before.yaw), nz = -Math.sin(before.yaw)
+  Object.assign(player, {
+    x: before.x + nx * 5.2, z: before.z + nz * 5.2, yaw: before.yaw,
+    progress: .248, gate: 1, vx: Math.sin(before.yaw) * 18, vz: Math.cos(before.yaw) * 18
+  })
+  for (let i = 0; i < 6; i++) stepRace(race, { throttle: 1, steer: 0, drift: false }, STEP)
+  assert.equal(player.gate, 2, 'shoulder margin crossing must still advance checkpoint gate')
+
+  // Crossing gate 2 starting from exact boundary progress === 0.50 must still advance gate
+  const exact = circuit.route.sample(.5)
+  Object.assign(player, {
+    x: exact.x, z: exact.z, yaw: exact.yaw,
+    progress: .5, gate: 2, vx: Math.sin(exact.yaw) * 18, vz: Math.cos(exact.yaw) * 18
+  })
+  stepRace(race, { throttle: 1, steer: 0, drift: false }, STEP)
+  assert.equal(player.gate, 3, 'exact boundary progress must advance gate')
+
+  // Standings on lap 2+ gate 4 across wrap-around: driver at progress 0.05 must rank ahead of progress 0.90
+  const [a, b] = race.drivers
+  Object.assign(a, { lap: 2, gate: 4, progress: .05, finish: null })
+  Object.assign(b, { lap: 2, gate: 4, progress: .90, finish: null })
+  const order = standings(race)
+  assert.ok(order.indexOf(a) < order.indexOf(b), 'lap 3 wrap-around driver must stay ahead in standings')
+})

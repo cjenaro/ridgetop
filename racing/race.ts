@@ -173,7 +173,7 @@ function stepTrack(race: Race, driver: Driver) {
   }
   const delta = (track.progress - previous + 1.5) % 1 - .5
   const toGate = (driver.gate * spacing - previous + 1) % 1
-  if (!driver.offroad && delta > 0 && delta < .075 && toGate > 0 && delta + 1e-9 >= toGate) {
+  if (track.distance <= circuit.width * .85 && delta > 0 && delta < .075 && (toGate === 0 || delta + 1e-9 >= toGate)) {
     if (driver.gate === 4) {
       driver.lap++
       driver.gate = 1
@@ -230,8 +230,9 @@ export function stepRace(race: Race, control: RaceInput, dt: number) {
 
 export function standings(race: Race) {
   function progress(driver: Driver) {
-    const cleared = driver.lap + (driver.gate - 1) * spacing
-    const travel = Math.max(0, Math.min(spacing, (driver.progress - cleared + 2.5) % 1 - .5))
+    const gateBase = (driver.gate - 1) * spacing
+    const cleared = driver.lap + gateBase
+    const travel = Math.max(0, Math.min(spacing, (driver.progress - gateBase + 1.5) % 1 - .5))
     return cleared + travel
   }
   return [...race.drivers].sort((a, b) => {

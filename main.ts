@@ -71,6 +71,8 @@ async function start() {
   let finishMedalText = ''
   let standingsLines: string[] = []
   let expeditionLoading = false
+  let lastFinished = false
+  let lastCharacterKey = ''
   let uiDirty = true
 
   // Multi-touch Canvas hold state merged cleanly with keyboard & gamepad controls.
@@ -275,16 +277,17 @@ async function start() {
     })
   }
 
-  function setupCourse() {
+  function setupCourse(preserveToast = false) {
     scene?.dispose()
     scene = createCourseScene(renderer, courses[courseId], reducedMotion, sprites)
     player = createPlayer('solo', 0, courses[courseId])
     player.jump = readInput().jump
     latest = undefined
+    lastFinished = false
     finishRun = undefined
     knownRevision = -1
     standingsLines = []
-    toastMessage = ''
+    if (!preserveToast) toastMessage = ''
     syncCourseOptions()
     syncUrl()
     join()
@@ -376,7 +379,7 @@ async function start() {
     else enter(mode, after ?? ROUTE[0])
   }
 
-  setupCourse()
+  setupCourse(true)
 
   function paintRun(local: PlayerSnapshot | undefined) {
     const course = courses[courseId]
@@ -692,13 +695,24 @@ async function start() {
       const players = room ? room.sample(now) : [player]
       const local = room ? players.find(candidate => candidate.id === room.id) : player
       latest = local
+      const nowFinished = Boolean(local?.finished)
+      if (nowFinished !== lastFinished) {
+        lastFinished = nowFinished
+        uiDirty = true
+      }
       scene.render(players, local, now)
       if (screen === 'play') paintRun(local)
       else hud.render(renderer.canvas, 'overlay', () => {})
       if (room) updateStandings(players, local)
       if (mode === 'expedition' && local && 'character' in local && local.character) {
-        character = local.character
-        syncCourseOptions()
+        const nextChar = local.character
+        const charKey = `${nextChar.name}|${nextChar.level}|${nextChar.xp}|${nextChar.cleared.join(',')}|${nextChar.guild.join(',')}`
+        if (charKey !== lastCharacterKey) {
+          lastCharacterKey = charKey
+          character = nextChar
+          syncCourseOptions()
+          uiDirty = true
+        }
       }
       const w = Math.max(1, uiCanvas.clientWidth), h = Math.max(1, uiCanvas.clientHeight)
       const ratio = Math.min(devicePixelRatio || 1, 2)
