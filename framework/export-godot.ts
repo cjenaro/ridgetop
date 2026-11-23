@@ -462,10 +462,11 @@ func _bind_ui() -> void:
 
 func _wire_buttons(node: Node) -> void:
 \tif node is CheckButton:
-\t\tnode.toggled.connect(func(pressed: bool): sound_enabled = pressed)
+\t\t(node as CheckButton).toggled.connect(func(pressed: bool): sound_enabled = pressed)
 \telif node is Button:
-\t\tvar text_lower := node.text.to_lower()
-\t\tnode.pressed.connect(func(): _on_ui_button(text_lower))
+\t\tvar btn := node as Button
+\t\tvar text_lower: String = btn.text.to_lower()
+\t\tbtn.pressed.connect(func(): _on_ui_button(text_lower))
 \tfor child in node.get_children():
 \t\t_wire_buttons(child)
 
