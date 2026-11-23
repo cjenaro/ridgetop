@@ -8,9 +8,9 @@ import test from 'node:test'
 import { fileURLToPath } from 'node:url'
 import { promisify } from 'node:util'
 import vm from 'node:vm'
-import { createArtKit } from '../framework/index.ts'
+import { createArtKit, box, instances } from '../framework/index.ts'
 import { boxNode, column, overlay } from '../framework/ui-layout.ts'
-import { bakeIconPng, bakeMotifWav, encodeGlb, layoutToGodotTscn, packageGame, parsePackageArgs } from '../framework/server.ts'
+import { bakeIconPng, bakeMotifWav, encodeGlb, encodeWav, layoutToGodotTscn, packageGame, parsePackageArgs } from '../framework/server.ts'
 import { createGame } from '../tools/create-game.ts'
 
 const execFileAsync = promisify(execFile)
@@ -267,4 +267,53 @@ test('generated create-game projects use pure Canvas UI, drop studio reviews/too
   await access(join(godotDir, 'assets', 'models', 'crystal.glb'))
   await access(join(godotDir, 'assets', 'models', 'flower.glb'))
   await access(join(godotDir, 'scenes', 'ui.tscn'))
+})
+
+test('export-godot fixes Float32 accessor bounds, unlit PBR attenuation, WAV safety, layout anchors, and racing runtime', () => {
+  const batch = instances(box, 2)
+  batch.add([0.123456789, 1.987654321, -0.333333333], [1, 2, 0.5], [0, 0, 0, 1], [1, 0.5, 0.25], 1)
+  batch.add([2, 0, 1], [1, 1, 1], [0, 0, 0, 1], [0.2, 0.4, 0.8], 0)
+  const glb = encodeGlb([batch], 'bounds-test')
+  const { json } = parseGlb(glb)
+  const jsonLen = glb.readUInt32LE(12)
+  const binStart = 20 + jsonLen + 8
+  for (const acc of json.accessors) {
+    if (!acc.min) continue
+    const bv = json.bufferViews[acc.bufferView]
+    const f32 = new Float32Array(glb.buffer, glb.byteOffset + binStart + (bv.byteOffset || 0), acc.count * 3)
+    const lo = [Infinity, Infinity, Infinity], hi = [-Infinity, -Infinity, -Infinity]
+    for (let i = 0; i < acc.count; i++) {
+      for (let k = 0; k < 3; k++) {
+        const v = f32[i * 3 + k]
+        if (v < lo[k]) lo[k] = v
+        if (v > hi[k]) hi[k] = v
+      }
+    }
+    assert.deepEqual(acc.min, lo)
+    assert.deepEqual(acc.max, hi)
+  }
+  const unlitMat = json.materials.find((m: { emissiveFactor?: number[] }) => Array.isArray(m.emissiveFactor))
+  assert.ok(unlitMat, 'expected emissive material for unlit=1 instance')
+  assert.deepEqual(unlitMat.pbrMetallicRoughness.baseColorFactor, [0, 0, 0, 1])
+
+  // WAV NaN/Infinity and non-positive frequency safety
+  const safeWav = encodeWav(new Float32Array([Number.NaN, Number.POSITIVE_INFINITY, -2, 0.5]))
+  assert.equal(safeWav.readInt16LE(44), 0)
+  assert.equal(safeWav.readInt16LE(46), 0)
+  assert.equal(safeWav.readInt16LE(48), -32767)
+  const motifWav = bakeMotifWav([[0, 0.1, 0], [-100, 0.1, 0], [440, 0.1, 0, -5]])
+  assert.equal(motifWav.subarray(0, 4).toString('ascii'), 'RIFF')
+
+  // Layout anchors (bottom, bottom-left, tuple inset) and digit-prefixed deduplicated node names
+  const tscn = layoutToGodotTscn(overlay({ id: 'root' }, [
+    boxNode({ id: '1st', style: { anchor: 'bottom', width: 200, height: 40, inset: [12, 24] }, widget: { type: 'text', text: 'A' } }),
+    boxNode({ id: '1st', style: { anchor: 'bottom-left', width: 100, height: 30, inset: [10, 30] }, widget: { type: 'text', text: 'B' } })
+  ]))
+  assert.ok(tscn.includes('name="_1st"'))
+  assert.ok(tscn.includes('name="_1st_2"'))
+  assert.ok(tscn.includes('anchors_preset = 7'))
+  assert.ok(tscn.includes('offset_bottom = -24.0'))
+  assert.ok(tscn.includes('anchors_preset = 2'))
+  assert.ok(tscn.includes('offset_left = 10.0'))
+  assert.ok(tscn.includes('offset_bottom = -30.0'))
 })

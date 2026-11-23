@@ -130,6 +130,12 @@ static func is_int(v: Variant) -> bool:
 \t\treturn is_finite(f) and floor(f) == f
 \treturn false
 
+static func is_safe_int(v: Variant) -> bool:
+\treturn is_int(v) and absf(float(v)) <= 9007199254740991.0
+
+static func is_array(v: Variant) -> bool:
+\treturn v is Array
+
 static func js_round(v: Variant) -> float:
 \tvar f := num(v)
 \tif is_nan(f) or is_inf(f):
@@ -257,9 +263,11 @@ static func get_prop(obj: Variant, key: Variant) -> Variant:
 \t\t\treturn ((v as Dictionary)["__rt_getter"] as Callable).call()
 \t\treturn v
 \tif obj is Array:
-\t\tvar idx := int(key)
-\t\tvar arr := obj as Array
-\t\treturn arr[idx] if idx >= 0 and idx < arr.size() else null
+\t\tif typeof(key) == TYPE_INT or typeof(key) == TYPE_FLOAT or (key is String and (key as String).is_valid_int()):
+\t\t\tvar idx := int(key)
+\t\t\tvar arr := obj as Array
+\t\t\treturn arr[idx] if idx >= 0 and idx < arr.size() else null
+\t\treturn null
 \tif obj is String:
 \t\tvar idx := int(key)
 \t\tvar s := obj as String
@@ -531,6 +539,29 @@ static func from_entries(pairs: Array) -> Dictionary:
 static func push_many(arr: Array, items: Array) -> int:
 \tarr.append_array(items)
 \treturn arr.size()
+
+static func call_set(target: Variant, args: Array) -> Variant:
+\tif target is Array:
+\t\tvar dst := target as Array
+\t\tvar src: Variant = iter(args[0]) if args.size() > 0 else []
+\t\tvar offset := int(args[1]) if args.size() > 1 and args[1] != null else 0
+\t\tif src is Array:
+\t\t\tvar s := src as Array
+\t\t\tfor i in range(s.size()):
+\t\t\t\tif offset + i >= 0 and offset + i < dst.size():
+\t\t\t\t\tdst[offset + i] = s[i]
+\t\treturn null
+\treturn invoke(get_prop(target, "set"), args)
+
+static func flat_map(arr: Array, cb: Callable) -> Array:
+\tvar out: Array = []
+\tfor i in range(arr.size()):
+\t\tvar res = _call_cb(cb, arr[i], i, arr)
+\t\tif res is Array:
+\t\t\tout.append_array(res as Array)
+\t\telse:
+\t\t\tout.append(res)
+\treturn out
 
 static func typed_array(arg: Variant = 0) -> Array:
 \tif arg is Array:
@@ -959,8 +990,13 @@ export function compileTsToGd(sourceText: string, fileName = 'module.ts', option
       if (node.text === 'Infinity') return 'INF'
       if (node.text === 'NaN') return 'NAN'
       const local = resolveLocal(node.text)
-      if (!local.isLocal && !isCallee && topFuncs.has(node.text)) {
-        return `Callable(self, ${gdString(safeIdent(node.text))})`
+      if (!local.isLocal && !isCallee) {
+        if (node.text === 'Boolean') return 'Callable(RT, "truthy")'
+        if (node.text === 'Number') return 'Callable(RT, "num")'
+        if (node.text === 'String') return 'Callable(RT, "js_str")'
+        if (topFuncs.has(node.text)) {
+          return `Callable(self, ${gdString(safeIdent(node.text))})`
+        }
       }
       return varRef(node.text)
     }
@@ -1086,6 +1122,24 @@ export function compileTsToGd(sourceText: string, fileName = 'module.ts', option
       if (ts.isIdentifier(target) && target.text === 'Math') {
         if (prop === 'PI') return 'PI'
         if (prop === 'E') return '2.718281828459045'
+        if (prop === 'SQRT2') return '1.4142135623730951'
+        if (prop === 'SQRT1_2') return '0.7071067811865476'
+        if (prop === 'LN2') return '0.6931471805599453'
+        if (prop === 'LN10') return '2.302585092994046'
+      }
+      if (ts.isIdentifier(target) && target.text === 'Number') {
+        if (prop === 'isFinite') return 'Callable(RT, "is_finite_num")'
+        if (prop === 'isInteger') return 'Callable(RT, "is_int")'
+        if (prop === 'isSafeInteger') return 'Callable(RT, "is_safe_int")'
+        if (prop === 'isNaN') return 'Callable(RT, "is_nan_num")'
+        if (prop === 'MAX_SAFE_INTEGER') return '9007199254740991'
+        if (prop === 'MIN_SAFE_INTEGER') return '-9007199254740991'
+        if (prop === 'POSITIVE_INFINITY') return 'INF'
+        if (prop === 'NEGATIVE_INFINITY') return '(-INF)'
+        if (prop === 'NaN') return 'NAN'
+      }
+      if (ts.isIdentifier(target) && target.text === 'Array') {
+        if (prop === 'isArray') return 'Callable(RT, "is_array")'
       }
       if (prop === 'length') return `RT.prop_len(${emitExpr(target, indent)})`
       if (prop === 'size') return `RT.prop_size(${emitExpr(target, indent)})`
@@ -1299,6 +1353,7 @@ export function compileTsToGd(sourceText: string, fileName = 'module.ts', option
 
       // Built-in Array / String / Map / Set methods
       if (method === 'map') return `RT.map${formatList('(', [obj, args[0]], ')', indent)}`
+      if (method === 'flatMap') return `RT.flat_map${formatList('(', [obj, args[0]], ')', indent)}`
       if (method === 'filter') return `RT.filter${formatList('(', [obj, args[0]], ')', indent)}`
       if (method === 'some') return `RT.some${formatList('(', [obj, args[0]], ')', indent)}`
       if (method === 'every') return `RT.every${formatList('(', [obj, args[0]], ')', indent)}`
@@ -1306,7 +1361,8 @@ export function compileTsToGd(sourceText: string, fileName = 'module.ts', option
       if (method === 'findIndex') return `RT.find_index${formatList('(', [obj, args[0]], ')', indent)}`
       if (method === 'forEach') return `RT.for_each${formatList('(', [obj, args[0]], ')', indent)}`
       if (method === 'reduce') return `RT.reduce${formatList('(', [obj, args[0], args.length > 1 ? 'true' : 'false', args[1] ?? 'null'], ')', indent)}`
-      if (method === 'slice') return `RT.slice(${obj}, ${args[0] ?? '0'}, ${args[1] ?? 'null'})`
+      if (method === 'slice' || method === 'subarray') return `RT.slice(${obj}, ${args[0] ?? '0'}, ${args[1] ?? 'null'})`
+      if (method === 'set') return `RT.call_set(${obj}, ${argsArr})`
       if (method === 'at') return `RT.at(${obj}, int(${args[0]}))`
       if (method === 'entries') return `RT.entries(${obj})`
       if (method === 'includes') return `RT.includes(${obj}, ${args[0]})`

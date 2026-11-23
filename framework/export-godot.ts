@@ -2,7 +2,6 @@ import { mkdir, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import type { InstanceBatch } from './types.ts'
 import type { LayoutNode } from './ui-layout.ts'
-import { rotateVec3 } from './geometry.ts'
 
 function pad4(length: number) {
   return (4 - (length % 4)) % 4
@@ -19,8 +18,6 @@ export function encodeGlb(batches: readonly InstanceBatch[], name = 'RidgetopMod
     r: number; g: number; b: number; unlit: number
     positions: number[]
     normals: number[]
-    min: [number, number, number]
-    max: [number, number, number]
   }
   const buckets = new Map<string, Bucket>()
 
@@ -32,31 +29,51 @@ export function encodeGlb(batches: readonly InstanceBatch[], name = 'RidgetopMod
       const base = i * 16
       const px = iData[base], py = iData[base + 1], pz = iData[base + 2]
       const sx = iData[base + 4], sy = iData[base + 5], sz = iData[base + 6]
+      const invSx = sx !== 0 ? 1 / sx : 1
+      const invSy = sy !== 0 ? 1 / sy : 1
+      const invSz = sz !== 0 ? 1 / sz : 1
       const r = srgbToLinear(Math.max(0, Math.min(1, iData[base + 8])))
       const g = srgbToLinear(Math.max(0, Math.min(1, iData[base + 9])))
       const b = srgbToLinear(Math.max(0, Math.min(1, iData[base + 10])))
       const unlit = Math.max(0, Math.min(1, iData[base + 11]))
       const qx = iData[base + 12], qy = iData[base + 13], qz = iData[base + 14], qw = iData[base + 15]
-      const q: readonly [number, number, number, number] = [qx, qy, qz, qw]
+      const m00 = 1 - 2 * (qy * qy + qz * qz)
+      const m01 = 2 * (qx * qy - qz * qw)
+      const m02 = 2 * (qx * qz + qy * qw)
+      const m10 = 2 * (qx * qy + qz * qw)
+      const m11 = 1 - 2 * (qx * qx + qz * qz)
+      const m12 = 2 * (qy * qz - qx * qw)
+      const m20 = 2 * (qx * qz - qy * qw)
+      const m21 = 2 * (qy * qz + qx * qw)
+      const m22 = 1 - 2 * (qx * qx + qy * qy)
 
       const key = `${Math.round(r * 1000)}:${Math.round(g * 1000)}:${Math.round(b * 1000)}:${Math.round(unlit * 100)}`
       let bucket = buckets.get(key)
       if (!bucket) {
-        bucket = { r, g, b, unlit, positions: [], normals: [], min: [Infinity, Infinity, Infinity], max: [-Infinity, -Infinity, -Infinity] }
+        bucket = { r, g, b, unlit, positions: [], normals: [] }
         buckets.set(key, bucket)
       }
 
+      const pos = bucket.positions
+      const norm = bucket.normals
       for (let v = 0; v < vCount; v++) {
         const vb = v * 6
-        const [rx, ry, rz] = rotateVec3(q, [vData[vb] * sx, vData[vb + 1] * sy, vData[vb + 2] * sz])
-        const wx = px + rx, wy = py + ry, wz = pz + rz
-        const [nx, ny, nz] = rotateVec3(q, [vData[vb + 3] / sx, vData[vb + 4] / sy, vData[vb + 5] / sz])
-        const nLen = Math.hypot(nx, ny, nz) || 1
-        bucket.positions.push(wx, wy, wz)
-        bucket.normals.push(nx / nLen, ny / nLen, nz / nLen)
-        if (wx < bucket.min[0]) bucket.min[0] = wx; if (wx > bucket.max[0]) bucket.max[0] = wx
-        if (wy < bucket.min[1]) bucket.min[1] = wy; if (wy > bucket.max[1]) bucket.max[1] = wy
-        if (wz < bucket.min[2]) bucket.min[2] = wz; if (wz > bucket.max[2]) bucket.max[2] = wz
+        const lx = vData[vb] * sx
+        const ly = vData[vb + 1] * sy
+        const lz = vData[vb + 2] * sz
+        pos.push(
+          px + m00 * lx + m01 * ly + m02 * lz,
+          py + m10 * lx + m11 * ly + m12 * lz,
+          pz + m20 * lx + m21 * ly + m22 * lz
+        )
+        const nlx = vData[vb + 3] * invSx
+        const nly = vData[vb + 4] * invSy
+        const nlz = vData[vb + 5] * invSz
+        const nx = m00 * nlx + m01 * nly + m02 * nlz
+        const ny = m10 * nlx + m11 * nly + m12 * nlz
+        const nz = m20 * nlx + m21 * nly + m22 * nlz
+        const nLen = Math.sqrt(nx * nx + ny * ny + nz * nz) || 1
+        norm.push(nx / nLen, ny / nLen, nz / nLen)
       }
     }
   }
@@ -74,6 +91,14 @@ export function encodeGlb(batches: readonly InstanceBatch[], name = 'RidgetopMod
     const vertCount = bucket.positions.length / 3
     const posArr = new Float32Array(bucket.positions)
     const normArr = new Float32Array(bucket.normals)
+    let minX = Infinity, minY = Infinity, minZ = Infinity
+    let maxX = -Infinity, maxY = -Infinity, maxZ = -Infinity
+    for (let i = 0; i < posArr.length; i += 3) {
+      const x = posArr[i], y = posArr[i + 1], z = posArr[i + 2]
+      if (x < minX) minX = x; if (x > maxX) maxX = x
+      if (y < minY) minY = y; if (y > maxY) maxY = y
+      if (z < minZ) minZ = z; if (z > maxZ) maxZ = z
+    }
     const posBuf = Buffer.from(posArr.buffer, posArr.byteOffset, posArr.byteLength)
     const normBuf = Buffer.from(normArr.buffer, normArr.byteOffset, normArr.byteLength)
 
@@ -88,15 +113,16 @@ export function encodeGlb(batches: readonly InstanceBatch[], name = 'RidgetopMod
     chunks.push(normBuf)
 
     const posAcc = accessors.length
-    accessors.push({ bufferView: posView, componentType: 5126, count: vertCount, type: 'VEC3', min: bucket.min, max: bucket.max })
+    accessors.push({ bufferView: posView, componentType: 5126, count: vertCount, type: 'VEC3', min: [minX, minY, minZ], max: [maxX, maxY, maxZ] })
     const normAcc = accessors.length
     accessors.push({ bufferView: normView, componentType: 5126, count: vertCount, type: 'VEC3' })
 
     const matIndex = materials.length
+    const litWeight = 1 - bucket.unlit
     const mat: Record<string, unknown> = {
       name: `Flat_${matIndex}`,
       pbrMetallicRoughness: {
-        baseColorFactor: [bucket.r, bucket.g, bucket.b, 1],
+        baseColorFactor: [bucket.r * litWeight, bucket.g * litWeight, bucket.b * litWeight, 1],
         metallicFactor: 0,
         roughnessFactor: 0.92
       }
@@ -163,7 +189,8 @@ export function encodeWav(samples: Float32Array, sampleRate = 44100): Buffer {
   buffer.write('data', 36, 'ascii')
   buffer.writeUInt32LE(dataLength, 40)
   for (let i = 0; i < samples.length; i++) {
-    const clamped = Math.max(-1, Math.min(1, samples[i]))
+    const raw = samples[i]
+    const clamped = Number.isFinite(raw) ? Math.max(-1, Math.min(1, raw)) : 0
     buffer.writeInt16LE(Math.round(clamped * 32767), 44 + i * 2)
   }
   return buffer
@@ -187,16 +214,22 @@ export function bakeMotifWav(
   } = {}
 ): Buffer {
   let endTime = 0.05
-  for (const [, duration, delay] of notes) endTime = Math.max(endTime, delay + duration + 0.02)
+  for (const [, duration, delay] of notes) {
+    if (Number.isFinite(duration) && duration > 0 && Number.isFinite(delay)) {
+      endTime = Math.max(endTime, Math.max(0, delay) + duration + 0.02)
+    }
+  }
   const samples = new Float32Array(Math.ceil(endTime * sampleRate))
   for (const [freq, duration, delay, endFreq] of notes) {
-    const start = Math.floor(delay * sampleRate)
+    if (!Number.isFinite(freq) || freq <= 0 || !Number.isFinite(duration) || duration <= 0 || !Number.isFinite(delay)) continue
+    const start = Math.max(0, Math.floor(delay * sampleRate))
     const count = Math.max(1, Math.floor(duration * sampleRate))
+    const glide = typeof endFreq === 'number' && Number.isFinite(endFreq) && endFreq > 0 ? endFreq / freq : 0
     let phase = 0
     for (let i = 0; i < count && start + i < samples.length; i++) {
       const t = i / sampleRate
       const u = i / count
-      const f = endFreq ? freq * Math.pow(endFreq / freq, u) : freq
+      const f = glide > 0 ? freq * Math.pow(glide, u) : freq
       phase += f / sampleRate
       const attack = Math.min(1, t / 0.015)
       const release = Math.pow(0.004, Math.max(0, (t - 0.015) / Math.max(0.001, duration - 0.015)))
@@ -211,8 +244,9 @@ function godotEscape(text: string) {
 }
 
 function godotNodeName(raw: string | undefined, fallback: string, used: Set<string>) {
-  const base = (raw || fallback).replace(/[^A-Za-z0-9_]/g, '_') || fallback
-  let candidate = /^[A-Za-z_]/.test(base) ? base : '_' + base
+  const cleaned = (raw || fallback).replace(/[^A-Za-z0-9_]/g, '_') || fallback
+  const base = /^[A-Za-z_]/.test(cleaned) ? cleaned : '_' + cleaned
+  let candidate = base
   let n = 2
   while (used.has(candidate)) candidate = `${base}_${n++}`
   used.add(candidate)
@@ -224,7 +258,9 @@ function anchorLines(node: LayoutNode): string[] {
   if (!anchor) return []
   const w = node.style?.width ?? 340
   const h = node.style?.height ?? 240
-  const inset = typeof node.style?.inset === 'number' ? node.style.inset : (node.style?.inset?.[0] ?? 16)
+  const rawInset = node.style?.inset
+  const insetX = typeof rawInset === 'number' ? rawInset : (rawInset?.[0] ?? 16)
+  const insetY = typeof rawInset === 'number' ? rawInset : (rawInset?.[1] ?? insetX)
   if (anchor === 'fill') {
     return ['layout_mode = 1', 'anchors_preset = 15', 'anchor_right = 1.0', 'anchor_bottom = 1.0', 'grow_horizontal = 2', 'grow_vertical = 2']
   }
@@ -251,9 +287,9 @@ function anchorLines(node: LayoutNode): string[] {
       'anchor_left = 0.5',
       'anchor_right = 0.5',
       `offset_left = ${-Math.round(w / 2)}.0`,
-      `offset_top = ${inset}.0`,
+      `offset_top = ${insetY}.0`,
       `offset_right = ${Math.round(w / 2)}.0`,
-      `offset_bottom = ${inset + h}.0`,
+      `offset_bottom = ${insetY + h}.0`,
       'grow_horizontal = 2'
     ]
   }
@@ -263,11 +299,40 @@ function anchorLines(node: LayoutNode): string[] {
       'anchors_preset = 1',
       'anchor_left = 1.0',
       'anchor_right = 1.0',
-      `offset_left = ${-(inset + w)}.0`,
-      `offset_top = ${inset}.0`,
-      `offset_right = ${-inset}.0`,
-      `offset_bottom = ${inset + h}.0`,
+      `offset_left = ${-(insetX + w)}.0`,
+      `offset_top = ${insetY}.0`,
+      `offset_right = ${-insetX}.0`,
+      `offset_bottom = ${insetY + h}.0`,
       'grow_horizontal = 0'
+    ]
+  }
+  if (anchor === 'bottom') {
+    return [
+      'layout_mode = 1',
+      'anchors_preset = 7',
+      'anchor_left = 0.5',
+      'anchor_top = 1.0',
+      'anchor_right = 0.5',
+      'anchor_bottom = 1.0',
+      `offset_left = ${-Math.round(w / 2)}.0`,
+      `offset_top = ${-(insetY + h)}.0`,
+      `offset_right = ${Math.round(w / 2)}.0`,
+      `offset_bottom = ${-insetY}.0`,
+      'grow_horizontal = 2',
+      'grow_vertical = 0'
+    ]
+  }
+  if (anchor === 'bottom-left') {
+    return [
+      'layout_mode = 1',
+      'anchors_preset = 2',
+      'anchor_top = 1.0',
+      'anchor_bottom = 1.0',
+      `offset_left = ${insetX}.0`,
+      `offset_top = ${-(insetY + h)}.0`,
+      `offset_right = ${insetX + w}.0`,
+      `offset_bottom = ${-insetY}.0`,
+      'grow_vertical = 0'
     ]
   }
   if (anchor === 'bottom-right') {
@@ -278,15 +343,22 @@ function anchorLines(node: LayoutNode): string[] {
       'anchor_top = 1.0',
       'anchor_right = 1.0',
       'anchor_bottom = 1.0',
-      `offset_left = ${-(inset + w)}.0`,
-      `offset_top = ${-(inset + h)}.0`,
-      `offset_right = ${-inset}.0`,
-      `offset_bottom = ${-inset}.0`,
+      `offset_left = ${-(insetX + w)}.0`,
+      `offset_top = ${-(insetY + h)}.0`,
+      `offset_right = ${-insetX}.0`,
+      `offset_bottom = ${-insetY}.0`,
       'grow_horizontal = 0',
       'grow_vertical = 0'
     ]
   }
-  return ['layout_mode = 1', `offset_left = ${inset}.0`, `offset_top = ${Math.max(56, inset)}.0`]
+  return [
+    'layout_mode = 1',
+    'anchors_preset = 0',
+    `offset_left = ${insetX}.0`,
+    `offset_top = ${insetY}.0`,
+    `offset_right = ${insetX + w}.0`,
+    `offset_bottom = ${insetY + h}.0`
+  ]
 }
 
 /** Translate a Ridgetop pure-math LayoutNode UI tree into a styled Godot 4 `.tscn` Control scene. */
@@ -418,7 +490,6 @@ var theme_cfg: Dictionary = {
 var hovered_id: String = ""
 var focused_id: String = ""
 var pressed_id: String = ""
-var _nav_cooldown: float = 0.0
 var _font: Font
 
 func _ready() -> void:
@@ -442,6 +513,11 @@ func set_items(next_items: Array) -> void:
 \t\tfocused_id = ""
 \telif not _has_focusable(focused_id):
 \t\tfocused_id = str(focusables[0].get("id", ""))
+\tif hovered_id != "" and not _has_focusable(hovered_id):
+\t\thovered_id = ""
+\t\tmouse_default_cursor_shape = Control.CURSOR_ARROW
+\tif pressed_id != "" and not _has_focusable(pressed_id):
+\t\tpressed_id = ""
 \tqueue_redraw()
 
 func _focusable_items() -> Array:
@@ -494,9 +570,6 @@ func _gui_input(event: InputEvent) -> void:
 \t\t\t\t\taction_triggered.emit(target)
 \t\t\t\taccept_event()
 \t\t\t\tqueue_redraw()
-
-func _process(delta: float) -> void:
-\t_nav_cooldown = maxf(0.0, _nav_cooldown - delta)
 
 func handle_menu_input(event: InputEvent) -> bool:
 \tvar focusables := _focusable_items()
@@ -624,10 +697,35 @@ var game_data: Dictionary = {}
 var models_cache: Dictionary = {}
 var audio_cache: Dictionary = {}
 var sound_enabled: bool = true
-var sfx_player: AudioStreamPlayer
+var sfx_players: Array[AudioStreamPlayer] = []
+var _sfx_cursor: int = 0
 var ui: Control
 var world_env: WorldEnvironment
 var camera: Camera3D
+var _last_ui_key: String = ""
+
+class _GodotStorage extends RefCounted:
+\tvar path: String = "user://ridgetop_save.json"
+\tvar data: Dictionary = {}
+
+\tfunc _init(save_path: String = "user://ridgetop_save.json") -> void:
+\t\tpath = save_path
+\t\tif FileAccess.file_exists(path):
+\t\t\tvar raw := FileAccess.get_file_as_string(path)
+\t\t\tvar parsed = JSON.parse_string(raw)
+\t\t\tif typeof(parsed) == TYPE_DICTIONARY:
+\t\t\t\tdata = parsed
+
+\tfunc getItem(key: String):
+\t\treturn data[key] if data.has(key) else null
+
+\tfunc setItem(key: String, value: String) -> void:
+\t\tdata[key] = value
+\t\tvar f := FileAccess.open(path, FileAccess.WRITE)
+\t\tif f:
+\t\t\tf.store_string(JSON.stringify(data))
+
+var _save_storage := _GodotStorage.new()
 
 var rt_script: GDScript = null
 var race_mod: Object = null
@@ -675,14 +773,20 @@ var _pulse_mat: StandardMaterial3D
 var _snare_mat: StandardMaterial3D
 var _supply_mat: StandardMaterial3D
 var _hit_mat: StandardMaterial3D
+var _supply_pool: Array[MeshInstance3D] = []
+var _pulse_pool: Array[MeshInstance3D] = []
+var _snare_pool: Array[MeshInstance3D] = []
+var _hit_pool: Array[MeshInstance3D] = []
 
 # --- Showcase state ---
 var showcase_root: Node3D
 var showcase_menu_open: bool = true
 
 func _ready() -> void:
-\tsfx_player = AudioStreamPlayer.new()
-\tadd_child(sfx_player)
+\tfor _i in range(4):
+\t\tvar p := AudioStreamPlayer.new()
+\t\tadd_child(p)
+\t\tsfx_players.append(p)
 \tworld_env = get_node_or_null("WorldEnvironment") as WorldEnvironment
 \tcamera = get_node_or_null("Camera3D") as Camera3D
 \tui = get_node_or_null("UI") as Control
@@ -703,7 +807,7 @@ func _ready() -> void:
 \t\tif pal.has("accent"):
 \t\t\tui.apply_theme({ "accent": str(pal["accent"]), "glow": str(pal.get("glow", "#83f0d6")) })
 
-\tget_viewport().size_changed.connect(_rebuild_ui)
+\tget_viewport().size_changed.connect(_on_viewport_resized)
 
 \tif ResourceLoader.exists("res://scripts/compiled/rt.gd"):
 \t\trt_script = load("res://scripts/compiled/rt.gd")
@@ -716,7 +820,7 @@ func _ready() -> void:
 \t\t\trace_mod = rt_script.mod("res://scripts/compiled/racing/race.gd")
 \t\t\ttrack_mod = rt_script.mod("res://scripts/compiled/racing/track.gd")
 \t\t\tprog_mod = rt_script.mod("res://scripts/compiled/racing/progression.gd")
-\t\t\tchampionship = prog_mod.loadChampionship(null)
+\t\t\tchampionship = prog_mod.loadChampionship(_save_storage)
 \t\t_load_circuit(0)
 \telif typeof(game_data.get("map", [])) == TYPE_ARRAY and (game_data["map"] as Array).size() > 0:
 \t\tmode = "grid"
@@ -724,6 +828,10 @@ func _ready() -> void:
 \telse:
 \t\tmode = "showcase"
 \t\t_setup_showcase()
+\t_rebuild_ui()
+
+func _on_viewport_resized() -> void:
+\t_last_ui_key = ""
 \t_rebuild_ui()
 
 func _exit_tree() -> void:
@@ -764,14 +872,29 @@ func _init_fx_meshes() -> void:
 \t_hit_mat.emission = Color("#ffdcaa")
 \t_hit_mat.emission_energy_multiplier = 1.8
 
+func _sanitize_asset_name(raw_name: String) -> String:
+\tvar out := ""
+\tvar prev_dash := false
+\tfor i in range(raw_name.length()):
+\t\tvar code := raw_name.unicode_at(i)
+\t\tvar ok := (code >= 48 and code <= 57) or (code >= 65 and code <= 90) or (code >= 97 and code <= 122) or code == 45 or code == 95
+\t\tif ok:
+\t\t\tout += raw_name.substr(i, 1)
+\t\t\tprev_dash = false
+\t\telif not prev_dash:
+\t\t\tout += "-"
+\t\t\tprev_dash = true
+\treturn out
+
 func _load_model_template(model_name: String):
-\tif models_cache.has(model_name):
-\t\treturn models_cache[model_name]
-\tvar path := "res://assets/models/%s.glb" % model_name
+\tvar safe := _sanitize_asset_name(model_name)
+\tif models_cache.has(safe):
+\t\treturn models_cache[safe]
+\tvar path := "res://assets/models/%s.glb" % safe
 \tif ResourceLoader.exists(path):
 \t\tvar packed = load(path)
 \t\tif packed is PackedScene:
-\t\t\tmodels_cache[model_name] = packed
+\t\t\tmodels_cache[safe] = packed
 \t\t\treturn packed
 \t# Runtime GLTF loader fallback so fresh exports work immediately without Godot editor --import!
 \tif FileAccess.file_exists(path):
@@ -782,7 +905,7 @@ func _load_model_template(model_name: String):
 \t\t\tif doc.append_from_buffer(bytes, "", state) == OK:
 \t\t\t\tvar scene := doc.generate_scene(state)
 \t\t\t\tif scene is Node3D:
-\t\t\t\t\tmodels_cache[model_name] = scene
+\t\t\t\t\tmodels_cache[safe] = scene
 \t\t\t\t\treturn scene
 \treturn null
 
@@ -801,13 +924,14 @@ func _spawn_model(model_name: String, pos: Vector3, parent: Node = self) -> Node
 \treturn node
 
 func _load_audio(clip_name: String) -> AudioStream:
-\tif audio_cache.has(clip_name):
-\t\treturn audio_cache[clip_name]
-\tvar path := "res://assets/audio/%s.wav" % clip_name
+\tvar safe := _sanitize_asset_name(clip_name)
+\tif audio_cache.has(safe):
+\t\treturn audio_cache[safe]
+\tvar path := "res://assets/audio/%s.wav" % safe
 \tif ResourceLoader.exists(path):
 \t\tvar stream = load(path)
 \t\tif stream is AudioStream:
-\t\t\taudio_cache[clip_name] = stream
+\t\t\taudio_cache[safe] = stream
 \t\t\treturn stream
 \tif FileAccess.file_exists(path):
 \t\tvar bytes := FileAccess.get_file_as_bytes(path)
@@ -817,17 +941,25 @@ func _load_audio(clip_name: String) -> AudioStream:
 \t\t\twav.mix_rate = bytes.decode_u32(24)
 \t\t\twav.stereo = bytes.decode_u16(22) == 2
 \t\t\twav.data = bytes.slice(44)
-\t\t\taudio_cache[clip_name] = wav
+\t\t\taudio_cache[safe] = wav
 \t\t\treturn wav
 \treturn null
 
 func _play_sfx(clip_name: String) -> void:
-\tif not sound_enabled:
+\tif not sound_enabled or sfx_players.is_empty():
 \t\treturn
 \tvar stream := _load_audio(clip_name)
 \tif stream:
-\t\tsfx_player.stream = stream
-\t\tsfx_player.play()
+\t\tvar player: AudioStreamPlayer = null
+\t\tfor p in sfx_players:
+\t\t\tif not p.playing:
+\t\t\t\tplayer = p
+\t\t\t\tbreak
+\t\tif player == null:
+\t\t\tplayer = sfx_players[_sfx_cursor % sfx_players.size()]
+\t\t\t_sfx_cursor += 1
+\t\tplayer.stream = stream
+\t\tplayer.play()
 
 func _input(event: InputEvent) -> void:
 \tif event.is_action_pressed("action_pause"):
@@ -837,11 +969,19 @@ func _input(event: InputEvent) -> void:
 \tif mode == "racing" and race_screen == "racing":
 \t\tif event is InputEventKey and event.pressed and not event.echo:
 \t\t\tvar ke := event as InputEventKey
-\t\t\tif ke.physical_keycode == KEY_J:
+\t\t\tif ke.physical_keycode == KEY_J and race_countdown <= 0.0:
 \t\t\t\tqueued_pulse = true
-\t\t\telif ke.physical_keycode == KEY_K:
+\t\t\telif ke.physical_keycode == KEY_K and race_countdown <= 0.0:
 \t\t\t\tqueued_snare = true
 \t\t\telif ke.physical_keycode == KEY_R:
+\t\t\t\t_recover_player()
+\t\telif event is InputEventJoypadButton and event.pressed:
+\t\t\tvar jb := event as InputEventJoypadButton
+\t\t\tif (jb.button_index == JOY_BUTTON_RIGHT_SHOULDER or jb.button_index == JOY_BUTTON_X) and race_countdown <= 0.0:
+\t\t\t\tqueued_pulse = true
+\t\t\telif jb.button_index == JOY_BUTTON_Y and race_countdown <= 0.0:
+\t\t\t\tqueued_snare = true
+\t\t\telif jb.button_index == JOY_BUTTON_BACK:
 \t\t\t\t_recover_player()
 \t\treturn
 \tif ui and _menu_is_active():
@@ -935,6 +1075,10 @@ func _load_circuit(index: int) -> void:
 \tcircuit_index = clampi(index, 0, circuits.size() - 1)
 \tif track_root and is_instance_valid(track_root):
 \t\ttrack_root.queue_free()
+\t_supply_pool.clear()
+\t_pulse_pool.clear()
+\t_snare_pool.clear()
+\t_hit_pool.clear()
 \ttrack_root = Node3D.new()
 \ttrack_root.name = "CircuitRoot"
 \tadd_child(track_root)
@@ -993,39 +1137,56 @@ func _driver_place(slot: int) -> int:
 \t\t\treturn i + 1
 \treturn 1
 
+func _acquire_fx(pool: Array[MeshInstance3D], index: int, mesh: Mesh, mat: Material) -> MeshInstance3D:
+\twhile pool.size() <= index:
+\t\tvar m := MeshInstance3D.new()
+\t\tm.mesh = mesh
+\t\tm.material_override = mat
+\t\tfx_root.add_child(m)
+\t\tpool.append(m)
+\tvar node := pool[index]
+\tnode.visible = true
+\treturn node
+
+func _hide_unused_fx(pool: Array[MeshInstance3D], used: int) -> void:
+\tfor i in range(used, pool.size()):
+\t\tpool[i].visible = false
+
 func _sync_race_fx() -> void:
 \tif fx_root == null or race_state.is_empty():
 \t\treturn
-\tfor child in fx_root.get_children():
-\t\tchild.queue_free()
+\tvar supply_used := 0
 \tfor sup in race_state["supplies"]:
 \t\tif float(sup["cooldown"]) > 0.0:
 \t\t\tcontinue
-\t\tvar m := MeshInstance3D.new()
-\t\tm.mesh = _supply_mesh
-\t\tm.material_override = _supply_mat
+\t\tvar m := _acquire_fx(_supply_pool, supply_used, _supply_mesh, _supply_mat)
 \t\tm.position = Vector3(float(sup["x"]), 0.55, float(sup["z"]))
 \t\tm.rotation.y = float(sup["yaw"]) + float(race_state["elapsed"]) * 1.4
-\t\tfx_root.add_child(m)
+\t\tsupply_used += 1
+\t_hide_unused_fx(_supply_pool, supply_used)
+
+\tvar pulse_used := 0
+\tvar snare_used := 0
 \tfor w in race_state["weapons"]:
-\t\tvar m := MeshInstance3D.new()
 \t\tif str(w["kind"]) == "pulse":
-\t\t\tm.mesh = _pulse_mesh
-\t\t\tm.material_override = _pulse_mat
+\t\t\tvar m := _acquire_fx(_pulse_pool, pulse_used, _pulse_mesh, _pulse_mat)
 \t\t\tm.position = Vector3(float(w["x"]), 0.65, float(w["z"]))
+\t\t\tpulse_used += 1
 \t\telse:
-\t\t\tm.mesh = _snare_mesh
-\t\t\tm.material_override = _snare_mat
+\t\t\tvar m := _acquire_fx(_snare_pool, snare_used, _snare_mesh, _snare_mat)
 \t\t\tm.position = Vector3(float(w["x"]), 0.2, float(w["z"]))
-\t\tfx_root.add_child(m)
+\t\t\tsnare_used += 1
+\t_hide_unused_fx(_pulse_pool, pulse_used)
+\t_hide_unused_fx(_snare_pool, snare_used)
+
+\tvar hit_used := 0
 \tfor h in race_state["hits"]:
-\t\tvar m := MeshInstance3D.new()
-\t\tm.mesh = _pulse_mesh
-\t\tm.material_override = _hit_mat
+\t\tvar m := _acquire_fx(_hit_pool, hit_used, _pulse_mesh, _hit_mat)
 \t\tvar s := 1.0 + float(h["age"]) * 5.0
 \t\tm.scale = Vector3(s, s, s)
 \t\tm.position = Vector3(float(h["x"]), 0.8, float(h["z"]))
-\t\tfx_root.add_child(m)
+\t\thit_used += 1
+\t_hide_unused_fx(_hit_pool, hit_used)
 
 func _step_racing(delta: float) -> void:
 \tif race_screen != "racing" or race_mod == null or race_state.is_empty():
@@ -1036,9 +1197,11 @@ func _step_racing(delta: float) -> void:
 \t\trace_countdown = maxf(0.0, race_countdown - delta)
 \t\tif race_countdown == 0.0 or ceili(race_countdown) != prev_c:
 \t\t\tif race_countdown == 0.0:
+\t\t\t\tqueued_pulse = false
+\t\t\t\tqueued_snare = false
 \t\t\t\t_play_sfx("go")
+\t\t\t_rebuild_ui()
 \t\t_update_race_camera(true)
-\t\t_rebuild_ui()
 \t\treturn
 
 \tvar step_dt := 1.0 / 60.0
@@ -1048,9 +1211,13 @@ func _step_racing(delta: float) -> void:
 \tvar prev_snares := int(player["snares"])
 \tvar prev_shield := int(player["shield"])
 
-\tvar throttle := (1.0 if (Input.is_action_pressed("move_up") or Input.is_joy_button_pressed(0, JOY_BUTTON_A)) else 0.0) - (1.0 if Input.is_action_pressed("move_down") else 0.0)
-\tvar steer := (1.0 if Input.is_action_pressed("move_left") else 0.0) - (1.0 if Input.is_action_pressed("move_right") else 0.0)
-\tvar drift := Input.is_key_pressed(KEY_SPACE) or Input.is_joy_button_pressed(0, JOY_BUTTON_B)
+\tvar gas := 1.0 if (Input.is_action_pressed("move_up") or Input.is_joy_button_pressed(0, JOY_BUTTON_A) or Input.get_joy_axis(0, JOY_AXIS_TRIGGER_RIGHT) > 0.2) else 0.0
+\tvar brake := 1.0 if (Input.is_action_pressed("move_down") or Input.get_joy_axis(0, JOY_AXIS_TRIGGER_LEFT) > 0.2) else 0.0
+\tvar throttle := gas - brake
+\tvar steer := Input.get_axis("move_left", "move_right")
+\tvar drift := Input.is_key_pressed(KEY_SPACE) or Input.is_joy_button_pressed(0, JOY_BUTTON_B) or Input.is_joy_button_pressed(0, JOY_BUTTON_LEFT_SHOULDER)
+\tvar pulse_held := Input.is_key_pressed(KEY_J) or Input.is_joy_button_pressed(0, JOY_BUTTON_RIGHT_SHOULDER) or Input.is_joy_button_pressed(0, JOY_BUTTON_X)
+\tvar snare_held := Input.is_key_pressed(KEY_K) or Input.is_joy_button_pressed(0, JOY_BUTTON_Y)
 
 \twhile race_accum >= step_dt:
 \t\trace_accum -= step_dt
@@ -1058,8 +1225,8 @@ func _step_racing(delta: float) -> void:
 \t\t\t"throttle": throttle,
 \t\t\t"steer": steer,
 \t\t\t"drift": drift,
-\t\t\t"pulse": queued_pulse or Input.is_key_pressed(KEY_J),
-\t\t\t"snare": queued_snare or Input.is_key_pressed(KEY_K)
+\t\t\t"pulse": queued_pulse or pulse_held,
+\t\t\t"snare": queued_snare or snare_held
 \t\t}
 \t\tqueued_pulse = false
 \t\tqueued_snare = false
@@ -1079,7 +1246,9 @@ func _step_racing(delta: float) -> void:
 \t\tif car:
 \t\t\tcar.position = Vector3(float(d["x"]), 0.0, float(d["z"]))
 \t\t\tcar.rotation.y = float(d["yaw"])
-\t\t\tcar.rotation.z = lerpf(car.rotation.z, float(d["steer"]) * (0.12 if bool(d["drift"]) else 0.06), clampf(delta * 10.0, 0.0, 1.0))
+\t\t\tvar speed := Vector2(float(d["vx"]), float(d["vz"])).length()
+\t\t\tvar target_roll := -float(d["steer"]) * minf(0.19, speed * 0.011)
+\t\t\tcar.rotation.z = lerpf(car.rotation.z, target_roll, clampf(delta * 10.0, 0.0, 1.0))
 
 \t_sync_race_fx()
 
@@ -1088,6 +1257,8 @@ func _step_racing(delta: float) -> void:
 \t\tvar ts_circuit: Dictionary = race_state["circuit"]
 \t\tvar qual := place <= int(ts_circuit["qualify"])
 \t\tvar payout := int(prog_mod.recordResult(championship, ts_circuit, place, float(player["finish"]))) if prog_mod else 0
+\t\tif prog_mod:
+\t\t\tprog_mod.saveChampionship(_save_storage, championship)
 \t\trace_result = { "place": place, "seconds": float(player["finish"]), "qualified": qual, "payout": payout }
 \t\tif qual:
 \t\t\t_play_sfx("podium")
@@ -1269,11 +1440,16 @@ func _rebuild_ui() -> void:
 \t\t\tvar lap_txt := "LAP %d / %d" % [mini(int(c["laps"]), int(p["lap"]) + 1), int(c["laps"])]
 \t\t\tvar kmh := "%d" % roundi(Vector2(float(p["vx"]), float(p["vz"])).length() * 3.6)
 \t\t\tvar surf := "REBOOTING" if float(p["disabled"]) > 0.0 else ("OFF TRACK" if bool(p["offroad"]) else ("DRIFTING" if bool(p["drift"]) else "ON TRACK"))
+\t\t\tvar time_txt := _fmt_time(float(race_state["elapsed"]))
+\t\t\tvar ui_key := "r|%d|%d|%d|%s|%s|%s|%s|%s|%d|%d|%d|%d" % [int(w), int(h), ceili(race_countdown), pos, lap_txt, kmh, surf, time_txt, int(p["shield"]), int(p["maxShield"]), int(p["pulses"]), int(p["snares"])]
+\t\t\tif ui_key == _last_ui_key:
+\t\t\t\treturn
+\t\t\t_last_ui_key = ui_key
 \t\t\titems.append({ "type": "panel", "rect": Rect2(18, 18, 210, 90) })
 \t\t\titems.append({ "type": "text", "rect": Rect2(30, 26, 90, 16), "text": "POSITION", "size": 11, "color": Color("#f3bd88") })
 \t\t\titems.append({ "type": "text", "rect": Rect2(118, 26, 98, 16), "text": lap_txt, "size": 11, "align": "right", "color": Color("#f3bd88") })
 \t\t\titems.append({ "type": "text", "rect": Rect2(30, 44, 100, 32), "text": pos, "size": 26 })
-\t\t\titems.append({ "type": "text", "rect": Rect2(118, 52, 98, 20), "text": _fmt_time(float(race_state["elapsed"])), "size": 13, "align": "right" })
+\t\t\titems.append({ "type": "text", "rect": Rect2(118, 52, 98, 20), "text": time_txt, "size": 13, "align": "right" })
 \t\t\titems.append({ "type": "text", "rect": Rect2(30, 82, 186, 18), "text": str(c["name"]).to_upper(), "size": 11, "color": Color("#f3bd88") })
 
 \t\t\titems.append({ "type": "panel", "rect": Rect2(18, h - 126, 210, 108) })
@@ -1290,6 +1466,7 @@ func _rebuild_ui() -> void:
 \t\t\t\titems.append({ "type": "panel", "rect": Rect2(w * 0.5 - 42, h * 0.28 - 32, 84, 64) })
 \t\t\t\titems.append({ "type": "text", "rect": Rect2(w * 0.5 - 42, h * 0.28 - 32, 84, 64), "text": str(ceili(race_countdown)), "size": 42, "align": "center" })
 \t\telse:
+\t\t\t_last_ui_key = ""
 \t\t\titems.append({ "type": "scrim", "rect": Rect2(0, 0, w, h), "fill": Color("#140f1296") if race_screen == "home" else Color("#120e0ec2") })
 \t\t\tvar card_w := minf(w - 40.0, 480.0 if race_screen == "events" else 410.0)
 \t\t\tvar card_h := 390.0 if race_screen == "events" else 318.0
