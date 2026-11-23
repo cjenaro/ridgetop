@@ -8,7 +8,7 @@ import { createPartEditor, createViewComparison } from './sprite-model-editor.ts
 type Manifest = SpriteAtlasSource & { clips: Record<string, SpriteClip> }
 type Asset = { image: HTMLCanvasElement; manifest: Manifest }
 type Template = {
-  palette: string[]; roles: string[]; palettes?: string[][]; variant: number; asset?: Asset; recipe?: ArtRecipe
+  palette: string[]; roles: string[]; palettes?: string[][]; variant: number; asset?: Asset; recipe?: ArtRecipe; dirty?: boolean
   generate(palette: string[], variant: number): Asset
 }
 
@@ -226,16 +226,24 @@ function showClip(first = 0) {
 
 function recolor(template: Template) {
   // Keep the edited clip timings and current pose while replacing the artwork.
+  template.dirty = false
   asset.image = template.generate(template.palette, template.variant).image
   review.show(art.value, asset)
   showClip(index)
 }
 
 let pendingRecolor = 0
+let pendingTemplate: Template | undefined
 function scheduleRecolor(template: Template) {
-  if (pendingRecolor) return
+  if (pendingRecolor) {
+    if (pendingTemplate === template) return
+    cancelAnimationFrame(pendingRecolor)
+    pendingRecolor = 0
+  }
+  pendingTemplate = template
   pendingRecolor = requestAnimationFrame(() => {
     pendingRecolor = 0
+    pendingTemplate = undefined
     if (templates[art.value] === template) recolor(template)
   })
 }
@@ -252,6 +260,7 @@ function showPalette(template: Template | undefined) {
     input.oninput = () => {
       template.palette[i] = input.value.slice(1)
       if (template.recipe) template.recipe.palette[role as ArtTone] = input.value
+      template.dirty = true
       scheduleRecolor(template)
     }
     const label = document.createElement('label')
@@ -262,7 +271,18 @@ function showPalette(template: Template | undefined) {
 
 function showAsset(preferredClip?: string, first = 0) {
   const template = templates[art.value]
-  asset = template ? (template.asset ??= template.generate(template.palette, template.variant)) : imported
+  if (template) {
+    if (!template.asset) {
+      template.asset = template.generate(template.palette, template.variant)
+      template.dirty = false
+    } else if (template.dirty) {
+      template.asset.image = template.generate(template.palette, template.variant).image
+      template.dirty = false
+    }
+    asset = template.asset
+  } else {
+    asset = imported
+  }
   clipSelect.replaceChildren(...Object.keys(asset.manifest.clips).map(name => new Option(name, name)))
   if (art.value === 'scout') clipSelect.value = 'run'
   if (preferredClip && Object.hasOwn(asset.manifest.clips, preferredClip)) clipSelect.value = preferredClip

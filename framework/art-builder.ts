@@ -37,8 +37,14 @@ export function artPartBounds(part: PlacedMesh): Bounds {
 
 function vec(fn: (axis: number) => number): Vec3 { return [fn(0), fn(1), fn(2)] }
 function checkVector(v: Vec3, label: string, positive = false) {
-  if (!Array.isArray(v) || v.length !== 3 || !v.every(n => Number.isFinite(n) && (!positive || n > 0))) {
+  if (!Array.isArray(v) || v.length !== 3) {
     throw new RangeError('Expected three ' + (positive ? 'positive ' : '') + 'finite dimensions for ' + label)
+  }
+  for (let i = 0; i < 3; i++) {
+    const n = v[i]
+    if (typeof n !== 'number' || !Number.isFinite(n) || (positive && n <= 0)) {
+      throw new RangeError('Expected three ' + (positive ? 'positive ' : '') + 'finite dimensions for ' + label)
+    }
   }
 }
 function extent(b: Bounds, i: number) { return b.max[i] - b.min[i] }

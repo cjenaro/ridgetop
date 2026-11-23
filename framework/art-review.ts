@@ -52,7 +52,7 @@ export function spritePartVisibility<Name extends string>(kit: {
     let key = base
     let suffix = 2
     while (Object.hasOwn(named, key)) key = `${base}#${suffix++}`
-    named[key] = counts[i]
+    Object.defineProperty(named, key, { value: counts[i], enumerable: true, writable: true, configurable: true })
   }
   return { frameSize, directions: spriteDirections, parts: named }
 }

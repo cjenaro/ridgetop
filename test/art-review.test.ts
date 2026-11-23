@@ -98,11 +98,17 @@ test('part edits preserve other roles and reject an outdated or invalid recipe w
   assert.deepEqual(JSON.parse(await readFile(join(folder, bound), 'utf8')), edited)
   assert.deepEqual(JSON.parse(await readFile(file, 'utf8')), { ranger, crate })
 
-  // Non-object JSON bodies and corrupted overrides.json return 400 (not 500)
+  // Non-object JSON bodies and corrupted overrides.json / review JSON return 400 (not 500)
   assert.equal((await app.request('reviews', 'POST', null)).status, 400)
   assert.equal((await app.request('recipe', 'POST', null)).status, 400)
   await writeFile(file, 'null')
   assert.equal((await app.request('recipe', 'POST', { asset: 'ranger', file: null, base: null, recipe: ranger })).status, 400)
+  await mkdir(join(folder, 'reviews'), { recursive: true })
+  const badId = randomUUID()
+  await writeFile(join(folder, 'reviews', badId + '.json'), 'null')
+  assert.equal((await app.request('reviews/' + badId + '/before.png')).status, 400)
+  await writeFile(join(folder, 'reviews', badId + '.json'), '{bad')
+  assert.equal((await app.request('reviews/' + badId, 'PATCH', { revision: 'x', status: 'open' })).status, 400)
 })
 
 test('pickArtScene, spritePartVisibility, and art-recipe validation handle bounds, duplicates, and malformed values', () => {
@@ -117,20 +123,22 @@ test('pickArtScene, spritePartVisibility, and art-recipe validation handle bound
   ;(badNull.parts[0] as unknown as Record<string, unknown>).pitch = null
   assert.throws(() => modelFromArtRecipe(badNull), RangeError)
 
-  // spritePartVisibility preserves duplicate part names instead of overwriting
+  // spritePartVisibility preserves duplicate part names and safely handles __proto__
   const kit = createArtKit<string>({
     models: {
       dup: {
         span: 2, centerY: 0, parts: [
           { name: 'leg', mesh: box, position: [-.4, 0, 0], scale: [.4, .4, .4], tone: 'accent' },
-          { name: 'leg', mesh: box, position: [.4, 0, 0], scale: [.4, .4, .4], tone: 'glow' }
+          { name: 'leg', mesh: box, position: [.4, 0, 0], scale: [.4, .4, .4], tone: 'glow' },
+          { name: '__proto__', mesh: box, position: [0, .5, 0], scale: [.3, .3, .3], tone: 'leaf' }
         ]
       }
     }
   })
   const vis = spritePartVisibility(kit, 'dup', 32)
-  assert.deepEqual(Object.keys(vis.parts), ['leg', 'leg#2'])
-  assert.ok(vis.parts.leg[0] > 0 && vis.parts['leg#2'][0] > 0)
+  assert.equal(Object.getPrototypeOf(vis.parts), Object.prototype)
+  assert.deepEqual(Object.keys(vis.parts), ['leg', 'leg#2', '__proto__'])
+  assert.ok(vis.parts.leg[0] > 0 && vis.parts['leg#2'][0] > 0 && vis.parts['__proto__'][0] > 0)
 
   // Headless pickArtScene (no DOM document) rejects out-of-range u/v and hits centered object
   const cam = multiply(orthographic(4, 4, .1, 20), view([0, 0, 5], [0, 0, 0]))

@@ -75,6 +75,9 @@ test('invalid placements fail without appending parts and edits reject invalid r
   assert.throws(() => art.between('arm',[1,0,0],[1,0,0],.1,'wood'), /endpoints/)
   assert.throws(() => art.solid('body','oval',[1,1,1],'wood'), /unique/)
   assert.throws(() => art.solid('bad','ring',[1,0,1],'ink'), /positive/)
+  const sparse = new Array(3)
+  sparse[0] = 1
+  assert.throws(() => art.solid('sparse','box',sparse as unknown as Vec3,'wood'), RangeError)
   assert.deepEqual(art.finish(),before)
   const invalid: ArtRecipe = structuredClone(before)
   invalid.parts[0].pitch = Infinity

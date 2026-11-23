@@ -54,7 +54,7 @@ async function payload(req: IncomingMessage): Promise<Record<string, any>> {
 }
 async function regular(path: string) {
   try { if (!(await lstat(path)).isFile()) bad('Expected a regular project file.'); return await readFile(path) }
-  catch (error) { if (error.code !== 'ENOENT') throw error }
+  catch (error) { if ((error as NodeJS.ErrnoException | undefined)?.code !== 'ENOENT') throw error }
 }
 async function atomic(path: string, body: string | Buffer) {
   const temp = path + '.' + randomUUID() + '.tmp'
@@ -74,7 +74,10 @@ export function createArtReviewHandler(root: URL) {
     const raw = await regular(join(reviews, id + '.json'))
     if (!raw) bad('Review not found.', 404)
     const source = raw.toString()
-    const value: ArtReview = JSON.parse(source)
+    let parsed: unknown
+    try { parsed = JSON.parse(source) } catch { bad('Invalid review file.') }
+    if (!isRecord(parsed)) bad('Invalid review file.')
+    const value = parsed as unknown as ArtReview
     if (value.version !== 1 || value.id !== id || !states.includes(value.status) || typeof value.created !== 'string' ||
         typeof value.comment !== 'string' || !Array.isArray(value.replies) || value.replies.some(r => typeof r?.text !== 'string')) bad('Invalid review file.')
     checkPin(value.target)
@@ -90,8 +93,10 @@ export function createArtReviewHandler(root: URL) {
     if (!path.startsWith('/__testing/')) return false
     const host = req.headers.host
     const port = req.socket.localPort
+    const remote = req.socket.remoteAddress
+    const loopback = remote === '127.0.0.1' || remote === '::1' || remote === '::ffff:127.0.0.1'
     const local = ['127.0.0.1', 'localhost', '[::1]'].some(name => host === name + ':' + port || (port === 80 && host === name))
-    if (!local || (req.method !== 'GET' && req.headers.origin !== new URL('http://' + host).origin)) bad('Use the local testing origin.', 403)
+    if (!loopback || !local || (req.method !== 'GET' && req.headers.origin !== new URL('http://' + host).origin)) bad('Use the local testing origin.', 403)
     if (path === '/__testing/recipe' && req.method === 'POST') {
       const { asset, file, base, recipe } = await payload(req)
       if (typeof asset !== 'string' || !/^[a-z0-9][a-z0-9_-]*$/i.test(asset)) bad('Invalid model role.')
@@ -174,8 +179,9 @@ export function createArtReviewHandler(root: URL) {
   return async (req: IncomingMessage, res: ServerResponse, path: string) => {
     if (!path.startsWith('/__testing/')) return false
     try { return await handle(req, res, path) } catch (error) {
-      res.writeHead(error.status ?? 500, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' })
-        .end(JSON.stringify({ error: error.status ? error.message : 'Could not read or write the project review files.' }))
+      const err = error as { status?: number; message?: string } | undefined
+      res.writeHead(err?.status ?? 500, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' })
+        .end(JSON.stringify({ error: err?.status ? err.message : 'Could not read or write the project review files.' }))
       return true
     }
   }
