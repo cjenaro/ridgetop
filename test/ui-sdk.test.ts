@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import {
-  boxNode, buttonPrimitive, column, createMachine, createUiAgent, dialogPrimitive,
+  boxNode, buttonPrimitive, column, createCanvasUi, createMachine, createUiAgent, dialogPrimitive,
   menuPrimitive, overlay, resolveLayout, row, selectPrimitive, sliderPrimitive, spacerNode, togglePrimitive
 } from '../framework/ui.ts'
 
@@ -148,4 +148,134 @@ test('resolveLayout computes exact flex, overlay, anchor, and safe-area rectangl
 
   // Bottom-right corner respects safeArea.right (16) + inset (12) and safeArea.bottom (24) + inset (12)
   assert.deepEqual(rects.get('corner'), { x: 800 - 16 - 12 - 60, y: 600 - 24 - 12 - 60, width: 60, height: 60 })
+
+  // Explicit width/height still respect minWidth/maxWidth/minHeight/maxHeight
+  const clamped = resolveLayout(row({ id: 'r', style: { width: 800, height: 100 } }, [
+    boxNode({ id: 'c', style: { width: 500, maxWidth: 200, height: 90, maxHeight: 50 } })
+  ]), { width: 800, height: 100 })
+  assert.deepEqual(clamped.get('c'), { x: 0, y: 0, width: 200, height: 50 })
+})
+
+test('createMachine preserves re-entrant transitions and select/slider handle edge cases', () => {
+  // Re-entrant setDisabled(true) inside button onPress must not be clobbered
+  const btn = buttonPrimitive.create({
+    id: 'once', label: 'Once',
+    onPress() { btn.api.setDisabled(true) }
+  })
+  btn.api.pointerDown()
+  btn.api.pointerUp()
+  assert.equal(btn.state, 'disabled')
+
+  // Dialog onOpenChange sees updated isOpen() state
+  let sawOpen = false
+  const dlg = dialogPrimitive.create({
+    id: 'dlg',
+    onOpenChange() { sawOpen = dlg.api.isOpen() }
+  })
+  dlg.api.open()
+  assert.equal(sawOpen, true)
+
+  // Select clears stale value when options become empty and does not skip index 0
+  const sel = selectPrimitive.create({
+    id: 's', label: 'S',
+    options: [{ value: 'a', label: 'A', disabled: true }, { value: 'b', label: 'B' }, { value: 'c', label: 'C' }],
+    value: 'a'
+  })
+  sel.api.next()
+  assert.equal(sel.api.value(), 'b')
+  sel.api.setOptions([])
+  assert.equal(sel.api.value(), '')
+
+  // Slider ignores NaN without firing onChange
+  let sliderChanges = 0
+  const sl = sliderPrimitive.create({
+    id: 'sl', label: 'Vol', min: 0, max: 10, step: 1, value: 5,
+    onChange() { sliderChanges++ }
+  })
+  sl.api.set(Number.NaN)
+  sl.api.setRatio(Number.NaN)
+  assert.equal(sl.api.value(), 5)
+  assert.equal(sliderChanges, 0)
+})
+
+test('createCanvasUi handles non-Array GamepadList, hidden hold release, scrim blocking, slider primitive drag, and viewport scaling', () => {
+  const prevNav = Object.getOwnPropertyDescriptor(globalThis, 'navigator')
+  const prevWin = Object.getOwnPropertyDescriptor(globalThis, 'window')
+  const prevDoc = Object.getOwnPropertyDescriptor(globalThis, 'document')
+  const fakeWin = new EventTarget()
+  const fakeDoc = Object.assign(new EventTarget(), { hidden: false })
+  Object.defineProperty(globalThis, 'navigator', {
+    value: { getGamepads: () => ({ length: 1, 0: { connected: false } }) },
+    configurable: true
+  })
+  Object.defineProperty(globalThis, 'window', { value: fakeWin, configurable: true })
+  Object.defineProperty(globalThis, 'document', { value: fakeDoc, configurable: true })
+  try {
+    const target = new EventTarget()
+    const noop = () => {}
+    const ctx = {
+      save: noop, restore: noop, beginPath: noop, moveTo: noop, lineTo: noop, closePath: noop,
+      fill: noop, stroke: noop, clip: noop, fillRect: noop, clearRect: noop, fillText: noop,
+      drawImage: noop, setTransform: noop, measureText: () => ({ width: 10 }),
+      fillStyle: '', strokeStyle: '', lineWidth: 1, font: '', textAlign: 'left', textBaseline: 'middle', globalAlpha: 1
+    }
+    const canvas = Object.assign(target, {
+      clientWidth: 400, clientHeight: 200, width: 400, height: 200, style: { cursor: '' },
+      getContext: () => ctx,
+      getBoundingClientRect: () => ({ left: 0, top: 0, width: 400, height: 200 }),
+      setPointerCapture() { throw new Error('synthetic pointer') }
+    }) as unknown as HTMLCanvasElement
+
+    const ui = createCanvasUi(canvas)
+    const holdStates: boolean[] = []
+    const sl = sliderPrimitive.create({ id: 'vol', label: 'Vol', min: 0, max: 100, step: 10, value: 0 })
+
+    // Scrim blocks hits to underlying controls; custom viewport (800x400) scales clicks from 400x200 CSS box
+    const buildTree = (hideHold: boolean, withScrim: boolean) => overlay({ id: 'root', style: { anchor: 'fill' } }, [
+      boxNode({
+        id: 'hold-btn', hidden: hideHold, style: { anchor: 'top-left', width: 200, height: 100 },
+        widget: { type: 'button', label: 'Gas', onHold: active => holdStates.push(active) }
+      }),
+      boxNode({
+        id: 'vol', style: { anchor: 'bottom-left', width: 400, height: 60 },
+        widget: { type: 'slider', label: 'Vol', ratio: sl.api.ratio(), primitive: sl }
+      }),
+      boxNode({ id: 'scrim', hidden: !withScrim, style: { anchor: 'fill' }, widget: { type: 'panel', scrim: true } })
+    ])
+
+    ui.render(buildTree(false, true), { width: 800, height: 400, pixelRatio: 1 })
+    assert.equal(ui.hitTest(50, 50), undefined, 'scrim must block hits to controls underneath')
+
+    ui.render(buildTree(false, false), { width: 800, height: 400, pixelRatio: 1 })
+    // Click at CSS (50, 25) -> scaled virtual (100, 50) hits hold-btn (0..200, 0..100)
+    const down = Object.assign(new Event('pointerdown'), { button: 0, pointerType: 'touch', pointerId: 7, clientX: 50, clientY: 25 })
+    canvas.dispatchEvent(down)
+    assert.deepEqual(holdStates, [true])
+    // Hide the hold button while held, then release pointer -> onHold(false) must still fire
+    ui.render(buildTree(true, false), { width: 800, height: 400, pixelRatio: 1 })
+    const up = Object.assign(new Event('pointerup'), { pointerId: 7, clientX: 50, clientY: 25 })
+    canvas.dispatchEvent(up)
+    assert.deepEqual(holdStates, [true, false])
+
+    // Drag slider backed by sliderPrimitive with pointer 1; pointer 2 must not hijack it
+    const slDown = Object.assign(new Event('pointerdown'), { button: 0, pointerType: 'touch', pointerId: 1, clientX: 100, clientY: 185 })
+    canvas.dispatchEvent(slDown) // CSS x=100 -> virtual x=200 of 400 = 50% -> 50
+    assert.equal(sl.api.value(), 50)
+    const otherMove = Object.assign(new Event('pointermove'), { pointerId: 2, clientX: 0, clientY: 185 })
+    canvas.dispatchEvent(otherMove)
+    assert.equal(sl.api.value(), 50, 'second pointer must not hijack active slider drag')
+    const slMove = Object.assign(new Event('pointermove'), { pointerId: 1, clientX: 160, clientY: 185 })
+    canvas.dispatchEvent(slMove) // CSS x=160 -> virtual x=320 of 400 = 80% -> 80
+    assert.equal(sl.api.value(), 80)
+    canvas.dispatchEvent(Object.assign(new Event('pointerup'), { pointerId: 1, clientX: 160, clientY: 185 }))
+    assert.equal(sl.state, 'focused')
+
+    ui.dispose()
+  } finally {
+    if (prevNav) Object.defineProperty(globalThis, 'navigator', prevNav)
+    if (prevWin) Object.defineProperty(globalThis, 'window', prevWin)
+    else delete (globalThis as Record<string, unknown>).window
+    if (prevDoc) Object.defineProperty(globalThis, 'document', prevDoc)
+    else delete (globalThis as Record<string, unknown>).document
+  }
 })

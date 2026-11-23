@@ -65,8 +65,10 @@ function measureNode(node: LayoutNode, availW: number, availH: number, cache: We
   const [pt, pr, pb, pl] = normalizePadding(s.padding)
   const padW = pl + pr
   const padH = pt + pb
-  const innerMaxW = Math.max(0, (s.width ?? clamp(availW, s.minWidth, s.maxWidth)) - padW)
-  const innerMaxH = Math.max(0, (s.height ?? clamp(availH, s.minHeight, s.maxHeight)) - padH)
+  const resolvedW = s.width !== undefined ? clamp(s.width, s.minWidth, s.maxWidth) : clamp(availW, s.minWidth, s.maxWidth)
+  const resolvedH = s.height !== undefined ? clamp(s.height, s.minHeight, s.maxHeight) : clamp(availH, s.minHeight, s.maxHeight)
+  const innerMaxW = Math.max(0, resolvedW - padW)
+  const innerMaxH = Math.max(0, resolvedH - padH)
   const children = (node.children ?? []).filter(child => !child.hidden)
   const gap = s.gap ?? 0
 
@@ -93,8 +95,8 @@ function measureNode(node: LayoutNode, availW: number, availH: number, cache: We
     }
   }
 
-  const width = s.width !== undefined ? s.width : clamp(contentW + padW, s.minWidth, s.maxWidth)
-  const height = s.height !== undefined ? s.height : clamp(contentH + padH, s.minHeight, s.maxHeight)
+  const width = s.width !== undefined ? resolvedW : clamp(contentW + padW, s.minWidth, s.maxWidth)
+  const height = s.height !== undefined ? resolvedH : clamp(contentH + padH, s.minHeight, s.maxHeight)
   const size = { width, height }
   cache.set(node, size)
   return size
@@ -193,7 +195,9 @@ function arrangeNode(
     const measuredCross = isRow ? item.measured.height : item.measured.width
     const explicitCross = isRow ? item.child.style?.height : item.child.style?.width
     const cross = explicitCross !== undefined
-      ? explicitCross
+      ? (isRow
+        ? clamp(explicitCross, item.child.style?.minHeight, item.child.style?.maxHeight)
+        : clamp(explicitCross, item.child.style?.minWidth, item.child.style?.maxWidth))
       : align === 'stretch'
         ? (isRow
           ? clamp(crossAvail, item.child.style?.minHeight, item.child.style?.maxHeight)

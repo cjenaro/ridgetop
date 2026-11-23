@@ -15,6 +15,7 @@ type SelectEvent =
   | { type: 'NEXT' }
   | { type: 'PREV' }
   | { type: 'SELECT'; value: string }
+  | { type: 'SYNC'; value: string }
   | { type: 'FOCUS' }
   | { type: 'BLUR' }
   | { type: 'DISABLE' }
@@ -52,7 +53,8 @@ export const selectPrimitive = definePrimitive<SelectProps, SelectApi>({
       if (!options.length) return current
       const enabled = options.filter(o => !o.disabled)
       if (!enabled.length) return current
-      const index = Math.max(0, enabled.findIndex(o => o.value === current))
+      const index = enabled.findIndex(o => o.value === current)
+      if (index < 0) return delta > 0 ? enabled[0].value : enabled[enabled.length - 1].value
       return enabled[(index + delta + enabled.length) % enabled.length].value
     }
 
@@ -74,6 +76,7 @@ export const selectPrimitive = definePrimitive<SelectProps, SelectApi>({
             NEXT: { action: ctx => commit(ctx, stepIndex(ctx.value, 1)) },
             PREV: { action: ctx => commit(ctx, stepIndex(ctx.value, -1)) },
             SELECT: { action: (ctx, e) => commit(ctx, e.value) },
+            SYNC: { action: (ctx, e) => { ctx.value = e.value } },
             FOCUS: { action: ctx => { ctx.focused = true } },
             BLUR: { action: ctx => { ctx.focused = false } },
             DISABLE: 'disabled'
@@ -87,12 +90,16 @@ export const selectPrimitive = definePrimitive<SelectProps, SelectApi>({
             NEXT: { action: ctx => commit(ctx, stepIndex(ctx.value, 1)) },
             PREV: { action: ctx => commit(ctx, stepIndex(ctx.value, -1)) },
             SELECT: { target: 'closed', action: (ctx, e) => commit(ctx, e.value) },
+            SYNC: { action: (ctx, e) => { ctx.value = e.value } },
             DISABLE: 'disabled'
           }
         },
         disabled: {
           enter(ctx) { ctx.focused = false },
-          on: { ENABLE: 'closed' }
+          on: {
+            ENABLE: 'closed',
+            SYNC: { action: (ctx, e) => { ctx.value = e.value } }
+          }
         }
       }
     })
@@ -108,8 +115,15 @@ export const selectPrimitive = definePrimitive<SelectProps, SelectApi>({
       option: () => options.find(o => o.value === machine.context.value),
       setOptions(nextOptions, value) {
         options = [...nextOptions]
-        const chosen = value ?? (options.some(o => o.value === machine.context.value) ? machine.context.value : options[0]?.value ?? '')
-        machine.send({ type: 'SELECT', value: chosen })
+        const fallback = options.find(o => !o.disabled)?.value ?? ''
+        const chosen = value !== undefined
+          ? (options.some(o => o.value === value && !o.disabled) ? value : fallback)
+          : (options.some(o => o.value === machine.context.value && !o.disabled) ? machine.context.value : fallback)
+        if (machine.state !== 'disabled' && chosen && chosen !== machine.context.value) {
+          machine.send({ type: 'SELECT', value: chosen })
+        } else if (chosen !== machine.context.value) {
+          machine.send({ type: 'SYNC', value: chosen })
+        }
       }
     }
 

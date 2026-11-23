@@ -60,6 +60,7 @@ export function bindActionControls<Action extends string>({
   const listeners = { signal: controller.signal }
 
   const actions = Array.from(new Set(Object.values(keys))) as Action[]
+  const pauseBindings: readonly GamepadBinding[] = pauseButtons.map(button => ({ button }))
   const padBindings = new Map<Action, readonly GamepadBinding[]>()
   if (gamepad !== false) {
     for (const action of actions) {
@@ -81,14 +82,19 @@ export function bindActionControls<Action extends string>({
   }
 
   function poll() {
-    if (disposed || gamepad === false) return
+    if (disposed || gamepad === false) return false
     const pads = readPads()
     if (!pads.length) {
       padDown.clear()
       padPauseDown = false
-      return
+      return false
     }
-    const pausePressed = pads.some(pad => pauseButtons.some(index => bindingActive(pad, { button: index })))
+    let pausePressed = false
+    for (let i = 0; i < pads.length && !pausePressed; i++) {
+      for (let j = 0; j < pauseBindings.length; j++) {
+        if (bindingActive(pads[i], pauseBindings[j])) { pausePressed = true; break }
+      }
+    }
     if (pausePressed && !padPauseDown) {
       onGesture()
       onPause()
@@ -97,7 +103,14 @@ export function bindActionControls<Action extends string>({
 
     const allow = enabled()
     for (const [action, bindings] of padBindings) {
-      const pressed = allow && pads.some(pad => bindings.some(binding => bindingActive(pad, binding)))
+      let pressed = false
+      if (allow) {
+        for (let i = 0; i < pads.length && !pressed; i++) {
+          for (let j = 0; j < bindings.length; j++) {
+            if (bindingActive(pads[i], bindings[j])) { pressed = true; break }
+          }
+        }
+      }
       if (pressed && !padDown.has(action)) {
         onGesture()
         onPress(action)
@@ -105,6 +118,7 @@ export function bindActionControls<Action extends string>({
       if (pressed) padDown.add(action)
       else padDown.delete(action)
     }
+    return true
   }
 
   function stopPadLoop() {
@@ -119,8 +133,7 @@ export function bindActionControls<Action extends string>({
     const step = () => {
       padFrame = undefined
       if (disposed) return
-      poll()
-      if (readPads().length) padFrame = globalThis.requestAnimationFrame(step)
+      if (poll() && !disposed) padFrame = globalThis.requestAnimationFrame(step)
     }
     padFrame = globalThis.requestAnimationFrame(step)
   }
@@ -162,7 +175,7 @@ export function bindActionControls<Action extends string>({
       if (event.button !== 0 || !enabled()) return
       event.preventDefault()
       onGesture()
-      button.setPointerCapture(event.pointerId)
+      try { button.setPointerCapture?.(event.pointerId) } catch { /* Synthetic or detached pointers cannot be captured. */ }
       pointers.set(event.pointerId, action)
       onPress(action)
     }, listeners)
@@ -181,10 +194,7 @@ export function bindActionControls<Action extends string>({
     clear,
     poll,
     active(action: Action) {
-      if (gamepad !== false && readPads().length) {
-        ensurePadLoop()
-        poll()
-      }
+      if (gamepad !== false && poll()) ensurePadLoop()
       for (const held of down.values()) if (held === action) return true
       for (const held of pointers.values()) if (held === action) return true
       return padDown.has(action)
@@ -238,6 +248,17 @@ function visibleFocusables(root: ParentNode): HTMLElement[] {
   })
 }
 
+const menuPrevBindings: readonly GamepadBinding[] = [
+  { button: 12 }, { button: 14 },
+  { axis: 1, direction: -1, threshold: .5 }, { axis: 0, direction: -1, threshold: .5 }
+]
+const menuNextBindings: readonly GamepadBinding[] = [
+  { button: 13 }, { button: 15 },
+  { axis: 1, direction: 1, threshold: .5 }, { axis: 0, direction: 1, threshold: .5 }
+]
+const menuConfirmBinding: GamepadBinding = { button: 0 }
+const menuBackBinding: GamepadBinding = { button: 1 }
+
 /** Enable D-pad / Left Stick menu navigation and A/B confirm/back on gamepads and Steam Deck. */
 export function bindMenuGamepad({
   enabled, container = () => document, onBack
@@ -258,44 +279,51 @@ export function bindMenuGamepad({
   function step(now = performance.now()) {
     if (disposed) return
     const pads = readPads()
-    if (!pads.length || !enabled()) {
+    if (!pads.length) {
       lastDir = 0
       confirmDown = false
       backDown = false
       return
     }
-    const prev = pads.some(p => bindingActive(p, { button: 12 }) || bindingActive(p, { button: 14 }) ||
-      bindingActive(p, { axis: 1, direction: -1, threshold: .5 }) || bindingActive(p, { axis: 0, direction: -1, threshold: .5 }))
-    const next = pads.some(p => bindingActive(p, { button: 13 }) || bindingActive(p, { button: 15 }) ||
-      bindingActive(p, { axis: 1, direction: 1, threshold: .5 }) || bindingActive(p, { axis: 0, direction: 1, threshold: .5 }))
-    const dir = next ? 1 : prev ? -1 : 0
-    const root = container()
-    const items = root ? visibleFocusables(root) : []
-    if (dir && items.length && (dir !== lastDir || now - lastMoveAt >= 200)) {
-      const current = document.activeElement instanceof HTMLElement ? items.indexOf(document.activeElement) : -1
-      const index = current < 0 ? (dir > 0 ? 0 : items.length - 1) : (current + dir + items.length) % items.length
-      items[index]?.focus()
-      lastMoveAt = now
+    const confirm = pads.some(p => bindingActive(p, menuConfirmBinding))
+    const back = pads.some(p => bindingActive(p, menuBackBinding))
+    if (!enabled()) {
+      lastDir = 0
+      confirmDown = confirm
+      backDown = back
+      return
     }
-    lastDir = dir
-
-    const confirm = pads.some(p => bindingActive(p, { button: 0 }))
-    if (confirm && !confirmDown) {
-      const active = document.activeElement instanceof HTMLElement && items.includes(document.activeElement)
-        ? document.activeElement : items[0]
-      if (active) {
-        active.focus()
-        if (active instanceof HTMLSelectElement) {
-          active.selectedIndex = (active.selectedIndex + 1) % Math.max(1, active.options.length)
-          active.dispatchEvent(new Event('change', { bubbles: true }))
-        } else {
-          active.click()
+    const prev = pads.some(p => menuPrevBindings.some(b => bindingActive(p, b)))
+    const next = pads.some(p => menuNextBindings.some(b => bindingActive(p, b)))
+    const dir = next ? 1 : prev ? -1 : 0
+    const shouldMove = dir !== 0 && (dir !== lastDir || now - lastMoveAt >= 200)
+    const shouldConfirm = confirm && !confirmDown
+    if (shouldMove || shouldConfirm) {
+      const root = container()
+      const items = root ? visibleFocusables(root) : []
+      if (shouldMove && items.length) {
+        const current = document.activeElement instanceof HTMLElement ? items.indexOf(document.activeElement) : -1
+        const index = current < 0 ? (dir > 0 ? 0 : items.length - 1) : (current + dir + items.length) % items.length
+        items[index]?.focus()
+        lastMoveAt = now
+      }
+      if (shouldConfirm) {
+        const active = document.activeElement instanceof HTMLElement && items.includes(document.activeElement)
+          ? document.activeElement : items[0]
+        if (active) {
+          active.focus()
+          if (active instanceof HTMLSelectElement) {
+            active.selectedIndex = (active.selectedIndex + 1) % Math.max(1, active.options.length)
+            active.dispatchEvent(new Event('change', { bubbles: true }))
+          } else {
+            active.click()
+          }
         }
       }
     }
+    lastDir = dir
     confirmDown = confirm
 
-    const back = pads.some(p => bindingActive(p, { button: 1 }))
     if (back && !backDown) onBack?.()
     backDown = back
   }

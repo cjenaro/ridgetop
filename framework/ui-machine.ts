@@ -50,12 +50,13 @@ export function createMachine<S extends string, C extends Record<string, unknown
       return true
     }
     if (candidate.guard && !candidate.guard(context, event)) return false
-    const next = candidate.target ?? current
-    const changed = next !== current
-    if (changed) config.states[current]?.exit?.(context, event)
-    candidate.action?.(context, event)
+    const prev = current
+    const next = candidate.target ?? prev
+    const changed = next !== prev
+    if (changed) config.states[prev]?.exit?.(context, event)
     current = next
-    if (changed) config.states[current]?.enter?.(context, event)
+    candidate.action?.(context, event)
+    if (changed && current === next) config.states[next]?.enter?.(context, event)
     return true
   }
 

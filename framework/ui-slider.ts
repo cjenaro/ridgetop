@@ -44,6 +44,7 @@ export const sliderPrimitive = definePrimitive<SliderProps, SliderApi>({
     const stepSize = props.step ?? 0.05
 
     function quantize(raw: number) {
+      if (!Number.isFinite(raw)) return min
       const clamped = Math.max(min, Math.min(max, raw))
       if (!(stepSize > 0)) return clamped
       const snapped = min + Math.round((clamped - min) / stepSize) * stepSize
@@ -51,6 +52,7 @@ export const sliderPrimitive = definePrimitive<SliderProps, SliderApi>({
     }
 
     function assign(ctx: { value: number }, next: number) {
+      if (!Number.isFinite(next)) return
       const value = quantize(next)
       if (value === ctx.value) return
       ctx.value = value

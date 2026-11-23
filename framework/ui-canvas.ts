@@ -162,14 +162,25 @@ export function createCanvasUi(canvas: HTMLCanvasElement, options: {
   let nodes: LayoutNode[] = []
   let hoveredId: string | null = null
   let focusedId: string | null = null
-  const activePointers = new Map<number, { id: string; isHold: boolean }>()
-  let draggingSliderId: string | null = null
+  const activePointers = new Map<number, { id: string; isHold: boolean; onHold?: (active: boolean) => void }>()
+  let draggingSlider: { id: string; pointerId: number } | null = null
+  let viewportW = 0
+  let viewportH = 0
+  let disposed = false
   let dirty = true
   let padFrame: number | undefined
   let padDir = 0
   let padMoveAt = 0
   let padConfirm = false
   let padBack = false
+
+  function connectedPads(): readonly Gamepad[] {
+    const getGamepads = globalThis.navigator?.getGamepads
+    if (typeof getGamepads !== 'function') return []
+    try {
+      return Array.from(getGamepads.call(globalThis.navigator) ?? []).filter((p): p is Gamepad => Boolean(p && p.connected))
+    } catch { return [] }
+  }
 
   function interactiveHits(includeDisabled = false): CanvasUiHit[] {
     const hits: CanvasUiHit[] = []
@@ -184,14 +195,29 @@ export function createCanvasUi(canvas: HTMLCanvasElement, options: {
   }
 
   function findHit(x: number, y: number): CanvasUiHit | undefined {
-    const hits = interactiveHits(true)
-    for (let i = hits.length - 1; i >= 0; i--) {
-      const { rect } = hits[i]
-      if (x >= rect.x && x <= rect.x + rect.width && y >= rect.y && y <= rect.y + rect.height) {
-        return isDisabled(hits[i].widget) ? undefined : hits[i]
-      }
+    for (let i = nodes.length - 1; i >= 0; i--) {
+      const node = nodes[i]
+      if (!node.id) continue
+      const widget = node.widget as CanvasWidget | undefined
+      if (!widget) continue
+      const rect = rects.get(node.id)
+      if (!rect || rect.width <= 0 || rect.height <= 0) continue
+      if (x < rect.x || x > rect.x + rect.width || y < rect.y || y > rect.y + rect.height) continue
+      if (isInteractive(widget)) return isDisabled(widget) ? undefined : { id: node.id, rect, widget }
+      if (widget.type === 'panel' && widget.scrim) return undefined
     }
     return undefined
+  }
+
+  function driveSlider(widget: Extract<CanvasWidget, { type: 'slider' }>, ratio: number, phase: 'start' | 'move') {
+    const prim = widget.primitive
+    if (prim) {
+      const fn = phase === 'start' ? prim.api.dragStart : prim.api.dragMove
+      if (typeof fn === 'function') fn(ratio)
+      else prim.api.setRatio?.(ratio)
+    } else {
+      widget.onChange?.(ratio)
+    }
   }
 
   function activateHit(hit: CanvasUiHit, direction: 1 | -1 = 1) {
@@ -227,14 +253,15 @@ export function createCanvasUi(canvas: HTMLCanvasElement, options: {
     const entry = activePointers.get(pointerId)
     if (!entry) return
     activePointers.delete(pointerId)
-    if (draggingSliderId === entry.id) {
-      draggingSliderId = null
+    if (draggingSlider && draggingSlider.pointerId === pointerId) {
+      const existing = interactiveHits(true).find(h => h.id === draggingSlider!.id)
+      draggingSlider = null
+      if (existing?.widget.type === 'slider') existing.widget.primitive?.api.dragEnd?.()
       dirty = true
       return
     }
-    const existing = interactiveHits(true).find(h => h.id === entry.id)
     if (entry.isHold) {
-      if (existing?.widget.type === 'button') existing.widget.onHold?.(false)
+      entry.onHold?.(false)
       dirty = true
       return
     }
@@ -251,16 +278,22 @@ export function createCanvasUi(canvas: HTMLCanvasElement, options: {
 
   function canvasPoint(event: PointerEvent) {
     const box = canvas.getBoundingClientRect()
-    return { x: event.clientX - box.left, y: event.clientY - box.top }
+    const rawX = event.clientX - box.left
+    const rawY = event.clientY - box.top
+    if (box.width > 0 && box.height > 0 && viewportW > 0 && viewportH > 0) {
+      return { x: rawX * (viewportW / box.width), y: rawY * (viewportH / box.height) }
+    }
+    return { x: rawX, y: rawY }
   }
 
   canvas.addEventListener('pointermove', event => {
     const { x, y } = canvasPoint(event)
-    if (draggingSliderId) {
-      const hit = interactiveHits().find(h => h.id === draggingSliderId)
+    if (draggingSlider) {
+      if (event.pointerId !== draggingSlider.pointerId) return
+      const hit = interactiveHits().find(h => h.id === draggingSlider!.id)
       if (hit && hit.widget.type === 'slider') {
         const ratio = Math.max(0, Math.min(1, (x - hit.rect.x) / Math.max(1, hit.rect.width)))
-        hit.widget.onChange?.(ratio)
+        driveSlider(hit.widget, ratio, 'move')
         dirty = true
       }
       return
@@ -281,17 +314,18 @@ export function createCanvasUi(canvas: HTMLCanvasElement, options: {
     if (!hit) return
     event.preventDefault()
     event.stopPropagation()
-    canvas.setPointerCapture?.(event.pointerId)
+    try { canvas.setPointerCapture?.(event.pointerId) } catch { /* Synthetic or detached pointer events cannot be captured. */ }
     focusedId = hit.id
-    const isHold = hit.widget.type === 'button' && typeof hit.widget.onHold === 'function'
-    activePointers.set(event.pointerId, { id: hit.id, isHold })
+    const holdCb = hit.widget.type === 'button' && typeof hit.widget.onHold === 'function' ? hit.widget.onHold : undefined
+    const isHold = Boolean(holdCb)
+    activePointers.set(event.pointerId, { id: hit.id, isHold, onHold: holdCb })
     if (isHold && hit.widget.type === 'button') {
-      hit.widget.onHold?.(true)
+      holdCb!(true)
       hit.widget.onPress?.()
     } else if (hit.widget.type === 'slider') {
-      draggingSliderId = hit.id
+      draggingSlider = { id: hit.id, pointerId: event.pointerId }
       const ratio = Math.max(0, Math.min(1, (x - hit.rect.x) / Math.max(1, hit.rect.width)))
-      hit.widget.onChange?.(ratio)
+      driveSlider(hit.widget, ratio, 'start')
     }
     dirty = true
   }, signal)
@@ -312,6 +346,9 @@ export function createCanvasUi(canvas: HTMLCanvasElement, options: {
 
   globalThis.window?.addEventListener('keydown', event => {
     if (options.keyboardEnabled && !options.keyboardEnabled()) return
+    if (event.altKey || event.ctrlKey || event.metaKey) return
+    const target = event.target as { closest?: (sel: string) => unknown; isContentEditable?: boolean } | null
+    if (target && (target.isContentEditable || target.closest?.('input, textarea, select'))) return
     const hits = interactiveHits().filter(h => !(h.widget.type === 'button' && h.widget.onHold))
     if (!hits.length) return
     if (event.code === 'ArrowDown' || (event.code === 'Tab' && !event.shiftKey)) {
@@ -326,7 +363,7 @@ export function createCanvasUi(canvas: HTMLCanvasElement, options: {
         event.preventDefault()
         activateHit(hit, event.code === 'ArrowRight' ? 1 : -1)
       }
-    } else if (event.code === 'Enter' || event.code === 'Space') {
+    } else if ((event.code === 'Enter' || event.code === 'Space') && !event.repeat) {
       const hit = hits.find(h => h.id === focusedId) ?? hits[0]
       if (hit) {
         event.preventDefault()
@@ -337,46 +374,61 @@ export function createCanvasUi(canvas: HTMLCanvasElement, options: {
   }, signal)
 
   function pollGamepad(now = performance.now()) {
-    const getGamepads = globalThis.navigator?.getGamepads
-    if (typeof getGamepads !== 'function') return
-    const pads = Array.from(getGamepads.call(globalThis.navigator) ?? []).filter((p): p is Gamepad => Boolean(p && p.connected))
-    const navEnabled = !options.keyboardEnabled || options.keyboardEnabled()
-    const hits = interactiveHits().filter(h => !(h.widget.type === 'button' && h.widget.onHold))
-    if (!pads.length || !navEnabled || !hits.length) {
+    if (disposed) return
+    const pads = connectedPads()
+    if (!pads.length) {
       padDir = 0; padConfirm = false; padBack = false
       return
     }
-    const prev = pads.some(p => p.buttons?.[12]?.pressed || p.buttons?.[14]?.pressed || (p.axes?.[1] ?? 0) < -0.5 || (p.axes?.[0] ?? 0) < -0.5)
-    const next = pads.some(p => p.buttons?.[13]?.pressed || p.buttons?.[15]?.pressed || (p.axes?.[1] ?? 0) > 0.5 || (p.axes?.[0] ?? 0) > 0.5)
-    const dir = next ? 1 : prev ? -1 : 0
+    const confirm = pads.some(p => p.buttons?.[0]?.pressed)
+    const back = pads.some(p => p.buttons?.[1]?.pressed)
+    const navEnabled = !options.keyboardEnabled || options.keyboardEnabled()
+    const hits = interactiveHits().filter(h => !(h.widget.type === 'button' && h.widget.onHold))
+    if (!navEnabled || !hits.length) {
+      padDir = 0
+      padConfirm = confirm
+      padBack = back
+      return
+    }
+    const vPrev = pads.some(p => p.buttons?.[12]?.pressed || (p.axes?.[1] ?? 0) < -0.5)
+    const vNext = pads.some(p => p.buttons?.[13]?.pressed || (p.axes?.[1] ?? 0) > 0.5)
+    const hPrev = pads.some(p => p.buttons?.[14]?.pressed || (p.axes?.[0] ?? 0) < -0.5)
+    const hNext = pads.some(p => p.buttons?.[15]?.pressed || (p.axes?.[0] ?? 0) > 0.5)
+    const vDir = vNext ? 1 : vPrev ? -1 : 0
+    const hDir = hNext ? 1 : hPrev ? -1 : 0
+    const dir = vDir || hDir
     if (dir && (dir !== padDir || now - padMoveAt >= 200)) {
-      moveFocus(dir)
+      const focused = hits.find(h => h.id === focusedId)
+      if (!vDir && hDir && focused && (focused.widget.type === 'select' || focused.widget.type === 'slider')) {
+        activateHit(focused, hDir)
+      } else {
+        moveFocus(dir)
+      }
       padMoveAt = now
     }
     padDir = dir
-    const confirm = pads.some(p => p.buttons?.[0]?.pressed)
     if (confirm && !padConfirm) {
       const hit = hits.find(h => h.id === focusedId) ?? hits[0]
       if (hit) { focusedId = hit.id; activateHit(hit) }
     }
     padConfirm = confirm
-    const back = pads.some(p => p.buttons?.[1]?.pressed)
     if (back && !padBack) options.onBack?.()
     padBack = back
   }
 
   function ensurePadLoop() {
-    if (padFrame !== undefined || typeof globalThis.requestAnimationFrame !== 'function') return
+    if (disposed || padFrame !== undefined || typeof globalThis.requestAnimationFrame !== 'function') return
     const tick = (now: number) => {
       padFrame = undefined
+      if (disposed) return
       pollGamepad(now)
-      if (globalThis.navigator?.getGamepads?.().some(Boolean)) padFrame = globalThis.requestAnimationFrame(tick)
+      if (!disposed && connectedPads().length) padFrame = globalThis.requestAnimationFrame(tick)
     }
     padFrame = globalThis.requestAnimationFrame(tick)
   }
 
   globalThis.window?.addEventListener('gamepadconnected', () => ensurePadLoop(), signal)
-  if (globalThis.navigator?.getGamepads?.().some(Boolean)) ensurePadLoop()
+  if (connectedPads().length) ensurePadLoop()
 
   function isPressed(id: string) {
     for (const entry of activePointers.values()) if (entry.id === id) return true
@@ -487,8 +539,15 @@ export function createCanvasUi(canvas: HTMLCanvasElement, options: {
         }
         ctx.restore()
       } else if (widget.type === 'slider') {
-        const isFocused = focusedId === node.id || hoveredId === node.id
-        drawFacetedBox(ctx, rect, { fill: theme.surface, stroke: isFocused ? theme.accent : theme.border, bevel: 4 })
+        const disabled = isDisabled(widget)
+        const isFocused = !disabled && (focusedId === node.id || hoveredId === node.id)
+        ctx.save()
+        if (disabled) ctx.globalAlpha = 0.62
+        drawFacetedBox(ctx, rect, {
+          fill: disabled ? '#152024b0' : theme.surface,
+          stroke: disabled ? '#3b4e5066' : isFocused ? theme.accent : theme.border,
+          bevel: 4
+        })
         const fillW = Math.max(0, Math.round((rect.width - 6) * Math.max(0, Math.min(1, widget.ratio))))
         if (fillW > 0) {
           ctx.fillStyle = theme.accent
@@ -499,6 +558,7 @@ export function createCanvasUi(canvas: HTMLCanvasElement, options: {
         ctx.textAlign = 'center'
         ctx.textBaseline = 'middle'
         ctx.fillText(widget.valueText ?? widget.label, rect.x + rect.width / 2, rect.y + rect.height / 2, Math.max(1, rect.width - 10))
+        ctx.restore()
       }
     }
     for (const child of node.children ?? []) paintNode(child)
@@ -527,6 +587,8 @@ export function createCanvasUi(canvas: HTMLCanvasElement, options: {
     render(tree: LayoutNode, viewport?: { width: number; height: number; pixelRatio?: number }) {
       const w = Math.max(1, viewport?.width ?? canvas.clientWidth)
       const h = Math.max(1, viewport?.height ?? canvas.clientHeight)
+      viewportW = w
+      viewportH = h
       const ratio = Math.min(viewport?.pixelRatio ?? globalThis.devicePixelRatio ?? 1, 2)
       const pw = Math.max(1, Math.round(w * ratio))
       const ph = Math.max(1, Math.round(h * ratio))
@@ -558,9 +620,13 @@ export function createCanvasUi(canvas: HTMLCanvasElement, options: {
       return false
     },
     dispose() {
+      disposed = true
       clearHolds()
       controller.abort()
-      if (padFrame !== undefined) globalThis.cancelAnimationFrame?.(padFrame)
+      if (padFrame !== undefined) {
+        globalThis.cancelAnimationFrame?.(padFrame)
+        padFrame = undefined
+      }
     }
   }
 }
