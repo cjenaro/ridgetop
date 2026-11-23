@@ -165,15 +165,17 @@ function stepTrack(race: Race, driver: Driver) {
   const { circuit } = race
   const track = circuit.route.nearest(driver.x, driver.z)
   driver.offroad = track.distance > circuit.width * .5
-  const previous = driver.progress
-  driver.progress = track.progress
   if (track.distance > 18) {
+    driver.progress = track.progress
     recover(driver, circuit)
     return
   }
+  if (track.distance > circuit.width * .85) return
+  const previous = driver.progress
+  driver.progress = track.progress
   const delta = (track.progress - previous + 1.5) % 1 - .5
   const toGate = (driver.gate * spacing - previous + 1) % 1
-  if (track.distance <= circuit.width * .85 && delta > 0 && delta < .075 && (toGate === 0 || delta + 1e-9 >= toGate)) {
+  if (delta > 0 && delta < .075 && (toGate === 0 || delta + 1e-9 >= toGate)) {
     if (driver.gate === 4) {
       driver.lap++
       driver.gate = 1

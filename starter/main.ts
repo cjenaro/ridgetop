@@ -68,12 +68,25 @@ async function start() {
   let viewRequest = 0
   const reduced = matchMedia('(prefers-reduced-motion: reduce)')
   const atlases = new Map<Name, Awaited<ReturnType<typeof createSpriteAtlas>>>()
+  const atlasPromises = new Map<Name, Promise<Awaited<ReturnType<typeof createSpriteAtlas>>>>()
   const names = new Set<Name>([game.ground, game.player, game.goal, game.pickup, game.effect, ...scenery.map(p => p.name)])
   async function atlasFor(canvas: HTMLCanvasElement, name: Name) {
     const override = sprites[name]
     const atlas = await createSpriteAtlas(canvas, override?.manifest ?? art.sprite(name))
     if (override && !Object.hasOwn(atlas.clips, override.clip)) throw new Error('Unknown clip ' + override.clip + ' for ' + name)
     return atlas
+  }
+  function ensureAtlas(name: Name) {
+    const existing = atlases.get(name)
+    if (existing) return Promise.resolve(existing)
+    let pending = atlasPromises.get(name)
+    if (!pending) {
+      pending = atlasFor(layer, name)
+        .then(atlas => { atlases.set(name, atlas); return atlas })
+        .finally(() => { atlasPromises.delete(name) })
+      atlasPromises.set(name, pending)
+    }
+    return pending
   }
 
   // Offscreen pickup icon canvas reused inside the Canvas UI HUD badge (zero HTML chrome).
@@ -94,13 +107,21 @@ async function start() {
   document.title = game.title
 
   // Opt-in UI state machines (only button, toggle, menu, dialog are imported; unused widgets stay out of the bundle).
+  let syncingView = false
   const menuDialog = dialogPrimitive.create({ id: 'pause-dialog', open: false, onOpenChange: () => { uiDirty = true } })
   const viewToggle = togglePrimitive.create({
     id: 'view-toggle',
     label: '2D Sprites',
     checked: params.get('view') === '2d',
     onChange(checked) {
-      void setViewMode(checked ? '2d' : '3d').catch(err => { errorBanner = err.message; uiDirty = true })
+      if (syncingView) return
+      void setViewMode(checked ? '2d' : '3d').catch(err => {
+        syncingView = true
+        viewToggle.api.set(spriteView)
+        syncingView = false
+        errorBanner = err.message
+        uiDirty = true
+      })
     }
   })
   const resumeBtn = buttonPrimitive.create({ id: 'resume-btn', label: 'Resume', onPress: () => menuDialog.api.close() })
@@ -198,8 +219,7 @@ async function start() {
     const ticket = ++viewRequest
     const next = nextMode === '2d'
     if (next && [...names].some(name => !atlases.has(name))) {
-      const loaded = await Promise.all([...names].filter(name => !atlases.has(name)).map(async name => [name, await atlasFor(layer, name)] as const))
-      for (const [name, atlas] of loaded) atlases.set(name, atlas)
+      await Promise.all([...names].map(name => ensureAtlas(name)))
     }
     if (!next && !renderer) {
       rendererPromise ??= createLowPolyRenderer(stage, { backend, canvasDepth: true })
@@ -266,12 +286,12 @@ async function start() {
         boxNode({
           id: 'hud-view-toggle',
           style: { width: compact ? 88 : 128, height: 44 },
-          widget: { type: 'toggle', label: compact ? '2D' : '2D Sprites', checked: viewToggle.api.checked(), primitive: viewToggle }
+          widget: { type: 'toggle', label: compact ? '2D' : '2D Sprites', checked: viewToggle.api.checked(), disabled: modalOpen, primitive: viewToggle }
         }),
         boxNode({
           id: 'menu-btn',
           style: { width: 78, height: 44 },
-          widget: { type: 'button', label: 'Menu', primitive: menuBtn }
+          widget: { type: 'button', label: 'Menu', disabled: modalOpen, primitive: menuBtn }
         })
       ]),
 
@@ -302,16 +322,29 @@ async function start() {
           style: { height: 42 },
           widget: { type: 'button', label: 'Resume', primary: true, primitive: resumeBtn }
         }),
-        boxNode({
-          id: 'modal-view-toggle',
-          style: { height: 40 },
-          widget: { type: 'toggle', label: '2D Sprites', checked: viewToggle.api.checked(), primitive: viewToggle }
-        }),
-        boxNode({
-          id: 'restart-btn',
-          style: { height: 42 },
-          widget: { type: 'button', label: won ? 'Play Again' : 'Restart', primary: won, primitive: restartBtn }
-        }),
+        ...(won ? [
+          boxNode({
+            id: 'restart-btn',
+            style: { height: 42 },
+            widget: { type: 'button', label: 'Play Again', primary: true, primitive: restartBtn }
+          }),
+          boxNode({
+            id: 'modal-view-toggle',
+            style: { height: 40 },
+            widget: { type: 'toggle', label: '2D Sprites', checked: viewToggle.api.checked(), primitive: viewToggle }
+          })
+        ] : [
+          boxNode({
+            id: 'modal-view-toggle',
+            style: { height: 40 },
+            widget: { type: 'toggle', label: '2D Sprites', checked: viewToggle.api.checked(), primitive: viewToggle }
+          }),
+          boxNode({
+            id: 'restart-btn',
+            style: { height: 42 },
+            widget: { type: 'button', label: 'Restart', primary: false, primitive: restartBtn }
+          })
+        ]),
         boxNode({
           id: 'quit-btn',
           hidden: !platform.canQuit,
@@ -418,10 +451,7 @@ async function start() {
           return { path: 'art/overrides.json#' + name, file, base, recipe: base ?? stock }
         },
         sprite: name => sprites[name],
-        async atlas(name) {
-          if (!atlases.has(name)) atlases.set(name, await atlasFor(layer, name))
-          return atlases.get(name)
-        },
+        atlas: name => ensureAtlas(name),
         pause(on) {
           controls.clear()
           queued = undefined
@@ -437,8 +467,10 @@ async function start() {
             travel: number; pickups: number[]; flash?: number[]; flashTime: number; won: boolean }
           if (!s || !['2d', '3d'].includes(s.view) || s.player?.length !== 3 ||
               ![...s.player, s.time, s.fromX, s.fromZ, s.travel, s.flashTime].every(Number.isFinite) || !Array.isArray(s.pickups)) throw new Error('This saved scene cannot be restored.')
-          viewToggle.api.set(s.view === '2d')
           await setViewMode(s.view as '2d' | '3d')
+          syncingView = true
+          viewToggle.api.set(spriteView)
+          syncingView = false
           player = { ...spawn, x: s.player[0], z: s.player[1], yaw: s.player[2] }
           fromX = s.fromX; fromZ = s.fromZ; travel = s.travel
           lastPaintTime = s.time

@@ -156,6 +156,22 @@ test('checkpoints tolerate curb/apex shoulder margin, exact boundary crossings, 
   stepRace(race, { throttle: 1, steer: 0, drift: false }, STEP)
   assert.equal(player.gate, 3, 'exact boundary progress must advance gate')
 
+  // Drifting briefly wider than width*0.85 across a checkpoint and rejoining must not soft-lock the lap
+  const wideRace = createRace(circuit)
+  const widePlayer = wideRace.drivers[0]
+  const preWide = circuit.route.sample(.245)
+  Object.assign(widePlayer, { x: preWide.x, z: preWide.z, yaw: preWide.yaw, progress: .245, gate: 1, vx: 0, vz: 0 })
+  const pastWide = circuit.route.sample(.255)
+  const pnx = Math.cos(pastWide.yaw), pnz = -Math.sin(pastWide.yaw)
+  // Step once while outside width*0.85 (~8.5m > 7.65m), then rejoin road at .260
+  Object.assign(widePlayer, { x: pastWide.x + pnx * 8.5, z: pastWide.z + pnz * 8.5, yaw: pastWide.yaw, vx: 0, vz: 0 })
+  stepRace(wideRace, { throttle: 0, steer: 0, drift: false }, STEP)
+  assert.equal(widePlayer.gate, 1)
+  const rejoin = circuit.route.sample(.26)
+  Object.assign(widePlayer, { x: rejoin.x, z: rejoin.z, yaw: rejoin.yaw, vx: 0, vz: 0 })
+  stepRace(wideRace, { throttle: 0, steer: 0, drift: false }, STEP)
+  assert.equal(widePlayer.gate, 2, 'rejoining road after brief wide drift across checkpoint must advance gate')
+
   // Standings on lap 2+ gate 4 across wrap-around: driver at progress 0.05 must rank ahead of progress 0.90
   const [a, b] = race.drivers
   Object.assign(a, { lap: 2, gate: 4, progress: .05, finish: null })

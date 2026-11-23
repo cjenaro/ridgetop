@@ -140,12 +140,14 @@ async function start() {
     }
   })
 
+  let syncingCourse = false
   const courseSelect = selectPrimitive.create({
     id: 'course',
     label: 'Course',
     options: ROUTE.map(id => ({ value: id, label: courses[id].name })),
     value: courseId,
     onChange(value) {
+      if (syncingCourse || value === courseId) return
       enter(mode, value)
     }
   })
@@ -206,13 +208,18 @@ async function start() {
 
   function syncCourseOptions() {
     const unlocked = ROUTE.indexOf(campaignSummary(progress).next)
-    courseSelect.api.setOptions(ROUTE.map((id, i) => ({
-      value: id,
-      label: courses[id].name,
-      disabled: mode === 'expedition'
-        ? Boolean(character && !canEnterRegion(character.cleared, id))
-        : mode === 'campaign' && unlocked >= 0 && i > unlocked
-    })), courseId)
+    syncingCourse = true
+    try {
+      courseSelect.api.setOptions(ROUTE.map((id, i) => ({
+        value: id,
+        label: courses[id].name,
+        disabled: mode === 'expedition'
+          ? Boolean(character && !canEnterRegion(character.cleared, id))
+          : mode === 'campaign' && unlocked >= 0 && i > unlocked
+      })), courseId)
+    } finally {
+      syncingCourse = false
+    }
   }
 
   function setScreen(value: string) {
@@ -338,7 +345,7 @@ async function start() {
       await loadCharacter()
       if (screen === 'title') enter('expedition', nextRegion())
     } catch (error) {
-      toastMessage = error.message
+      if (screen === 'title') toastMessage = error.message
     } finally {
       expeditionLoading = false
       uiDirty = true
@@ -614,9 +621,9 @@ async function start() {
         widget: { type: 'panel' }
       }, [
         ...(portraitReady ? [boxNode({ id: 'ending-portrait', style: { width: 48, height: 60 }, widget: { type: 'icon', image: portrait, pixelated: true } })] : []),
-        boxNode({ id: 'ending-title', style: { height: 36, width: 360 }, widget: { type: 'text', text: 'Signal restored', size: 28, weight: 900, align: 'center' } }),
-        boxNode({ id: 'ending-desc', style: { height: 40, width: 360 }, widget: { type: 'text', text: 'All six relays are lit. The valley can see its way home.', size: 14, color: ui.theme.muted, align: 'center', wrap: true } }),
-        boxNode({ id: 'ending-stats', style: { height: 22, width: 380 }, widget: { type: 'text', text: endingStats, size: 12, color: ui.theme.accent, mono: true, align: 'center' } }),
+        boxNode({ id: 'ending-title', style: { height: 36, width: Math.min(w - 84, 360) }, widget: { type: 'text', text: 'Signal restored', size: 28, weight: 900, align: 'center' } }),
+        boxNode({ id: 'ending-desc', style: { height: 40, width: Math.min(w - 84, 360) }, widget: { type: 'text', text: 'All six relays are lit. The valley can see its way home.', size: 14, color: ui.theme.muted, align: 'center', wrap: true } }),
+        boxNode({ id: 'ending-stats', style: { height: 22, width: Math.min(w - 84, 380) }, widget: { type: 'text', text: endingStats, size: 12, color: ui.theme.accent, mono: true, align: 'center' } }),
         boxNode({ id: 'ending-menu', style: { width: 180, height: 44 }, widget: { type: 'button', label: 'Main menu', primary: true, primitive: endingMenuBtn } })
       ]),
 
