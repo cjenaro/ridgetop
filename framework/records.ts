@@ -1,7 +1,7 @@
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import type { Records } from './server-types.ts'
 import { randomUUID } from 'node:crypto'
-import { mkdir, readFile, rename, writeFile } from 'node:fs/promises'
+import { mkdir, readFile, rename, unlink, writeFile } from 'node:fs/promises'
 import { dirname } from 'node:path'
 
 export function createRecords<T>(file?: string, saved: Iterable<readonly [string, T]> = []): Records<T> {
@@ -19,11 +19,13 @@ export function createRecords<T>(file?: string, saved: Iterable<readonly [string
       dirty = false
       pending = pending.catch(() => {}).then(async () => {
         const value = JSON.stringify([...records])
+        const temp = `${file}.${process.pid}.${randomUUID()}.tmp`
         try {
           await mkdir(dirname(file), { recursive: true, mode: 0o700 })
-          await writeFile(file + '.tmp', value, { mode: 0o600 })
-          await rename(file + '.tmp', file)
+          await writeFile(temp, value, { mode: 0o600 })
+          await rename(temp, file)
         } catch (error) {
+          await unlink(temp).catch(() => {})
           dirty = true
           throw error
         }

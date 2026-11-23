@@ -1,5 +1,6 @@
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import type { RoomInput } from './types.ts'
+import { Buffer } from 'node:buffer'
 import { randomUUID } from 'node:crypto'
 import { performance } from 'node:perf_hooks'
 import { STEP } from './loop.ts'
@@ -51,6 +52,7 @@ export function createRoomService<World, Player, Snapshot extends object>({
     member.res = res
     member.expiresAt = Infinity
     member.lastInput = performance.now()
+    startTimer()
     res.writeHead(200, {
       'Content-Type': 'text/event-stream; charset=utf-8',
       'Cache-Control': 'no-cache, no-transform',
@@ -76,16 +78,24 @@ export function createRoomService<World, Player, Snapshot extends object>({
     if (action === 'leave') {
       room.members.delete(token)
       member.res?.end()
+      if (!room.members.size) {
+        rooms.delete(key)
+        if (!rooms.size) stopTimer()
+      }
       return sendText(res, 204)
     }
-    let body = ''
+    const chunks: Buffer[] = []
+    let bytes = 0
     for await (const chunk of req) {
-      body += chunk
-      if (body.length > 512) {
+      const buf = typeof chunk === 'string' ? Buffer.from(chunk) : chunk as Buffer
+      bytes += buf.byteLength
+      if (bytes > 512) {
         res.setHeader('Connection', 'close')
         return sendText(res, 413)
       }
+      chunks.push(buf)
     }
+    const body = Buffer.concat(chunks, bytes).toString('utf8')
     let input
     try { input = JSON.parse(body) } catch { return sendText(res, 400) }
     if (!member.res || room.members.get(token) !== member) return sendText(res, 401)
@@ -104,47 +114,80 @@ export function createRoomService<World, Player, Snapshot extends object>({
   let previous = performance.now()
   let lag = 0
   let tick = 0
-  const timer = setInterval(() => {
-    const now = performance.now()
-    lag += Math.min((now - previous) / 1000, STEP * 5)
-    previous = now
-    while (lag >= STEP) {
-      lag -= STEP
-      tick++
-      for (const [key, room] of rooms) {
-        for (const [token, member] of room.members) {
-          if (now >= member.expiresAt) {
-            room.members.delete(token)
+  let timer: ReturnType<typeof setInterval> | undefined
+
+  function stopTimer() {
+    if (timer !== undefined) {
+      clearInterval(timer)
+      timer = undefined
+    }
+  }
+
+  function startTimer() {
+    if (timer !== undefined) return
+    previous = performance.now()
+    lag = 0
+    timer = setInterval(() => {
+      const now = performance.now()
+      lag += Math.min((now - previous) / 1000, STEP * 5)
+      previous = now
+      while (lag >= STEP) {
+        lag -= STEP
+        tick++
+        for (const [key, room] of rooms) {
+          for (const [token, member] of room.members) {
+            if (now >= member.expiresAt) {
+              room.members.delete(token)
+              continue
+            }
+            if (now - member.lastInput > 600 && (member.input.left || member.input.right)) {
+              member.input = { ...emptyInput, jump: member.input.jump }
+            }
+            stepPlayer(member.player, member.input, STEP, room.world, member.identity)
+          }
+          if (!room.members.size) {
+            rooms.delete(key)
             continue
           }
-          if (now - member.lastInput > 600 && (member.input.left || member.input.right)) {
-            member.input = { ...emptyInput, jump: member.input.jump }
+          if (tick % 3 !== 0) continue
+          const connected: Member[] = []
+          for (const member of room.members.values()) {
+            if (member.res) connected.push(member)
           }
-          stepPlayer(member.player, member.input, STEP, room.world, member.identity)
+          if (!connected.length) continue
+          if (beforePublish) {
+            const participants = new Array(connected.length)
+            for (let i = 0; i < connected.length; i++) {
+              participants[i] = { player: connected[i].player, identity: connected[i].identity }
+            }
+            beforePublish(room.world, participants, tick)
+          }
+          const players = new Array(connected.length)
+          for (let i = 0; i < connected.length; i++) {
+            const member = connected[i]
+            players[i] = { ...snapshot(member.player, room.world, member.identity), id: member.id, slot: member.slot }
+          }
+          const packet = 'data: ' + JSON.stringify({ tick, players }) + '\n\n'
+          for (let i = 0; i < connected.length; i++) {
+            const res = connected[i].res!
+            if (res.writableLength >= frameBudget) res.destroy()
+            else res.write(packet)
+          }
         }
-        if (!room.members.size) rooms.delete(key)
-        if (tick % 3 !== 0) continue
-        const connected = [...room.members.values()].filter(member => member.res)
-        if (!connected.length) continue
-        beforePublish?.(room.world, connected.map(({ player, identity }) => ({ player, identity })), tick)
-        const players = connected.map(member => ({
-          ...snapshot(member.player, room.world, member.identity), id: member.id, slot: member.slot
-        }))
-        const packet = 'data: ' + JSON.stringify({ tick, players }) + '\n\n'
-        for (const { res } of connected) {
-          if (res.writableLength >= frameBudget) res.destroy()
-          else res.write(packet)
+        if (!rooms.size) {
+          stopTimer()
+          return
         }
       }
-    }
-  }, 8)
-  timer.unref()
+    }, 8)
+    timer.unref()
+  }
 
   return {
     join,
     receive,
     close() {
-      clearInterval(timer)
+      stopTimer()
       for (const { members } of rooms.values()) {
         for (const { res } of members.values()) res?.end()
       }

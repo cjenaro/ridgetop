@@ -7,7 +7,8 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { createGameServer } from '../server.ts'
-import { createGameHost } from '../framework/server.ts'
+import { createGameHost, createRecords } from '../framework/server.ts'
+import { connectRoom } from '../framework/index.ts'
 import { courses } from '../game/level.ts'
 
 test('game art folders serve PNG and JSON exports with encoded names', async t => {
@@ -116,4 +117,73 @@ test('room protocol isolates courses, applies inputs once, and resumes disconnec
   assert.equal((await post('leave', first.token)).status, 204)
   await b.until(data => data.players.length === 1)
   assert.equal((await post('input', first.token, reset)).status, 401)
+})
+
+test('host HEAD sets Content-Length, records avoid temp-file races, and connectRoom rebases jump count', async t => {
+  const folder = await mkdtemp(join(tmpdir(), 'ridgetop-net-'))
+  t.after(() => rm(folder, { recursive: true, force: true }))
+  await writeFile(join(folder, 'hello.json'), '{"ok":true}')
+  const app = createGameHost({ root: pathToFileURL(folder + '/'), files: ['hello.json'] })
+  t.after(() => app.close())
+  app.server.listen(0, '127.0.0.1')
+  await once(app.server, 'listening')
+  const base = 'http://127.0.0.1:' + (app.server.address() as AddressInfo).port
+  const head = await fetch(base + '/hello.json', { method: 'HEAD' })
+  assert.equal(head.status, 200)
+  assert.equal(head.headers.get('content-length'), '11')
+  assert.equal(await head.text(), '')
+
+  // Concurrent saves from two independent createRecords handles targeting the same file must not race on .tmp
+  const saveFile = join(folder, 'records.json')
+  const r1 = createRecords<{ v: number }>(saveFile)
+  const r2 = createRecords<{ v: number }>(saveFile)
+  r1.set('a', { v: 1 })
+  r2.set('b', { v: 2 })
+  await Promise.all([r1.save(), r2.save()])
+
+  // connectRoom must rebase monotonic jump count on fresh welcome so prior solo jumps do not fire on join
+  const prevES = Object.getOwnPropertyDescriptor(globalThis, 'EventSource')
+  const prevFetch = Object.getOwnPropertyDescriptor(globalThis, 'fetch')
+  const sent: Record<string, unknown>[] = []
+  let fakeEs: EventTarget & { readyState: number; close(): void }
+  class FakeEventSource extends EventTarget {
+    static OPEN = 1
+    static CLOSED = 2
+    readyState = 1
+    onmessage: ((e: MessageEvent) => void) | null = null
+    onerror: (() => void) | null = null
+    constructor() { super(); fakeEs = this }
+    close() { this.readyState = 2 }
+  }
+  Object.defineProperty(globalThis, 'EventSource', { value: FakeEventSource, configurable: true })
+  Object.defineProperty(globalThis, 'fetch', {
+    value: async (_url: string, init?: RequestInit) => {
+      if (init?.body) sent.push(JSON.parse(String(init.body)))
+      return { ok: true }
+    },
+    configurable: true
+  })
+  try {
+    let jump = 5
+    const room = connectRoom({
+      endpoint: '/rooms/ridge/test',
+      readInput: () => ({ left: false, right: false, jump }),
+      onStatus() {}
+    })
+    fakeEs!.dispatchEvent(Object.assign(new Event('welcome'), { data: JSON.stringify({ id: 'p1', token: 't1' }) }))
+    await room.flush(100)
+    assert.equal(sent[0].jump, 0)
+    jump = 6
+    await room.flush(200)
+    assert.equal(sent[1].jump, 1)
+    // Reconnect with a new player ID (expired session) must rebase jump back to 0
+    fakeEs!.dispatchEvent(Object.assign(new Event('welcome'), { data: JSON.stringify({ id: 'p2', token: 't2' }) }))
+    await room.flush(300)
+    assert.equal(sent[2].jump, 0)
+    room.close()
+  } finally {
+    if (prevES) Object.defineProperty(globalThis, 'EventSource', prevES)
+    else delete (globalThis as Record<string, unknown>).EventSource
+    if (prevFetch) Object.defineProperty(globalThis, 'fetch', prevFetch)
+  }
 })

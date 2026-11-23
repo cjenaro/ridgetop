@@ -3,6 +3,7 @@ import { selectDecisionProvider } from './decision-providers.ts'
 
 const maxRequestBytes = 4096
 const maxResponseBytes = 4096
+const textEncoder = new TextEncoder()
 
 // Limit bytes read after decompression as well as declared Content-Length.
 async function readDecision(response: Response) {
@@ -70,7 +71,7 @@ export function createDecisionApi<I, E, L extends string>({ provider = 'http', e
         throw new RangeError('Cloudflare Clef supports up to 63 evidence items per decision')
       }
       const body = JSON.stringify(adapter.encode(context))
-      const bytes = Buffer.byteLength(body)
+      const bytes = textEncoder.encode(body).byteLength
       if (bytes > maxRequestBytes) throw new Error('Decision request exceeds ' + maxRequestBytes + ' bytes')
       if (cache.has(body)) {
         usage.reused++

@@ -1,7 +1,7 @@
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import type { GameHost } from './server-types.ts'
 import { createServer } from 'node:http'
-import { lstat, readFile } from 'node:fs/promises'
+import { lstat, readFile, stat } from 'node:fs/promises'
 import { pathToFileURL } from 'node:url'
 
 const browserModules = [
@@ -54,7 +54,12 @@ export function createGameHost({ root, moduleRoot = root, files, artDirectories 
     res.setHeader('Referrer-Policy', 'same-origin')
     res.setHeader('Content-Security-Policy', "default-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'")
     try {
-      const { pathname } = new URL(req.url, 'http://localhost')
+      let pathname: string
+      try {
+        pathname = new URL(req.url ?? '/', 'http://localhost').pathname
+      } catch {
+        return sendText(res, 400, 'Bad request')
+      }
       if (await handle?.(req, res, pathname)) return
       if (req.method !== 'GET' && req.method !== 'HEAD') return sendText(res, 405)
       if (pathname === '/healthz') return sendText(res, 200, 'ok')
@@ -63,11 +68,22 @@ export function createGameHost({ root, moduleRoot = root, files, artDirectories 
       if (!asset) return sendText(res, 404, 'Not found')
       const extension = asset.pathname.split('.').at(-1).toLowerCase()
       const type = mime[extension]
+      const contentType = extension === 'png' ? type : type ? type + '; charset=utf-8' : 'application/octet-stream'
+      if (req.method === 'HEAD') {
+        const info = await stat(asset)
+        res.writeHead(200, {
+          'Content-Type': contentType,
+          'Content-Length': String(info.size),
+          'Cache-Control': 'no-cache'
+        }).end()
+        return
+      }
       const body = await readFile(asset)
       res.writeHead(200, {
-        'Content-Type': extension === 'png' ? type : type ? type + '; charset=utf-8' : 'application/octet-stream',
+        'Content-Type': contentType,
+        'Content-Length': String(body.byteLength),
         'Cache-Control': 'no-cache'
-      }).end(req.method === 'HEAD' ? undefined : body)
+      }).end(body)
     } catch (error) {
       if (!res.headersSent && error.code === 'ENOENT') return sendText(res, 404, 'Not found')
       if (!res.headersSent) sendText(res, 500, 'Server error')

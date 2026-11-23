@@ -15,13 +15,17 @@ export function connectRoom<T extends RoomPlayer = RoomPlayer>({ endpoint, readI
   let sentAt = 0
   let inFlight = false
   let restart = 0
+  let jumpOffset = 0
   let closed = false
   const abort = new AbortController()
   const events = new EventSource(endpoint + '/events')
 
   events.addEventListener('welcome', event => {
     const welcome = JSON.parse((event as MessageEvent<string>).data) as { id: string; token: string }
-    if (id && id !== welcome.id) restart = 0
+    if (id !== welcome.id) {
+      restart = 0
+      jumpOffset = readInput().jump
+    }
     id = welcome.id
     token = welcome.token
     previous = latest = undefined
@@ -39,7 +43,8 @@ export function connectRoom<T extends RoomPlayer = RoomPlayer>({ endpoint, readI
 
   async function flush(now: number) {
     if (!token || closed || events.readyState !== EventSource.OPEN || inFlight || now - sentAt < 25) return
-    const input = { ...readInput(), restart }
+    const raw = readInput()
+    const input = { left: raw.left, right: raw.right, jump: Math.max(0, raw.jump - jumpOffset), restart }
     if (lastSent && now - sentAt < 180 && input.restart === lastSent.restart &&
         input.left === lastSent.left && input.right === lastSent.right &&
         input.jump === lastSent.jump) return
