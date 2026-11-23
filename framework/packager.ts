@@ -385,22 +385,24 @@ async function resolveProjectAssets(projectGameDir: string): Promise<ResolvedGam
   let palette: Record<string, string> = {}
   let customModels: Record<string, ArtModel> = {}
   let modelFiles: Record<string, string> = {}
-  let map: readonly string[] = []
+  let gameConfig: Record<string, unknown> = {}
   let iconRole = 'ranger'
   const roles = new Set<string>(['ranger', 'tile', 'crystal', 'lantern', 'pine', 'rock', 'crate'])
 
   try {
     const mod = await import(pathToFileURL(join(projectGameDir, 'game.js')).href + '?t=' + Date.now())
-    if (mod.game?.title) title = String(mod.game.title)
-    if (mod.game?.palette) palette = { ...mod.game.palette }
-    if (Array.isArray(mod.game?.map)) map = mod.game.map
+    if (mod.game && typeof mod.game === 'object') {
+      gameConfig = { ...mod.game }
+      if (mod.game.title) title = String(mod.game.title)
+      if (mod.game.palette) palette = { ...mod.game.palette }
+      iconRole = mod.game.player ?? mod.game.pickup ?? 'ranger'
+      roles.clear()
+      for (const r of [mod.game.player, mod.game.ground, mod.game.pickup, mod.game.goal, mod.game.effect, ...Object.values(mod.game.scenery ?? {})]) {
+        if (typeof r === 'string') roles.add(r)
+      }
+    }
     if (mod.models) customModels = { ...mod.models }
     if (mod.modelFiles) modelFiles = { ...mod.modelFiles }
-    iconRole = mod.game?.player ?? mod.game?.pickup ?? 'ranger'
-    roles.clear()
-    for (const r of [mod.game?.player, mod.game?.ground, mod.game?.pickup, mod.game?.goal, mod.game?.effect, ...Object.values(mod.game?.scenery ?? {})]) {
-      if (typeof r === 'string') roles.add(r)
-    }
   } catch { /* Fall back to default art kit. */ }
 
   let overrides: Record<string, ArtRecipe> = {}
@@ -442,8 +444,8 @@ async function resolveProjectAssets(projectGameDir: string): Promise<ResolvedGam
       pickup: { notes: [[660, .12, 0], [880, .16, .08]], waveform: 'sine' },
       victory: { notes: [[392, .16, 0], [523.25, .16, .11], [659.25, .24, .22]], waveform: 'triangle' }
     },
-    gameData: { palette, map },
-    uiTree: defaultMenuLayout(title ?? 'Ridgetop Game', ['Resume', 'Restart'])
+    gameData: gameConfig,
+    uiTree: defaultMenuLayout(title ?? 'Ridgetop Game', ['Resume', 'Restart', 'Quit'])
   }
 }
 

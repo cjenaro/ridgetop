@@ -65,14 +65,16 @@ test('bakeIconPng, encodeGlb, bakeMotifWav, and layoutToGodotTscn produce valid 
   assert.ok(peak > 1000, 'Baked WAV should contain audible synth signal')
 
   const tscn = layoutToGodotTscn(overlay({ id: 'root' }, [
-    column({ id: 'card', style: { gap: 10 }, widget: { type: 'panel' } }, [
+    column({ id: 'card', style: { anchor: 'center', width: 320, gap: 10 }, widget: { type: 'panel' } }, [
       boxNode({ id: 'play', style: { width: 200, height: 42 }, widget: { type: 'button', label: 'Start' } }),
       boxNode({ id: 'mute', style: { width: 200, height: 40 }, widget: { type: 'toggle', label: 'Sound', checked: true } })
     ])
   ]))
-  assert.ok(tscn.includes('[gd_scene format=3]'))
+  assert.ok(tscn.includes('[gd_scene load_steps=2 format=3]'))
+  assert.ok(tscn.includes('StyleBoxFlat_panel'))
   assert.ok(tscn.includes('type="PanelContainer"'))
-  assert.ok(tscn.includes('type="Button"'))
+  assert.ok(tscn.includes('type="VBoxContainer" parent="card"'))
+  assert.ok(tscn.includes('type="Button" parent="card/Content"'))
   assert.ok(tscn.includes('text = "Start"'))
   assert.ok(tscn.includes('type="CheckButton"'))
 })
