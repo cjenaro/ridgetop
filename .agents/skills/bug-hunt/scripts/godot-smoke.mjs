@@ -52,24 +52,32 @@ function assertGlbFloat32Bounds(buffer, label) {
 }
 
 const godot = await findGodot()
-const outDir = await mkdtemp(join(tmpdir(), 'ridgetop-godot-smoke-'))
-try {
-  await packageGame({ target: 'godot', game: 'signal-drift', repoRoot, outDir })
-  await access(join(outDir, 'scripts', 'compiled', 'rt.gd'))
-  await access(join(outDir, 'scripts', 'compiled', 'racing', 'race.gd'))
+const games = [
+  { game: 'signal-drift', checkFile: ['scripts', 'compiled', 'racing', 'race.gd'], glb: 'circuit-copper.glb' },
+  { game: 'beacon-run', checkFile: ['scripts', 'compiled', 'game', 'simulation.gd'], glb: 'lantern.glb' },
+  { game: 'starter', checkFile: ['scripts', 'compiled', 'starter', 'game.gd'], glb: 'ranger.glb' }
+]
+for (const entry of games) {
+  const outDir = await mkdtemp(join(tmpdir(), `ridgetop-godot-smoke-${entry.game}-`))
+  try {
+    await packageGame({ target: 'godot', game: entry.game, repoRoot, outDir })
+    await access(join(outDir, 'scripts', 'compiled', 'rt.gd'))
+    await access(join(outDir, ...entry.checkFile))
 
-  const circuitGlb = await readFile(join(outDir, 'assets', 'models', 'circuit-copper.glb'))
-  assertGlbFloat32Bounds(circuitGlb, 'circuit-copper.glb')
+    const glb = await readFile(join(outDir, 'assets', 'models', entry.glb))
+    assertGlbFloat32Bounds(glb, `${entry.game}/${entry.glb}`)
 
-  if (!godot) {
-    console.log('Godot 4 binary not found; verified export structure, compiled GDScript, and GLB Float32 bounds.')
-    process.exit(0)
+    if (godot) {
+      const res = spawnSync(godot, ['--headless', '--path', outDir, '--quit-after', '5'], { encoding: 'utf8' })
+      assert.equal(res.status, 0, `${entry.game}: Godot exited with status ${res.status}:\n${res.stderr}`)
+      assert.equal(res.stderr.trim(), '', `${entry.game}: Godot emitted stderr warnings/errors:\n${res.stderr}`)
+    }
+  } finally {
+    await rm(outDir, { recursive: true, force: true })
   }
-
-  const res = spawnSync(godot, ['--headless', '--path', outDir, '--quit-after', '5'], { encoding: 'utf8' })
-  assert.equal(res.status, 0, `Godot exited with status ${res.status}:\n${res.stderr}`)
-  assert.equal(res.stderr.trim(), '', `Godot emitted stderr warnings/errors:\n${res.stderr}`)
-  console.log(`Godot 4 smoke passed cleanly (${godot}): status=0, stderr=CLEAN, GLB bounds=0 mismatches.`)
-} finally {
-  await rm(outDir, { recursive: true, force: true })
+}
+if (!godot) {
+  console.log('Godot 4 binary not found; verified export structure, compiled GDScript, and GLB Float32 bounds for all 3 games.')
+} else {
+  console.log(`Godot 4 smoke passed cleanly (${godot}): all 3 games status=0, stderr=CLEAN, GLB bounds=0 mismatches.`)
 }
