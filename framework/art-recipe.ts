@@ -1,4 +1,4 @@
-import { box, chamferedPrism, cylinder, octahedron } from './geometry.ts'
+import { archMesh, box, chamferedPrism, cylinder, octahedron, revolvedMesh } from './geometry.ts'
 import { spriteDirections } from './low-poly.ts'
 import type { Mesh, Vec3 } from './types.ts'
 
@@ -6,7 +6,15 @@ export const artPalette = {
   ground: '#92b878', leaf: '#43836c', wood: '#96694e', stone: '#889ba7',
   ink: '#344556', accent: '#eaa555', light: '#ffe4ad', glow: '#82ebd0'
 }
-export const artShapes = { box, prism: chamferedPrism(.16), cylinder: cylinder(7), cone: cylinder(7, 0), octahedron }
+export const artShapes = {
+  box, prism: chamferedPrism(.16), cylinder: cylinder(7), cone: cylinder(7, 0), octahedron,
+  oval: revolvedMesh([[0,-.5],[.30,-.40],[.47,-.19],[.50,.06],[.43,.29],[.26,.44],[0,.5]]),
+  dome: revolvedMesh([[0,-.5],[.44,-.5],[.50,-.38],[.47,-.13],[.38,.14],[.23,.37],[0,.5]]),
+  bowl: revolvedMesh([[0,-.5],[.30,-.5],[.42,-.28],[.50,.39],[.48,.5],[.40,.5],[.38,.31],[.28,-.22],[0,-.25]]),
+  ring: revolvedMesh([[.36,-.5],[.47,-.5],[.50,-.32],[.50,.32],[.47,.5],[.36,.5],[.33,.30],[.33,-.30],[.36,-.5]]),
+  taper: revolvedMesh([[0,-.5],[.5,-.5],[.23,.5],[0,.5]], 8),
+  arch: archMesh()
+}
 export type ArtTone = keyof typeof artPalette
 export type ArtShape = keyof typeof artShapes
 type Palette = Partial<Record<ArtTone, string>>
@@ -17,7 +25,10 @@ export interface ArtPart {
   position: Vec3
   scale: Vec3
   tone: ArtTone
+  /** Radians around X, Y and Z. Roll is applied first, then pitch, then yaw. */
+  pitch?: number
   yaw?: number
+  roll?: number
   unlit?: number
 }
 export interface ArtModel {
@@ -70,7 +81,7 @@ export function checkArtModel(model: ArtModel, name: string, palette: Palette = 
   for (const p of model.parts) {
     if (!p?.mesh?.vertexCount || !(Object.hasOwn(palette, p.tone) || Object.hasOwn(model.palette ?? {}, p.tone)) ||
         p.position?.length !== 3 || !p.position.every?.(Number.isFinite) || p.scale?.length !== 3 || !p.scale.every?.(n => n > 0 && Number.isFinite(n)) ||
-        !Number.isFinite(p.yaw ?? 0) || !Number.isFinite(p.unlit ?? 0) || (p.unlit ?? 0) < 0 || (p.unlit ?? 0) > 1) {
+        ![p.pitch ?? 0, p.yaw ?? 0, p.roll ?? 0].every(Number.isFinite) || !Number.isFinite(p.unlit ?? 0) || (p.unlit ?? 0) < 0 || (p.unlit ?? 0) > 1) {
       throw new RangeError('Invalid mesh, palette tone or transform in ' + name + (p?.name ? ' / ' + p.name : ''))
     }
   }
@@ -91,7 +102,8 @@ export function modelFromArtRecipe(value: unknown): ArtModel {
     if (typeof p?.name !== 'string' || !p.name.trim() || names.has(p.name)) throw new Error('Each model part needs a unique name.')
     if (!Object.hasOwn(artShapes, p.shape)) throw new Error('Unknown shape in ' + p.name)
     names.add(p.name)
-    return { name: p.name, mesh: artShapes[p.shape], position: p.position, scale: p.scale, tone: p.tone, yaw: p.yaw, unlit: p.unlit }
+    return { name: p.name, mesh: artShapes[p.shape], position: p.position, scale: p.scale, tone: p.tone,
+      pitch: p.pitch, yaw: p.yaw, roll: p.roll, unlit: p.unlit }
   })
   const model = { span: source.span, centerY: source.centerY, frameSize: source.frameSize, palette: source.palette, parts, timings: source.timings }
   checkArtModel(model, source.name)

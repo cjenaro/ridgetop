@@ -113,9 +113,7 @@ function transformBatch(matrix: Matrix, batch: InstanceBatch, polygons: Face[], 
   }
 }
 
-function depthTarget(ctx: CanvasRenderingContext2D, width: number, height: number) {
-  const image = ctx.createImageData(width, height)
-  const pixels = new Uint32Array(image.data.buffer)
+function depthTarget(width: number, height: number, pixels: Uint32Array) {
   const depth = new Float32Array(width * height)
 
   function triangle(a: number[], b: number[], c: number[], tint: number) {
@@ -153,9 +151,23 @@ function depthTarget(ctx: CanvasRenderingContext2D, width: number, height: numbe
       for (const { points, pixel } of polygons) {
         for (let i = 1; i + 1 < points.length; i++) triangle(points[0], points[i], points[i + 1], pixel)
       }
-      ctx.putImageData(image, 0, 0)
     }
   }
+}
+
+/** Render a transparent strip with the same depth-tested triangles used by the live canvas backend. */
+export function meshViewPixels(cameras: readonly Matrix[], batches: readonly InstanceBatch[], size: number, light: Float32Array<ArrayBuffer>) {
+  const width = cameras.length * size
+  const pixels = new Uint8ClampedArray(width * size * 4)
+  const sheet = new Uint32Array(pixels.buffer), frame = new Uint32Array(size * size)
+  const target = depthTarget(size, size, frame)
+  for (const [column, camera] of cameras.entries()) {
+    const faces: Face[] = []
+    for (const batch of batches) transformBatch(camera, batch, faces, light, true)
+    target.draw(faces, 0)
+    for (let y = 0; y < size; y++) sheet.set(frame.subarray(y*size, (y+1)*size), y*width+column*size)
+  }
+  return { width, height: size, pixels }
 }
 
 export function canvasMeshes(canvas: HTMLCanvasElement, light: Float32Array<ArrayBuffer>,
@@ -165,6 +177,7 @@ export function canvasMeshes(canvas: HTMLCanvasElement, light: Float32Array<Arra
   const cache = new Map()
   let lastCamera
   let target: ReturnType<typeof depthTarget>
+  let image: ImageData
   return {
     name: 'Canvas 2D',
     maxDimension: 4096,
@@ -184,8 +197,12 @@ export function canvasMeshes(canvas: HTMLCanvasElement, light: Float32Array<Arra
         for (const polygon of entry.polygons) polygons.push(polygon)
       }
       if (depthTest) {
-        if (!target || target.width !== canvas.width || target.height !== canvas.height) target = depthTarget(ctx, canvas.width, canvas.height)
+        if (!target || target.width !== canvas.width || target.height !== canvas.height) {
+          image = ctx.createImageData(canvas.width, canvas.height)
+          target = depthTarget(canvas.width, canvas.height, new Uint32Array(image.data.buffer))
+        }
         target.draw(polygons, transparent ? 0 : pixel(clear[0], clear[1], clear[2]))
+        ctx.putImageData(image, 0, 0)
         stats.drawCalls = 1
         return
       }

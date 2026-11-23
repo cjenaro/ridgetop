@@ -67,8 +67,10 @@
             <div class="part-pair"><label>Shape <select id="part-shape"></select></label><label>Palette color <select id="part-tone"></select></label></div>
             <fieldset><legend>Position</legend><div id="part-position" class="part-vector"></div></fieldset>
             <fieldset><legend>Size</legend><div id="part-scale" class="part-vector"></div></fieldset>
+            <fieldset><legend>Rotation (degrees)</legend><div id="part-rotation" class="part-vector"></div></fieldset>
             <label>Sprite size (px) <input id="model-frame-size" type="number" step="1" min="1" max="1024" required></label>
             <button type="submit" class="quiet">Apply changes</button>
+            <button type="submit" id="fit-model" class="quiet">Apply, ground and fit all views</button>
             <output id="part-status" role="status"></output>
           </form>
         </details>

@@ -134,6 +134,46 @@ export function cylinder(sides = 6, topRadius = 1, bottomRadius = 1) {
   return mesh(positions, indices)
 }
 
+/** Revolve a section from its underside round to its inside. A zero radius closes a cap. */
+export function revolvedMesh(section: readonly (readonly [radius: number, height: number])[], sides = 10) {
+  if (section.length < 2 || !Number.isSafeInteger(sides) || sides < 3 || sides > 256) throw new RangeError('Invalid revolved section')
+  const positions: number[] = [], indices: number[] = []
+  for (const [ring, [radius, height]] of section.entries()) {
+    if (radius < 0 || !Number.isFinite(radius + height)) throw new RangeError('Invalid section radius or height')
+    for (let i = 0; i < sides; i++) {
+      const angle = 2 * Math.PI * i / sides
+      positions.push(radius * Math.cos(angle), height, radius * Math.sin(angle))
+      if (!ring) continue
+      const a = (ring - 1) * sides + i, b = (ring - 1) * sides + (i + 1) % sides
+      if (section[ring - 1][0] > 0) indices.push(a, a + sides, b)
+      if (radius > 0) indices.push(b, a + sides, b + sides)
+    }
+  }
+  return mesh(positions, indices)
+}
+
+/** A continuous inverted U in the XY plane, with flat feet on its lower face. */
+export function archMesh() {
+  const section: number[][] = [[-.5,-.5,-.32,-.5], [-.5,.04,-.32,.04]]
+  for (let i = 1; i <= 6; i++) {
+    const a = Math.PI - Math.PI * i / 6
+    section.push([.5*Math.cos(a), .04+.46*Math.sin(a), .32*Math.cos(a), .04+.29*Math.sin(a)])
+  }
+  section.push([.5,-.5,.32,-.5])
+  const positions: number[] = [], indices: number[] = []
+  for (const [i,[ox,oy,ix,iy]] of section.entries()) {
+    positions.push(ox,oy,-.5, ix,iy,-.5, ix,iy,.5, ox,oy,.5)
+    if (!i) continue
+    for (let k = 0; k < 4; k++) {
+      const a = 4*(i-1)+k, b = 4*(i-1)+(k+1)%4
+      indices.push(a,a+4,b, b,a+4,b+4)
+    }
+  }
+  const end = positions.length / 3 - 4
+  indices.push(0,1,3, 1,2,3, end,end+3,end+1, end+1,end+3,end+2)
+  return mesh(positions, indices)
+}
+
 export function projectPoint(matrix: Matrix, x: number, y: number, z: number): [number, number] {
   const w = x * matrix[3] + y * matrix[7] + z * matrix[11] + matrix[15]
   return [

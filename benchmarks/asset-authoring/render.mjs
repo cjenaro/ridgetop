@@ -35,9 +35,7 @@ function renderAsset(api, palette, id, source, checkFraming) {
   let ground = Infinity, triangles = 0
   for (const part of model.parts) {
     triangles += part.mesh.vertexCount / 3
-    for (let i = 1; i < part.mesh.data.length; i += 6) {
-      ground = Math.min(ground, part.position[1] + part.scale[1] * part.mesh.data[i])
-    }
+    ground = Math.min(ground, api.artPartBounds(part).min[1])
   }
   const failures = []
   if (id !== source.name) failures.push('recipe ID')

@@ -4,6 +4,8 @@ Run `npm start` in this directory with Node 22.18 or later and open http://local
 
 Open `low-poly-models.html` directly to orbit three live 3D examples. Choose **Open model file** to inspect your own `.art.json` from any side at display resolution.
 
+To make your own models and sprites, choose a starter body, seat features on named parts, and export its eight directions. The toolbox example takes a lid, a handle and two latches. [Build low-poly art](ART.md)
+
 Start in `game/game.js`. Change the title, palette, map, art names, or step time and reload the browser. Each map row has the same width. Use one `@` for the player, one `L` for the goal, `*` for pickups, and `.` for open ground. Entries in `scenery` place solid props. The game rules and camera are in `game/main.js`.
 
 The view selector switches the same level and progress between live 3D meshes and 2D sprites. The inventory icon, pickup effect, character, terrain, and props use the same art kit. The included flower in `game/game.js` shows how to add a new recipe using colored parts. Change a palette role to update every part using it.

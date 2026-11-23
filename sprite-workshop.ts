@@ -1,4 +1,4 @@
-import { artModels, artPalette, bakeSpriteDirections, color, createArtKit, createArtRecipe, createSpriteSheet,
+import { artBases, artModels, artPalette, bakeSpriteDirections, color, createArtBuilder, createArtKit, createArtRecipe, createSpriteSheet,
   modelFromArtRecipe, spriteColumn, spriteDirections } from './framework/index.ts'
 import type { ArtRecipe, ArtTone, SpriteAtlasSource, SpriteClip, SpriteFrame } from './framework/index.ts'
 import { chipClips, chipPalette, frameHeight, frameWidth, paintChip, paintScout, scoutClips, suits } from './game/sprite-art.ts'
@@ -43,6 +43,15 @@ for (const name of Object.keys(artModels) as (keyof typeof artModels)[]) {
   library.append(new Option(name[0].toUpperCase() + name.slice(1), name))
 }
 art.append(library)
+const forms = document.createElement('optgroup')
+forms.label = 'Art builder starter forms'
+for (const base of artBases) {
+  if (base === 'empty') continue
+  const key = 'starter-' + base
+  templates[key] = recipeTemplate(createArtBuilder(key, { base }).finish())
+  forms.append(new Option(base[0].toUpperCase() + base.slice(1), key))
+}
+art.append(forms)
 const opened = document.createElement('optgroup')
 opened.label = 'Opened models'
 const clipSelect = element<HTMLSelectElement>('clip')

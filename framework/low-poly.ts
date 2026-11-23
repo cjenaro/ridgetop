@@ -1,7 +1,7 @@
 import type { Backend, Color, InstanceBatch, LowPolyRenderer, Matrix, MeshBackend, Vec3 } from './types.ts'
 import type { SpriteClip } from './sprites.ts'
 import { multiply, orthographic, view } from './geometry.ts'
-import { canvasMeshes } from './mesh-canvas.ts'
+import { canvasMeshes, meshViewPixels } from './mesh-canvas.ts'
 import { glMeshes } from './mesh-gl.ts'
 import { gpuMeshes } from './mesh-gpu.ts'
 import { frustum, visible } from './instances.ts'
@@ -121,36 +121,37 @@ export function renderMeshFrame(canvas: HTMLCanvasElement, camera: Matrix, batch
   finally { renderer.dispose() }
 }
 
-/** Bake eight camera views of a +Z-facing model into one transparent horizontal sprite sheet. */
-export function bakeSpriteDirections(batches: readonly InstanceBatch[], {
-  span, center = [0, 0, 0], frameSize = 64, elevation = Math.PI / 6, src = 'sprite.png', lighting
-}: { span: number; center?: Vec3; frameSize?: number; elevation?: number; src?: string; lighting?: Lighting }) {
+type SpriteCamera = { span: number; center?: Vec3; frameSize?: number; elevation?: number; lighting?: Lighting }
+
+/** Bake the same eight mesh views on the server or in the browser, without a canvas. */
+export function bakeSpritePixels(batches: readonly InstanceBatch[], {
+  span, center = [0, 0, 0], frameSize = 64, elevation = Math.PI / 6, lighting
+}: SpriteCamera) {
   if (!Number.isInteger(frameSize) || frameSize < 1 || frameSize > 1024) throw new RangeError('Frame size must be 1–1024 pixels')
   if (!(Number.isFinite(span) && span > 0 && center.every(Number.isFinite) && Math.abs(elevation) < Math.PI / 2)) {
     throw new RangeError('Invalid sprite camera framing')
   }
-  const frame = document.createElement('canvas')
-  frame.width = frame.height = frameSize
-  const image = document.createElement('canvas')
-  image.width = spriteDirections.length * frameSize
-  image.height = frameSize
-  const context = image.getContext('2d')
-  if (!context) throw new Error('Could not create the sprite sheet')
-  const renderer = canvasMeshes(frame, packLighting(lighting), { transparent: true, depthTest: true })
   const projection = orthographic(span, span, span / 100, span * 8)
   const radius = span * 4
   const horizontal = radius * Math.cos(elevation)
-  const stats = { drawCalls: 0, triangles: 0, instances: 0, uploadBytes: 0, culledBatches: 0 }
+  const cameras = spriteDirections.map((_, column) => {
+    const angle = column * 2 * Math.PI / spriteDirections.length
+    return multiply(projection, view([center[0] + horizontal * Math.sin(angle), center[1] + radius * Math.sin(elevation),
+      center[2] + horizontal * Math.cos(angle)], center))
+  })
+  return meshViewPixels(cameras, batches, frameSize, packLighting(lighting))
+}
+
+/** Bake eight camera views of a +Z-facing model into one transparent horizontal sprite sheet. */
+export function bakeSpriteDirections(batches: readonly InstanceBatch[], { src = 'sprite.png', ...camera }: SpriteCamera & { src?: string }) {
+  const { width, height: frameSize, pixels } = bakeSpritePixels(batches, camera)
+  const image = document.createElement('canvas')
+  image.width = width
+  image.height = frameSize
+  const context = image.getContext('2d')
+  if (!context) throw new Error('Could not create the sprite sheet')
+  context.putImageData(new ImageData(pixels, width, frameSize), 0, 0)
   const clips: Record<string, SpriteClip> = { turntable: { column: 0, frames: spriteDirections.length, frameMs: 150 } }
-  try {
-    for (const [column, name] of spriteDirections.entries()) {
-      const angle = column * 2 * Math.PI / spriteDirections.length
-      const camera = view([center[0] + horizontal * Math.sin(angle), center[1] + radius * Math.sin(elevation),
-        center[2] + horizontal * Math.cos(angle)], center)
-      renderer.draw(multiply(projection, camera), defaultClear, batches, stats)
-      context.drawImage(frame, frameSize * column, 0)
-      clips[name] = { column, frames: 1, frameMs: 150 }
-    }
-  } finally { renderer.dispose() }
+  spriteDirections.forEach((name, column) => { clips[name] = { column, frames: 1, frameMs: 150 } })
   return { image, manifest: { src, frameWidth: frameSize, frameHeight: frameSize, clips } }
 }

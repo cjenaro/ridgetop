@@ -16,9 +16,13 @@ Bun and Deno run the same server through their Node-compatible HTTP and filesyst
 
 To make artwork, open the [sprite workshop](http://localhost:3000/sprites) on the running server.
 
+For new low-poly game assets, `createArtBuilder` supplies starter bodies, face attachments, endpoint-to-endpoint parts and open handles. It grounds the finished geometry and fits all eight sprites. Generated games include the same builder and a runnable toolbox example. Run `npm run preview-art -- <recipe.art.json>` to check the game's actual sprites and eight larger mesh views before accepting the art. [Art authoring guide](starter/ART.md)
+
+Use `npm run art-library -- list "<description>"` to search 13 editable references, including creatures, equipment and scenery. For example, `npm run art-library -- start field-radio weather-receiver` creates a local copy with named parts ready for a game-specific design.
+
 For live low-poly art, open the [3D model viewer](http://localhost:3000/models), or open `dist/low-poly-models.html` directly after a build. Orbit the raincoat ranger, the Signal Drift rally car, or the headland lighthouse. **Open model file** previews your workshop’s `.art.json` at the canvas resolution. The lighthouse source in `models/headland.ts` shows how to assemble a scene with a custom cliff mesh and instanced props.
 
-Compare how GPT-5.6 Sol, Terra and Luna handled 20 identical low-poly game-art briefs. The study includes a blind gallery, the editable recipes and six part-specific revisions. [Low-poly art trial](benchmarks/asset-authoring/README.md)
+Compare how GPT-5.6 Sol, Terra and Luna handled 20 identical low-poly game-art briefs. A follow-up tested the builder, reference library and rendered feedback on the smaller models. [Original blind gallery and trial](benchmarks/asset-authoring/README.md) · [Guided art results](benchmarks/asset-authoring/guided/README.md)
 
 ## Start a game of your own
 

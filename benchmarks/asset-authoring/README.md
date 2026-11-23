@@ -12,6 +12,8 @@ Download the gallery and open it locally to compare all 60 candidates in eight d
 
 ![The three models' trail packs, field cameras, marsh herons and lighthouse keepers at game size and from two larger mesh angles.](comparison.png)
 
+The follow-up trial tested generic body forms, reviewed references and corrections from rendered feedback with the smaller models. [Guided authoring results](guided/README.md)
+
 ## Where the differences showed up
 
 | Visual passes out of five | Sol | Terra | Luna |

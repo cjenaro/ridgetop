@@ -1,4 +1,5 @@
 import { instances } from './instances.ts'
+import { quaternionFromEuler } from './geometry.ts'
 import { bakeSpriteDirections } from './low-poly.ts'
 import { color } from './renderer.ts'
 import { artPalette, artShapes, checkArtModel, checkArtPalette, checkFrameSize } from './art-recipe.ts'
@@ -78,7 +79,8 @@ export function createArtRecipe(name: keyof typeof artModels): ArtRecipe {
   const palette = Object.fromEntries(parts.map(p => [p.tone, artPalette[p.tone]]))
   return { format: 'ridgetop-art', version: 1, name, span, centerY, frameSize: 64, palette,
     parts: parts.map(p => ({ name: p.name, shape: shapeNames.get(p.mesh), position: [...p.position], scale: [...p.scale],
-      tone: p.tone, ...(p.yaw ? { yaw: p.yaw } : {}), ...(p.unlit ? { unlit: p.unlit } : {}) })) }
+      tone: p.tone, ...(p.pitch ? { pitch: p.pitch } : {}), ...(p.yaw ? { yaw: p.yaw } : {}),
+      ...(p.roll ? { roll: p.roll } : {}), ...(p.unlit ? { unlit: p.unlit } : {}) })) }
 }
 
 /** A palette and named model recipes shared by mesh batches and cached, in-memory sprite sheets. */
@@ -127,8 +129,10 @@ export function createArtKit<Extra extends string = never>({
           }
           const [px, py, pz] = piece.position
           const [sx, sy, sz] = piece.scale
+          const facing = yaw + (piece.yaw ?? 0)
+          const rotation = piece.pitch || piece.roll ? quaternionFromEuler(piece.pitch, facing, piece.roll) : facing
           batch.add([x + (px * cos + pz * sin) * scale, y + py * scale, z + (pz * cos - px * sin) * scale],
-            [sx * scale, sy * scale, sz * scale], yaw + (piece.yaw ?? 0), partTint?.(piece, index) ?? tones.get(piece.tone), piece.unlit)
+            [sx * scale, sy * scale, sz * scale], rotation, partTint?.(piece, index) ?? tones.get(piece.tone), piece.unlit)
           index++
         }
       }

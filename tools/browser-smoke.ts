@@ -100,6 +100,28 @@ try {
   await click(workshop, 'silhouette')
   assert.equal(await workshop.evaluate("document.querySelector('#view-comparison').classList.contains('silhouettes')"), true)
   assert.equal(await backView(), editedBack, 'the silhouette overlay preserves the art pixels')
+  await workshop.evaluate(`(() => {
+    const art = document.querySelector('#art')
+    art.value = 'starter-vessel'
+    art.dispatchEvent(new Event('change'))
+    const parts = document.querySelector('#part-name')
+    parts.value = 'rim'
+    parts.dispatchEvent(new Event('change'))
+    document.querySelector('#part-rotation input').value = '28'
+    document.querySelector('#fit-model').click()
+  })()`)
+  assert.match(await status(workshop, 'part-status'), /fitted all eight views/)
+  assert.equal(await workshop.evaluate("document.querySelector('#part-name').value"), 'rim')
+  assert.ok(await workshop.evaluate(`[...document.querySelectorAll('#frames canvas')].length === 8 &&
+    [...document.querySelectorAll('#frames canvas')].every(frame => {
+      const { width, height } = frame
+      const { data } = frame.getContext('2d').getImageData(0,0,width,height)
+      return data.some((alpha,i) => i % 4 === 3 && alpha) && data.every((alpha,i) => {
+        if (i % 4 !== 3 || !alpha) return true
+        const x = Math.floor(i / 4) % width, y = Math.floor(i / (4 * width))
+        return x > 0 && y > 0 && x < width - 1 && y < height - 1
+      })
+    })`))
   await workshop.evaluate(`(async () => {
     const portrait = await fetch('/game/assets/scout.png').then(response => response.blob())
     const transfer = new DataTransfer()

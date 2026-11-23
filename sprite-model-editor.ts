@@ -1,4 +1,4 @@
-import { artPalette, artShapes } from './framework/index.ts'
+import { artPalette, artShapes, fitArtRecipe } from './framework/index.ts'
 import type { ArtRecipe, ArtShape, ArtTone, SpriteSheetImage, Vec3 } from './framework/index.ts'
 
 export function createPartEditor(root: HTMLDetailsElement, onApply: (source: ArtRecipe) => void) {
@@ -26,6 +26,7 @@ export function createPartEditor(root: HTMLDetailsElement, onApply: (source: Art
     })
   }
   const position = vectorControls('position'), scale = vectorControls('scale')
+  const rotation = vectorControls('rotation'), angles = ['pitch', 'yaw', 'roll'] as const
   const values = ([x, y, z]: HTMLInputElement[]): Vec3 => [x.valueAsNumber, y.valueAsNumber, z.valueAsNumber]
   function showPart() {
     if (!source) return
@@ -35,6 +36,7 @@ export function createPartEditor(root: HTMLDetailsElement, onApply: (source: Art
     for (let i = 0; i < 3; i++) {
       position[i].value = String(part.position[i])
       scale[i].value = String(part.scale[i])
+      rotation[i].value = String((part[angles[i]] ?? 0) * 180 / Math.PI)
     }
     frameSize.value = String(source.frameSize)
     status.textContent = ''
@@ -47,15 +49,17 @@ export function createPartEditor(root: HTMLDetailsElement, onApply: (source: Art
       const next = structuredClone(source)
       const part = next.parts[select.selectedIndex]
       part.shape = shape.value as ArtShape
-      if (part.tone !== tone.value) {
-        part.tone = tone.value as ArtTone
-        next.palette[part.tone] ??= artPalette[part.tone]
-      }
+      part.tone = tone.value as ArtTone
       part.position = values(position)
       part.scale = values(scale)
+      angles.forEach((axis, i) => {
+        const degrees = rotation[i].valueAsNumber
+        if (degrees !== (part[axis] ?? 0) * 180 / Math.PI) part[axis] = degrees * Math.PI / 180
+      })
       next.frameSize = frameSize.valueAsNumber
-      onApply(next)
-      status.textContent = 'Updated ' + part.name + '.'
+      const fit = (event.submitter as HTMLElement)?.id === 'fit-model'
+      onApply(fit ? fitArtRecipe(next) : next)
+      status.textContent = fit ? 'Grounded the model and fitted all eight views.' : 'Updated ' + part.name + '.'
     } catch (error) { status.textContent = error.message }
   }
   return {

@@ -1,8 +1,8 @@
 import { createArtKit } from './art.ts'
 import { multiply, orthographic, view } from './geometry.ts'
-import { renderMeshFrame, spriteDirections } from './low-poly.ts'
-import type { ArtPart } from './art-recipe.ts'
-import type { Color, Matrix } from './types.ts'
+import { bakeSpritePixels, renderMeshFrame, spriteDirections } from './low-poly.ts'
+import type { ArtModel, ArtPart } from './art-recipe.ts'
+import type { Color, InstanceBatch, Matrix, Vec3 } from './types.ts'
 
 export type ReviewKit = ReturnType<typeof createArtKit<string>>
 export interface ReviewObject { id: string; name: string; x: number; z: number; y?: number; yaw?: number }
@@ -27,6 +27,27 @@ export interface ArtReview {
 }
 export const partName = (part: ArtPart, index: number) => part.name ?? 'part-' + (index + 1)
 function tint(id: number): Color { return [(id & 255) / 255, ((id >> 8) & 255) / 255, ((id >> 16) & 255) / 255, 1] }
+
+/** Count the pixels belonging to each visible named part in each sprite direction. */
+export function spritePartVisibility<Name extends string>(kit: {
+  model(name: Name): ArtModel
+  group(): { batches: readonly InstanceBatch[]; add(name: Name, position: Vec3, options: { partTint(part: ArtPart, i: number): Color }): void }
+}, asset: Name, frameSize: number) {
+  const model = kit.model(asset), group = kit.group()
+  const counts = model.parts.map(() => spriteDirections.map(() => 0))
+  group.add(asset, [0,0,0], { partTint: (_part, i) => tint(i+1) })
+  const { width, pixels } = bakeSpritePixels(group.batches, {
+    span: model.span, center: [0,model.centerY,0], frameSize, lighting: { ambient: 1 }
+  })
+  for (let i = 0; i < pixels.length; i += 4) {
+    if (!pixels[i+3]) continue
+    const id = pixels[i] + (pixels[i+1] << 8) + (pixels[i+2] << 16)
+    const direction = Math.floor((i/4 % width)/frameSize)
+    counts[id-1][direction]++
+  }
+  return { frameSize, directions: spriteDirections,
+    parts: Object.fromEntries(model.parts.map((part, i) => [partName(part, i), counts[i]])) }
+}
 export function pickId(image: HTMLCanvasElement, u: number, v: number) {
   if (!(u >= 0 && u < 1 && v >= 0 && v < 1)) return 0
   const [r, g, b, a] = image.getContext('2d').getImageData(Math.floor(u * image.width), Math.floor(v * image.height), 1, 1).data

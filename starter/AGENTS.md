@@ -4,6 +4,7 @@
 - Begin with `game/game.js` for the level, copy, palette, art assignments, and custom model recipes. The same named art can appear as a live mesh, a directional sprite, or a HUD icon.
 - Edit movement, interactions, drawing order, and the win condition in `game/main.js`. Check both view modes after changing a mechanic or asset. Switch views partway through a run to verify that progress carries over.
 - Put workshop PNG and JSON exports together in `game/art/`, register the named clip in `sprites`, and reload the browser.
+- For new low-poly art, search `npm run art-library -- list "<description>"`. Adapt a close reference by named part, or build the silhouette from the body forms in [ART.md](ART.md). Attach distinguishing features and call `finish()`. Run `npm run preview-art -- game/art/<name>.art.json`, inspect both PNGs against the brief, and correct features that disappear at game size.
 - For a 3D model and its derived sprites, put the editable `.art.json` in `game/art/` and map the target asset name to that file in `modelFiles`. Change named parts and keep the camera framing and ground origin stable across variants.
 - Use `framework/index.js` and its declarations for public game APIs. Keep static mesh batches separate from moving objects.
 

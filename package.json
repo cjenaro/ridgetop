@@ -5,6 +5,8 @@
   "scripts": {
     "start": "node dist/server.js",
     "playtest": "node starter/serve.ts --testing",
+    "preview-art": "node starter/preview-art.ts",
+    "art-library": "node starter/art-library.ts",
     "test": "node --test test/*.test.ts",
     "test:browser": "node tools/browser-smoke.ts",
     "test:review": "node tools/art-review-smoke.ts",
