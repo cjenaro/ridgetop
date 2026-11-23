@@ -325,3 +325,162 @@ func _init() -> void:
     assert.ok(Math.abs(got.z - exp.z) < 0.02, `driver ${exp.name} z (${got.z} vs ${exp.z})`)
   }
 })
+
+test('TS -> GDScript compiler handles progression partial saves, export * barrels, closures, switch fallthrough, and JS semantics in Godot 4', async t => {
+  const projectDir = await mkdtemp(join(tmpdir(), 'ridgetop-gd-semantics-'))
+  t.after(() => rm(projectDir, { recursive: true, force: true }))
+
+  const edgeTs = join(projectDir, 'edge.ts')
+  await writeFile(edgeTs, `
+export function testAll() {
+  // 1. Prefix/postfix ++/--, concise arrow mutation, comma for-loop
+  let i = 0, sum = 0
+  const before = i++
+  const after = ++i
+  ;[10, 20, 30].forEach(v => sum += v)
+  let steps = 0
+  for (let a = 0, b = 4; a < b; a++, b--) steps++
+
+  // 2. Short-circuit single evaluation
+  let calls = 0
+  const bump = (v: unknown) => { calls++; return v }
+  const orVal = bump(7) || bump(99)
+  const andVal = bump(0) && bump(99)
+  const nullVal = bump(0) ?? bump(99)
+
+  // 3. Reference identity vs deep equality
+  const o1 = { a: 1 }, o2 = { a: 1 }
+  const sameRef = o1 === o1
+  const diffRef = o1 === o2
+
+  // 4. Plain .size/.length, numeric keys, string indexing, Map/Set
+  const sized = { size: 42, length: 99, 0: 'zero' }
+  const m = new Map([['k', 7]])
+  const mapEntries = m.entries()
+  const s = new Set([3, 4])
+  let setSum = 0
+  s.forEach(v => setSum += v)
+
+  // 5. Switch grouped fallthrough, non-final default, nested break inside loop
+  const swOut: number[] = []
+  for (let k = 0; k < 4; k++) {
+    switch (k) {
+      case 0:
+      case 1:
+        if (k === 0) break
+        swOut.push(10 + k)
+        break
+      default:
+        swOut.push(99)
+        break
+      case 2:
+        swOut.push(20)
+        break
+    }
+  }
+
+  // 6. Outer-mutated closure + recursive local function
+  let x = 1
+  const getX = () => x
+  x = 5
+  function fact(n: number): number { return n <= 1 ? 1 : n * fact(n - 1) }
+
+  // 7. Math, spread, push, reduce arity, for..in, do..while
+  const arr = [1, 2]
+  const pushLen = arr.push()
+  const pushLen2 = arr.push(3)
+  const red = arr.reduce((acc, v, idx) => acc + v * (idx + 1), 0)
+  const spreadMax = Math.max(...arr)
+  const roundNegHalf = Math.round(-0.5)
+  const maxNan = Number.isNaN(Math.max(NaN, 1))
+  const intNull = Number.isInteger(null)
+  const keys: string[] = []
+  for (const key in { p: 1, q: 2 }) keys.push(key)
+  let doCount = 0
+  do { doCount++ } while (doCount < 3)
+
+  return {
+    before, after, i, sum, steps, calls, orVal, andVal, nullVal,
+    sameRef, diffRef, sizeProp: sized.size, lenProp: sized.length, numKey: sized[0],
+    strChar: 'abc'[1], mapEntries, setSum, swOut, outerClosure: getX(), fact5: fact(5),
+    pushLen, pushLen2, red, spreadMax, roundNegHalf, maxNan, intNull, keys, doCount,
+    tmpl: \`v=\${Math.floor(3.9)}\`
+  }
+}
+`)
+
+  await compileTsProjectToGodot({
+    entries: [
+      join(repoRoot, 'racing', 'progression.ts'),
+      join(repoRoot, 'starter', 'game.ts')
+    ],
+    rootDir: repoRoot,
+    outDir: join(projectDir, 'scripts', 'compiled')
+  })
+  await compileTsProjectToGodot({
+    entries: [edgeTs],
+    rootDir: projectDir,
+    outDir: join(projectDir, 'scripts', 'compiled')
+  })
+
+  const godot = await findGodot()
+  if (!godot) return
+
+  const gd = await runGodotHarness(godot, projectDir, `extends SceneTree
+const RT = preload("res://scripts/compiled/rt.gd")
+func _init() -> void:
+\tvar prog = RT.mod("res://scripts/compiled/racing/progression.gd")
+\tvar partial_save = JSON.stringify({ "credits": 120, "build": { "motor": 1, "tires": 0, "armor": 0, "capacitor": 0 }, "records": { "copper": { "place": 2, "seconds": 41.5 } } })
+\tvar loaded = prog.loadChampionship({ "getItem": func(_k): return partial_save })
+\tvar starter_game = RT.mod("res://scripts/compiled/starter/game.gd")
+\tvar edge = RT.mod("res://scripts/compiled/edge.gd")
+\tvar res = edge.testAll()
+\tprint("PARITY_JSON:" + JSON.stringify({
+\t\t"credits": loaded["credits"],
+\t\t"copperPlace": loaded["records"]["copper"]["place"],
+\t\t"hasBrine": loaded["records"].has("brine"),
+\t\t"starterTitle": starter_game.game["title"],
+\t\t"flowerParts": starter_game.models["flower"]["parts"].size(),
+\t\t"edge": res
+\t}))
+\tRT.clear_modules()
+\tquit()
+`)
+
+  assert.equal(gd.credits, 120)
+  assert.equal(gd.copperPlace, 2)
+  assert.equal(gd.hasBrine, false)
+  assert.equal(gd.starterTitle, 'Lantern Grove')
+  assert.ok(gd.flowerParts >= 2)
+  const e = gd.edge
+  assert.equal(e.before, 0)
+  assert.equal(e.after, 2)
+  assert.equal(e.i, 2)
+  assert.equal(e.sum, 60)
+  assert.equal(e.steps, 2)
+  assert.equal(e.calls, 3, 'LHS of ||, &&, ?? must each be evaluated once')
+  assert.equal(e.orVal, 7)
+  assert.equal(e.andVal, 0)
+  assert.equal(e.nullVal, 0)
+  assert.equal(e.sameRef, true)
+  assert.equal(e.diffRef, false)
+  assert.equal(e.sizeProp, 42)
+  assert.equal(e.lenProp, 99)
+  assert.equal(e.numKey, 'zero')
+  assert.equal(e.strChar, 'b')
+  assert.deepEqual(e.mapEntries, [['k', 7]])
+  assert.equal(e.setSum, 7)
+  assert.deepEqual(e.swOut, [11, 20, 99])
+  assert.equal(e.outerClosure, 5)
+  assert.equal(e.fact5, 120)
+  assert.equal(e.pushLen, 2)
+  assert.equal(e.pushLen2, 3)
+  assert.equal(e.red, 14)
+  assert.equal(e.spreadMax, 3)
+  assert.equal(e.roundNegHalf, 0)
+  assert.equal(e.maxNan, true)
+  assert.equal(e.intNull, false)
+  assert.deepEqual(e.keys, ['p', 'q'])
+  assert.equal(e.doCount, 3)
+  assert.equal(e.tmpl, 'v=3')
+})
