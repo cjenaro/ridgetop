@@ -484,3 +484,209 @@ func _init() -> void:
   assert.equal(e.doCount, 3)
   assert.equal(e.tmpl, 'v=3')
 })
+
+test('TS -> GDScript compiler handles this-bound methods, rest/spread, optional builtins, logical assign, switch continue, do-continue, delete, finally, and safe ints in Godot 4', async t => {
+  const projectDir = await mkdtemp(join(tmpdir(), 'ridgetop-gd-edge2-'))
+  t.after(() => rm(projectDir, { recursive: true, force: true }))
+
+  const edge2Ts = join(projectDir, 'edge2.ts')
+  await writeFile(edge2Ts, `
+const secret = 42
+export { secret as aliasedSecret }
+
+function restSum(first: number, ...rest: number[]) {
+  let total = first
+  for (const n of rest) total += n
+  return [total, rest.length]
+}
+
+export function testEdge2() {
+  // 1. ?.length ?? fallback (null returns null, not 0)
+  const missing: number[] | null = null
+  const lenFallback = (missing as number[] | null)?.length ?? 77
+
+  // 2. Object literal method using this
+  const objThis = {
+    base: 10,
+    get val() { return this.base + 5 },
+    double() { return this.val * 2 }
+  }
+  const thisDouble = objThis.double()
+
+  // 3. Switch with hoisted case expressions and continue inside an outer loop
+  const swLoop: number[] = []
+  let probe = 0
+  for (let k = 0; k < 4; k++) {
+    switch (k) {
+      case 0:
+        swLoop.push(100)
+        break
+      case (probe++ || 1):
+        continue
+      case (probe && 2):
+        swLoop.push(200)
+        break
+      default:
+        swLoop.push(300)
+    }
+    swLoop.push(k)
+  }
+
+  // 4. do..while with continue must still check condition
+  let doN = 0
+  do {
+    doN++
+    if (doN === 1) continue
+  } while (false)
+
+  // 5. Number.isSafeInteger rejects 2^53
+  const safeOk = Number.isSafeInteger(9007199254740991)
+  const safeBig = Number.isSafeInteger(9007199254740992)
+
+  // 6. Optional chaining on built-in methods
+  const nullArr: number[] | null = null
+  const nullStr: string | null = null
+  const optMap = (nullArr as number[] | null)?.map(v => v + 1)
+  const optTrim = (nullStr as string | null)?.trim()
+
+  // 7. Rest params, array rest, object rest
+  const [head, ...tail] = [1, 2, 3, 4]
+  const { a, ...restObj } = { a: 1, b: 2, c: 3 }
+  const restCall = restSum(10, 1, 2, 3)
+
+  // 8. Boxed getter, recursive const arrow, for..of outer var mutation
+  let gVal = 3
+  const boxGetter = { get v() { return gVal } }
+  gVal = 9
+  const fib = (n: number): number => {
+    if (n <= 1) return n
+    return fib(n - 1) + fib(n - 2)
+  }
+  let lastOf = 0
+  const readLast = () => lastOf
+  for (lastOf of [4, 8]) {}
+
+  // 9. Logical assignments short-circuit RHS
+  let side = 0
+  const cache: Record<string, number> = { hit: 5 }
+  cache.hit ??= ++side
+  cache.miss ??= ++side
+
+  // 10. Spread Set/String, Object.assign spread, splice spread
+  const setSpread = [...new Set([7, 8])]
+  const strSpread = [...'hi']
+  const merged = Object.assign({ x: 1 }, ...[{ y: 2 }, { z: 3 }])
+  const sp = [1, 9, 4]
+  sp.splice(1, 1, ...[2, 3])
+
+  // 11. Numeric dict key normalization, array OOB assign, string non-index
+  const dict: Record<string, string> = {}
+  ;(dict as unknown as Record<number, string>)[0] = 'zero'
+  const dictStr = dict['0']
+  const grow: number[] = []
+  grow[2] = 55
+  const strFoo = ('abc' as unknown as Record<string, unknown>).foo
+
+  // 12. 1-arg reduce, 0-arg Set.forEach, null slice/join, String.at, custom dict method
+  const red1 = [1, 2, 3].reduce(acc => acc + 10, 0)
+  let setTicks = 0
+  new Set([1, 2]).forEach(() => { setTicks++ })
+  const undefIdx: number | undefined = undefined
+  const sliced = [10, 20, 30].slice(undefIdx, 2)
+  const joined = [1, 2].join(undefined)
+  const strAt = 'xyz'.at(-1)
+  const custom = { pop: () => 'custom-pop' }
+  const customPop = custom.pop()
+
+  // 13. delete + try/finally
+  const delObj: Record<string, number> = { keep: 1, drop: 2 }
+  delete delObj.drop
+  let finRan = 0
+  try { finRan += 1 } finally { finRan += 10 }
+
+  return {
+    lenFallback, thisDouble, swLoop, doN, safeOk, safeBig, optMap, optTrim,
+    head, tail, a, restObj, restCall, getterVal: boxGetter.v, fib6: fib(6), lastOf: readLast(),
+    side, cacheHit: cache.hit, cacheMiss: cache.miss,
+    setSpread, strSpread, merged, sp, dictStr, growLen: grow.length, grow2: grow[2], strFoo,
+    red1, setTicks, sliced, joined, strAt, customPop,
+    hasDrop: Object.hasOwn(delObj, 'drop'), hasKeep: Object.hasOwn(delObj, 'keep'), finRan
+  }
+}
+`)
+
+  await compileTsProjectToGodot({
+    entries: [
+      join(repoRoot, 'framework', 'ui-machine.ts'),
+      join(repoRoot, 'framework', 'ui-button.ts')
+    ],
+    rootDir: repoRoot,
+    outDir: join(projectDir, 'scripts', 'compiled')
+  })
+  await compileTsProjectToGodot({
+    entries: [edge2Ts],
+    rootDir: projectDir,
+    outDir: join(projectDir, 'scripts', 'compiled')
+  })
+
+  const godot = await findGodot()
+  if (!godot) return
+
+  const gd = await runGodotHarness(godot, projectDir, `extends SceneTree
+const RT = preload("res://scripts/compiled/rt.gd")
+func _init() -> void:
+\tvar edge2 = RT.mod("res://scripts/compiled/edge2.gd")
+\tvar mach = RT.mod("res://scripts/compiled/framework/ui-machine.gd")
+\tvar btn_mod = RT.mod("res://scripts/compiled/framework/ui-button.gd")
+\tvar btn = btn_mod.buttonPrimitive["create"].call({ "id": "go", "label": "Go" })
+\tvar agent = mach.createUiAgent(func(): return [btn])
+\tvar queried = agent["query"].call({ "id": "go" })
+\tprint("PARITY_JSON:" + JSON.stringify({
+\t\t"alias": edge2.aliasedSecret,
+\t\t"queriedCount": queried.size(),
+\t\t"res": edge2.testEdge2()
+\t}))
+\tRT.clear_modules()
+\tquit()
+`)
+
+  assert.equal(gd.alias, 42)
+  assert.equal(gd.queriedCount, 1, 'createUiAgent().query() must work via object-literal this binding')
+  const r = gd.res
+  assert.equal(r.lenFallback, 77)
+  assert.equal(r.thisDouble, 30)
+  assert.deepEqual(r.swLoop, [100, 0, 200, 2, 300, 3])
+  assert.equal(r.doN, 1)
+  assert.equal(r.safeOk, true)
+  assert.equal(r.safeBig, false)
+  assert.equal(r.optMap, null)
+  assert.equal(r.optTrim, null)
+  assert.equal(r.head, 1)
+  assert.deepEqual(r.tail, [2, 3, 4])
+  assert.equal(r.a, 1)
+  assert.deepEqual(r.restObj, { b: 2, c: 3 })
+  assert.deepEqual(r.restCall, [16, 3])
+  assert.equal(r.getterVal, 9)
+  assert.equal(r.fib6, 8)
+  assert.equal(r.lastOf, 8)
+  assert.equal(r.side, 1)
+  assert.equal(r.cacheHit, 5)
+  assert.equal(r.cacheMiss, 1)
+  assert.deepEqual(r.setSpread, [7, 8])
+  assert.deepEqual(r.strSpread, ['h', 'i'])
+  assert.deepEqual(r.merged, { x: 1, y: 2, z: 3 })
+  assert.deepEqual(r.sp, [1, 2, 3, 4])
+  assert.equal(r.dictStr, 'zero')
+  assert.equal(r.growLen, 3)
+  assert.equal(r.grow2, 55)
+  assert.equal(r.strFoo, null)
+  assert.equal(r.red1, 30)
+  assert.equal(r.setTicks, 2)
+  assert.deepEqual(r.sliced, [10, 20])
+  assert.equal(r.joined, '1,2')
+  assert.equal(r.strAt, 'z')
+  assert.equal(r.customPop, 'custom-pop')
+  assert.equal(r.hasDrop, false)
+  assert.equal(r.hasKeep, true)
+  assert.equal(r.finRan, 11)
+})

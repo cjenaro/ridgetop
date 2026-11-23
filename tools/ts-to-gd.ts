@@ -131,7 +131,14 @@ static func is_int(v: Variant) -> bool:
 \treturn false
 
 static func is_safe_int(v: Variant) -> bool:
-\treturn is_int(v) and absf(float(v)) <= 9007199254740991.0
+\tvar t := typeof(v)
+\tif t == TYPE_INT:
+\t\tvar n := int(v)
+\t\treturn n >= -9007199254740991 and n <= 9007199254740991
+\tif t == TYPE_FLOAT:
+\t\tvar f := float(v)
+\t\treturn is_finite(f) and floor(f) == f and f >= -9007199254740991.0 and f <= 9007199254740991.0
+\treturn false
 
 static func is_array(v: Variant) -> bool:
 \treturn v is Array
@@ -191,24 +198,24 @@ static func min_all(args: Array) -> float:
 
 static func prop_len(v: Variant) -> Variant:
 \tif v == null:
-\t\treturn 0
+\t\treturn null
 \tif v is Array:
 \t\treturn (v as Array).size()
 \tif v is String:
 \t\treturn (v as String).length()
 \tif v is Dictionary:
 \t\treturn get_prop(v, "length")
-\treturn 0
+\treturn null
 
 static func prop_size(v: Variant) -> Variant:
 \tif v == null:
-\t\treturn 0
+\t\treturn null
 \tif v is Dictionary:
 \t\tvar d := v as Dictionary
 \t\tif (d.has("__is_map") or d.has("__is_set")) and d.has("__store"):
 \t\t\treturn (d["__store"] as Dictionary).size()
 \t\treturn get_prop(d, "size")
-\treturn 0
+\treturn null
 
 static func len_of(v: Variant) -> int:
 \tif v == null:
@@ -269,9 +276,11 @@ static func get_prop(obj: Variant, key: Variant) -> Variant:
 \t\t\treturn arr[idx] if idx >= 0 and idx < arr.size() else null
 \t\treturn null
 \tif obj is String:
-\t\tvar idx := int(key)
-\t\tvar s := obj as String
-\t\treturn s.substr(idx, 1) if idx >= 0 and idx < s.length() else null
+\t\tif typeof(key) == TYPE_INT or typeof(key) == TYPE_FLOAT or (key is String and (key as String).is_valid_int()):
+\t\t\tvar idx := int(key)
+\t\t\tvar s := obj as String
+\t\t\treturn s.substr(idx, 1) if idx >= 0 and idx < s.length() else null
+\t\treturn null
 \tif obj is Object:
 \t\tvar s := str(key)
 \t\tif s in obj:
@@ -283,15 +292,55 @@ static func get_prop(obj: Variant, key: Variant) -> Variant:
 static func set_prop(obj: Variant, key: Variant, value: Variant) -> Variant:
 \tif obj is Dictionary:
 \t\tvar d := obj as Dictionary
-\t\tif (typeof(key) == TYPE_INT or typeof(key) == TYPE_FLOAT) and not d.has(key) and d.has(js_str(key)):
-\t\t\td[js_str(key)] = value
+\t\tif typeof(key) == TYPE_INT or typeof(key) == TYPE_FLOAT:
+\t\t\tvar sk := js_str(key)
+\t\t\tif d.has(key) and not d.has(sk):
+\t\t\t\td.erase(key)
+\t\t\td[sk] = value
 \t\telse:
 \t\t\td[key] = value
 \telif obj is Array:
-\t\t(obj as Array)[int(key)] = value
+\t\tvar arr := obj as Array
+\t\tvar idx := int(key)
+\t\tif idx >= 0:
+\t\t\tif idx >= arr.size():
+\t\t\t\tarr.resize(idx + 1)
+\t\t\tarr[idx] = value
 \telif obj is Object:
 \t\tobj.set(str(key), value)
 \treturn value
+
+static func del_prop(obj: Variant, key: Variant) -> bool:
+\tif obj is Dictionary:
+\t\tvar d := obj as Dictionary
+\t\tif d.has(key):
+\t\t\td.erase(key)
+\t\t\treturn true
+\t\tif typeof(key) == TYPE_INT or typeof(key) == TYPE_FLOAT:
+\t\t\tvar sk := js_str(key)
+\t\t\tif d.has(sk):
+\t\t\t\td.erase(sk)
+\t\t\t\treturn true
+\treturn true
+
+static func omit_dict(src: Variant, excluded: Array) -> Dictionary:
+\tvar out: Dictionary = {}
+\tif src is Dictionary:
+\t\tvar d := src as Dictionary
+\t\tfor k in d.keys():
+\t\t\tif not excluded.has(k) and not excluded.has(js_str(k)):
+\t\t\t\tout[k] = get_prop(d, k)
+\treturn out
+
+const UNDEF := "__rt_undef_sentinel__"
+
+static func pack_rest(args: Array) -> Array:
+\tvar out: Array = []
+\tfor item in args:
+\t\tif item is String and (item as String) == UNDEF:
+\t\t\tbreak
+\t\tout.append(item)
+\treturn out
 
 static func invoke(callee: Variant, args: Array) -> Variant:
 \tif callee is Callable:
@@ -318,38 +367,56 @@ static func _call_cb(cb: Callable, item: Variant, index: int, arr: Array) -> Var
 \t\treturn cb.call(item, index)
 \treturn cb.call(item, index, arr)
 
-static func map(arr: Array, cb: Callable) -> Array:
+static func map(target: Variant, cb: Callable) -> Variant:
+\tif target is Dictionary and (target as Dictionary).has("map"):
+\t\treturn invoke((target as Dictionary)["map"], [cb])
+\tvar arr := target as Array
 \tvar out: Array = []
 \tfor i in range(arr.size()):
 \t\tout.append(_call_cb(cb, arr[i], i, arr))
 \treturn out
 
-static func filter(arr: Array, cb: Callable) -> Array:
+static func filter(target: Variant, cb: Callable) -> Variant:
+\tif target is Dictionary and (target as Dictionary).has("filter"):
+\t\treturn invoke((target as Dictionary)["filter"], [cb])
+\tvar arr := target as Array
 \tvar out: Array = []
 \tfor i in range(arr.size()):
 \t\tif truthy(_call_cb(cb, arr[i], i, arr)):
 \t\t\tout.append(arr[i])
 \treturn out
 
-static func some(arr: Array, cb: Callable) -> bool:
+static func some(target: Variant, cb: Callable) -> Variant:
+\tif target is Dictionary and (target as Dictionary).has("some"):
+\t\treturn invoke((target as Dictionary)["some"], [cb])
+\tvar arr := target as Array
 \tfor i in range(arr.size()):
 \t\tif truthy(_call_cb(cb, arr[i], i, arr)):
 \t\t\treturn true
 \treturn false
 
-static func every(arr: Array, cb: Callable) -> bool:
+static func every(target: Variant, cb: Callable) -> Variant:
+\tif target is Dictionary and (target as Dictionary).has("every"):
+\t\treturn invoke((target as Dictionary)["every"], [cb])
+\tvar arr := target as Array
 \tfor i in range(arr.size()):
 \t\tif not truthy(_call_cb(cb, arr[i], i, arr)):
 \t\t\treturn false
 \treturn true
 
-static func find(arr: Array, cb: Callable) -> Variant:
+static func find(target: Variant, cb: Callable) -> Variant:
+\tif target is Dictionary and (target as Dictionary).has("find"):
+\t\treturn invoke((target as Dictionary)["find"], [cb])
+\tvar arr := target as Array
 \tfor i in range(arr.size()):
 \t\tif truthy(_call_cb(cb, arr[i], i, arr)):
 \t\t\treturn arr[i]
 \treturn null
 
-static func find_index(arr: Array, cb: Callable) -> int:
+static func find_index(target: Variant, cb: Callable) -> Variant:
+\tif target is Dictionary and (target as Dictionary).has("findIndex"):
+\t\treturn invoke((target as Dictionary)["findIndex"], [cb])
+\tvar arr := target as Array
 \tfor i in range(arr.size()):
 \t\tif truthy(_call_cb(cb, arr[i], i, arr)):
 \t\t\treturn i
@@ -360,9 +427,11 @@ static func for_each(target: Variant, cb: Callable) -> void:
 \t\tvar d := target as Dictionary
 \t\tif d.has("__is_map"):
 \t\t\tvar store := d["__store"] as Dictionary
+\t\t\tvar argc := cb.get_argument_count()
 \t\t\tfor k in store.keys():
-\t\t\t\tvar argc := cb.get_argument_count()
-\t\t\t\tif argc <= 1:
+\t\t\t\tif argc <= 0:
+\t\t\t\t\tcb.call()
+\t\t\t\telif argc == 1:
 \t\t\t\t\tcb.call(store[k])
 \t\t\t\telif argc == 2:
 \t\t\t\t\tcb.call(store[k], k)
@@ -371,9 +440,11 @@ static func for_each(target: Variant, cb: Callable) -> void:
 \t\t\treturn
 \t\tif d.has("__is_set"):
 \t\t\tvar store := d["__store"] as Dictionary
+\t\t\tvar argc := cb.get_argument_count()
 \t\t\tfor k in store.keys():
-\t\t\t\tvar argc := cb.get_argument_count()
-\t\t\t\tif argc <= 1:
+\t\t\t\tif argc <= 0:
+\t\t\t\t\tcb.call()
+\t\t\t\telif argc == 1:
 \t\t\t\t\tcb.call(k)
 \t\t\t\telif argc == 2:
 \t\t\t\t\tcb.call(k, k)
@@ -387,14 +458,21 @@ static func for_each(target: Variant, cb: Callable) -> void:
 \tfor i in range(arr.size()):
 \t\t_call_cb(cb, arr[i], i, arr)
 
-static func reduce(arr: Array, cb: Callable, has_init: bool, init: Variant = null) -> Variant:
+static func reduce(target: Variant, cb: Callable, has_init: bool, init: Variant = null) -> Variant:
+\tif target is Dictionary and (target as Dictionary).has("reduce"):
+\t\treturn invoke((target as Dictionary)["reduce"], [cb, init] if has_init else [cb])
+\tvar arr := target as Array
 \tif not has_init and arr.is_empty():
 \t\treturn null
 \tvar acc: Variant = init if has_init else arr[0]
 \tvar start := 0 if has_init else 1
 \tvar argc := cb.get_argument_count()
 \tfor i in range(start, arr.size()):
-\t\tif argc <= 2:
+\t\tif argc <= 0:
+\t\t\tacc = cb.call()
+\t\telif argc == 1:
+\t\t\tacc = cb.call(acc)
+\t\telif argc == 2:
 \t\t\tacc = cb.call(acc, arr[i])
 \t\telif argc == 3:
 \t\t\tacc = cb.call(acc, arr[i], i)
@@ -402,24 +480,37 @@ static func reduce(arr: Array, cb: Callable, has_init: bool, init: Variant = nul
 \t\t\tacc = cb.call(acc, arr[i], i, arr)
 \treturn acc
 
-static func slice(arr: Variant, start: int = 0, end_idx: Variant = null) -> Variant:
+static func slice(arr: Variant, start: Variant = 0, end_idx: Variant = null) -> Variant:
+\tif arr is Dictionary and (arr as Dictionary).has("slice"):
+\t\treturn invoke((arr as Dictionary)["slice"], [start, end_idx] if end_idx != null else [start])
+\tvar s_raw := 0 if start == null else int(num(start))
 \tif arr is Array:
 \t\tvar a := arr as Array
 \t\tvar n := a.size()
-\t\tvar s := maxi(0, n + start if start < 0 else start)
-\t\tvar e := n if end_idx == null else maxi(0, n + int(end_idx) if int(end_idx) < 0 else mini(n, int(end_idx)))
+\t\tvar s := maxi(0, n + s_raw if s_raw < 0 else s_raw)
+\t\tvar e := n if end_idx == null else maxi(0, n + int(num(end_idx)) if int(num(end_idx)) < 0 else mini(n, int(num(end_idx))))
 \t\treturn a.slice(s, e)
 \tif arr is String:
 \t\tvar st := arr as String
 \t\tvar n := st.length()
-\t\tvar s := maxi(0, n + start if start < 0 else start)
-\t\tvar e := n if end_idx == null else maxi(0, n + int(end_idx) if int(end_idx) < 0 else mini(n, int(end_idx)))
+\t\tvar s := maxi(0, n + s_raw if s_raw < 0 else s_raw)
+\t\tvar e := n if end_idx == null else maxi(0, n + int(num(end_idx)) if int(num(end_idx)) < 0 else mini(n, int(num(end_idx))))
 \t\treturn st.substr(s, maxi(0, e - s))
 \treturn []
 
-static func at(arr: Array, idx: int) -> Variant:
-\tvar i := arr.size() + idx if idx < 0 else idx
-\treturn arr[i] if i >= 0 and i < arr.size() else null
+static func at(target: Variant, idx: Variant = 0) -> Variant:
+\tif target is Dictionary and (target as Dictionary).has("at"):
+\t\treturn invoke((target as Dictionary)["at"], [idx])
+\tvar raw := 0 if idx == null else int(num(idx))
+\tif target is Array:
+\t\tvar arr := target as Array
+\t\tvar i := arr.size() + raw if raw < 0 else raw
+\t\treturn arr[i] if i >= 0 and i < arr.size() else null
+\tif target is String:
+\t\tvar s := target as String
+\t\tvar i := s.length() + raw if raw < 0 else raw
+\t\treturn s.substr(i, 1) if i >= 0 and i < s.length() else null
+\treturn null
 
 static func entries(target: Variant) -> Array:
 \tif target is Dictionary:
@@ -434,19 +525,24 @@ static func entries(target: Variant) -> Array:
 \t\tout.append([i, arr[i]])
 \treturn out
 
-static func index_of(container: Variant, value: Variant, from_idx: int = 0) -> int:
+static func index_of(container: Variant, value: Variant, from_idx: Variant = 0) -> Variant:
+\tif container is Dictionary and (container as Dictionary).has("indexOf"):
+\t\treturn invoke((container as Dictionary)["indexOf"], [value, from_idx])
+\tvar fi := 0 if from_idx == null else int(num(from_idx))
 \tif container is Array:
 \t\tvar arr := container as Array
-\t\tvar start := maxi(0, arr.size() + from_idx if from_idx < 0 else from_idx)
+\t\tvar start := maxi(0, arr.size() + fi if fi < 0 else fi)
 \t\tfor i in range(start, arr.size()):
 \t\t\tif eq(arr[i], value):
 \t\t\t\treturn i
 \t\treturn -1
 \tif container is String:
-\t\treturn (container as String).find(js_str(value), maxi(0, from_idx))
+\t\treturn (container as String).find(js_str(value), maxi(0, fi))
 \treturn -1
 
-static func includes(container: Variant, value: Variant) -> bool:
+static func includes(container: Variant, value: Variant) -> Variant:
+\tif container is Dictionary and (container as Dictionary).has("includes"):
+\t\treturn invoke((container as Dictionary)["includes"], [value])
 \tif container is Array:
 \t\tfor item in container:
 \t\t\tif eq(item, value):
@@ -456,7 +552,10 @@ static func includes(container: Variant, value: Variant) -> bool:
 \t\treturn (container as String).contains(js_str(value))
 \treturn false
 
-static func sort_arr(arr: Array, cmp: Variant = null) -> Array:
+static func sort_arr(target: Variant, cmp: Variant = null) -> Variant:
+\tif target is Dictionary and (target as Dictionary).has("sort"):
+\t\treturn invoke((target as Dictionary)["sort"], [cmp] if cmp != null else [])
+\tvar arr := target as Array
 \tif cmp is Callable:
 \t\tvar fn := cmp as Callable
 \t\tarr.sort_custom(func(a, b): return num(fn.call(a, b)) < 0.0)
@@ -464,10 +563,18 @@ static func sort_arr(arr: Array, cmp: Variant = null) -> Array:
 \t\tarr.sort_custom(func(a, b): return js_str(a) < js_str(b))
 \treturn arr
 
-static func splice_arr(arr: Array, start: int, delete_count: Variant = null, items: Array = []) -> Array:
+static func splice_arr(target: Variant, start: Variant = 0, delete_count: Variant = null, items: Array = []) -> Variant:
+\tif target is Dictionary and (target as Dictionary).has("splice"):
+\t\tvar call_args: Array = [start]
+\t\tif delete_count != null:
+\t\t\tcall_args.append(delete_count)
+\t\tcall_args.append_array(items)
+\t\treturn invoke((target as Dictionary)["splice"], call_args)
+\tvar arr := target as Array
 \tvar n := arr.size()
-\tvar s := clampi(n + start if start < 0 else start, 0, n)
-\tvar dc := n - s if delete_count == null else clampi(int(delete_count), 0, n - s)
+\tvar s_raw := 0 if start == null else int(num(start))
+\tvar s := clampi(n + s_raw if s_raw < 0 else s_raw, 0, n)
+\tvar dc := n - s if delete_count == null else clampi(int(num(delete_count)), 0, n - s)
 \tvar removed: Array = []
 \tfor _i in range(dc):
 \t\tremoved.append(arr[s])
@@ -476,16 +583,44 @@ static func splice_arr(arr: Array, start: int, delete_count: Variant = null, ite
 \t\tarr.insert(s + idx, items[idx])
 \treturn removed
 
-static func str_pad_start(s: String, target_len: int, pad: String = " ") -> String:
-\tif s.length() >= target_len or pad.is_empty():
+static func pop_arr(target: Variant) -> Variant:
+\tif target is Dictionary and (target as Dictionary).has("pop"):
+\t\treturn invoke((target as Dictionary)["pop"], [])
+\treturn (target as Array).pop_back()
+
+static func shift_arr(target: Variant) -> Variant:
+\tif target is Dictionary and (target as Dictionary).has("shift"):
+\t\treturn invoke((target as Dictionary)["shift"], [])
+\treturn (target as Array).pop_front()
+
+static func join_arr(target: Variant, sep: Variant = ",") -> Variant:
+\tif target is Dictionary and (target as Dictionary).has("join"):
+\t\treturn invoke((target as Dictionary)["join"], [sep])
+\tvar d := "," if sep == null else js_str(sep)
+\tvar arr := target as Array
+\tvar parts := PackedStringArray()
+\tfor item in arr:
+\t\tparts.append(js_str(item))
+\treturn d.join(parts)
+
+static func str_pad_start(raw_s: Variant, target_len: Variant = 0, raw_pad: Variant = " ") -> Variant:
+\tif raw_s is Dictionary and (raw_s as Dictionary).has("padStart"):
+\t\treturn invoke((raw_s as Dictionary)["padStart"], [target_len, raw_pad])
+\tvar s := js_str(raw_s)
+\tvar tlen := 0 if target_len == null else int(num(target_len))
+\tvar pad := " " if raw_pad == null else js_str(raw_pad)
+\tif s.length() >= tlen or pad.is_empty():
 \t\treturn s
-\tvar needed := target_len - s.length()
+\tvar needed := tlen - s.length()
 \tvar prefix := ""
 \twhile prefix.length() < needed:
 \t\tprefix += pad
 \treturn prefix.substr(0, needed) + s
 
-static func str_split(s: String, sep: Variant = null) -> Array:
+static func str_split(raw_s: Variant, sep: Variant = null) -> Variant:
+\tif raw_s is Dictionary and (raw_s as Dictionary).has("split"):
+\t\treturn invoke((raw_s as Dictionary)["split"], [sep] if sep != null else [])
+\tvar s := js_str(raw_s)
 \tif sep == null:
 \t\treturn [s]
 \tvar d := js_str(sep)
@@ -511,9 +646,15 @@ static func spread_arr(parts: Array) -> Array:
 \tvar out: Array = []
 \tfor part in parts:
 \t\tif part is Array:
-\t\t\tfor item in part:
+\t\t\tout.append_array(part as Array)
+\t\telif part is String:
+\t\t\tvar s := part as String
+\t\t\tfor i in range(s.length()):
+\t\t\t\tout.append(s.substr(i, 1))
+\t\telif part is Dictionary:
+\t\t\tfor item in iter(part):
 \t\t\t\tout.append(item)
-\t\telse:
+\t\telif part != null:
 \t\t\tout.append(part)
 \treturn out
 
@@ -536,7 +677,10 @@ static func from_entries(pairs: Array) -> Dictionary:
 \t\tout[p[0]] = p[1]
 \treturn out
 
-static func push_many(arr: Array, items: Array) -> int:
+static func push_many(target: Variant, items: Array) -> Variant:
+\tif target is Dictionary and (target as Dictionary).has("push"):
+\t\treturn invoke((target as Dictionary)["push"], items)
+\tvar arr := target as Array
 \tarr.append_array(items)
 \treturn arr.size()
 
@@ -553,7 +697,10 @@ static func call_set(target: Variant, args: Array) -> Variant:
 \t\treturn null
 \treturn invoke(get_prop(target, "set"), args)
 
-static func flat_map(arr: Array, cb: Callable) -> Array:
+static func flat_map(target: Variant, cb: Callable) -> Variant:
+\tif target is Dictionary and (target as Dictionary).has("flatMap"):
+\t\treturn invoke((target as Dictionary)["flatMap"], [cb])
+\tvar arr := target as Array
 \tvar out: Array = []
 \tfor i in range(arr.size()):
 \t\tvar res = _call_cb(cb, arr[i], i, arr)
@@ -665,7 +812,7 @@ function findBoxedVars(root: ts.Node): Set<string> {
   }
   function isFuncBoundary(node: ts.Node) {
     return ts.isFunctionDeclaration(node) || ts.isFunctionExpression(node) ||
-      ts.isArrowFunction(node) || ts.isMethodDeclaration(node)
+      ts.isArrowFunction(node) || ts.isMethodDeclaration(node) || ts.isGetAccessorDeclaration(node)
   }
 
   // Pass 1: collect all declarations per function scope (order-independent!).
@@ -683,7 +830,16 @@ function findBoxedVars(root: ts.Node): Set<string> {
       ts.forEachChild(node, c => pass1(c, next))
       return
     }
-    if (ts.isVariableDeclaration(node)) collectBinding(node.name, current.decls)
+    if (ts.isVariableDeclaration(node)) {
+      collectBinding(node.name, current.decls)
+      if (current !== rootScope && ts.isIdentifier(node.name) && node.initializer) {
+        let init = node.initializer
+        while (ts.isAsExpression(init) || ts.isSatisfiesExpression(init) || ts.isParenthesizedExpression(init)) init = init.expression
+        if (ts.isArrowFunction(init) || ts.isFunctionExpression(init)) {
+          current.localFuncs.add(node.name.text)
+        }
+      }
+    }
     ts.forEachChild(node, c => pass1(c, current))
   }
 
@@ -730,6 +886,8 @@ function findBoxedVars(root: ts.Node): Set<string> {
     } else if ((ts.isPrefixUnaryExpression(node) || ts.isPostfixUnaryExpression(node)) &&
       (node.operator === ts.SyntaxKind.PlusPlusToken || node.operator === ts.SyntaxKind.MinusMinusToken)) {
       if (ts.isIdentifier(node.operand)) markRef(node.operand.text, true)
+    } else if ((ts.isForOfStatement(node) || ts.isForInStatement(node)) && ts.isIdentifier(node.initializer)) {
+      markRef(node.initializer.text, true)
     } else if (ts.isIdentifier(node) && isRefIdentifier(node)) {
       markRef(node.text, false)
     }
@@ -774,6 +932,7 @@ export function compileTsToGd(sourceText: string, fileName = 'module.ts', option
   // Track top-level `func` declarations and module-level variables so calls & value refs emit cleanly.
   const topFuncs = new Set<string>()
   const topVars = new Set<string>()
+  const exportAliases: { local: string; alias: string }[] = []
   const importedBindings = new Map<string, { resPath: string; exportName: string }>()
   let tempCounter = 0
   const nextTemp = (prefix = '_t') => `${prefix}${++tempCounter}`
@@ -783,6 +942,14 @@ export function compileTsToGd(sourceText: string, fileName = 'module.ts', option
       topFuncs.add(stmt.name.text)
     } else if (ts.isVariableStatement(stmt)) {
       for (const decl of stmt.declarationList.declarations) collectBindingNames(decl.name, topVars)
+    } else if (ts.isExportDeclaration(stmt) && !stmt.isTypeOnly && !stmt.moduleSpecifier && stmt.exportClause && ts.isNamedExports(stmt.exportClause)) {
+      for (const el of stmt.exportClause.elements) {
+        if (el.isTypeOnly || !el.propertyName) continue
+        if (el.propertyName.text !== el.name.text) {
+          exportAliases.push({ local: el.propertyName.text, alias: el.name.text })
+          topVars.add(el.name.text)
+        }
+      }
     } else if (ts.isImportDeclaration(stmt)) {
       if (stmt.importClause?.isTypeOnly) continue
       const specifier = (stmt.moduleSpecifier as ts.StringLiteral).text
@@ -814,6 +981,29 @@ export function compileTsToGd(sourceText: string, fileName = 'module.ts', option
   const scopeStack: Map<string, string>[] = []
   const funcUsedStack: Set<string>[] = []
   const hoistStack: { indent: string; lines: string[] }[] = []
+  const thisStack: string[] = ['self']
+  const switchContStack: (string | null)[] = []
+
+  function containsOwnThis(node: ts.Node): boolean {
+    if (node.kind === ts.SyntaxKind.ThisKeyword) return true
+    if (ts.isFunctionDeclaration(node) || ts.isFunctionExpression(node) || ts.isObjectLiteralExpression(node)) return false
+    let found = false
+    ts.forEachChild(node, c => { if (!found && containsOwnThis(c)) found = true })
+    return found
+  }
+
+  function switchHasOuterContinue(node: ts.Node): boolean {
+    if (ts.isContinueStatement(node)) return true
+    if (ts.isForStatement(node) || ts.isForOfStatement(node) || ts.isForInStatement(node) ||
+      ts.isWhileStatement(node) || ts.isDoStatement(node) ||
+      ts.isFunctionDeclaration(node) || ts.isFunctionExpression(node) ||
+      ts.isArrowFunction(node) || ts.isMethodDeclaration(node) || ts.isGetAccessorDeclaration(node)) {
+      return false
+    }
+    let found = false
+    ts.forEachChild(node, c => { if (!found && switchHasOuterContinue(c)) found = true })
+    return found
+  }
 
   function pushFuncScope(isNested = false) {
     scopeStack.push(new Map())
@@ -891,11 +1081,18 @@ export function compileTsToGd(sourceText: string, fileName = 'module.ts', option
     const tmp = nextTemp('_d')
     lines.push(`${indent}var ${tmp} = ${rhsExpr}`)
     if (ts.isObjectBindingPattern(name)) {
+      const excludedKeys: string[] = []
       for (const el of name.elements) {
         if (!ts.isBindingElement(el)) continue
+        if (el.dotDotDotToken) {
+          const restAccess = `RT.omit_dict(${tmp}, ${formatList('[', excludedKeys, ']', indent)})`
+          lines.push(...emitBindingDecls(el.name, restAccess, indent, isModuleTop))
+          continue
+        }
         const keyExpr = el.propertyName
           ? propKeyExpr(el.propertyName, indent)
           : gdString(ts.isIdentifier(el.name) ? el.name.text : '')
+        excludedKeys.push(keyExpr)
         let access = `RT.get_prop(${tmp}, ${keyExpr})`
         if (el.initializer) {
           const defExpr = emitExpr(el.initializer, indent)
@@ -908,6 +1105,10 @@ export function compileTsToGd(sourceText: string, fileName = 'module.ts', option
     } else if (ts.isArrayBindingPattern(name)) {
       for (const [idx, el] of name.elements.entries()) {
         if (ts.isOmittedExpression(el)) continue
+        if (el.dotDotDotToken) {
+          lines.push(...emitBindingDecls(el.name, `RT.slice(${tmp}, ${idx})`, indent, isModuleTop))
+          continue
+        }
         let access = `RT.get_prop(${tmp}, ${idx})`
         if (el.initializer) {
           const defExpr = emitExpr(el.initializer, indent)
@@ -925,6 +1126,17 @@ export function compileTsToGd(sourceText: string, fileName = 'module.ts', option
     const sigParts: string[] = []
     const prelude: string[] = []
     for (const p of params) {
+      if (p.dotDotDotToken) {
+        const restSlots: string[] = []
+        for (let r = 0; r < 8; r++) {
+          const slot = nextTemp('_r')
+          sigParts.push(`${slot} = RT.UNDEF`)
+          restSlots.push(slot)
+        }
+        const packed = `RT.pack_rest([${restSlots.join(', ')}])`
+        prelude.push(...withHoist(bodyIndent, () => emitBindingDecls(p.name, packed, bodyIndent, false)))
+        continue
+      }
       if (ts.isIdentifier(p.name) && !boxedVars.has(p.name.text)) {
         const id = declareLocal(p.name.text)
         if (p.initializer) {
@@ -984,7 +1196,7 @@ export function compileTsToGd(sourceText: string, fileName = 'module.ts', option
     if (node.kind === ts.SyntaxKind.TrueKeyword) return 'true'
     if (node.kind === ts.SyntaxKind.FalseKeyword) return 'false'
     if (node.kind === ts.SyntaxKind.NullKeyword) return 'null'
-    if (node.kind === ts.SyntaxKind.ThisKeyword) return 'self'
+    if (node.kind === ts.SyntaxKind.ThisKeyword) return thisStack[thisStack.length - 1]
     if (ts.isIdentifier(node)) {
       if (node.text === 'undefined') return 'null'
       if (node.text === 'Infinity') return 'INF'
@@ -1018,6 +1230,36 @@ export function compileTsToGd(sourceText: string, fileName = 'module.ts', option
     }
     if (ts.isObjectLiteralExpression(node)) {
       const itemIndent = indent + '\t'
+      const hoist = hoistStack[hoistStack.length - 1]
+      const needsSelfObj = Boolean(hoist && node.properties.some(prop =>
+        (ts.isMethodDeclaration(prop) || ts.isGetAccessorDeclaration(prop)) && prop.body && containsOwnThis(prop.body)
+      ))
+      if (needsSelfObj && hoist) {
+        const objVar = nextTemp('_obj')
+        hoist.lines.push(`${hoist.indent}var ${objVar}: Dictionary = {}`)
+        thisStack.push(objVar)
+        try {
+          for (const prop of node.properties) {
+            if (ts.isSpreadAssignment(prop)) {
+              hoist.lines.push(`${hoist.indent}RT.assign(${objVar}, [${emitExpr(prop.expression, hoist.indent)}])`)
+            } else if (ts.isPropertyAssignment(prop)) {
+              const key = propKeyExpr(prop.name, hoist.indent)
+              hoist.lines.push(`${hoist.indent}${objVar}[${key}] = ${emitExpr(prop.initializer, hoist.indent)}`)
+            } else if (ts.isShorthandPropertyAssignment(prop)) {
+              hoist.lines.push(`${hoist.indent}${objVar}[${gdString(prop.name.text)}] = ${varRef(prop.name.text)}`)
+            } else if (ts.isMethodDeclaration(prop)) {
+              const key = propKeyExpr(prop.name, hoist.indent)
+              hoist.lines.push(`${hoist.indent}${objVar}[${key}] = ${emitLambda(prop.parameters, prop.body, hoist.indent)}`)
+            } else if (ts.isGetAccessorDeclaration(prop)) {
+              const key = propKeyExpr(prop.name, hoist.indent)
+              hoist.lines.push(`${hoist.indent}${objVar}[${key}] = { "__rt_getter": ${emitLambda([], prop.body, hoist.indent)} }`)
+            }
+          }
+        } finally {
+          thisStack.pop()
+        }
+        return objVar
+      }
       const hasSpread = node.properties.some(p => ts.isSpreadAssignment(p))
       if (!hasSpread) {
         const pairs: string[] = []
@@ -1179,6 +1421,16 @@ export function compileTsToGd(sourceText: string, fileName = 'module.ts', option
     if (ts.isArrowFunction(node) || ts.isFunctionExpression(node)) {
       return emitLambda(node.parameters, node.body, indent)
     }
+    if (ts.isDeleteExpression(node)) {
+      const inner = unwrapTs(node.expression)
+      if (ts.isPropertyAccessExpression(inner)) {
+        return `RT.del_prop(${emitExpr(inner.expression, indent)}, ${gdString(inner.name.text)})`
+      }
+      if (ts.isElementAccessExpression(inner)) {
+        return `RT.del_prop(${emitExpr(inner.expression, indent)}, ${emitExpr(inner.argumentExpression, indent)})`
+      }
+      return 'true'
+    }
     return 'null'
   }
 
@@ -1276,6 +1528,12 @@ export function compileTsToGd(sourceText: string, fileName = 'module.ts', option
     const argsArr = hasSpread
       ? `RT.spread_arr(${formatList('[', node.arguments.map((arg, i) => ts.isSpreadElement(arg) ? args[i] : `[${args[i]}]`), ']', indent)})`
       : formatList('[', args, ']', indent)
+    const sliceArgsArr = (startIdx: number) => {
+      const tailNodes = node.arguments.slice(startIdx)
+      const tailExprs = args.slice(startIdx)
+      if (!tailNodes.some(arg => ts.isSpreadElement(arg))) return formatList('[', tailExprs, ']', indent)
+      return `RT.spread_arr(${formatList('[', tailNodes.map((arg, i) => ts.isSpreadElement(arg) ? tailExprs[i] : `[${tailExprs[i]}]`), ']', indent)})`
+    }
 
     if (ts.isIdentifier(callee)) {
       if (callee.text === 'Number') return `RT.num(${args[0] ?? '0'})`
@@ -1324,7 +1582,8 @@ export function compileTsToGd(sourceText: string, fileName = 'module.ts', option
       // Number.*
       if (ts.isIdentifier(objNode) && objNode.text === 'Number') {
         if (method === 'isFinite') return `RT.is_finite_num(${args[0]})`
-        if (method === 'isInteger' || method === 'isSafeInteger') return `RT.is_int(${args[0]})`
+        if (method === 'isInteger') return `RT.is_int(${args[0]})`
+        if (method === 'isSafeInteger') return `RT.is_safe_int(${args[0]})`
         if (method === 'isNaN') return `RT.is_nan_num(${args[0]})`
       }
 
@@ -1337,7 +1596,7 @@ export function compileTsToGd(sourceText: string, fileName = 'module.ts', option
       // Object.*
       if (ts.isIdentifier(objNode) && objNode.text === 'Object') {
         if (method === 'freeze') return args[0] ?? '{}'
-        if (method === 'assign') return `RT.assign(${args[0]}, ${formatList('[', args.slice(1), ']', indent)})`
+        if (method === 'assign') return `RT.assign(${args[0]}, ${sliceArgsArr(1)})`
         if (method === 'keys') return `(${args[0]}).keys()`
         if (method === 'values') return `(${args[0]}).values()`
         if (method === 'entries') return `RT.obj_entries(${args[0]})`
@@ -1351,37 +1610,48 @@ export function compileTsToGd(sourceText: string, fileName = 'module.ts', option
         if (method === 'from') return `RT.arr_from${formatList('(', [args[0], args[1] ?? 'null'], ')', indent)}`
       }
 
+      const wrapOpt = (build: (ref: string) => string) => {
+        if (!isOptionalCall) return build(obj)
+        const hoist = hoistStack[hoistStack.length - 1]
+        if (hoist) {
+          const oc = nextTemp('_oc')
+          hoist.lines.push(`${hoist.indent}var ${oc} = ${obj}`)
+          return `(null if ${oc} == null else ${build(oc)})`
+        }
+        return `(null if (${obj}) == null else ${build(obj)})`
+      }
+
       // Built-in Array / String / Map / Set methods
-      if (method === 'map') return `RT.map${formatList('(', [obj, args[0]], ')', indent)}`
-      if (method === 'flatMap') return `RT.flat_map${formatList('(', [obj, args[0]], ')', indent)}`
-      if (method === 'filter') return `RT.filter${formatList('(', [obj, args[0]], ')', indent)}`
-      if (method === 'some') return `RT.some${formatList('(', [obj, args[0]], ')', indent)}`
-      if (method === 'every') return `RT.every${formatList('(', [obj, args[0]], ')', indent)}`
-      if (method === 'find') return `RT.find${formatList('(', [obj, args[0]], ')', indent)}`
-      if (method === 'findIndex') return `RT.find_index${formatList('(', [obj, args[0]], ')', indent)}`
-      if (method === 'forEach') return `RT.for_each${formatList('(', [obj, args[0]], ')', indent)}`
-      if (method === 'reduce') return `RT.reduce${formatList('(', [obj, args[0], args.length > 1 ? 'true' : 'false', args[1] ?? 'null'], ')', indent)}`
-      if (method === 'slice' || method === 'subarray') return `RT.slice(${obj}, ${args[0] ?? '0'}, ${args[1] ?? 'null'})`
-      if (method === 'set') return `RT.call_set(${obj}, ${argsArr})`
-      if (method === 'at') return `RT.at(${obj}, int(${args[0]}))`
-      if (method === 'entries') return `RT.entries(${obj})`
-      if (method === 'includes') return `RT.includes(${obj}, ${args[0]})`
-      if (method === 'indexOf') return `RT.index_of(${obj}, ${args[0]}, ${args[1] ?? '0'})`
-      if (method === 'push') return `RT.push_many(${obj}, ${argsArr})`
-      if (method === 'pop') return `(${obj}).pop_back()`
-      if (method === 'shift') return `(${obj}).pop_front()`
-      if (method === 'splice') return `RT.splice_arr(${obj}, int(${args[0] ?? '0'}), ${args[1] ?? 'null'}, ${formatList('[', args.slice(2), ']', indent)})`
-      if (method === 'sort') return `RT.sort_arr${formatList('(', [obj, args[0] ?? 'null'], ')', indent)}`
-      if (method === 'join') return `(${args[0] ?? '","'}).join(PackedStringArray(RT.map(${obj}, func(x): return RT.js_str(x))))`
-      if (method === 'toFixed') return `("%." + str(int(${args[0] ?? '0'})) + "f") % RT.num(${obj})`
-      if (method === 'trim') return `RT.js_str(${obj}).strip_edges()`
-      if (method === 'toLowerCase') return `RT.js_str(${obj}).to_lower()`
-      if (method === 'toUpperCase') return `RT.js_str(${obj}).to_upper()`
-      if (method === 'startsWith') return `RT.js_str(${obj}).begins_with(RT.js_str(${args[0] ?? '""'}))`
-      if (method === 'endsWith') return `RT.js_str(${obj}).ends_with(RT.js_str(${args[0] ?? '""'}))`
-      if (method === 'split') return `RT.str_split(RT.js_str(${obj}), ${args[0] ?? 'null'})`
-      if (method === 'padStart') return `RT.str_pad_start(RT.js_str(${obj}), int(${args[0] ?? '0'}), ${args[1] ? `RT.js_str(${args[1]})` : '" "' })`
-      if (method === 'replaceAll') return `RT.js_str(${obj}).replace(RT.js_str(${args[0] ?? '""'}), RT.js_str(${args[1] ?? '""'}))`
+      if (method === 'map') return wrapOpt(o => `RT.map${formatList('(', [o, args[0]], ')', indent)}`)
+      if (method === 'flatMap') return wrapOpt(o => `RT.flat_map${formatList('(', [o, args[0]], ')', indent)}`)
+      if (method === 'filter') return wrapOpt(o => `RT.filter${formatList('(', [o, args[0]], ')', indent)}`)
+      if (method === 'some') return wrapOpt(o => `RT.some${formatList('(', [o, args[0]], ')', indent)}`)
+      if (method === 'every') return wrapOpt(o => `RT.every${formatList('(', [o, args[0]], ')', indent)}`)
+      if (method === 'find') return wrapOpt(o => `RT.find${formatList('(', [o, args[0]], ')', indent)}`)
+      if (method === 'findIndex') return wrapOpt(o => `RT.find_index${formatList('(', [o, args[0]], ')', indent)}`)
+      if (method === 'forEach') return wrapOpt(o => `RT.for_each${formatList('(', [o, args[0]], ')', indent)}`)
+      if (method === 'reduce') return wrapOpt(o => `RT.reduce${formatList('(', [o, args[0], args.length > 1 ? 'true' : 'false', args[1] ?? 'null'], ')', indent)}`)
+      if (method === 'slice' || method === 'subarray') return wrapOpt(o => `RT.slice(${o}, ${args[0] ?? '0'}, ${args[1] ?? 'null'})`)
+      if (method === 'set') return wrapOpt(o => `RT.call_set(${o}, ${argsArr})`)
+      if (method === 'at') return wrapOpt(o => `RT.at(${o}, ${args[0] ?? '0'})`)
+      if (method === 'entries') return wrapOpt(o => `RT.entries(${o})`)
+      if (method === 'includes') return wrapOpt(o => `RT.includes(${o}, ${args[0]})`)
+      if (method === 'indexOf') return wrapOpt(o => `RT.index_of(${o}, ${args[0]}, ${args[1] ?? '0'})`)
+      if (method === 'push') return wrapOpt(o => `RT.push_many(${o}, ${argsArr})`)
+      if (method === 'pop') return wrapOpt(o => `RT.pop_arr(${o})`)
+      if (method === 'shift') return wrapOpt(o => `RT.shift_arr(${o})`)
+      if (method === 'splice') return wrapOpt(o => `RT.splice_arr(${o}, ${args[0] ?? '0'}, ${args[1] ?? 'null'}, ${sliceArgsArr(2)})`)
+      if (method === 'sort') return wrapOpt(o => `RT.sort_arr${formatList('(', [o, args[0] ?? 'null'], ')', indent)}`)
+      if (method === 'join') return wrapOpt(o => `RT.join_arr(${o}, ${args[0] ?? '","'})`)
+      if (method === 'toFixed') return wrapOpt(o => `("%." + str(int(${args[0] ?? '0'})) + "f") % RT.num(${o})`)
+      if (method === 'trim') return wrapOpt(o => `RT.js_str(${o}).strip_edges()`)
+      if (method === 'toLowerCase') return wrapOpt(o => `RT.js_str(${o}).to_lower()`)
+      if (method === 'toUpperCase') return wrapOpt(o => `RT.js_str(${o}).to_upper()`)
+      if (method === 'startsWith') return wrapOpt(o => `RT.js_str(${o}).begins_with(RT.js_str(${args[0] ?? '""'}))`)
+      if (method === 'endsWith') return wrapOpt(o => `RT.js_str(${o}).ends_with(RT.js_str(${args[0] ?? '""'}))`)
+      if (method === 'split') return wrapOpt(o => `RT.str_split(${o}, ${args[0] ?? 'null'})`)
+      if (method === 'padStart') return wrapOpt(o => `RT.str_pad_start(${o}, ${args[0] ?? '0'}, ${args[1] ?? '" "' })`)
+      if (method === 'replaceAll') return wrapOpt(o => `RT.js_str(${o}).replace(RT.js_str(${args[0] ?? '""'}), RT.js_str(${args[1] ?? '""'}))`)
 
       // General method call on an object / dictionary / module
       return `${invokeFn}(RT.get_prop(${obj}, ${gdString(method)}), ${argsArr})`
@@ -1448,12 +1718,76 @@ export function compileTsToGd(sourceText: string, fileName = 'module.ts', option
 
   function emitAssignValue(node: ts.BinaryExpression, indent: string): { lines: string[]; value: string } {
     const op = node.operatorToken.kind
+    const lhs = unwrapTs(node.left)
+
+    // Logical assignments (&&=, ||=, ??=) must short-circuit RHS evaluation and avoid redundant set_prop.
+    if (op === ts.SyntaxKind.AmpersandAmpersandEqualsToken || op === ts.SyntaxKind.BarBarEqualsToken || op === ts.SyntaxKind.QuestionQuestionEqualsToken) {
+      const condFor = (cur: string) =>
+        op === ts.SyntaxKind.AmpersandAmpersandEqualsToken ? `RT.truthy(${cur})`
+          : op === ts.SyntaxKind.BarBarEqualsToken ? `not RT.truthy(${cur})`
+            : `${cur} == null`
+      const evalRhs = (bodyIndent: string) => {
+        const rhsFrame = { indent: bodyIndent, lines: [] as string[] }
+        hoistStack.push(rhsFrame)
+        try {
+          const rhs = ts.isBinaryExpression(node.right) && isAssignmentOp(node.right.operatorToken.kind)
+            ? emitAssignValue(node.right, bodyIndent)
+            : { lines: [] as string[], value: emitExpr(node.right, bodyIndent) }
+          return { lines: [...rhsFrame.lines, ...rhs.lines], value: rhs.value }
+        } finally {
+          hoistStack.pop()
+        }
+      }
+      if (ts.isIdentifier(lhs)) {
+        const target = varRef(lhs.text)
+        const rhs = evalRhs(indent + '\t')
+        return {
+          lines: [
+            `${indent}if ${condFor(target)}:`,
+            ...rhs.lines,
+            `${indent}\t${target} = ${rhs.value}`
+          ],
+          value: target
+        }
+      } else if (ts.isPropertyAccessExpression(lhs)) {
+        const objTmp = nextTemp('_ao')
+        const curTmp = nextTemp('_ac')
+        const key = gdString(lhs.name.text)
+        const rhs = evalRhs(indent + '\t')
+        return {
+          lines: [
+            `${indent}var ${objTmp} = ${emitExpr(lhs.expression, indent)}`,
+            `${indent}var ${curTmp} = RT.get_prop(${objTmp}, ${key})`,
+            `${indent}if ${condFor(curTmp)}:`,
+            ...rhs.lines,
+            `${indent}\t${curTmp} = RT.set_prop(${objTmp}, ${key}, ${rhs.value})`
+          ],
+          value: curTmp
+        }
+      } else if (ts.isElementAccessExpression(lhs)) {
+        const objTmp = nextTemp('_ao')
+        const keyTmp = nextTemp('_ak')
+        const curTmp = nextTemp('_ac')
+        const rhs = evalRhs(indent + '\t')
+        return {
+          lines: [
+            `${indent}var ${objTmp} = ${emitExpr(lhs.expression, indent)}`,
+            `${indent}var ${keyTmp} = ${emitExpr(lhs.argumentExpression, indent)}`,
+            `${indent}var ${curTmp} = RT.get_prop(${objTmp}, ${keyTmp})`,
+            `${indent}if ${condFor(curTmp)}:`,
+            ...rhs.lines,
+            `${indent}\t${curTmp} = RT.set_prop(${objTmp}, ${keyTmp}, ${rhs.value})`
+          ],
+          value: curTmp
+        }
+      }
+    }
+
     const rhs = ts.isBinaryExpression(node.right) && isAssignmentOp(node.right.operatorToken.kind)
       ? emitAssignValue(node.right, indent)
       : { lines: [] as string[], value: emitExpr(node.right, indent) }
 
     const lines = [...rhs.lines]
-    const lhs = unwrapTs(node.left)
 
     if (ts.isIdentifier(lhs)) {
       const target = varRef(lhs.text)
@@ -1552,14 +1886,27 @@ export function compileTsToGd(sourceText: string, fileName = 'module.ts', option
       return []
     }
     if (ts.isVariableStatement(stmt)) {
-      return withHoist(indent, () => {
-        const out: string[] = []
-        for (const decl of stmt.declarationList.declarations) {
-          const rhs = decl.initializer ? emitExpr(decl.initializer, indent) : 'null'
-          out.push(...emitBindingDecls(decl.name, rhs, indent, isModuleTop))
+      const out: string[] = []
+      for (const decl of stmt.declarationList.declarations) {
+        if (!isModuleTop && ts.isIdentifier(decl.name) && boxedVars.has(decl.name.text) && decl.initializer) {
+          let init = decl.initializer
+          while (ts.isAsExpression(init) || ts.isSatisfiesExpression(init) || ts.isParenthesizedExpression(init)) init = init.expression
+          if (ts.isArrowFunction(init) || ts.isFunctionExpression(init)) {
+            const fnName = declareLocal(decl.name.text)
+            out.push(`${indent}var ${fnName} = [null]`)
+            out.push(...withHoist(indent, () => {
+              const lam = emitExpr(decl.initializer!, indent)
+              return [`${indent}${fnName}[0] = ${lam}`]
+            }))
+            continue
+          }
         }
-        return out
-      })
+        out.push(...withHoist(indent, () => {
+          const rhs = decl.initializer ? emitExpr(decl.initializer, indent) : 'null'
+          return emitBindingDecls(decl.name, rhs, indent, isModuleTop)
+        }))
+      }
+      return out
     }
     if (ts.isFunctionDeclaration(stmt) && stmt.name) {
       if (isModuleTop) return [] // Emitted as top-level `func` below
@@ -1583,7 +1930,11 @@ export function compileTsToGd(sourceText: string, fileName = 'module.ts', option
       return withHoist(indent, () => [stmt.expression ? `${indent}return ${emitExpr(stmt.expression, indent)}` : `${indent}return`])
     }
     if (ts.isBreakStatement(stmt)) return [`${indent}break`]
-    if (ts.isContinueStatement(stmt)) return [`${indent}continue`]
+    if (ts.isContinueStatement(stmt)) {
+      const swCont = switchContStack[switchContStack.length - 1]
+      if (swCont) return [`${indent}${swCont} = true`, `${indent}break`]
+      return [`${indent}continue`]
+    }
     if (ts.isThrowStatement(stmt)) {
       return withHoist(indent, () => [`${indent}assert(false, str(${emitExpr(stmt.expression, indent)}))`])
     }
@@ -1600,7 +1951,7 @@ export function compileTsToGd(sourceText: string, fileName = 'module.ts', option
             lines.push(...elifLines)
           } else {
             lines.push(`${indent}else:`)
-            lines.push(...emitStmt(stmt.elseStatement, indent + '\t'))
+            lines.push(...elifLines.map(line => '\t' + line))
           }
         } else {
           lines.push(`${indent}else:`)
@@ -1619,43 +1970,49 @@ export function compileTsToGd(sourceText: string, fileName = 'module.ts', option
       ])
       const clauses = stmt.caseBlock.clauses
       let defaultIndex = -1
-      let firstCase = true
       for (let i = 0; i < clauses.length; i++) {
         const clause = clauses[i]
         if (ts.isDefaultClause(clause)) {
           defaultIndex = i
           continue
         }
-        const kw = firstCase ? 'if' : 'elif'
-        firstCase = false
-        const checkLines = withHoist(indent, () => [`${indent}${kw} RT.eq(${disc}, ${emitExpr(clause.expression, indent)}):`])
-        if (kw === 'elif' && checkLines.length > 1) {
-          lines.push(`${indent}else:`)
-          const sub = withHoist(indent + '\t', () => [`${indent}\tif RT.eq(${disc}, ${emitExpr(clause.expression, indent + '\t')}):`])
-          lines.push(...sub, `${indent}\t\t${idxVar} = ${i}`)
-        } else {
-          lines.push(...checkLines, `${indent}\t${idxVar} = ${i}`)
-        }
+        const checkLines = withHoist(indent + '\t', () => [
+          `${indent}\tif RT.eq(${disc}, ${emitExpr(clause.expression, indent + '\t')}):`,
+          `${indent}\t\t${idxVar} = ${i}`
+        ])
+        lines.push(`${indent}if ${idxVar} == -1:`, ...checkLines)
       }
       if (defaultIndex >= 0) {
-        if (firstCase) lines.push(`${indent}${idxVar} = ${defaultIndex}`)
-        else lines.push(`${indent}else:`, `${indent}\t${idxVar} = ${defaultIndex}`)
+        lines.push(`${indent}if ${idxVar} == -1:`, `${indent}\t${idxVar} = ${defaultIndex}`)
       }
+      const needsCont = switchHasOuterContinue(stmt.caseBlock)
+      const contFlag = needsCont ? nextTemp('_swc') : null
+      if (contFlag) lines.push(`${indent}var ${contFlag} := false`)
       lines.push(`${indent}while true:`)
-      for (let i = 0; i < clauses.length; i++) {
-        pushBlockScope()
-        const body = emitBlockStatements(clauses[i].statements, indent + '\t\t')
-        popBlockScope()
-        if (body.length) {
-          lines.push(`${indent}\tif ${idxVar} >= 0 and ${idxVar} <= ${i}:`)
-          lines.push(...body)
+      switchContStack.push(contFlag)
+      try {
+        for (let i = 0; i < clauses.length; i++) {
+          pushBlockScope()
+          const body = emitBlockStatements(clauses[i].statements, indent + '\t\t')
+          popBlockScope()
+          if (body.length) {
+            lines.push(`${indent}\tif ${idxVar} >= 0 and ${idxVar} <= ${i}:`)
+            lines.push(...body)
+          }
         }
+      } finally {
+        switchContStack.pop()
       }
       lines.push(`${indent}\tbreak`)
+      if (contFlag) {
+        lines.push(`${indent}if ${contFlag}:`)
+        lines.push(`${indent}\tcontinue`)
+      }
       return lines
     }
     if (ts.isForOfStatement(stmt)) {
       pushBlockScope()
+      switchContStack.push(null)
       try {
         const loopVar = nextTemp('_el')
         const header = withHoist(indent, () => [`${indent}for ${loopVar} in RT.iter(${emitExpr(stmt.expression, indent)}):`])
@@ -1670,11 +2027,13 @@ export function compileTsToGd(sourceText: string, fileName = 'module.ts', option
         lines.push(...(body.length ? body : [`${indent}\tpass`]))
         return lines
       } finally {
+        switchContStack.pop()
         popBlockScope()
       }
     }
     if (ts.isForInStatement(stmt)) {
       pushBlockScope()
+      switchContStack.push(null)
       try {
         const loopVar = nextTemp('_k')
         const srcVar = nextTemp('_obj')
@@ -1693,11 +2052,13 @@ export function compileTsToGd(sourceText: string, fileName = 'module.ts', option
         lines.push(...(body.length ? body : [`${indent}\tpass`]))
         return lines
       } finally {
+        switchContStack.pop()
         popBlockScope()
       }
     }
     if (ts.isForStatement(stmt)) {
       pushBlockScope()
+      switchContStack.push(null)
       try {
         const lines: string[] = []
         if (stmt.initializer) {
@@ -1742,34 +2103,54 @@ export function compileTsToGd(sourceText: string, fileName = 'module.ts', option
         }
         return lines
       } finally {
+        switchContStack.pop()
         popBlockScope()
       }
     }
     if (ts.isWhileStatement(stmt)) {
-      const lines = [`${indent}while true:`]
-      lines.push(...withHoist(indent + '\t', () => [
-        `${indent}\tif not RT.truthy(${emitExpr(stmt.expression, indent + '\t')}):`,
-        `${indent}\t\tbreak`
-      ]))
-      const body = emitScopedBody(stmt.statement, indent + '\t')
-      lines.push(...(body.length ? body : [`${indent}\tpass`]))
-      return lines
+      switchContStack.push(null)
+      try {
+        const lines = [`${indent}while true:`]
+        lines.push(...withHoist(indent + '\t', () => [
+          `${indent}\tif not RT.truthy(${emitExpr(stmt.expression, indent + '\t')}):`,
+          `${indent}\t\tbreak`
+        ]))
+        const body = emitScopedBody(stmt.statement, indent + '\t')
+        lines.push(...(body.length ? body : [`${indent}\tpass`]))
+        return lines
+      } finally {
+        switchContStack.pop()
+      }
     }
     if (ts.isDoStatement(stmt)) {
-      const lines = [`${indent}while true:`]
-      const body = emitScopedBody(stmt.statement, indent + '\t')
-      lines.push(...(body.length ? body : [`${indent}\tpass`]))
-      lines.push(...withHoist(indent + '\t', () => [
-        `${indent}\tif not RT.truthy(${emitExpr(stmt.expression, indent + '\t')}):`,
-        `${indent}\t\tbreak`
-      ]))
-      return lines
+      switchContStack.push(null)
+      try {
+        const firstFlag = nextTemp('_df')
+        const lines = [
+          `${indent}var ${firstFlag} := true`,
+          `${indent}while true:`,
+          `${indent}\tif ${firstFlag}:`,
+          `${indent}\t\t${firstFlag} = false`,
+          `${indent}\telse:`,
+          ...withHoist(indent + '\t\t', () => [
+            `${indent}\t\tif not RT.truthy(${emitExpr(stmt.expression, indent + '\t\t')}):`,
+            `${indent}\t\t\tbreak`
+          ])
+        ]
+        const body = emitScopedBody(stmt.statement, indent + '\t')
+        lines.push(...(body.length ? body : [`${indent}\tpass`]))
+        return lines
+      } finally {
+        switchContStack.pop()
+      }
     }
     if (ts.isBlock(stmt)) {
       return emitScopedBody(stmt, indent)
     }
     if (ts.isTryStatement(stmt)) {
-      return emitScopedBody(stmt.tryBlock, indent)
+      const out = emitScopedBody(stmt.tryBlock, indent)
+      if (stmt.finallyBlock) out.push(...emitScopedBody(stmt.finallyBlock, indent))
+      return out
     }
     if (ts.isExpressionStatement(stmt)) {
       return withHoist(indent, () => emitExprStmt(stmt.expression, indent))
@@ -1821,6 +2202,10 @@ export function compileTsToGd(sourceText: string, fileName = 'module.ts', option
     if (ts.isFunctionDeclaration(stmt)) continue
     initBody.push(...emitStmt(stmt, '\t', true))
   }
+  for (const { local, alias } of exportAliases) {
+    const rhs = topFuncs.has(local) ? `Callable(self, ${gdString(safeIdent(local))})` : safeIdent(local)
+    initBody.push(`\t${safeIdent(alias)} = ${rhs}`)
+  }
   popFuncScope()
   lines.push('func __init_module() -> void:')
   lines.push(...(initBody.length ? initBody : ['\tpass']))
@@ -1863,6 +2248,14 @@ async function resolveLocalModulePath(fromFile: string, specifier: string): Prom
   return raw
 }
 
+function bindingContainsName(name: ts.BindingName, symbol: string): boolean {
+  if (ts.isIdentifier(name)) return name.text === symbol
+  if (ts.isObjectBindingPattern(name) || ts.isArrayBindingPattern(name)) {
+    return name.elements.some(el => ts.isBindingElement(el) && bindingContainsName(el.name, symbol))
+  }
+  return false
+}
+
 function fileDirectlyExports(sf: ts.SourceFile, symbol: string): boolean {
   for (const stmt of sf.statements) {
     const modifiers = ts.canHaveModifiers(stmt) ? ts.getModifiers(stmt) : undefined
@@ -1871,7 +2264,7 @@ function fileDirectlyExports(sf: ts.SourceFile, symbol: string): boolean {
       if (ts.isFunctionDeclaration(stmt) && stmt.name?.text === symbol) return true
       if (ts.isVariableStatement(stmt)) {
         for (const d of stmt.declarationList.declarations) {
-          if (ts.isIdentifier(d.name) && d.name.text === symbol) return true
+          if (bindingContainsName(d.name, symbol)) return true
         }
       }
     }
@@ -1943,7 +2336,6 @@ export async function compileTsProjectToGodot(options: CompileProjectOptions): P
 
   await mkdir(outDir, { recursive: true })
   const rtPath = join(outDir, 'rt.gd')
-  await writeFile(rtPath, renderRtGd())
 
   const astCache = new Map<string, ts.SourceFile>()
   const visited = new Set<string>()
@@ -2005,6 +2397,7 @@ export async function compileTsProjectToGodot(options: CompileProjectOptions): P
   }
 
   for (const entry of options.entries) await compileOne(entry)
+  await writeFile(rtPath, renderRtGd())
   return { files: emitted, rtPath }
 }
 
