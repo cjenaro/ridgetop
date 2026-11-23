@@ -455,13 +455,48 @@ async function resolveBuiltInAssets(kind: 'signal-drift' | 'beacon-run' | 'start
   if (kind === 'signal-drift') {
     const models: Record<string, readonly InstanceBatch[]> = {}
     let iconBatches: readonly InstanceBatch[] | undefined
+    const exportedCircuits: Record<string, unknown>[] = []
     try {
-      const carMod = await import(pathToFileURL(join(repoRoot, 'dist', 'racing', 'car-art.js')).href)
+      const [carMod, trackMod, sceneMod] = await Promise.all([
+        import(pathToFileURL(join(repoRoot, 'dist', 'racing', 'car-art.js')).href),
+        import(pathToFileURL(join(repoRoot, 'dist', 'racing', 'track.js')).href),
+        import(pathToFileURL(join(repoRoot, 'dist', 'racing', 'scene.js')).href)
+      ])
       if (typeof carMod.createCarModels === 'function') {
-        const cars = carMod.createCarModels()
-        cars.add({ x: 0, z: 0, yaw: 0, slot: 0 }, 0, 0, false, { motor: 2, tires: 2, armor: 2, capacitor: 2 })
-        models['rally-car'] = cars.full
-        iconBatches = cars.full
+        for (let slot = 0; slot < 4; slot++) {
+          const cars = carMod.createCarModels()
+          cars.add({ x: 0, z: 0, yaw: 0, slot }, 0, 0, false, slot === 0 ? { motor: 1, tires: 1, armor: 1, capacitor: 1 } : undefined)
+          models[`car-${slot}`] = cars.full
+          if (slot === 0) {
+            models['rally-car'] = cars.full
+            iconBatches = cars.full
+          }
+        }
+      }
+      if (Array.isArray(trackMod.circuits) && typeof sceneMod.buildCircuitBatches === 'function') {
+        for (const c of trackMod.circuits) {
+          const built = sceneMod.buildCircuitBatches(c)
+          models[`circuit-${c.id}`] = built.staticBatches
+          const samples: number[][] = []
+          const count = 96
+          for (let i = 0; i < count; i++) {
+            const p = c.route.sample(i / count)
+            samples.push([Number(p.x.toFixed(3)), Number(p.z.toFixed(3)), Number(p.yaw.toFixed(4))])
+          }
+          exportedCircuits.push({
+            id: c.id,
+            name: c.name,
+            description: c.description,
+            width: c.width,
+            laps: c.laps,
+            qualify: c.qualify,
+            purse: c.purse,
+            pace: c.pace,
+            grip: c.grip,
+            clear: built.clear,
+            samples
+          })
+        }
       }
     } catch {}
     const kit = createArtKit({ palette: { accent: '#f8aa4e', glow: '#8df5d5', leaf: '#56bfae' } })
@@ -481,8 +516,12 @@ async function resolveBuiltInAssets(kind: 'signal-drift' | 'beacon-run' | 'start
         go: { notes: [[660, .15, 0], [880, .20, .10]], waveform: 'sine' },
         podium: { notes: [[392, .18, 0], [523, .17, .12], [660, .24, .26], [784, .38, .42]], waveform: 'sine' }
       },
-      gameData: { game: 'signal-drift', circuits: ['copper-basin', 'brineworks', 'cinder-switchback', 'midnight-relay'] },
-      uiTree: defaultMenuLayout('Signal Drift', ['Start Race', 'Events', 'Garage'], 'top-left')
+      gameData: {
+        game: 'signal-drift',
+        theme: { surface: '#221a19ee', surfaceAlt: '#382924f4', top: '#6b473b88', border: '#e2a77399', accent: '#f8aa4e', accentText: '#1e1410', text: '#fff2e2', muted: '#d8beaa', glow: '#8df5d5' },
+        circuits: exportedCircuits
+      },
+      uiTree: defaultMenuLayout('Signal Drift', ['Start Race', 'Events', 'Quit'], 'top-left')
     }
   }
 

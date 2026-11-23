@@ -74,7 +74,7 @@ function terrainTiles(sand: Color[]) {
   })
 }
 
-export function createRaceScene(renderer: LowPolyRenderer, circuit: Circuit) {
+export function buildCircuitBatches(circuit: Circuit) {
   const theme = themes[circuit.id]
   const [track, shoulderTint, orange, clear] = palette(theme.road)
   const sandstone = palette(theme.strata)
@@ -90,11 +90,6 @@ export function createRaceScene(renderer: LowPolyRenderer, circuit: Circuit) {
   const scenery = instances(rock)
   const water = instances(pond)
   const lights = instances(octahedron)
-  const models = createCarModels()
-  const effects = instances(octahedron)
-  const trackBatches = [...ground, shoulder, road, water, solid, rocks, lights, effects]
-  const simpleBatches = [...trackBatches, ...models.common]
-  const all = [...trackBatches, ...models.full, ...line, trim, scenery]
   shoulder.add([0, 0, 0], [1, 1, 1], 0, shoulderTint)
   road.add([0, 0, 0], [1, 1, 1], 0, track)
   for (const edge of line) edge.add([0, 0, 0], [1, 1, 1], 0, ivory, .66)
@@ -192,7 +187,6 @@ export function createRaceScene(renderer: LowPolyRenderer, circuit: Circuit) {
     }
   }
 
-  // Retained scenery frames the outside of the circuit.
   for (let i = 0; i < 32; i++) {
     const angle = i * Math.PI / 16
     const x = Math.cos(angle) * (49 + i % 5 * 2.8)
@@ -225,6 +219,19 @@ export function createRaceScene(renderer: LowPolyRenderer, circuit: Circuit) {
       scenery.add([x + .94, .09, z + .35], [.43, .26, .49], -i, shrub)
     }
   }
+
+  const staticBatches = [...ground, shoulder, road, water, solid, rocks, lights, ...line, trim, scenery]
+  return { clear, ground, shoulder, road, water, solid, rocks, lights, line, trim, scenery, staticBatches }
+}
+
+export function createRaceScene(renderer: LowPolyRenderer, circuit: Circuit) {
+  const { route, width: trackWidth } = circuit
+  const { clear, ground, shoulder, road, water, solid, rocks, lights, line, trim, scenery } = buildCircuitBatches(circuit)
+  const models = createCarModels()
+  const effects = instances(octahedron)
+  const trackBatches = [...ground, shoulder, road, water, solid, rocks, lights, effects]
+  const simpleBatches = [...trackBatches, ...models.common]
+  const all = [...trackBatches, ...models.full, ...line, trim, scenery]
 
   const xs = route.nodes.map(([x]) => x)
   const zs = route.nodes.map(([, z]) => z)
