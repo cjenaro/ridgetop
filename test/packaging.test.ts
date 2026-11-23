@@ -306,17 +306,19 @@ test('export-godot fixes Float32 accessor bounds, unlit PBR attenuation, WAV saf
   const motifWav = bakeMotifWav([[0, 0.1, 0], [-100, 0.1, 0], [440, 0.1, 0, -5]])
   assert.equal(motifWav.subarray(0, 4).toString('ascii'), 'RIFF')
 
-  // Layout anchors (bottom, bottom-left, tuple inset) and digit-prefixed deduplicated node names
+  // Layout anchors (bottom, bottom-left, tuple inset, fractional offsets), newline escaping, and digit-prefixed deduplicated node names
   const tscn = layoutToGodotTscn(overlay({ id: 'root' }, [
-    boxNode({ id: '1st', style: { anchor: 'bottom', width: 200, height: 40, inset: [12, 24] }, widget: { type: 'text', text: 'A' } }),
-    boxNode({ id: '1st', style: { anchor: 'bottom-left', width: 100, height: 30, inset: [10, 30] }, widget: { type: 'text', text: 'B' } })
+    boxNode({ id: '1st', style: { anchor: 'bottom', width: 200, height: 40, inset: [12, 24] }, widget: { type: 'text', text: 'Line 1\nLine 2' } }),
+    boxNode({ id: '1st', style: { anchor: 'bottom-left', width: 100.5, height: 30, inset: [10.5, 30] }, widget: { type: 'text', text: 'B' } })
   ]))
   assert.ok(tscn.includes('name="_1st"'))
   assert.ok(tscn.includes('name="_1st_2"'))
   assert.ok(tscn.includes('anchors_preset = 7'))
   assert.ok(tscn.includes('offset_bottom = -24.0'))
+  assert.ok(tscn.includes('text = "Line 1\\nLine 2"'))
   assert.ok(tscn.includes('anchors_preset = 2'))
-  assert.ok(tscn.includes('offset_left = 10.0'))
+  assert.ok(tscn.includes('offset_left = 10.5'))
+  assert.ok(!tscn.includes('10.5.0'))
   assert.ok(tscn.includes('offset_bottom = -30.0'))
 })
 
@@ -329,11 +331,14 @@ test('packager handles nested game subdirs, comment/template imports, scoped mob
   const pkg = JSON.parse(await readFile(join(projectDir, 'package.json'), 'utf8'))
   assert.equal(pkg.name, 'my-game')
 
-  // Add nested subdir module with ../../framework/ import, comments/templates with fake imports, and an unused sibling JS file
+  // Add nested subdir module with ../../framework/ import, regex literals with quotes/braces/slashes, comments/templates with fake imports, and an unused sibling JS file
   await mkdir(join(projectDir, 'game', 'sub'), { recursive: true })
   await writeFile(join(projectDir, 'game', 'sub', 'helper.js'), `
 // import { fake } from './does-not-exist.js'
-export function note() { return \`import { nope } from './nope.js'\` }
+export function note(s) {
+  const re = /['"{(/*]/g
+  return re.test(s) ? \`import { nope } from './nope.js'\` : ''
+}
 import { color } from '../../framework/index.js'
 export const accent = color('#efac62')
 `)
@@ -353,13 +358,20 @@ export const accent = color('#efac62')
   const electronMain = await readFile(join(outDir, 'steam', 'electron', 'main.cjs'), 'utf8')
   assert.ok(electronMain.includes('sandbox: true'))
   assert.ok(electronMain.includes('isDestroyed()'))
+  assert.ok(electronMain.includes('setWindowOpenHandler'))
+  assert.ok(electronMain.includes('will-navigate'))
+  assert.ok(electronMain.includes("pathname.includes('\\0')"))
+  assert.ok(electronMain.includes('!Array.isArray(parsed)'))
   const builderYml = await readFile(join(outDir, 'steam', 'electron-builder.yml'), 'utf8')
   assert.ok(builderYml.includes('steam_appid.txt'))
+  assert.ok(builderYml.includes('appId: "'))
+  assert.ok(builderYml.includes('executableName: "'))
 
-  // Mobile bridge clear() only removes ridgetop.native.* keys and respects pre-hydration writes
+  // Mobile bridge clear() only removes ridgetop.native.* keys, respects pre-hydration writes, and notifies onHydrate listeners
   const bridgeCode = await readFile(join(outDir, 'mobile', 'www', 'ridgetop-mobile-bridge.js'), 'utf8')
   const prefStore = new Map<string, string>([
     ['ridgetop.native.save', 'old'],
+    ['ridgetop.native.recovered', 'from-prefs'],
     ['other.plugin.token', 'keep-me']
   ])
   let releaseKeys!: () => void
@@ -390,11 +402,21 @@ export const accent = color('#efac62')
   }
   sandbox.globalThis = sandbox
   vm.runInNewContext(bridgeCode, sandbox)
-  const bridge = sandbox.__ridgetopPlatform as { storage: { remove(k: string): void; clear(): void } }
+  const bridge = sandbox.__ridgetopPlatform as {
+    storage: {
+      remove(k: string): void
+      clear(): void
+      onHydrate(fn: (k: string, v: string) => void): () => void
+    }
+  }
+  const hydrated: [string, string][] = []
+  bridge.storage.onHydrate((k, v) => hydrated.push([k, v]))
   bridge.storage.remove('save')
   releaseKeys()
   await new Promise(r => setTimeout(r, 15))
   assert.equal(local.get('save'), undefined, 'hydration must not restore a key removed before hydration finished')
+  assert.equal(local.get('recovered'), 'from-prefs')
+  assert.deepEqual(hydrated, [['recovered', 'from-prefs']], 'late-hydrated keys must notify live storage subscribers')
   prefStore.set('ridgetop.native.extra', 'v')
   bridge.storage.clear()
   await new Promise(r => setTimeout(r, 15))

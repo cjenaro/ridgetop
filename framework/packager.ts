@@ -84,20 +84,25 @@ function stripSourceMap(source: string) {
   return source.replace(/^\/\/# sourceMappingURL=.*$/gm, '')
 }
 
+function escapeHtmlAttr(value: string) {
+  return value.replaceAll('&', '&amp;').replaceAll('"', '&quot;').replaceAll('<', '&lt;').replaceAll('>', '&gt;')
+}
+
 function ensureMobileMeta(html: string, themeColor: string, extraHead = '') {
   let out = html
   if (/<meta name="viewport"[^>]*>/i.test(out)) {
     out = out.replace(/<meta name="viewport"[^>]*>/i,
-      '<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">')
+      () => '<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">')
   } else {
     out = out.replace(/<head>/i,
-      '<head>\n  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">')
+      () => '<head>\n  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">')
   }
   if (!/<meta name="theme-color"/i.test(out)) {
-    out = out.replace(/<\/head>/i, `  <meta name="theme-color" content="${themeColor}">\n</head>`)
+    const safeColor = escapeHtmlAttr(themeColor)
+    out = out.replace(/<\/head>/i, () => `  <meta name="theme-color" content="${safeColor}">\n</head>`)
   }
   if (extraHead) {
-    out = out.replace(/<\/head>/i, `${extraHead}\n</head>`)
+    out = out.replace(/<\/head>/i, () => `${extraHead}\n</head>`)
   }
   return out
 }
@@ -236,6 +241,34 @@ function scanStaticModuleStatements(code: string): ModuleStatement[] {
     return out
   }
 
+  const regexPrevKeywords = new Set([
+    'return', 'case', 'throw', 'typeof', 'void', 'delete', 'in', 'instanceof', 'of', 'new', 'yield', 'await', 'else', 'do'
+  ])
+  const regexPrevPunct = new Set([
+    '', '(', '[', '{', ',', ';', ':', '?', '!', '=', '&', '|', '^', '~', '+', '-', '*', '%', '<', '>', '/'
+  ])
+  function canStartRegex(prev: string) {
+    return regexPrevPunct.has(prev) || regexPrevKeywords.has(prev)
+  }
+
+  function skipRegExp() {
+    i++ // opening '/'
+    let inClass = false
+    while (i < len) {
+      const c = code.charCodeAt(i++)
+      if (c === 92 && i < len) { i++; continue }
+      if (c === 91) { inClass = true; continue }
+      if (c === 93) { inClass = false; continue }
+      if (c === 47 && !inClass) break
+      if (c === 10 || c === 13) break
+    }
+    while (i < len) {
+      const c = code.charCodeAt(i)
+      if ((c >= 65 && c <= 90) || (c >= 97 && c <= 122)) i++
+      else break
+    }
+  }
+
   function skipTemplate() {
     i++ // opening `
     while (i < len) {
@@ -245,15 +278,21 @@ function scanStaticModuleStatements(code: string): ModuleStatement[] {
       if (c === 36 && code.charCodeAt(i) === 123) {
         i++
         let depth = 1
+        let tplPrev = '{'
         while (i < len && depth > 0) {
           skipWsAndComments()
           if (i >= len) break
           const ch = code.charCodeAt(i)
-          if (ch === 39 || ch === 34) { readString(); continue }
-          if (ch === 96) { skipTemplate(); continue }
+          if (ch === 39 || ch === 34) { readString(); tplPrev = 'str'; continue }
+          if (ch === 96) { skipTemplate(); tplPrev = 'tpl'; continue }
+          if (ch === 47 && canStartRegex(tplPrev)) { skipRegExp(); tplPrev = 'regex'; continue }
+          if ((ch >= 65 && ch <= 90) || (ch >= 97 && ch <= 122) || ch === 95 || ch === 36) {
+            tplPrev = readIdent()
+            continue
+          }
           if (ch === 123) depth++
           else if (ch === 125) depth--
-          i++
+          tplPrev = code[i++]
         }
       }
     }
@@ -303,6 +342,7 @@ function scanStaticModuleStatements(code: string): ModuleStatement[] {
     const ch = code.charCodeAt(i)
     if (ch === 39 || ch === 34) { readString(); prevToken = 'str'; continue }
     if (ch === 96) { skipTemplate(); prevToken = 'tpl'; continue }
+    if (ch === 47 && canStartRegex(prevToken)) { skipRegExp(); prevToken = 'regex'; continue }
     if (ch === 123) { braceDepth++; i++; prevToken = '{'; continue }
     if (ch === 125) { braceDepth = Math.max(0, braceDepth - 1); i++; prevToken = '}'; continue }
     if (ch === 40) { parenDepth++; i++; prevToken = '('; continue }
@@ -472,7 +512,17 @@ async function emitShakenModules({
     return join(dirname(fromRel), specifier).replace(/\\/g, '/')
   }
 
+  const resolvedRoot = resolve(wwwDir)
+  function assertWithinRoot(relPath: string) {
+    const dst = resolve(resolvedRoot, relPath)
+    if (dst !== resolvedRoot && !dst.startsWith(resolvedRoot + sep)) {
+      throw new Error('Module path escapes bundle root: ' + relPath)
+    }
+    return dst
+  }
+
   async function loadModule(relPath: string): Promise<string> {
+    assertWithinRoot(relPath)
     if (rawSources.has(relPath)) return rawSources.get(relPath)
     let code = stripSourceMap(await readFile(resolveSource(relPath), 'utf8'))
     if (rewriteSource) code = rewriteSource(relPath, code)
@@ -524,12 +574,8 @@ async function emitShakenModules({
 
   for (const barrelRel of Array.from(barrelNames.keys())) await traceFinal(barrelRel)
 
-  const resolvedRoot = resolve(wwwDir)
   for (const [relPath, code] of finalSources) {
-    const dst = resolve(resolvedRoot, relPath)
-    if (dst !== resolvedRoot && !dst.startsWith(resolvedRoot + sep)) {
-      throw new Error('Module path escapes bundle root: ' + relPath)
-    }
+    const dst = assertWithinRoot(relPath)
     await mkdir(dirname(dst), { recursive: true })
     await writeFile(dst, code)
   }
@@ -756,7 +802,7 @@ async function resolveBuiltInAssets(kind: 'signal-drift' | 'beacon-run' | 'start
       hit: { notes: [[195, .23, 0, 70]], waveform: 'triangle' },
       finish: { notes: [[392, .16, 0], [493.9, .17, .13], [587.3, .18, .26], [784, .38, .39]], waveform: 'sine' }
     },
-    gameData: { game: 'beacon-run', courses: ['ridge', 'ruins', 'summit', 'storm', 'foundry', 'beacon'] },
+    gameData: { game: 'beacon-run', courses: ['ridge', 'ruins', 'summit', 'storm', 'foundry', 'lastlight'] },
     uiTree: defaultMenuLayout('Beacon Run', ['Start Campaign', 'Practice'])
   }
 }
@@ -936,12 +982,18 @@ const saveDir = process.env.RIDGETOP_SAVE_DIR || path.join(app.getPath('userData
 const saveFile = path.join(saveDir, ${JSON.stringify(slug + '-save.json')})
 
 function loadSaves() {
+  const out = Object.create(null)
   try {
     const parsed = JSON.parse(fs.readFileSync(saveFile, 'utf8'))
-    return parsed && typeof parsed === 'object' ? parsed : {}
-  } catch {
-    return {}
-  }
+    if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+      for (const [k, v] of Object.entries(parsed)) {
+        if (k !== '__proto__' && k !== 'constructor' && k !== 'prototype' && typeof v === 'string') {
+          out[k] = v
+        }
+      }
+    }
+  } catch {}
+  return out
 }
 
 let saveCache = null
@@ -984,15 +1036,24 @@ function createWindow() {
   })
 
   win.setMenuBarVisibility(false)
+  win.webContents.setWindowOpenHandler(() => ({ action: 'deny' }))
+  win.webContents.on('will-navigate', (event, url) => {
+    if (!url.startsWith(SCHEME + '://app/')) event.preventDefault()
+  })
   win.webContents.on('before-input-event', (_event, input) => {
     if (input.type === 'keyDown' && (input.key === 'F11' || (input.alt && input.key === 'Enter'))) {
       win.setFullScreen(!win.isFullScreen())
     }
   })
-  win.on('minimize', () => win.webContents.send('ridgetop:lifecycle', 'pause'))
-  win.on('restore', () => win.webContents.send('ridgetop:lifecycle', 'resume'))
-  win.on('blur', () => win.webContents.send('ridgetop:lifecycle', 'pause'))
-  win.on('focus', () => win.webContents.send('ridgetop:lifecycle', 'resume'))
+  const sendLife = state => {
+    if (!win.isDestroyed() && !win.webContents.isDestroyed()) {
+      win.webContents.send('ridgetop:lifecycle', state)
+    }
+  }
+  win.on('minimize', () => sendLife('pause'))
+  win.on('restore', () => sendLife('resume'))
+  win.on('blur', () => sendLife('pause'))
+  win.on('focus', () => sendLife('resume'))
 
   void win.loadURL(SCHEME + '://app/index.html')
   return win
@@ -1012,6 +1073,9 @@ if (!singleLock) {
       } catch {
         return new Response('Bad Request', { status: 400 })
       }
+      if (pathname.includes('\\0')) {
+        return new Response('Bad Request', { status: 400 })
+      }
       if (!pathname || pathname === '/') pathname = '/index.html'
       const target = path.resolve(WWW_ROOT, '.' + pathname)
       if (target !== WWW_ROOT && !target.startsWith(WWW_ROOT + path.sep)) {
@@ -1027,19 +1091,23 @@ if (!singleLock) {
       })
     })
 
-    ipcMain.on('ridgetop:storage-load', event => { event.returnValue = getSaves() })
+    ipcMain.on('ridgetop:storage-load', event => { event.returnValue = { ...getSaves() } })
     ipcMain.on('ridgetop:storage-set', (_event, key, value) => {
+      const k = String(key)
+      if (k === '__proto__' || k === 'constructor' || k === 'prototype') return
       const data = getSaves()
-      data[String(key)] = String(value)
+      data[k] = String(value)
       persistSaves(data)
     })
     ipcMain.on('ridgetop:storage-remove', (_event, key) => {
+      const k = String(key)
+      if (k === '__proto__' || k === 'constructor' || k === 'prototype') return
       const data = getSaves()
-      delete data[String(key)]
+      delete data[k]
       persistSaves(data)
     })
     ipcMain.on('ridgetop:storage-clear', () => {
-      saveCache = {}
+      saveCache = Object.create(null)
       persistSaves(saveCache)
     })
 
@@ -1171,7 +1239,7 @@ module.exports = {
 }
 
 function renderElectronBuilderConfig(name: string, slug: string, appId: string) {
-  return `appId: ${appId}
+  return `appId: ${JSON.stringify(appId)}
 productName: ${JSON.stringify(name)}
 directories:
   buildResources: build
@@ -1202,7 +1270,7 @@ mac:
 linux:
   icon: build/icon.png
   category: Game
-  executableName: ${slug}
+  executableName: ${JSON.stringify(slug)}
   target:
     - AppImage
     - tar.gz
@@ -1247,6 +1315,7 @@ function renderMobileBridgeJs(orientation: PackageOrientation) {
 
   const PREFIX = 'ridgetop.native.'
   const lifecycleListeners = new Set()
+  const hydrateListeners = new Set()
   const mutatedKeys = new Set()
   let clearedAll = false
 
@@ -1289,6 +1358,9 @@ function renderMobileBridgeJs(orientation: PackageOrientation) {
           if (clearedAll || mutatedKeys.has(bare)) return
           if (item && typeof item.value === 'string' && globalThis.localStorage?.getItem(bare) === null) {
             try { globalThis.localStorage.setItem(bare, item.value) } catch {}
+            for (const fn of hydrateListeners) {
+              try { fn(bare, item.value) } catch {}
+            }
           }
         })
       }))
@@ -1327,6 +1399,11 @@ function renderMobileBridgeJs(orientation: PackageOrientation) {
         mutatedKeys.clear()
         try { globalThis.localStorage.clear() } catch {}
         mirrorToPreferences('clear')
+      },
+      onHydrate: function (listener) {
+        if (typeof listener !== 'function') return function () {}
+        hydrateListeners.add(listener)
+        return function () { hydrateListeners.delete(listener) }
       }
     },
     haptics: {
@@ -1437,16 +1514,18 @@ async function tryCompileGodotScripts(options: PackageGameOptions, repoRoot: str
     }
   }
   if (!spec) return 0
+  const compiledDir = join(godotDir, 'scripts', 'compiled')
   try {
     const mod = await import(pathToFileURL(compilerPath).href)
     if (typeof mod.compileTsProjectToGodot !== 'function') return 0
     const compiled = await mod.compileTsProjectToGodot({
       entries: spec.entries,
       rootDir: spec.rootDir,
-      outDir: join(godotDir, 'scripts', 'compiled')
+      outDir: compiledDir
     })
     return Array.isArray(compiled?.files) ? compiled.files.length : 0
   } catch {
+    await rm(compiledDir, { recursive: true, force: true }).catch(() => {})
     return 0
   }
 }

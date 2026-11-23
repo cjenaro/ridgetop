@@ -7,6 +7,7 @@ export interface RidgetopNativeBridge {
     set?(key: string, value: string): void
     remove?(key: string): void
     clear?(): void
+    onHydrate?(listener: (key: string, value: string) => void): (() => void) | void
   }
   fullscreen?: {
     isFullscreen?(): boolean
@@ -52,6 +53,8 @@ function getBridge(): RidgetopNativeBridge | undefined {
 
 function createBridgeStorage(native: NonNullable<RidgetopNativeBridge['storage']>): Storage {
   const entries = new Map<string, string>()
+  const mutated = new Set<string>()
+  let cleared = false
   try {
     const initial = native.loadAll?.()
     if (initial && typeof initial === 'object') {
@@ -60,6 +63,13 @@ function createBridgeStorage(native: NonNullable<RidgetopNativeBridge['storage']
       }
     }
   } catch { /* Start with an empty in-memory cache if native loading fails. */ }
+  try {
+    native.onHydrate?.((key, value) => {
+      if (!cleared && !mutated.has(key) && !entries.has(key) && typeof value === 'string') {
+        entries.set(key, value)
+      }
+    })
+  } catch { /* Ignore optional hydration subscription failures. */ }
 
   return {
     get length() { return entries.size },
@@ -72,14 +82,18 @@ function createBridgeStorage(native: NonNullable<RidgetopNativeBridge['storage']
     },
     setItem(key: string, value: string) {
       const text = String(value)
+      mutated.add(key)
       entries.set(key, text)
       try { native.set?.(key, text) } catch { /* Keep the in-memory copy if persistence fails. */ }
     },
     removeItem(key: string) {
+      mutated.add(key)
       entries.delete(key)
       try { native.remove?.(key) } catch { /* Ignore native removal errors. */ }
     },
     clear() {
+      cleared = true
+      mutated.clear()
       entries.clear()
       try { native.clear?.() } catch { /* Ignore native clear errors. */ }
     }

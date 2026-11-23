@@ -134,9 +134,9 @@ export function encodeGlb(batches: readonly InstanceBatch[], name = 'RidgetopMod
     primitives.push({ attributes: { POSITION: posAcc, NORMAL: normAcc }, material: matIndex })
   }
 
-  const binRaw = Buffer.concat(chunks)
-  const binPad = Buffer.alloc(pad4(binRaw.length), 0)
-  const binChunk = Buffer.concat([binRaw, binPad])
+  const binPadLen = pad4(byteOffset)
+  const binChunkLen = byteOffset + binPadLen
+  const binPad = binPadLen ? Buffer.alloc(binPadLen, 0) : Buffer.alloc(0)
 
   const gltf = {
     asset: { version: '2.0', generator: 'Ridgetop' },
@@ -145,30 +145,31 @@ export function encodeGlb(batches: readonly InstanceBatch[], name = 'RidgetopMod
     nodes: [{ name, mesh: 0 }],
     materials,
     meshes: [{ name, primitives }],
-    buffers: [{ byteLength: binChunk.length }],
+    buffers: [{ byteLength: binChunkLen }],
     bufferViews,
     accessors
   }
 
   const jsonRaw = Buffer.from(JSON.stringify(gltf), 'utf8')
-  const jsonPad = Buffer.alloc(pad4(jsonRaw.length), 0x20)
-  const jsonChunk = Buffer.concat([jsonRaw, jsonPad])
+  const jsonPadLen = pad4(jsonRaw.length)
+  const jsonChunkLen = jsonRaw.length + jsonPadLen
+  const jsonPad = jsonPadLen ? Buffer.alloc(jsonPadLen, 0x20) : Buffer.alloc(0)
 
-  const totalLength = 12 + 8 + jsonChunk.length + 8 + binChunk.length
+  const totalLength = 12 + 8 + jsonChunkLen + 8 + binChunkLen
   const header = Buffer.alloc(12)
   header.write('glTF', 0, 'ascii')
   header.writeUInt32LE(2, 4)
   header.writeUInt32LE(totalLength, 8)
 
   const jsonHeader = Buffer.alloc(8)
-  jsonHeader.writeUInt32LE(jsonChunk.length, 0)
+  jsonHeader.writeUInt32LE(jsonChunkLen, 0)
   jsonHeader.writeUInt32LE(0x4e4f534a, 4)
 
   const binHeader = Buffer.alloc(8)
-  binHeader.writeUInt32LE(binChunk.length, 0)
+  binHeader.writeUInt32LE(binChunkLen, 0)
   binHeader.writeUInt32LE(0x004e4942, 4)
 
-  return Buffer.concat([header, jsonHeader, jsonChunk, binHeader, binChunk])
+  return Buffer.concat([header, jsonHeader, jsonRaw, jsonPad, binHeader, ...chunks, binPad], totalLength)
 }
 
 /** Encode mono float32 PCM samples (-1..1) into a standard 16-bit WAV file. */
@@ -240,7 +241,16 @@ export function bakeMotifWav(
 }
 
 function godotEscape(text: string) {
-  return text.replaceAll('\\', '\\\\').replaceAll('"', '\\"')
+  return text
+    .replaceAll('\\', '\\\\')
+    .replaceAll('"', '\\"')
+    .replaceAll('\r', '\\r')
+    .replaceAll('\n', '\\n')
+    .replaceAll('\t', '\\t')
+}
+
+function fmtFloat(n: number) {
+  return Number.isInteger(n) ? `${n}.0` : String(n)
 }
 
 function godotNodeName(raw: string | undefined, fallback: string, used: Set<string>) {
@@ -286,10 +296,10 @@ function anchorLines(node: LayoutNode): string[] {
       'anchors_preset = 5',
       'anchor_left = 0.5',
       'anchor_right = 0.5',
-      `offset_left = ${-Math.round(w / 2)}.0`,
-      `offset_top = ${insetY}.0`,
-      `offset_right = ${Math.round(w / 2)}.0`,
-      `offset_bottom = ${insetY + h}.0`,
+      `offset_left = ${fmtFloat(-Math.round(w / 2))}`,
+      `offset_top = ${fmtFloat(insetY)}`,
+      `offset_right = ${fmtFloat(Math.round(w / 2))}`,
+      `offset_bottom = ${fmtFloat(insetY + h)}`,
       'grow_horizontal = 2'
     ]
   }
@@ -299,10 +309,10 @@ function anchorLines(node: LayoutNode): string[] {
       'anchors_preset = 1',
       'anchor_left = 1.0',
       'anchor_right = 1.0',
-      `offset_left = ${-(insetX + w)}.0`,
-      `offset_top = ${insetY}.0`,
-      `offset_right = ${-insetX}.0`,
-      `offset_bottom = ${insetY + h}.0`,
+      `offset_left = ${fmtFloat(-(insetX + w))}`,
+      `offset_top = ${fmtFloat(insetY)}`,
+      `offset_right = ${fmtFloat(-insetX)}`,
+      `offset_bottom = ${fmtFloat(insetY + h)}`,
       'grow_horizontal = 0'
     ]
   }
@@ -314,10 +324,10 @@ function anchorLines(node: LayoutNode): string[] {
       'anchor_top = 1.0',
       'anchor_right = 0.5',
       'anchor_bottom = 1.0',
-      `offset_left = ${-Math.round(w / 2)}.0`,
-      `offset_top = ${-(insetY + h)}.0`,
-      `offset_right = ${Math.round(w / 2)}.0`,
-      `offset_bottom = ${-insetY}.0`,
+      `offset_left = ${fmtFloat(-Math.round(w / 2))}`,
+      `offset_top = ${fmtFloat(-(insetY + h))}`,
+      `offset_right = ${fmtFloat(Math.round(w / 2))}`,
+      `offset_bottom = ${fmtFloat(-insetY)}`,
       'grow_horizontal = 2',
       'grow_vertical = 0'
     ]
@@ -328,10 +338,10 @@ function anchorLines(node: LayoutNode): string[] {
       'anchors_preset = 2',
       'anchor_top = 1.0',
       'anchor_bottom = 1.0',
-      `offset_left = ${insetX}.0`,
-      `offset_top = ${-(insetY + h)}.0`,
-      `offset_right = ${insetX + w}.0`,
-      `offset_bottom = ${-insetY}.0`,
+      `offset_left = ${fmtFloat(insetX)}`,
+      `offset_top = ${fmtFloat(-(insetY + h))}`,
+      `offset_right = ${fmtFloat(insetX + w)}`,
+      `offset_bottom = ${fmtFloat(-insetY)}`,
       'grow_vertical = 0'
     ]
   }
@@ -343,10 +353,10 @@ function anchorLines(node: LayoutNode): string[] {
       'anchor_top = 1.0',
       'anchor_right = 1.0',
       'anchor_bottom = 1.0',
-      `offset_left = ${-(insetX + w)}.0`,
-      `offset_top = ${-(insetY + h)}.0`,
-      `offset_right = ${-insetX}.0`,
-      `offset_bottom = ${-insetY}.0`,
+      `offset_left = ${fmtFloat(-(insetX + w))}`,
+      `offset_top = ${fmtFloat(-(insetY + h))}`,
+      `offset_right = ${fmtFloat(-insetX)}`,
+      `offset_bottom = ${fmtFloat(-insetY)}`,
       'grow_horizontal = 0',
       'grow_vertical = 0'
     ]
@@ -354,10 +364,10 @@ function anchorLines(node: LayoutNode): string[] {
   return [
     'layout_mode = 1',
     'anchors_preset = 0',
-    `offset_left = ${insetX}.0`,
-    `offset_top = ${insetY}.0`,
-    `offset_right = ${insetX + w}.0`,
-    `offset_bottom = ${insetY + h}.0`
+    `offset_left = ${fmtFloat(insetX)}`,
+    `offset_top = ${fmtFloat(insetY)}`,
+    `offset_right = ${fmtFloat(insetX + w)}`,
+    `offset_bottom = ${fmtFloat(insetY + h)}`
   ]
 }
 
@@ -618,6 +628,8 @@ func _chamfer_points(rect: Rect2, bevel: float) -> PackedVector2Array:
 \t])
 
 func _draw_faceted(rect: Rect2, fill: Color, stroke: Color, highlight: Color, bevel: float = 7.0) -> void:
+\tif rect.size.x <= 0.0 or rect.size.y <= 0.0:
+\t\treturn
 \tvar pts := _chamfer_points(rect, bevel)
 \tdraw_colored_polygon(pts, fill)
 \tif highlight.a > 0.01 and rect.size.y >= 16.0:
@@ -1422,7 +1434,7 @@ func _process(delta: float) -> void:
 func _fmt_time(sec: float) -> String:
 \tvar cs := int(floor(sec * 100.0))
 \tvar rem := str(cs % 6000).pad_zeros(4)
-\treturn "%d:%s.%s" % [cs / 6000, rem.substr(0, 2), rem.substr(2, 2)]
+\treturn "%d:%s.%s" % [int(floor(float(cs) / 6000.0)), rem.substr(0, 2), rem.substr(2, 2)]
 
 func _rebuild_ui() -> void:
 \tif ui == null:
