@@ -6,7 +6,7 @@ const testing = process.argv.includes('--testing')
 const reviews = testing ? (await import('../framework/review-store.ts')).createArtReviewHandler(root) : undefined
 const app = createGameHost({
   root, moduleRoot: source ? new URL('../dist/starter/', root) : root,
-  files: ['index.html', 'style.css', 'main.js', 'game.js', ...(testing ? ['testing.js', 'testing-scene.js', 'testing.html'] : [])],
+  files: ['index.html', 'style.css', 'main.js', 'game.js', ...(testing ? ['testing.js', 'testing-scene.js', 'testing.html', 'testing.css'] : [])],
   artDirectories: ['art'],
   aliases: { '/': 'index.html' },
   async handle(req, res, path) {

@@ -62,7 +62,10 @@ async function start() {
   const stage = $<HTMLCanvasElement>('world')
   const layer = $<HTMLCanvasElement>('sprites')
   const uiCanvas = $<HTMLCanvasElement>('ui')
+  const board = layer.parentElement
   let renderer: LowPolyRenderer
+  let rendererPromise: Promise<LowPolyRenderer> | undefined
+  let viewRequest = 0
   const reduced = matchMedia('(prefers-reduced-motion: reduce)')
   const atlases = new Map<Name, Awaited<ReturnType<typeof createSpriteAtlas>>>()
   const names = new Set<Name>([game.ground, game.player, game.goal, game.pickup, game.effect, ...scenery.map(p => p.name)])
@@ -115,9 +118,12 @@ async function start() {
     onBack: () => menuDialog.api.close()
   })
 
+  const isMenuOpen = () => menuDialog.api.isOpen() || won
+
   const ui = createCanvasUi(uiCanvas, {
     theme: createUiTheme(game.palette),
     safeArea: { top: 12, right: 12, bottom: 12, left: 12 },
+    keyboardEnabled: () => isMenuOpen() && !testingPaused,
     onBack: () => { if (menuDialog.api.isOpen()) menuDialog.api.close() }
   })
   function renderUiNow() {
@@ -144,7 +150,6 @@ async function start() {
     })
   }
 
-  const isMenuOpen = () => menuDialog.api.isOpen() || won
   const controls = bindActionControls({
     keys,
     buttons: [],
@@ -190,12 +195,19 @@ async function start() {
   }
 
   async function setViewMode(nextMode: '2d' | '3d') {
+    const ticket = ++viewRequest
     const next = nextMode === '2d'
     if (next && [...names].some(name => !atlases.has(name))) {
       const loaded = await Promise.all([...names].filter(name => !atlases.has(name)).map(async name => [name, await atlasFor(layer, name)] as const))
       for (const [name, atlas] of loaded) atlases.set(name, atlas)
     }
-    if (!next) renderer ??= await createLowPolyRenderer(stage, { backend, canvasDepth: true })
+    if (!next && !renderer) {
+      rendererPromise ??= createLowPolyRenderer(stage, { backend, canvasDepth: true })
+        .then(r => { renderer = r; return r })
+        .finally(() => { rendererPromise = undefined })
+      await rendererPromise
+    }
+    if (ticket !== viewRequest) return
     spriteView = next
     const world = renderer?.canvas ?? stage
     world.hidden = spriteView
@@ -207,7 +219,6 @@ async function start() {
   restart()
   await setViewMode(viewToggle.api.checked() ? '2d' : '3d')
 
-  const board = layer.parentElement
   const cx = (width - 1) / 2, cz = (depth - 1) / 2
   const target: Vec3 = [cx, .5, cz]
   const distance = Math.max(width, depth) * 2 + 8
@@ -388,6 +399,7 @@ async function start() {
       await new Promise<void>(resolve => requestAnimationFrame(() => resolve()))
       await attachTesting({
         kit: art, hud: icon, pickup: game.pickup,
+        hudRect: () => ui.rects.get('pickup-icon'),
         frame: () => ({ objects: [...ground, ...foreground(drawnHero, drawnEffect)], matrix: camera, spanY,
           now: reduced.matches ? 0 : lastPaintTime, sprite: spriteView, surface: spriteView ? layer : renderer.canvas }),
         source(name) {
@@ -415,6 +427,7 @@ async function start() {
           queued = undefined
           if (!on) clockOffset = performance.now() - lastPaintTime
           testingPaused = on
+          uiCanvas.style.pointerEvents = on ? 'none' : ''
           uiDirty = true
         },
         snapshot: () => ({ view: spriteView ? '2d' : '3d', time: lastPaintTime, player: [player.x, player.z, player.yaw],

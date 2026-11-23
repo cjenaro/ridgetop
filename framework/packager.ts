@@ -57,7 +57,7 @@ export interface PackageResult {
 }
 
 const blockedStudioFiles = new Set([
-  'serve.js', 'testing.js', 'testing-scene.js', 'testing.html',
+  'serve.js', 'testing.js', 'testing-scene.js', 'testing.html', 'testing.css',
   'preview-art.js', 'art-library.js', 'package.js',
   'art-review.js', 'review-store.js', 'verification.js',
   'decision-api.js', 'decision-providers.js',

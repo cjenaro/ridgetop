@@ -39,6 +39,12 @@ function mark(canvas: HTMLCanvasElement, pin: ArtPin) {
 export async function attachTesting(game: InspectGame) {
   const fragment = await fetch('./testing.html')
   if (!fragment.ok) throw new Error('Testing controls are unavailable.')
+  if (!document.querySelector('link[href="./testing.css"]')) {
+    const link = document.createElement('link')
+    link.rel = 'stylesheet'
+    link.href = './testing.css'
+    document.head.append(link)
+  }
   const content = new DOMParser().parseFromString(await fragment.text(), 'text/html')
   const board = document.querySelector<HTMLElement>('.board')
   const highlight = document.createElement('div')
@@ -128,7 +134,13 @@ export async function attachTesting(game: InspectGame) {
     if (pin !== target) return
     highlight.hidden = !subject
     if (!subject) return
-    const rect = (pin.view.surface === 'hud' ? game.hud : game.frame().surface).getBoundingClientRect()
+    const surfaceRect = game.frame().surface.getBoundingClientRect()
+    const hudDom = game.hud.getBoundingClientRect()
+    const hudLayout = game.hudRect?.()
+    const rect = pin.view.surface === 'hud'
+      ? (hudDom.width > 0 && hudDom.height > 0 ? hudDom
+        : hudLayout ? { left: surfaceRect.left + hudLayout.x, top: surfaceRect.top + hudLayout.y } : surfaceRect)
+      : surfaceRect
     const parent = board.getBoundingClientRect()
     highlight.style.left = (rect.left - parent.left - board.clientLeft + subject.left) + 'px'
     highlight.style.top = (rect.top - parent.top - board.clientTop + subject.top) + 'px'
@@ -213,11 +225,21 @@ export async function attachTesting(game: InspectGame) {
   }
   board.addEventListener('click', async event => {
     if (!active || !canNavigate()) return
-    const hud = event.target === game.hud
-    if (!hud && event.target !== game.frame().surface) return
+    const surface = game.frame().surface
+    const uiLayer = document.getElementById('ui')
+    const hudLayout = game.hudRect?.()
+    const boardRect = surface.getBoundingClientRect()
+    const inHudLayout = Boolean(hudLayout && hudLayout.width > 0 && hudLayout.height > 0 &&
+      event.clientX >= boardRect.left + hudLayout.x && event.clientX <= boardRect.left + hudLayout.x + hudLayout.width &&
+      event.clientY >= boardRect.top + hudLayout.y && event.clientY <= boardRect.top + hudLayout.y + hudLayout.height)
+    const hud = event.target === game.hud || inHudLayout
+    if (!hud && event.target !== surface && event.target !== uiLayer) return
     const ticket = ++selecting
     try {
-      const [u,v] = measurePoint(hud ? game.hud : game.frame().surface, event)
+      const [u, v] = inHudLayout && hudLayout
+        ? [Math.max(0, Math.min(1, (event.clientX - (boardRect.left + hudLayout.x)) / hudLayout.width)),
+           Math.max(0, Math.min(1, (event.clientY - (boardRect.top + hudLayout.y)) / hudLayout.height))] as const
+        : measurePoint(hud ? game.hud : surface, event)
       const pin = await scene.pick(u, v, hud)
       if (ticket !== selecting) return
       if (!pin) { status('Click a visible part of an object.'); return }

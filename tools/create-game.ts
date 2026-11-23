@@ -24,7 +24,7 @@ export async function createGame(destination: string) {
     await cp(new URL('starter/art/rain-ranger.art.json', root), join(game, 'art', 'rain-ranger.art.json'))
     await cp(new URL('starter/art/library/', root), join(game, 'art', 'library'), { recursive: true })
     await writeFile(join(game, 'art', 'overrides.json'), '{}\n')
-    for (const file of ['index.html', 'style.css', 'testing.html']) await cp(new URL('starter/' + file, root), join(game, file))
+    for (const file of ['index.html', 'style.css', 'testing.html', 'testing.css']) await cp(new URL('starter/' + file, root), join(game, file))
     for (const name of ['game', 'main', 'serve', 'testing', 'testing-scene', 'preview-art', 'art-library', 'package']) {
       await copyModule(new URL('starter/' + name + '.js', dist), join(game, name + '.js'))
     }

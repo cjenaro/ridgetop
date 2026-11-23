@@ -9,6 +9,7 @@ export interface InspectGame {
   kit: ReviewKit
   frame(): { objects: ReviewObject[]; matrix: Matrix; spanY: number; now: number; sprite: boolean; surface: HTMLCanvasElement }
   hud: HTMLCanvasElement; pickup: string
+  hudRect?(): { x: number; y: number; width: number; height: number } | undefined
   source(name: string): { path: string; file: string | null; recipe?: ArtRecipe; base: ArtRecipe | null }
   sprite(name: string): { manifest: string; clip: string } | undefined
   atlas(name: string): Promise<Atlas>
@@ -22,10 +23,20 @@ export function measurePoint(canvas: HTMLCanvasElement, event: PointerEvent | Mo
   return [unit((event.clientX - rect.left) / rect.width), unit((event.clientY - rect.top) / rect.height)] as const
 }
 export function reviewScene(game: InspectGame) {
+  function hudBox(surface: HTMLCanvasElement) {
+    const domRect = game.hud.getBoundingClientRect()
+    if (domRect.width > 0 && domRect.height > 0) return domRect
+    const layout = game.hudRect?.()
+    const base = surface.getBoundingClientRect()
+    if (layout && layout.width > 0 && layout.height > 0) {
+      return { left: base.left + layout.x, top: base.top + layout.y, width: layout.width, height: layout.height }
+    }
+    return { left: base.left, top: base.top, width: Math.max(1, game.hud.width), height: Math.max(1, game.hud.height) }
+  }
   async function describe(obj: ReviewObject, hud: boolean) {
     const scene = game.frame(), model = game.kit.model(obj.name)
     const canvas = hud ? game.hud : scene.surface
-    const { width: w, height: h } = canvas.getBoundingClientRect()
+    const { width: w, height: h } = hud ? hudBox(scene.surface) : canvas.getBoundingClientRect()
     const surface = hud ? 'hud' : scene.sprite ? 'sprite' : 'model'
     const point = hud ? [0, 0] : projectPoint(scene.matrix, obj.x, (obj.y ?? 0) + model.centerY, obj.z)
     const view: ArtView = { asset: obj.name, instance: hud ? 'inventory' : obj.id, surface, source: game.source(obj.name).path,
@@ -104,7 +115,7 @@ export function reviewScene(game: InspectGame) {
   }
   async function pick(u: number, v: number, hud: boolean) {
     const scene = game.frame(), canvas = hud ? game.hud : scene.surface
-    const rect = canvas.getBoundingClientRect(), x = u * rect.width, y = v * rect.height
+    const rect = hud ? hudBox(scene.surface) : canvas.getBoundingClientRect(), x = u * rect.width, y = v * rect.height
     if (!hud && !scene.sprite) {
       const hit = pickArtScene(game.kit, scene.objects, scene.matrix, canvas.width, canvas.height, u, v)
       if (!hit) return
