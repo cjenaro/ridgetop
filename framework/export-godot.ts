@@ -824,7 +824,7 @@ func _ready() -> void:
 \tif ResourceLoader.exists("res://scripts/compiled/rt.gd"):
 \t\trt_script = load("res://scripts/compiled/rt.gd")
 
-\tif str(game_data.get("game", "")) == "signal-drift" and typeof(game_data.get("circuits", [])) == TYPE_ARRAY and (game_data["circuits"] as Array).size() > 0:
+\tif str(game_data.get("game", "")) == "signal-drift" and game_data.has("circuits") and typeof(game_data["circuits"]) == TYPE_ARRAY and (game_data["circuits"] as Array).size() > 0:
 \t\tmode = "racing"
 \t\tcircuits = game_data["circuits"]
 \t\t_init_fx_meshes()
@@ -834,7 +834,7 @@ func _ready() -> void:
 \t\t\tprog_mod = rt_script.mod("res://scripts/compiled/racing/progression.gd")
 \t\t\tchampionship = prog_mod.loadChampionship(_save_storage)
 \t\t_load_circuit(0)
-\telif typeof(game_data.get("map", [])) == TYPE_ARRAY and (game_data["map"] as Array).size() > 0:
+\telif game_data.has("map") and typeof(game_data["map"]) == TYPE_ARRAY and (game_data["map"] as Array).size() > 0:
 \t\tmode = "grid"
 \t\t_setup_grid_game(game_data["map"])
 \telse:
