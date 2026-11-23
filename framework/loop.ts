@@ -4,16 +4,22 @@ export function fixedLoop({ update, render }: { update(dt: number): void; render
   let previous = performance.now()
   let lag = 0
   let frame: number
+  let stopped = false
   function advance(now: number) {
-    lag += Math.min((now - previous) / 1000, STEP * 5)
+    if (stopped) return
+    lag += Math.max(0, Math.min((now - previous) / 1000, STEP * 5))
     previous = now
     while (lag >= STEP) {
       update(STEP)
+      if (stopped) return
       lag -= STEP
     }
     render(lag / STEP, now)
-    frame = requestAnimationFrame(advance)
+    if (!stopped) frame = requestAnimationFrame(advance)
   }
   frame = requestAnimationFrame(advance)
-  return () => cancelAnimationFrame(frame)
+  return () => {
+    stopped = true
+    cancelAnimationFrame(frame)
+  }
 }

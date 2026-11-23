@@ -16,8 +16,24 @@ struct Vertex {
 `
 
 export function color(hex: string): Color {
-  const rgb = Number.parseInt(hex.replace(/^#/, ''), 16)
-  return [(rgb >> 16) / 255, ((rgb >> 8) & 255) / 255, (rgb & 255) / 255, 1]
+  const clean = typeof hex === 'string' ? hex.replace(/^#/, '') : ''
+  if (/^[0-9a-f]{6}$/i.test(clean)) {
+    const rgb = Number.parseInt(clean, 16)
+    return [((rgb >>> 16) & 255) / 255, ((rgb >>> 8) & 255) / 255, (rgb & 255) / 255, 1]
+  }
+  if (/^[0-9a-f]{8}$/i.test(clean)) {
+    const rgba = Number.parseInt(clean, 16)
+    return [((rgba >>> 24) & 255) / 255, ((rgba >>> 16) & 255) / 255, ((rgba >>> 8) & 255) / 255, (rgba & 255) / 255]
+  }
+  if (/^[0-9a-f]{3}$/i.test(clean)) {
+    return [
+      Number.parseInt(clean[0] + clean[0], 16) / 255,
+      Number.parseInt(clean[1] + clean[1], 16) / 255,
+      Number.parseInt(clean[2] + clean[2], 16) / 255,
+      1
+    ]
+  }
+  throw new RangeError('Invalid hex color: ' + hex)
 }
 
 async function gpuBackend(canvas) {
@@ -54,12 +70,15 @@ async function gpuBackend(canvas) {
     return {
       name: 'WebGPU',
       lost: device.lost,
+      maxDimension: device.limits.maxTextureDimension2D,
       maxInstances: Math.floor(device.limits.maxBufferSize / (STRIDE * 4)),
       draw(data, count, clear) {
-        if (count && (!buffer || buffer.size < count * STRIDE * 4)) {
+        const required = count * STRIDE * 4
+        if (count && (!buffer || buffer.size < required)) {
           buffer?.destroy()
+          const capacity = Math.min(device.limits.maxBufferSize, Math.max(data.byteLength, required))
           buffer = device.createBuffer({
-            size: count * STRIDE * 4,
+            size: capacity,
             usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.VERTEX
           })
         }
@@ -90,25 +109,28 @@ async function gpuBackend(canvas) {
   }
 }
 
-const css = rgba => `rgba(${Math.round(rgba[0]*255)},${Math.round(rgba[1]*255)},${Math.round(rgba[2]*255)},${rgba[3]})`
+const css = (r: number, g: number, b: number, a: number) =>
+  `rgba(${Math.round(r * 255)},${Math.round(g * 255)},${Math.round(b * 255)},${a})`
 
 function canvasBackend(canvas) {
   const context = canvas.getContext('2d', { alpha: false })
   if (!context) throw new Error('Canvas 2D is unavailable')
   return {
     name: 'Canvas 2D',
+    maxDimension: 4096,
     maxInstances: Infinity,
     draw(data, count, clear) {
       const width = canvas.width / 2
       const height = canvas.height / 2
-      context.fillStyle = css(clear)
+      context.fillStyle = css(clear[0], clear[1], clear[2], clear[3])
       context.fillRect(0, 0, canvas.width, canvas.height)
-      let previous = -4
-      for (let i = 0; i < count * STRIDE; i += STRIDE) {
-        if (data[i+4] !== data[previous+4] || data[i+5] !== data[previous+5] ||
-            data[i+6] !== data[previous+6] || data[i+7] !== data[previous+7] || i === 0) {
-          context.fillStyle = css(data.subarray(i+4, i+8))
-          previous = i
+      let prevR = -1, prevG = -1, prevB = -1, prevA = -1
+      const end = count * STRIDE
+      for (let i = 0; i < end; i += STRIDE) {
+        const r = data[i + 4], g = data[i + 5], b = data[i + 6], a = data[i + 7]
+        if (r !== prevR || g !== prevG || b !== prevB || a !== prevA) {
+          context.fillStyle = css(r, g, b, a)
+          prevR = r; prevG = g; prevB = b; prevA = a
         }
         context.fillRect((data[i]+1)*width, (1-data[i+1])*height, data[i+2]*width, -data[i+3]*height)
       }
@@ -148,6 +170,7 @@ export async function createRenderer(canvas: HTMLCanvasElement, { width, height,
   let count = 0
   return {
     get name() { return backend.name },
+    get canvas() { return canvas },
     begin() { count = 0 },
     rect(x, y, w, h, tint) {
       if (x + w <= 0 || x >= width || y + h <= 0 || y >= height) return
@@ -165,9 +188,11 @@ export async function createRenderer(canvas: HTMLCanvasElement, { width, height,
       data.set(tint, index)
     },
     end(clear) {
-      const ratio = Math.min(devicePixelRatio, 2)
-      const pixelWidth = Math.max(1, Math.round(canvas.clientWidth * ratio))
-      const pixelHeight = Math.max(1, Math.round(canvas.clientHeight * ratio))
+      const w = Math.max(1, canvas.clientWidth)
+      const h = Math.max(1, canvas.clientHeight)
+      const ratio = Math.min(globalThis.devicePixelRatio || 1, 2, backend.maxDimension / Math.max(w, h))
+      const pixelWidth = Math.max(1, Math.round(w * ratio))
+      const pixelHeight = Math.max(1, Math.round(h * ratio))
       if (canvas.width !== pixelWidth) canvas.width = pixelWidth
       if (canvas.height !== pixelHeight) canvas.height = pixelHeight
       backend.draw(data, count, clear)

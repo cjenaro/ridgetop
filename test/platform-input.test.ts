@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { bindActionControls, bindPlatformControls, createPlatform, resolveStorage } from '../framework/index.ts'
+import { bindActionControls, bindPlatformControls, color, createPlatform, createPlatformer, createSynthAudio, fixedLoop, resolveStorage, STEP } from '../framework/index.ts'
 import type { RidgetopNativeBridge } from '../framework/index.ts'
 
 function withGlobals(overrides: Record<string, unknown>, run: () => void | Promise<void>) {
@@ -186,4 +186,129 @@ test('bindActionControls and bindPlatformControls poll standard gamepads with de
     assert.deepEqual(pressed, ['throttle', 'pulse'])
     racer.dispose()
   })
+})
+
+test('fixedLoop prevents negative alpha and zombie frames on re-entrant stop', () => {
+  const callbacks = new Map<number, FrameRequestCallback>()
+  let nextId = 0
+  let now = 100
+  const alphas: number[] = []
+  let updates = 0
+  withGlobals({
+    performance: { now: () => now },
+    requestAnimationFrame: (cb: FrameRequestCallback) => { const id = ++nextId; callbacks.set(id, cb); return id },
+    cancelAnimationFrame: (id: number) => { callbacks.delete(id) }
+  }, () => {
+    let stop: () => void = () => {}
+    stop = fixedLoop({
+      update() {
+        updates++
+        if (updates === 1) stop()
+      },
+      render(alpha) { alphas.push(alpha) }
+    })
+    // Frame 1 with timestamp earlier than performance.now() must not yield negative alpha
+    const first = Array.from(callbacks.values())[0]
+    callbacks.clear()
+    first(92)
+    assert.equal(alphas[0], 0)
+    assert.equal(callbacks.size, 1)
+    // Frame 2 triggers update which calls stop(); no further frame may be scheduled
+    const second = Array.from(callbacks.values())[0]
+    callbacks.clear()
+    second(120)
+    assert.equal(updates, 1)
+    assert.equal(callbacks.size, 0)
+  })
+})
+
+test('platformer tolerates IEEE-754 ULP rounding on landings and pads', () => {
+  const move = createPlatformer({ worldWidth: 100, bodyWidth: 1, bodyHeight: 1.1, speed: 5, gravity: 10, jumpSpeed: 5, boostSpeed: 10 })
+  const world = { platforms: [{ x: 0, y: 0.1, w: 20 }], pads: [{ x: 0, y: 0.1, w: 20 }] }
+  const player = { x: 2, y: -1.01, vx: 0, vy: 1, grounded: false, moving: false, facing: 1, coyote: 0, buffer: 0, jump: 0 }
+  move(player, { left: false, right: false, jump: 0 }, STEP, world, { coyoteTicks: 4, bufferTicks: 4 })
+  assert.equal(player.grounded, true)
+  // Next tick: (0.1 - 1.1) + 1.1 === 0.10000000000000009 > 0.1; must stay grounded
+  move(player, { left: false, right: false, jump: 0 }, STEP, world, { coyoteTicks: 4, bufferTicks: 4 })
+  assert.equal(player.grounded, true)
+  // Jumping from that pad must use boostSpeed (-10 + gravity*dt)
+  move(player, { left: false, right: false, jump: 1 }, STEP, world, { coyoteTicks: 4, bufferTicks: 4 })
+  assert.ok(player.vy < -9)
+})
+
+test('createSynthAudio recovers after close(), respects mute, and handles short notes', () => {
+  let contexts = 0
+  let oscillators = 0
+  const ramps: number[] = []
+  class FakeAudioContext {
+    state = 'running'
+    currentTime = 0
+    destination = {}
+    constructor() { contexts++ }
+    createGain() {
+      return {
+        gain: {
+          value: 1,
+          setValueAtTime() {},
+          exponentialRampToValueAtTime(_v: number, t: number) { ramps.push(t) }
+        },
+        connect() {},
+        disconnect() {}
+      }
+    }
+    createOscillator() {
+      oscillators++
+      return {
+        type: 'sine',
+        frequency: { setValueAtTime() {}, exponentialRampToValueAtTime() {} },
+        connect() {},
+        disconnect() {},
+        start() {},
+        stop() {},
+        onended: null as null | (() => void)
+      }
+    }
+    resume() { this.state = 'running'; return Promise.resolve() }
+    suspend() { this.state = 'suspended'; return Promise.resolve() }
+    close() { this.state = 'closed'; return Promise.resolve() }
+  }
+  withGlobals({ AudioContext: FakeAudioContext }, () => {
+    const audio = createSynthAudio({ blip: [[440, 0.01, 0]] })
+    audio.unlock()
+    audio.mute(true)
+    audio.play('blip')
+    assert.equal(oscillators, 0)
+    audio.mute(false)
+    audio.play('blip')
+    assert.equal(oscillators, 1)
+    // Attack peak (0.005) must precede release end (0.01)
+    assert.ok(ramps[0] < ramps[1])
+    audio.close()
+    audio.unlock()
+    assert.equal(contexts, 2)
+    audio.play('blip')
+    assert.equal(oscillators, 2)
+  })
+})
+
+test('resolveStorage shares cache per native bridge and color() validates hex formats', () => {
+  const backing: Record<string, string> = {}
+  const bridge: RidgetopNativeBridge = {
+    platform: 'desktop',
+    storage: {
+      loadAll: () => ({ ...backing }),
+      set: (k, v) => { backing[k] = v }
+    }
+  }
+  withGlobals({ __ridgetopPlatform: bridge }, () => {
+    const a = resolveStorage()!
+    const b = resolveStorage()!
+    a.setItem('shared', 'yes')
+    assert.equal(b.getItem('shared'), 'yes')
+  })
+
+  assert.deepEqual(color('#ff0000ff'), [1, 0, 0, 1])
+  assert.deepEqual(color('#0f8'), [0, 1, 0x88 / 255, 1])
+  assert.deepEqual(color('112233'), [0x11 / 255, 0x22 / 255, 0x33 / 255, 1])
+  assert.throws(() => color('not-a-color'), RangeError)
 })

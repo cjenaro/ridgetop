@@ -86,10 +86,19 @@ function createBridgeStorage(native: NonNullable<RidgetopNativeBridge['storage']
   }
 }
 
+const bridgeStorageCache = new WeakMap<object, Storage>()
+
 /** Return the native host save store when packaged, or browser localStorage on the web. */
 export function resolveStorage(): Storage | undefined {
   const native = getBridge()?.storage
-  if (native) return createBridgeStorage(native)
+  if (native) {
+    let cached = bridgeStorageCache.get(native)
+    if (!cached) {
+      cached = createBridgeStorage(native)
+      bridgeStorageCache.set(native, cached)
+    }
+    return cached
+  }
   try { return globalThis.localStorage } catch { return undefined }
 }
 
@@ -151,7 +160,9 @@ export function createPlatform(): RidgetopPlatform {
       }
       if (globalThis.window) {
         globalThis.window.addEventListener('pagehide', () => pause?.(), options)
-        globalThis.window.addEventListener('pageshow', () => resume?.(), options)
+        globalThis.window.addEventListener('pageshow', event => {
+          if ((event as PageTransitionEvent).persisted) resume?.()
+        }, options)
       }
       const unsubscribeNative = bridge?.lifecycle?.subscribe?.({ pause, resume })
       return () => {

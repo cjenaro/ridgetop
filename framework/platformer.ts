@@ -1,6 +1,8 @@
 import type { PlatformerBody, RoomInput } from './types.ts'
 type Surface = { x: number; y: number; w: number }
 
+const SURFACE_EPS = 1e-9
+
 export function createPlatformer({ worldWidth, bodyWidth, bodyHeight, speed, gravity, jumpSpeed, boostSpeed = jumpSpeed }: {
   worldWidth: number; bodyWidth: number; bodyHeight: number; speed: number; gravity: number; jumpSpeed: number; boostSpeed?: number
 }) {
@@ -17,7 +19,7 @@ export function createPlatformer({ worldWidth, bodyWidth, bodyHeight, speed, gra
     player.buffer = pressed ? timing.bufferTicks : Math.max(0, player.buffer - 1)
     player.coyote = player.grounded ? timing.coyoteTicks : Math.max(0, player.coyote - 1)
     if (player.buffer && player.coyote) {
-      const onPad = pads.some(pad => player.grounded && player.y + bodyHeight === pad.y &&
+      const onPad = pads.some(pad => player.grounded && Math.abs(player.y + bodyHeight - pad.y) <= SURFACE_EPS &&
         player.x + bodyWidth > pad.x && player.x < pad.x + pad.w)
       player.vy = onPad ? -boostSpeed : -jumpSpeed
       player.coyote = player.buffer = 0
@@ -30,7 +32,7 @@ export function createPlatformer({ worldWidth, bodyWidth, bodyHeight, speed, gra
     // Compare swept feet with each top. Pick the first top crossed in world space.
     let landing = Infinity
     for (const platform of platforms) {
-      if (player.vy >= 0 && oldFeet <= platform.y && player.y + bodyHeight >= platform.y &&
+      if (player.vy >= 0 && oldFeet <= platform.y + SURFACE_EPS && player.y + bodyHeight >= platform.y - SURFACE_EPS &&
           player.x < platform.x + platform.w && player.x + bodyWidth > platform.x) {
         landing = Math.min(landing, platform.y)
       }

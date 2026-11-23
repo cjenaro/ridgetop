@@ -18,16 +18,18 @@ export function createSynthAudio<Name extends string>(motifs: Record<Name, reado
       } catch { /* Sound is optional. */ }
     },
     play(name: Name) {
-      if (context?.state !== 'running') return
+      if (muted || context?.state !== 'running') return
       for (const [frequency, duration, delay, endFrequency] of motifs[name] ?? []) {
+        if (!(duration > 0)) continue
         const oscillator = context.createOscillator()
         const envelope = context.createGain()
         const at = context.currentTime + delay
+        const attack = Math.min(.015, duration * .5)
         oscillator.type = waveform[name] ?? 'sine'
         oscillator.frequency.setValueAtTime(frequency, at)
         if (endFrequency) oscillator.frequency.exponentialRampToValueAtTime(endFrequency, at + duration)
         envelope.gain.setValueAtTime(.001, at)
-        envelope.gain.exponentialRampToValueAtTime(.25, at + .015)
+        envelope.gain.exponentialRampToValueAtTime(.25, at + attack)
         envelope.gain.exponentialRampToValueAtTime(.001, at + duration)
         oscillator.connect(envelope)
         envelope.connect(output)
@@ -47,6 +49,11 @@ export function createSynthAudio<Name extends string>(motifs: Record<Name, reado
     resume() {
       if (!muted && context?.state === 'suspended') context.resume().catch(() => {})
     },
-    close() { context?.close().catch(() => {}) }
+    close() {
+      const active = context
+      context = undefined
+      output = undefined
+      active?.close().catch(() => {})
+    }
   }
 }
