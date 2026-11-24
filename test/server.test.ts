@@ -175,13 +175,16 @@ test('host HEAD sets Content-Length, records avoid temp-file races, and connectR
     await room.flush(0)
     assert.equal(sent.length, 1)
     assert.equal(sent[0].jump, 0)
+    assert.equal(sent[0].inputSeq, 1)
     jump = 6
     await room.flush(100)
     assert.equal(sent[1].jump, 1)
+    assert.equal(sent[1].inputSeq, 2)
     // Reconnect with a new player ID (expired session) must rebase jump back to 0
     fakeEs!.dispatchEvent(Object.assign(new Event('welcome'), { data: JSON.stringify({ id: 'p2', token: 't2' }) }))
     await room.flush(200)
     assert.equal(sent[2].jump, 0)
+    assert.equal(sent[2].inputSeq, 1)
     room.close()
     // Messages arriving after close() must be ignored
     const prevCount = sent.length

@@ -71,7 +71,32 @@ export interface LowPolyRenderer {
 
 export interface RoomInput { left: boolean; right: boolean; jump: number }
 
-export interface RoomPlayer { id: string; x: number; y: number; falls: number; revision?: number }
+export interface RoomEntity {
+  id: string
+  slot?: number
+  revision?: number
+  lastProcessedSeq?: number
+}
+
+export interface RoomPlayer extends RoomEntity {
+  x: number
+  y: number
+  falls: number
+}
+
+export type RoomTransport = 'sse' | 'ws' | 'auto'
+
+export type RoomStatus = 'connected' | 'reconnecting' | 'unavailable'
+
+export interface RoomWelcome {
+  id: string
+  token: string
+}
+
+export interface RoomPrediction<T, Input = RoomInput> {
+  step(state: T, input: Input, dt: number): T
+  equals?(a: T, b: T): boolean
+}
 
 export interface VerificationFrame<S, A> {
   readonly tick: number
