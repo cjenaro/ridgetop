@@ -12,34 +12,40 @@ import { createArtRecipe, multiply, orthographic, projectPoint, view } from 'rid
 type Tab = Awaited<ReturnType<typeof openTab>>
 const backend = process.env.RIDGETOP_REVIEW_RENDERER ?? 'canvas'
 const temp = await mkdtemp(join(tmpdir(), 'ridgetop-playtest-'))
-let server: ReturnType<typeof spawn>, tab: Tab
+let server: ReturnType<typeof spawn> | undefined, tab: Tab | undefined
+
+function activeTab(): Tab {
+  if (!tab) throw new Error('Browser tab is not open')
+  return tab
+}
 
 function change(selector: string, value: string) {
-  return tab.evaluate(`{const f=document.querySelector(${JSON.stringify(selector)}); f.value=${JSON.stringify(value)}; f.dispatchEvent(new Event('change'))}`)
+  return activeTab().evaluate(`{const f=document.querySelector(${JSON.stringify(selector)}); f.value=${JSON.stringify(value)}; f.dispatchEvent(new Event('change'))}`)
 }
-const value = (id: string) => tab.evaluate(`document.getElementById('${id}')?.value`)
-const viewMode = () => tab.evaluate("window.__ridgetopUi?.state?.()?.view")
-const footerText = () => tab.evaluate("document.querySelector('#ridgetop-testing-drawer .rt-footer-msg')?.textContent?.trim()")
-const clickButtonByText = (text: string) => tab.evaluate(`(() => {
+const value = (id: string) => activeTab().evaluate(`document.getElementById('${id}')?.value`)
+const viewMode = () => activeTab().evaluate("window.__ridgetopUi?.state?.()?.view")
+const footerText = () => activeTab().evaluate("document.querySelector('#ridgetop-testing-drawer .rt-footer-msg')?.textContent?.trim()")
+const clickButtonByText = (text: string) => activeTab().evaluate(`(() => {
   const btn = [...document.querySelectorAll('#ridgetop-testing-drawer button')].find(b => b.textContent?.trim() === ${JSON.stringify(text)})
   if (!btn) throw new Error('Missing button: ' + ${JSON.stringify(text)})
   btn.click()
 })()`)
 async function point(selector: string, u: number, v: number) {
-  return tab.evaluate(`(() => { const el=document.querySelector(${JSON.stringify(selector)}); el.scrollIntoView({block:'center'});
+  return activeTab().evaluate(`(() => { const el=document.querySelector(${JSON.stringify(selector)}); el.scrollIntoView({block:'center'});
     const r=el.getBoundingClientRect(); return { x:r.x+r.width*${u}, y:r.y+r.height*${v} } })()`)
 }
 async function press(selector: string, u: number, v: number, end?: [number, number]) {
+  const t = activeTab()
   const start = await point(selector, u, v)
   const at = end ? await point(selector, ...end) : start
-  await tab.call('Input.dispatchMouseEvent', { type: 'mousePressed', ...start, button: 'left', buttons: 1, clickCount: 1 })
-  if (end) await tab.call('Input.dispatchMouseEvent', { type: 'mouseMoved', ...at, buttons: 1 })
-  await tab.call('Input.dispatchMouseEvent', { type: 'mouseReleased', ...at, button: 'left', clickCount: 1 })
+  await t.call('Input.dispatchMouseEvent', { type: 'mousePressed', ...start, button: 'left', buttons: 1, clickCount: 1 })
+  if (end) await t.call('Input.dispatchMouseEvent', { type: 'mouseMoved', ...at, buttons: 1 })
+  await t.call('Input.dispatchMouseEvent', { type: 'mouseReleased', ...at, button: 'left', clickCount: 1 })
 }
 async function saveComment(text: string) {
   await clickButtonByText('Comments / Reviews')
-  await until(() => tab.evaluate("Boolean(document.getElementById('rt-review-comment'))"), true, 'review form mounted')
-  await tab.evaluate(`{const f=document.getElementById('rt-review-comment'); f.value=${JSON.stringify(text)}; f.dispatchEvent(new Event('input'))}`)
+  await until(() => activeTab().evaluate("Boolean(document.getElementById('rt-review-comment'))"), true, 'review form mounted')
+  await activeTab().evaluate(`{const f=document.getElementById('rt-review-comment'); f.value=${JSON.stringify(text)}; f.dispatchEvent(new Event('input'))}`)
   await clickButtonByText('Save Comment')
   await until(footerText, s => typeof s === 'string' && s.startsWith('Saved reviews/'), 'saved project review')
   return value('rt-review-select')
@@ -56,7 +62,8 @@ try {
   for (const name of ['sprites.json', 'sprites.png']) await copyFile(new URL('../game/assets/' + name, import.meta.url), join(game, 'art', name))
 
   server = spawn(process.execPath, ['game/serve.js', '--testing'], { cwd: project, env: { ...process.env, PORT: '0' }, stdio: ['ignore', 'pipe', 'inherit'] })
-  let origin: string
+  assert.ok(server.stdout)
+  let origin: string | undefined
   for await (const line of createInterface({ input: server.stdout })) {
     const port = /listening on port (\d+)/.exec(line)?.[1]
     if (port) { origin = 'http://127.0.0.1:' + port; break }
@@ -64,7 +71,7 @@ try {
   assert.ok(origin, 'testing host started')
   const url = origin + '/?testing=1&renderer=' + backend
   tab = await openTab(url)
-  await until(() => status(tab, 'rt-pause-btn'), 'Pause & Inspect (F9)', 'loaded framework testing studio')
+  await until(() => status(activeTab(), 'rt-pause-btn'), 'Pause & Inspect (F9)', 'loaded framework testing studio')
   await click(tab, 'rt-pause-btn')
   assert.equal(await viewMode(), '3d')
 
@@ -73,7 +80,7 @@ try {
   const camera = multiply(orthographic(span * aspect, span, .1, 52), view([4, 13.5, 3 + 26 * Math.cos(Math.PI / 6)], [4, .5, 3]))
   const visor = projectPoint(camera, 1.07, 1.06, 1.32)
   await press('#world', (visor[0] + 1) / 2, (1 - visor[1]) / 2)
-  await until(() => tab.evaluate("document.querySelector('#ridgetop-testing-drawer .rt-title')?.textContent"), t => typeof t === 'string' && t.includes('ranger'), 'picked ranger through the playfield')
+  await until(() => activeTab().evaluate("document.querySelector('#ridgetop-testing-drawer .rt-title')?.textContent"), t => typeof t === 'string' && t.includes('ranger'), 'picked ranger through the playfield')
 
   // Verify keyboard input is ignored while paused
   await key(tab, 'keyDown', 'ArrowRight', 'ArrowRight')
@@ -112,25 +119,25 @@ try {
   await writeFile(file, JSON.stringify(ready, null, 2))
   await click(tab, 'rt-refresh-btn')
   await clickButtonByText('Comments / Reviews')
-  await until(() => tab.evaluate("document.querySelector('#ridgetop-testing-drawer .rt-section-title')?.textContent"), 'Review · ready', 'read the agent reply from disk')
-  const savedLoad = await tab.evaluate('performance.timeOrigin')
+  await until(() => activeTab().evaluate("document.querySelector('#ridgetop-testing-drawer .rt-section-title')?.textContent"), 'Review · ready', 'read the agent reply from disk')
+  const savedLoad = await tab.evaluate<number>('performance.timeOrigin')
   await clickButtonByText('Reload & Compare')
-  await until(() => tab.evaluate('performance.timeOrigin'), time => time > savedLoad, 'reloaded latest project source')
-  await until(() => tab.evaluate("document.querySelector('#ridgetop-testing-drawer .rt-section-title')?.textContent"), 'Review · ready', 'restored the reviewed scene')
+  await until(() => activeTab().evaluate<number>('performance.timeOrigin'), time => time > savedLoad, 'reloaded latest project source')
+  await until(() => activeTab().evaluate("document.querySelector('#ridgetop-testing-drawer .rt-section-title')?.textContent"), 'Review · ready', 'restored the reviewed scene')
   assert.deepEqual(await readFile(beforeFile), png)
   await tab.evaluate(`{const f=document.getElementById('rt-review-comment'); f.value='I can read it now.'; f.dispatchEvent(new Event('input'))}`)
   await clickButtonByText('Resolve')
-  await until(() => tab.evaluate("document.querySelector('#ridgetop-testing-drawer .rt-section-title')?.textContent"), 'Review · resolved', 'creator resolved with a reply')
+  await until(() => activeTab().evaluate("document.querySelector('#ridgetop-testing-drawer .rt-section-title')?.textContent"), 'Review · resolved', 'creator resolved with a reply')
   assert.equal((await disk()).replies.length, 2)
 
   // Resume, switch to 2D sprites, pause, pick 2D sprite & HUD icon
   await click(tab, 'rt-pause-btn')
   await tab.evaluate("window.__ridgetopUi.act('hud-view-toggle', 'toggle')")
-  await until(() => tab.evaluate("document.getElementById('sprites').hidden"), false, 'switched to 2D')
+  await until(() => activeTab().evaluate("document.getElementById('sprites').hidden"), false, 'switched to 2D')
   await click(tab, 'rt-pause-btn')
   const center = projectPoint(camera, 1, .68, 1)
   await press('#sprites', (center[0] + 1) / 2, (1 - center[1]) / 2)
-  await until(() => tab.evaluate("document.querySelector('#ridgetop-testing-drawer .rt-badge')?.textContent"), '2D Sprite', 'picked 2D sprite')
+  await until(() => activeTab().evaluate("document.querySelector('#ridgetop-testing-drawer .rt-badge')?.textContent"), '2D Sprite', 'picked 2D sprite')
   const spriteId = await saveComment('Brighten this section of the running sprite.')
   const sprite = JSON.parse(await readFile(join(game, 'reviews', spriteId + '.json'), 'utf8'))
   assert.equal(sprite.target.view.surface, 'sprite')
@@ -146,7 +153,7 @@ try {
   })()`)
   await tab.call('Input.dispatchMouseEvent', { type: 'mousePressed', ...iconCenter, button: 'left', buttons: 1, clickCount: 1 })
   await tab.call('Input.dispatchMouseEvent', { type: 'mouseReleased', ...iconCenter, button: 'left', clickCount: 1 })
-  await until(() => tab.evaluate("document.querySelector('#ridgetop-testing-drawer .rt-badge')?.textContent"), 'HUD', 'picked HUD icon')
+  await until(() => activeTab().evaluate("document.querySelector('#ridgetop-testing-drawer .rt-badge')?.textContent"), 'HUD', 'picked HUD icon')
   const hudId = await saveComment('Give just the inventory icon more contrast.')
   const hud = JSON.parse(await readFile(join(game, 'reviews', hudId + '.json'), 'utf8'))
   assert.equal(hud.target.view.surface, 'hud')
@@ -159,10 +166,10 @@ try {
   await until(() => value('rt-review-select'), spriteId, 'review deep link opened in a fresh tab')
   assert.equal(await viewMode(), '2d')
   await change('#rt-review-select', id)
-  await until(() => tab.evaluate("document.querySelector('#ridgetop-testing-drawer .rt-section-title')?.textContent"), 'Review · resolved', 'restored 3D review from 2D sprite review')
+  await until(() => activeTab().evaluate("document.querySelector('#ridgetop-testing-drawer .rt-section-title')?.textContent"), 'Review · resolved', 'restored 3D review from 2D sprite review')
   assert.equal(await viewMode(), '3d')
   await clickButtonByText('Reopen')
-  await until(() => tab.evaluate("document.querySelector('#ridgetop-testing-drawer .rt-section-title')?.textContent"), 'Review · open', 'reopened resolved feedback')
+  await until(() => activeTab().evaluate("document.querySelector('#ridgetop-testing-drawer .rt-section-title')?.textContent"), 'Review · open', 'reopened resolved feedback')
   assert.equal((await disk()).status, 'open')
   assert.deepEqual(tab.errors, [])
   console.log('Passed on ' + backend + ': picked 3D model, edited & saved recipe, compared revisions, pinned 2D sprite and HUD icon, and reopened reviews.')

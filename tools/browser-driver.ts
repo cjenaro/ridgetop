@@ -5,14 +5,21 @@ function debugUrl() {
   return process.env.CHROMIUM_DEBUG ?? 'http://localhost:9222'
 }
 
+type DevToolsTarget = { id: string; webSocketDebuggerUrl: string }
+type PendingCall = {
+  resolve: (value: any) => void
+  reject: (reason?: unknown) => void
+  timeout: ReturnType<typeof setTimeout>
+}
+
 async function connect(url: string) {
   const socket = new WebSocket(url)
   await new Promise((resolve, reject) => {
     socket.addEventListener('open', resolve, { once: true })
     socket.addEventListener('error', reject, { once: true })
   })
-  const pending = new Map()
-  const errors = []
+  const pending = new Map<number, PendingCall>()
+  const errors: string[] = []
   let message = 0
   socket.onmessage = ({ data }) => {
     const packet = JSON.parse(data)
@@ -41,14 +48,14 @@ async function connect(url: string) {
   return { call, errors, close: () => socket.close() }
 }
 
-async function attach(target, beforeLoad?: string) {
+async function attach(target: DevToolsTarget, beforeLoad?: string) {
   const { call, errors, close } = await connect(target.webSocketDebuggerUrl)
   const tab = {
     call, errors,
-    async evaluate(expression) {
+    async evaluate<T = any>(expression: string): Promise<T> {
       const result = await call('Runtime.evaluate', { expression, returnByValue: true, awaitPromise: true })
       if (result.exceptionDetails) throw new Error(JSON.stringify(result.exceptionDetails))
-      return result.result?.value
+      return result.result?.value as T
     },
     async close() {
       close()
@@ -62,8 +69,10 @@ async function attach(target, beforeLoad?: string) {
   return tab
 }
 
+export type BrowserTab = Awaited<ReturnType<typeof attach>>
+
 export async function openTab(url: string, beforeLoad?: string) {
-  const target = await fetch(debugUrl() + '/json/new?about:blank', { method: 'PUT' }).then(r => r.json())
+  const target = await fetch(debugUrl() + '/json/new?about:blank', { method: 'PUT' }).then(r => r.json()) as DevToolsTarget
   const tab = await attach(target, beforeLoad)
   await tab.call('Page.navigate', { url })
   await tab.call('Page.bringToFront')
@@ -72,7 +81,7 @@ export async function openTab(url: string, beforeLoad?: string) {
 
 // Player release checks run in temporary profiles so downloads and saves stay isolated.
 export async function openPlayerTab(downloadPath: string) {
-  const info = await fetch(debugUrl() + '/json/version').then(r => r.json())
+  const info = await fetch(debugUrl() + '/json/version').then(r => r.json()) as { webSocketDebuggerUrl: string }
   const browser = await connect(info.webSocketDebuggerUrl)
   const { browserContextId } = await browser.call('Target.createBrowserContext', { disposeOnDetach: true })
   async function dispose() {
@@ -82,8 +91,10 @@ export async function openPlayerTab(downloadPath: string) {
   try {
     await browser.call('Browser.setDownloadBehavior', { behavior: 'allow', downloadPath, browserContextId })
     const { targetId } = await browser.call('Target.createTarget', { url: 'about:blank', browserContextId })
-    const targets = await fetch(debugUrl() + '/json/list').then(r => r.json())
-    const tab = await attach(targets.find(entry => entry.id === targetId))
+    const targets = await fetch(debugUrl() + '/json/list').then(r => r.json()) as DevToolsTarget[]
+    const target = targets.find(entry => entry.id === targetId)
+    if (!target) throw new Error('Browser target not found: ' + targetId)
+    const tab = await attach(target)
     await tab.call('Network.enable')
     await tab.call('Network.emulateNetworkConditions', { offline: true, latency: 0, downloadThroughput: 0, uploadThroughput: 0 })
     await tab.call('Page.bringToFront')
@@ -91,15 +102,20 @@ export async function openPlayerTab(downloadPath: string) {
   } catch (error) { await dispose(); throw error }
 }
 
-export async function until(read, expected, description, limit = 160) {
-  let actual
+export async function until<T>(
+  read: () => Promise<T> | T,
+  expected: T | ((value: T) => unknown),
+  description: string,
+  limit = 160
+): Promise<T> {
+  let actual: T | undefined
   for (let i = 0; i < limit; i++) {
     actual = await read()
-    if (typeof expected === 'function' ? expected(actual) : expected === actual) return actual
+    if (typeof expected === 'function' ? (expected as (value: T) => unknown)(actual) : expected === actual) return actual
     await wait(100)
   }
   assert.fail(description + '. Last value: ' + actual)
 }
-export const status = (tab, id) => tab.evaluate(`document.querySelector('#${id}')?.textContent`)
-export const click = (tab, id) => tab.evaluate(`document.querySelector('#${id}').click()`)
-export const key = (tab, type, code, key) => tab.call('Input.dispatchKeyEvent', { type, key, code })
+export const status = (tab: BrowserTab, id: string) => tab.evaluate<string | null | undefined>(`document.querySelector('#${id}')?.textContent`)
+export const click = (tab: BrowserTab, id: string) => tab.evaluate(`document.querySelector('#${id}').click()`)
+export const key = (tab: BrowserTab, type: string, code: string, keyName: string) => tab.call('Input.dispatchKeyEvent', { type, key: keyName, code })

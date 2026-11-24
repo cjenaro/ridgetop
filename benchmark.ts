@@ -5,13 +5,19 @@ const width = 960
 const height = 540
 const clear = color('22394b')
 const tints = ['55b69d', 'c0ed9d', 'ffc477', '73afcf'].map(color)
-const config = document.querySelector<HTMLFormElement>('#config')
-const runButton = document.querySelector<HTMLButtonElement>('#run')
-const result = document.querySelector('#result')
-const download = document.querySelector<HTMLAnchorElement>('#download')
+function requireElement<T extends Element>(selector: string): T {
+  const el = document.querySelector<T>(selector)
+  if (!el) throw new Error('Missing element ' + selector)
+  return el
+}
+
+const config = requireElement<HTMLFormElement>('#config')
+const runButton = requireElement<HTMLButtonElement>('#run')
+const result = requireElement('#result')
+const download = requireElement<HTMLAnchorElement>('#download')
 const nextFrame = () => new Promise<number>(resolve => requestAnimationFrame(resolve))
 
-function percentile(values, fraction) {
+function percentile(values: number[], fraction: number) {
   values.sort((a, b) => a - b)
   return Number(values[Math.ceil(values.length * fraction) - 1].toFixed(2))
 }
@@ -31,7 +37,7 @@ config.addEventListener('submit', async event => {
   canvas.height = height
   canvas.style.width = width + 'px'
   canvas.style.maxWidth = 'none'
-  document.querySelector('#viewport').replaceChildren(canvas)
+  requireElement('#viewport').replaceChildren(canvas)
   let renderer
   try {
     renderer = await createLowPolyRenderer(canvas, { backend, pixelRatio: 1 })
@@ -44,7 +50,7 @@ config.addEventListener('submit', async event => {
       i % columns - columns / 2, (i * 43 % 83) * .013, Math.floor(i / columns) - columns / 2
     ])
     const scale: Vec3 = [.55, .65, .55]
-    function populate(yaw) {
+    function populate(yaw: number) {
       for (const batch of batches) batch.clear()
       for (let i = 0; i < count; i++) {
         batches[i % 2].add(positions[i], scale, i * .71 + yaw, tints[i % 4])

@@ -1,3 +1,4 @@
+import type { CourseId } from './game/level.ts'
 import type { CharacterView } from './game/expedition.ts'
 import type { Player, PlayerSnapshot } from './game/simulation.ts'
 import type { Backend } from 'ridgetop'
@@ -36,7 +37,7 @@ function unlockSound() { if (progress.sound) audio.unlock() }
 audio.mute(!progress.sound)
 
 async function start() {
-  const config = ['webgpu', 'webgl2', 'canvas'].includes(requestedBackend) ? { backend: requestedBackend as Backend } : {}
+  const config = requestedBackend && ['webgpu', 'webgl2', 'canvas'].includes(requestedBackend) ? { backend: requestedBackend as Backend } : {}
   const [renderer, sprites] = await Promise.all([
     createLowPolyRenderer($<HTMLCanvasElement>('stage'), config),
     createSprites($<HTMLCanvasElement>('sprites'), reducedMotion)
@@ -50,7 +51,7 @@ async function start() {
   let portraitReady = false
   portrait.onload = () => { portraitReady = true; uiDirty = true }
 
-  let courseId = ROUTE.includes(requestedCourse) ? requestedCourse : ROUTE[0]
+  let courseId: CourseId = requestedCourse && (ROUTE as readonly string[]).includes(requestedCourse) ? requestedCourse as CourseId : ROUTE[0]
   let code = /^[a-z0-9-]{1,32}$/.test(roomCode ?? '') ? roomCode : null
   const requestedMode = url.searchParams.get('mode')
   let mode = requestedMode === 'expedition' ? 'expedition' :
@@ -62,7 +63,7 @@ async function start() {
   let player: Player
   let latest: PlayerSnapshot | undefined
   let finishRun: string | undefined
-  let character: CharacterView
+  let character: CharacterView | undefined
   let connectionLabel = 'Loading'
   let connectionOnline = false
   let bestText = 'Best —'
@@ -104,14 +105,15 @@ async function start() {
     character = await page.requestJson<CharacterView>('/expeditions/character', { method: 'POST' }, 'Could not load your guild character.')
   }
 
-  function nextRegion() {
-    return ROUTE.find(id => !character.cleared.includes(id) && canEnterRegion(character.cleared, id)) ?? ROUTE[0]
+  function nextRegion(): CourseId {
+    const cleared = character?.cleared ?? []
+    return ROUTE.find(id => !cleared.includes(id) && canEnterRegion(cleared, id)) ?? ROUTE[0]
   }
 
   if (mode === 'expedition') {
     try {
       await loadCharacter()
-      if (!canEnterRegion(character.cleared, courseId)) {
+      if (character && !canEnterRegion(character.cleared, courseId)) {
         toastMessage = 'Restore the earlier relays to unlock ' + courses[courseId].name + '.'
         courseId = nextRegion()
       }
@@ -147,8 +149,8 @@ async function start() {
     options: ROUTE.map(id => ({ value: id, label: courses[id].name })),
     value: courseId,
     onChange(value) {
-      if (syncingCourse || value === courseId) return
-      enter(mode, value)
+      if (syncingCourse || value === courseId || !Object.hasOwn(courses, value)) return
+      enter(mode, value as CourseId)
     }
   })
 
@@ -207,7 +209,8 @@ async function start() {
   })
 
   function syncCourseOptions() {
-    const unlocked = ROUTE.indexOf(campaignSummary(progress).next)
+    const nextCourse = campaignSummary(progress).next
+    const unlocked = nextCourse ? ROUTE.indexOf(nextCourse) : -1
     syncingCourse = true
     try {
       courseSelect.api.setOptions(ROUTE.map((id, i) => ({
@@ -302,7 +305,7 @@ async function start() {
     uiDirty = true
   }
 
-  function enter(nextMode: string, nextCourse = courseId) {
+  function enter(nextMode: string, nextCourse: CourseId = courseId) {
     mode = nextMode
     courseId = nextCourse
     if (mode === 'expedition') code ??= GUILD_WORLD
@@ -380,7 +383,7 @@ async function start() {
   function advanceNext() {
     const after = ROUTE[ROUTE.indexOf(courseId) + 1]
     if (mode === 'expedition') {
-      if (after && canEnterRegion(character.cleared, after)) enter(mode, after)
+      if (after && character && canEnterRegion(character.cleared, after)) enter(mode, after)
       else showTitle()
     } else if (mode === 'campaign' && !after && campaignSummary(progress).complete) showEnding()
     else enter(mode, after ?? ROUTE[0])
@@ -390,7 +393,8 @@ async function start() {
 
   function paintRun(local: PlayerSnapshot | undefined) {
     const course = courses[courseId]
-    const collected = course.crystals.filter((_, i) => local?.crystals & (1 << i)).length
+    const crystalBits = local?.crystals ?? 0
+    const collected = course.crystals.filter((_, i) => crystalBits & (1 << i)).length
     const falls = (local?.falls ?? 0) + ((local?.falls ?? 0) === 1 ? ' fall' : ' falls')
     const elapsed = time(local?.ticks ?? 0)
     const chip = local?.signal ? '◆ Chip found' : '◇ Signal chip'
@@ -411,7 +415,7 @@ async function start() {
       painter.text(chapter.toUpperCase(), x, inset + 10, { ...label, fill: '#a9efb4' })
       painter.text(course.name, x, inset + 26, { fill: '#f1f9ef', size: 22, weight: 800, maxWidth: width - 24 })
       for (let i = 0; i < course.crystals.length; i++) {
-        const found = Boolean(local?.crystals & (1 << i))
+        const found = Boolean(crystalBits & (1 << i))
         painter.text(found ? '◆' : '◇', x + i * 19, inset + 53, { size: 16, fill: found ? '#a6ffee' : '#9bb9b0' })
       }
       painter.text(chip, x, inset + 73, { ...label, fill: local?.signal ? '#f8d782' : label.fill })
@@ -494,19 +498,19 @@ async function start() {
         boxNode({
           id: 'touch-left',
           style: { width: 58, height: 54 },
-          widget: { type: 'button', label: '←', onHold: active => { touchLeft = active; if (active) unlockSound() } }
+          widget: { type: 'button', label: '←', onHold: (active: boolean) => { touchLeft = active; if (active) unlockSound() } }
         }),
         boxNode({
           id: 'touch-right',
           style: { width: 58, height: 54 },
-          widget: { type: 'button', label: '→', onHold: active => { touchRight = active; if (active) unlockSound() } }
+          widget: { type: 'button', label: '→', onHold: (active: boolean) => { touchRight = active; if (active) unlockSound() } }
         })
       ]),
       boxNode({
         id: 'touch-jump',
         hidden: !showTouch,
         style: { anchor: 'bottom-right', width: 92, height: 54, inset: 14, respectSafeArea: true },
-        widget: { type: 'button', label: 'Jump', primary: true, onHold: active => { if (active) { unlockSound(); touchJump++ } } }
+        widget: { type: 'button', label: 'Jump', primary: true, onHold: (active: boolean) => { if (active) { unlockSound(); touchJump++ } } }
       }),
 
       // Title screen
@@ -669,7 +673,7 @@ async function start() {
         character: character ? { ...character } : null,
         message: toastMessage,
         courseDisabled: Object.fromEntries(ROUTE.map(id => {
-          const unlocked = ROUTE.indexOf(summary.next)
+          const unlocked = summary.next ? ROUTE.indexOf(summary.next) : -1
           const disabled = mode === 'expedition'
             ? Boolean(character && !canEnterRegion(character.cleared, id))
             : mode === 'campaign' && unlocked >= 0 && ROUTE.indexOf(id) > unlocked
@@ -698,9 +702,10 @@ async function start() {
       if (screen === 'play' && !room) stepPlayer(player, readInput(), dt, courses[courseId])
     },
     render(_alpha, now) {
-      room?.flush(now)
-      const players = room ? room.sample(now) : [player]
-      const local = room ? players.find(candidate => candidate.id === room.id) : player
+      const activeRoom = room
+      activeRoom?.flush(now)
+      const players = activeRoom ? activeRoom.sample(now) : [player]
+      const local = activeRoom ? players.find(candidate => candidate.id === activeRoom.id) : player
       latest = local
       const nowFinished = Boolean(local?.finished)
       if (nowFinished !== lastFinished) {

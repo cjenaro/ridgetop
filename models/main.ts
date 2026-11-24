@@ -96,7 +96,8 @@ async function start() {
   }
   function select(id: string) {
     request++
-    if (studies.has(id)) show(id, studies.get(id))
+    const study = studies.get(id)
+    if (study) show(id, study)
   }
   for (const button of choiceButtons) button.onclick = () => select(button.id)
   const fileInput = element<HTMLInputElement>('source-file')

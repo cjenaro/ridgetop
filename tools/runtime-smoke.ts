@@ -10,10 +10,11 @@ const runtimes = {
   bun: [process.env.RIDGETOP_BUN ?? 'bun'],
   deno: [process.env.RIDGETOP_DENO ?? 'deno', 'run', '--allow-read', '--allow-write', '--allow-net', '--allow-env']
 }
+type RuntimeName = keyof typeof runtimes
 const names = process.argv.slice(2)
 for (const name of names.length ? names : Object.keys(runtimes)) {
   if (!Object.hasOwn(runtimes, name)) throw new Error('Unknown runtime: ' + name)
-  const [command, ...args] = runtimes[name]
+  const [command, ...args] = runtimes[name as RuntimeName]
   const temporary = await mkdtemp(join(tmpdir(), 'ridgetop-runtime-'))
   const save = join(temporary, 'characters.json')
   const server = spawn(command, [...args, 'dist/server.js'], {
@@ -57,7 +58,7 @@ for (const name of names.length ? names : Object.keys(runtimes)) {
     assert.match(await (await request('/framework/art-recipe.js')).text(), /export function modelFromArtRecipe/)
     assert.match(await (await request('/sprite-model-editor.js')).text(), /export function createPartEditor/)
     const atlas = await request('/game/assets/sprites.json')
-    assert.match(atlas.headers.get('content-type'), /application\/json/)
+    assert.match(atlas.headers.get('content-type') ?? '', /application\/json/)
     assert.equal((await atlas.json()).clips.run.frames, 4)
     assert.equal((await request('/framework/sprite-sheet.js')).status, 200)
     assert.match(await (await request('/racing/main.js')).text(), /createLowPolyRenderer/)
@@ -72,7 +73,9 @@ for (const name of names.length ? names : Object.keys(runtimes)) {
     assert.equal((await request('/framework/server.js')).status, 404)
     const profile = await request('/expeditions/character', { method: 'POST' })
     assert.equal(profile.status, 200)
-    const cookie = profile.headers.get('set-cookie').split(';')[0]
+    const setCookie = profile.headers.get('set-cookie')
+    assert.ok(setCookie)
+    const cookie = setCookie.split(';')[0]
     assert.match(await profile.text(), /"xp":0/)
     assert.match(await readFile(save, 'utf8'), /"cleared":\[\]/)
     const zone = '/expeditions/ridge/runtime-smoke'
@@ -80,6 +83,7 @@ for (const name of names.length ? names : Object.keys(runtimes)) {
     assert.equal(stream.status, 200)
     let received = ''
     const decoder = new TextDecoder()
+    assert.ok(stream.body)
     const reader = stream.body.getReader()
     let token: string | undefined
     while (!token) {

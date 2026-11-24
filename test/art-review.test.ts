@@ -56,7 +56,7 @@ test('art reviews survive a host restart, preserve the before image and detect a
   await writeFile(path, JSON.stringify(note))
   const change = { status: 'resolved', reply: 'Looks good in motion.' }
   assert.equal((await next.request('reviews/' + id, 'PATCH', { ...change, revision: initial.revision })).status, 409)
-  const { entries, errors } = await (await next.request('reviews')).json()
+  const { entries, errors } = await (await next.request('reviews')).json() as { entries: { note: unknown; revision: string }[]; errors: unknown[] }
   assert.deepEqual(errors, [])
   assert.deepEqual(entries.map(e => e.note), [note])
   const resolved = await (await next.request('reviews/' + id, 'PATCH', { ...change, revision: entries[0].revision })).json()

@@ -1,4 +1,7 @@
 import type { RoomInput } from 'ridgetop'
+import type { CourseId } from '../examples/beacon-run/game/level.ts'
+import type { JumpTiming, Player } from '../examples/beacon-run/game/simulation.ts'
+import type { CourseRouteAction } from './course-route.ts'
 import { readFile } from 'node:fs/promises'
 import { pathToFileURL } from 'node:url'
 import { STEP, verifyTrace } from 'ridgetop'
@@ -6,24 +9,37 @@ import { courses } from '../examples/beacon-run/game/level.ts'
 import { platformerRules } from '../examples/beacon-run/game/rules.ts'
 import { createPlayer, DEFAULT_JUMP_TIMING, EMPTY_INPUT, stepPlayer } from '../examples/beacon-run/game/simulation.ts'
 
+type ProbeScenario = {
+  course: CourseId
+  fall: number
+  vy: number
+  intent: { edge: number[]; landing: number[] }
+  stale: { edge: number[]; landing: number[] }
+}
+
 const jump = { ...EMPTY_INPUT, jump: 1 }
 const right = { ...EMPTY_INPUT, right: true }
 const intentProbes = {
   edge: [0, 2, 3, 4], landing: [1, 3, 4, 5]
 }
 const staleProbes = { edge: [5, 7], landing: [6, 8] }
-const tuning = [
+const tuning: ProbeScenario[] = [
   { course: 'ridge', fall: 30, vy: 0, intent: intentProbes, stale: staleProbes },
   { course: 'ruins', fall: 60, vy: 60, intent: intentProbes, stale: staleProbes }
 ]
-const holdout = [
+const holdout: ProbeScenario[] = [
   { course: 'storm', fall: 38, vy: 110,
     intent: { edge: [1, 4], landing: [2, 5] }, stale: { edge: [5, 9], landing: [6, 10] } },
   { course: 'lastlight', fall: 78, vy: -45,
     intent: { edge: [3, 4], landing: [1, 5] }, stale: { edge: [5, 11], landing: [6, 11] } }
 ]
 
-function reach(player, advance, input, condition) {
+function reach(
+  player: Player,
+  advance: (player: Player, input: RoomInput) => void,
+  input: RoomInput,
+  condition: (player: Player) => boolean
+) {
   for (let tick = 0; tick < 180; tick++) {
     if (condition(player)) return tick
     advance(player, input)
@@ -31,11 +47,11 @@ function reach(player, advance, input, condition) {
   throw new Error('Timing probe could not reach its starting state')
 }
 
-function measure(scenarios, timing) {
+function measure(scenarios: readonly ProbeScenario[], timing: JumpTiming) {
   const samples = []
   for (const scenario of scenarios) {
     const course = courses[scenario.course]
-    const advance = (player, input) => stepPlayer(player, input, STEP, course, timing)
+    const advance = (player: Player, input: RoomInput) => stepPlayer(player, input, STEP, course, timing)
     const edge = createPlayer('edge', 0, course)
     reach(edge, advance, EMPTY_INPUT, player => player.grounded)
     reach(edge, advance, right, player => !player.grounded)
@@ -43,8 +59,8 @@ function measure(scenarios, timing) {
     fallStart.y -= scenario.fall
     fallStart.vy = scenario.vy
     const landingTick = reach(structuredClone(fallStart), advance, EMPTY_INPUT, player => player.grounded)
-    for (const [expected, offsets] of [[true, scenario.intent], [false, scenario.stale]]) {
-      for (const kind of ['edge', 'landing']) {
+    for (const [expected, offsets] of [[true, scenario.intent], [false, scenario.stale]] as const) {
+      for (const kind of ['edge', 'landing'] as const) {
         for (const offset of offsets[kind]) {
           const player = structuredClone(kind === 'edge' ? edge : fallStart)
           const delay = kind === 'edge' ? offset : landingTick - offset - 1
@@ -71,8 +87,8 @@ function measure(scenarios, timing) {
   }
 }
 
-function verifyCourses(routes, timing) {
-  return Object.entries(courses).map(([id, course]) => {
+function verifyCourses(routes: Record<CourseId, CourseRouteAction[]>, timing: JumpTiming) {
+  return (Object.entries(courses) as [CourseId, (typeof courses)[CourseId]][]).map(([id, course]) => {
     const actions: RoomInput[] = routes[id].flatMap(segment => Array(segment.frames).fill({
       left: segment.left, right: segment.right, jump: segment.jump
     }))
@@ -118,12 +134,12 @@ export async function tuneJumps(baselineTiming = DEFAULT_JUMP_TIMING) {
   return { status: approved ? 'candidate-passes' : 'keep-baseline', baseline, proposal, candidates }
 }
 
-function distance(timing, baseline) {
+function distance(timing: JumpTiming, baseline: JumpTiming) {
   return Math.abs(timing.coyoteTicks - baseline.coyoteTicks) +
     Math.abs(timing.bufferTicks - baseline.bufferTicks)
 }
 
-function regressed(before, after) {
+function regressed(before: ReturnType<typeof measure>, after: ReturnType<typeof measure>) {
   return before.samples.some((sample, index) =>
     sample.fired === sample.expected && after.samples[index].fired !== sample.expected)
 }

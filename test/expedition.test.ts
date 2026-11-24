@@ -13,24 +13,29 @@ test('expedition characters persist, progression gates zones and duplicate rewar
   const folder = await mkdtemp(join(tmpdir(), 'ridgetop-characters-'))
   const file = join(folder, 'characters.json')
   const store = await openCharacterStore(file)
+  const requireCharacter = (s: typeof store, key: string) => {
+    const character = s.get(key)
+    assert.ok(character)
+    return character
+  }
   const id = store.create()
-  assert.equal(canEnterRegion(store.get(id).cleared, 'ruins'), false)
+  assert.equal(canEnterRegion(requireCharacter(store, id).cleared, 'ruins'), false)
   assert.equal(store.award(id, 'foundry', { finished: true, signal: true }), false)
   assert.equal(store.award(id, 'ridge', { finished: false, signal: true }), false)
   assert.equal(store.award(id, 'ridge', { finished: true, signal: true }), true)
   assert.equal(store.awardGuild('ridge', [id, id]), false)
-  assert.equal(characterView(store.get(id)).xp, 125)
+  assert.equal(characterView(requireCharacter(store, id)).xp, 125)
   const teammate = store.create()
   assert.equal(store.awardGuild('ridge', [id, teammate]), false)
   assert.equal(store.award(teammate, 'ridge', { finished: true }), true)
   assert.equal(store.awardGuild('ridge', [id, teammate]), true)
   assert.equal(store.awardGuild('ridge', [id, teammate]), false)
-  assert.equal(characterView(store.get(teammate)).xp, 160)
-  assert.equal(canEnterRegion(store.get(id).cleared, 'ruins'), true)
+  assert.equal(characterView(requireCharacter(store, teammate)).xp, 160)
+  assert.equal(canEnterRegion(requireCharacter(store, id).cleared, 'ruins'), true)
   await store.save()
   const loaded = await openCharacterStore(file)
-  assert.deepEqual(characterView(loaded.get(id)), {
-    name: store.get(id).name, cleared: ['ridge'], chips: ['ridge'], guild: ['ridge'], xp: 185, level: 2
+  assert.deepEqual(characterView(requireCharacter(loaded, id)), {
+    name: requireCharacter(store, id).name, cleared: ['ridge'], chips: ['ridge'], guild: ['ridge'], xp: 185, level: 2
   })
 })
 
@@ -43,7 +48,9 @@ test('expedition endpoint grants stable anonymous characters and isolates the pu
   const endpoint = base + '/expeditions/character'
   const create = await fetch(endpoint, { method: 'POST' })
   assert.equal(create.status, 200)
-  const cookie = create.headers.get('set-cookie').split(';')[0]
+  const setCookie = create.headers.get('set-cookie')
+  assert.ok(setCookie)
+  const cookie = setCookie.split(';')[0]
   const profile = await create.json()
   const known = await fetch(endpoint, { method: 'POST', headers: { Cookie: cookie } })
   assert.deepEqual(await known.json(), profile)
@@ -60,8 +67,9 @@ test('expedition endpoint grants stable anonymous characters and isolates the pu
   })
   assert.equal(race.status, 200)
   assert.equal(expedition.status, 200)
-  async function snapshot(stream) {
+  async function snapshot(stream: Response) {
     let text = ''
+    assert.ok(stream.body)
     const reader = stream.body.getReader()
     const decoder = new TextDecoder()
     while (true) {

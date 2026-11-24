@@ -3,8 +3,8 @@ import assert from 'node:assert/strict'
 import { campaignSummary, loadCampaign, recordRelay, ROUTE, SAVE_KEY, saveCampaign } from '../examples/beacon-run/game/campaign.ts'
 
 test('progress unlocks the next course and survives reload, while improving records independently', () => {
-  const store = new Map()
-  const storage = { getItem: key => store.get(key) ?? null, setItem: (key, value) => store.set(key, value) }
+  const store = new Map<string, string>()
+  const storage = { getItem: (key: string) => store.get(key) ?? null, setItem: (key: string, value: string) => { store.set(key, value) } }
   const progress = loadCampaign(storage)
   assert.equal(campaignSummary(progress).next, ROUTE[0])
   recordRelay(progress, ROUTE[0], { finished: false })

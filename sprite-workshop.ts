@@ -80,12 +80,13 @@ function canvas(width: number, height: number) {
 }
 
 async function importPngs(input: File[]): Promise<Asset> {
+  if (!input.length) throw new Error('Choose at least one PNG frame.')
   if (input.length > 64) throw new Error('Choose up to 64 PNG frames for a sheet.')
   input.sort((a, b) => a.name.localeCompare(b.name, 'en', { numeric: true }))
   const single = input.length === 1
   const columns = single ? 4 : input.length
-  let image: HTMLCanvasElement
-  let width: number, height: number, rise: number
+  let image: HTMLCanvasElement | undefined
+  let width = 0, height = 0, rise = 0
   for (const [i, file] of input.entries()) {
     if (file.type !== 'image/png' && !/\.png$/i.test(file.name)) throw new Error(file.name + ' must be a PNG.')
     const bitmap = await createImageBitmap(file)
@@ -101,15 +102,18 @@ async function importPngs(input: File[]): Promise<Asset> {
         }
         image = canvas(sheetWidth, sheetHeight)
       }
+      if (!image) throw new Error('Could not initialize sprite sheet.')
       if (bitmap.width !== width || bitmap.height !== height) {
         throw new Error(file.name + ' must match the first frame (' + width + ' × ' + height + ' px).')
       }
       const ctx = image.getContext('2d')
+      if (!ctx) throw new Error('2D canvas context unavailable.')
       if (single) {
         for (const [column, y] of [2 * rise, rise, 0, rise].entries()) ctx.drawImage(bitmap, column * width, y)
       } else ctx.drawImage(bitmap, i * width, 0)
     } finally { bitmap.close() }
   }
+  if (!image) throw new Error('Could not build sprite sheet.')
   const name = input[0].name.replace(/\.png$/i, '').normalize('NFKD')
     .replace(/[^a-z0-9_-]+/gi, '-').replace(/^-+|-+$/g, '') || 'sprite'
   const clips: Record<string, SpriteClip> = single
@@ -121,6 +125,7 @@ async function importPngs(input: File[]): Promise<Asset> {
 function paintFrame(target: HTMLCanvasElement, column: number, row = 0) {
   const { frameWidth: w, frameHeight: h } = asset.manifest
   const ctx = target.getContext('2d')
+  if (!ctx) return
   ctx.clearRect(0, 0, target.width, target.height)
   ctx.imageSmoothingEnabled = false
   ctx.drawImage(asset.image, column * w, row * h, w, h, 0, 0, target.width, target.height)
@@ -289,16 +294,17 @@ element('next-palette').onclick = () => {
   if (!template?.palettes) return
   template.variant = (template.variant + 1) % template.palettes.length
   template.palette = [...template.palettes[template.variant]]
-  if (template.recipe) {
+  const recipe = template.recipe
+  if (recipe) {
     template.roles.forEach((role, i) => {
-      template.recipe.palette[role as ArtTone] = '#' + template.palette[i]
+      recipe.palette[role as ArtTone] = '#' + template.palette[i]
     })
   }
   showPalette(template)
   recolor(template)
 }
 files.onchange = async () => {
-  const input = Array.from(files.files)
+  const input = Array.from(files.files ?? [])
   if (!input.length) return
   const request = ++importRequest
   const status = element('import-status')
@@ -363,7 +369,8 @@ element('save-json').onclick = () => {
     asset.manifest.src.replace(/\.png$/, '.json'))
 }
 element('save-recipe').onclick = () => {
-  const recipe = templates[art.value].recipe
+  const recipe = templates[art.value]?.recipe
+  if (!recipe) return
   download(new Blob([JSON.stringify(recipe, null, 2) + '\n'], { type: 'application/json' }), recipe.name + '.art.json')
 }
 showAsset()

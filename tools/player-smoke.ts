@@ -3,6 +3,7 @@ import { copyFile, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promi
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { pathToFileURL } from 'node:url'
+import type { BrowserTab } from './browser-driver.ts'
 import { key, openPlayerTab, until } from './browser-driver.ts'
 
 const temp = await mkdtemp(join(tmpdir(), 'ridgetop-player-'))
@@ -10,8 +11,8 @@ const source = new URL('../dist/signal-drift.html', import.meta.url)
 const backup = join(temp, 'signal-drift-save.json')
 const backend = process.env.RIDGETOP_BACKENDS?.split(',')[0] ?? 'auto'
 
-const uiState = (tab, field: string) => tab.evaluate(`window.__ridgetopUi?.state?.()?.[${JSON.stringify(field)}]`)
-const uiAct = (tab, id: string, action = 'press') => tab.evaluate(`window.__ridgetopUi?.act(${JSON.stringify(id)}, ${JSON.stringify(action)})`)
+const uiState = <T = any>(tab: BrowserTab, field: string) => tab.evaluate<T>(`window.__ridgetopUi?.state?.()?.[${JSON.stringify(field)}]`)
+const uiAct = (tab: BrowserTab, id: string, action = 'press') => tab.evaluate(`window.__ridgetopUi?.act(${JSON.stringify(id)}, ${JSON.stringify(action)})`)
 
 async function launch(folder: string) {
   await mkdir(folder)
@@ -29,12 +30,12 @@ async function launch(folder: string) {
   } catch (error) { await tab.close(); throw error }
 }
 
-async function chooseFile(tab, file: string) {
+async function chooseFile(tab: BrowserTab, file: string) {
   const { root } = await tab.call('DOM.getDocument')
   const { nodeId } = await tab.call('DOM.querySelector', { nodeId: root.nodeId, selector: '#race-save-file' })
   await tab.call('DOM.setFileInputFiles', { nodeId, files: [file] })
 }
-async function checkOffline(tab) {
+async function checkOffline(tab: BrowserTab) {
   assert.equal(await tab.evaluate("performance.getEntriesByType('resource').some(r => /^https?:/.test(r.name))"), false)
   assert.deepEqual(tab.errors, [])
 }

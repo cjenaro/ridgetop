@@ -1,13 +1,27 @@
+import type { Course, CourseId } from './level.ts'
+import type { PlayerSnapshot } from './simulation.ts'
 import { courses } from './level.ts'
 
-export const ROUTE = Object.freeze(Object.keys(courses))
+export interface CampaignLevelRecord {
+  ticks: number
+  medal: number
+  signal: boolean
+}
+
+export interface CampaignProgress {
+  levels: Partial<Record<CourseId, CampaignLevelRecord>>
+  sound: boolean
+}
+
+export const ROUTE: readonly CourseId[] = Object.freeze(Object.keys(courses) as CourseId[])
 export const SAVE_KEY = 'ridgetop.campaign.v1'
 
-export function loadCampaign(storage) {
-  const levels = {}
+export function loadCampaign(storage?: Pick<Storage, 'getItem'> | null): CampaignProgress {
+  const levels: Partial<Record<CourseId, CampaignLevelRecord>> = {}
   let sound = true
   try {
-    const saved = JSON.parse(storage.getItem(SAVE_KEY))
+    const raw = storage?.getItem(SAVE_KEY)
+    const saved = raw ? JSON.parse(raw) : null
     for (const id of ROUTE) {
       const entry = saved?.levels?.[id]
       if (entry && Number.isSafeInteger(entry.ticks) && entry.ticks > 0 &&
@@ -20,32 +34,37 @@ export function loadCampaign(storage) {
   return { levels, sound }
 }
 
-export function saveCampaign(storage, progress) {
-  try { storage.setItem(SAVE_KEY, JSON.stringify(progress)) }
+export function saveCampaign(storage: Pick<Storage, 'setItem'> | null | undefined, progress: CampaignProgress) {
+  try { storage?.setItem(SAVE_KEY, JSON.stringify(progress)) }
   catch { /* In-memory progress remains available. */ }
 }
 
-export function medal(course, player) {
+export function medal(course: Pick<Course, 'par'>, player: Pick<PlayerSnapshot, 'falls' | 'ticks'>) {
   if (player.falls === 0 && player.ticks <= course.par * 60) return 3
   return player.falls <= 2 ? 2 : 1
 }
 
-export function recordRelay(progress, id, player) {
+export function recordRelay(
+  progress: CampaignProgress,
+  id: string,
+  player: { finished: false } | Pick<PlayerSnapshot, 'finished' | 'ticks' | 'signal' | 'falls'>
+) {
   if (!player.finished || !Object.hasOwn(courses, id)) return
-  const previous = progress.levels[id]
-  progress.levels[id] = {
+  const courseId = id as CourseId
+  const previous = progress.levels[courseId]
+  progress.levels[courseId] = {
     ticks: Math.min(previous?.ticks ?? Infinity, player.ticks),
     signal: Boolean(previous?.signal || player.signal),
-    medal: Math.max(previous?.medal ?? 0, medal(courses[id], player))
+    medal: Math.max(previous?.medal ?? 0, medal(courses[courseId], player))
   }
 }
 
-export function campaignSummary(progress) {
+export function campaignSummary(progress: CampaignProgress) {
   let cleared = 0
   let signals = 0
   let gold = 0
   let ticks = 0
-  let next
+  let next: CourseId | undefined
   for (const id of ROUTE) {
     const record = progress.levels[id]
     if (!record) {
