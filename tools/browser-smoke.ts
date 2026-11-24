@@ -289,6 +289,175 @@ try {
     console.log(backend + ' rendered Signal Drift and handled garage preview, installation, save, driving, weapons, pause and recovery')
   }
 
+  for (const backend of selected) {
+    const lh = await open('/lighthouse?renderer=' + backend, `(() => {
+      const storage = window.localStorage
+      const prefix = ${JSON.stringify(room + '.lighthouse.' + backend + '.')}
+      Object.defineProperty(window, 'localStorage', { value: {
+        getItem: key => storage.getItem(prefix + key),
+        setItem: (key, value) => storage.setItem(prefix + key, value),
+        removeItem: key => storage.removeItem(prefix + key)
+      } })
+    })()`)
+    await until(() => uiState(lh, 'screen'), 'title', backend + ' Tidewatch title screen loaded')
+    const titleLayout = await lh.evaluate(`(() => {
+      const world = document.getElementById('lh-stage')
+      const layer = document.getElementById('lh-hud')
+      const ui = document.getElementById('lh-ui')
+      const fillsViewport = el => {
+        const r = el.getBoundingClientRect()
+        return r.top === 0 && r.left === 0 && r.width === innerWidth && r.height === innerHeight
+      }
+      const uiPixels = ui.getContext('2d').getImageData(0, 0, ui.width, ui.height).data
+      let uiPainted = false
+      for (let i = 3; i < uiPixels.length; i += 64) { if (uiPixels[i] > 0) { uiPainted = true; break } }
+      return {
+        playfield: fillsViewport(world),
+        hud: fillsViewport(layer),
+        ui: fillsViewport(ui),
+        noHtmlMenus: document.querySelectorAll('button, select').length === 0,
+        noScroll: document.scrollingElement.scrollHeight === innerHeight,
+        uiPainted
+      }
+    })()`)
+    assert.deepEqual(titleLayout, { playfield: true, hud: true, ui: true, noHtmlMenus: true, noScroll: true, uiPainted: true }, backend + ' Tidewatch title layout')
+
+    // Start gameplay via Canvas UI action
+    await uiAct(lh, 'lh-play')
+    await until(() => uiState(lh, 'screen'), 'playing', backend + ' Tidewatch gameplay started')
+    await assertGameViewport(lh, 'lh-stage', 'lh-hud', 'lh-ui')
+
+    // Verify movement / keyboard input updates the rendered viewport and state stays finite
+    const stageClip = await lh.evaluate(`(() => {
+      const { x, y, width, height } = document.getElementById('lh-stage').getBoundingClientRect()
+      return { x, y, width, height, scale: 1 }
+    })()`)
+    async function captureStage() {
+      await lh.evaluate('new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))')
+      return (await lh.call('Page.captureScreenshot', { format: 'png', clip: stageClip })).data
+    }
+    const beforeMove = await captureStage()
+    await key(lh, 'keyDown', 'KeyD', 'd')
+    await key(lh, 'keyDown', 'KeyS', 's')
+    await until(async () => await captureStage() !== beforeMove, true, backend + ' Tidewatch movement updates live frame', 40)
+    await key(lh, 'keyUp', 'KeyD', 'd')
+    await key(lh, 'keyUp', 'KeyS', 's')
+
+    const playState = await lh.evaluate('window.__ridgetopUi?.state?.()')
+    for (const metric of ['day', 'coins', 'fuel', 'warmth', 'carry', 'shipsGuided']) {
+      assert.ok(typeof playState[metric] === 'number' && Number.isFinite(playState[metric]), `${backend} Tidewatch ${metric} must be finite`)
+    }
+
+    // Open and close the upgrade shop modal
+    await key(lh, 'keyDown', 'KeyE', 'e')
+    await key(lh, 'keyUp', 'KeyE', 'e')
+    await until(() => uiState(lh, 'screen'), 'shop', backend + ' Tidewatch upgrade shop opens')
+    await until(() => lh.evaluate("window.__ridgetopUi?.query?.({ id: 'lh-upg-boots' })?.length"), 1, backend + ' Tidewatch upgrade button rendered in shop modal')
+    await until(() => uiRect(lh, 'lh-shop-close'), Boolean, backend + ' Tidewatch shop close button laid out')
+    await uiAct(lh, 'lh-shop-close')
+    await until(() => uiState(lh, 'screen'), 'playing', backend + ' Tidewatch upgrade shop closes')
+
+    // Pause and resume
+    await key(lh, 'keyDown', 'Escape', 'Escape')
+    await key(lh, 'keyUp', 'Escape', 'Escape')
+    await until(() => uiState(lh, 'screen'), 'paused', backend + ' Tidewatch pause opens')
+    await until(() => uiRect(lh, 'lh-resume'), Boolean, backend + ' Tidewatch resume button laid out')
+    await uiAct(lh, 'lh-resume')
+    await until(() => uiState(lh, 'screen'), 'playing', backend + ' Tidewatch pause closes')
+
+    // Confirm active rendering stats on this backend (instances/triangles > 0, no NaN, alpha/additive blending & dynamic lighting active)
+    const renderProbe = await lh.evaluate(`(async () => {
+      const [{ createLowPolyRenderer }, { createInitialState, stepGame }, { createLighthouseScene }] = await Promise.all([
+        import('/framework/index.js'),
+        import('/lighthouse/simulation.js'),
+        import('/lighthouse/scene.js')
+      ])
+      const probeCanvas = document.createElement('canvas')
+      probeCanvas.width = 640
+      probeCanvas.height = 360
+      probeCanvas.style.cssText = 'position:fixed;left:0;top:0;width:640px;height:360px;opacity:0;pointer-events:none'
+      document.body.appendChild(probeCanvas)
+      let renderer
+      let scene
+      try {
+        renderer = await createLowPolyRenderer(probeCanvas, {
+          backend: ${JSON.stringify(backend)},
+          canvasDepth: true,
+          lighting: { direction: [-0.45, 0.82, 0.36], ambient: 0.50 }
+        })
+        let lastLighting = null
+        let alphaInstances = 0
+        let additiveInstances = 0
+        let opaqueInstances = 0
+        let hasNonFiniteInstance = false
+        const tracked = {
+          get name() { return renderer.name },
+          get canvas() { return renderer.canvas },
+          setLighting(opts) {
+            lastLighting = opts
+            return renderer.setLighting(opts)
+          },
+          render(camera, batches, clear) {
+            alphaInstances = 0
+            additiveInstances = 0
+            opaqueInstances = 0
+            hasNonFiniteInstance = false
+            for (const b of batches) {
+              const mode = b.blend ?? 'opaque'
+              if (mode === 'alpha') alphaInstances += b.count
+              else if (mode === 'additive') additiveInstances += b.count
+              else opaqueInstances += b.count
+              const len = b.count * 16
+              for (let i = 0; i < len; i++) {
+                if (!Number.isFinite(b.data[i])) { hasNonFiniteInstance = true; break }
+              }
+            }
+            return renderer.render(camera, batches, clear)
+          },
+          release(batch) { return renderer.release(batch) },
+          releaseMesh(m) { return renderer.releaseMesh(m) },
+          dispose() { return renderer.dispose() }
+        }
+        scene = createLighthouseScene(tracked)
+        const state = createInitialState(1337)
+        for (let i = 0; i < 6; i++) stepGame(state, { x: 0.8, z: 0.4 }, 1 / 60)
+        const stats = scene.render(state, 1 / 60, false)
+        return {
+          backend: renderer.name,
+          stats,
+          alphaInstances,
+          additiveInstances,
+          opaqueInstances,
+          hasNonFiniteInstance,
+          pointLights: lastLighting?.points?.length ?? 0,
+          fogActive: Number.isFinite(lastLighting?.fogNear) && Number.isFinite(lastLighting?.fogFar) && lastLighting.fogFar > lastLighting.fogNear
+        }
+      } finally {
+        scene?.dispose()
+        renderer?.dispose()
+        probeCanvas.remove()
+      }
+    })()`)
+    assert.equal(renderProbe.backend, rendererNames[backend], backend + ' Tidewatch backend matched')
+    assert.ok(renderProbe.stats.instances > 0 && Number.isFinite(renderProbe.stats.instances), backend + ' Tidewatch instances > 0')
+    assert.ok(renderProbe.stats.triangles > 0 && Number.isFinite(renderProbe.stats.triangles), backend + ' Tidewatch triangles > 0')
+    assert.ok(renderProbe.stats.drawCalls > 0 && Number.isFinite(renderProbe.stats.drawCalls), backend + ' Tidewatch drawCalls > 0')
+    assert.equal(renderProbe.hasNonFiniteInstance, false, backend + ' Tidewatch instance transforms have no NaN/Infinity')
+    assert.ok(renderProbe.alphaInstances > 0, backend + ' Tidewatch alpha blending active')
+    assert.ok(renderProbe.additiveInstances > 0, backend + ' Tidewatch additive blending active')
+    assert.ok(renderProbe.pointLights >= 3, backend + ' Tidewatch dynamic point lighting active')
+    assert.equal(renderProbe.fogActive, true, backend + ' Tidewatch distance fog active')
+
+    if (process.env.RIDGETOP_LIGHTHOUSE_SCREENSHOT && backend === selected[0]) {
+      const shot = await lh.call('Page.captureScreenshot', { format: 'png' })
+      await writeFile(process.env.RIDGETOP_LIGHTHOUSE_SCREENSHOT, Buffer.from(shot.data, 'base64'))
+    }
+    assert.deepEqual(lh.errors, [])
+    await lh.close()
+    tabs.pop()
+    console.log(backend + ' rendered Tidewatch (/lighthouse) with alpha/additive blending, dynamic lighting, movement, and shop modal')
+  }
+
   const campaign = await open('/?canvas=1', `
     (() => {
       const realStorage = window.localStorage
