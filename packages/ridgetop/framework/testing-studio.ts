@@ -254,13 +254,20 @@ export interface TestingStudioHandle {
   dispose(): void
 }
 
+let activeStudioHandle: TestingStudioHandle | undefined
+
 /**
  * Mount the game-agnostic Ridgetop Testing Mode bar and unified In-Game Asset Studio drawer.
  * Isolated inside `#ridgetop-testing-root` appended to `document.body` — works with any game page.
  */
 export function mountTestingStudio(): TestingStudioHandle {
+  if (activeStudioHandle) {
+    activeStudioHandle.dispose()
+    activeStudioHandle = undefined
+  }
   const existing = document.getElementById('ridgetop-testing-root')
   if (existing) existing.remove()
+  let disposed = false
 
   setTestingActive(true)
 
@@ -1575,20 +1582,35 @@ export function mountTestingStudio(): TestingStudioHandle {
 
   // Initial load + resume review from URL or reload-compare state
   refreshReviews().then(async () => {
+    if (disposed) return
     const state = history.state?.ridgetopStudio as { reviewId?: string; scene?: unknown } | undefined
     const urlReview = new URLSearchParams(location.search).get('review')
     const wanted = state?.reviewId ?? urlReview
     if (wanted && entries.has(wanted)) {
       await openReview(entries.get(wanted)!)
+    } else if (state && state.scene !== undefined && state.scene !== null) {
+      if (!isTestingPaused()) setTestingPaused(true)
+      const hasRestore = getTestingHooks().some(h => typeof h.restore === 'function')
+      if (hasRestore) {
+        await restoreSnapshot(state.scene)
+      } else {
+        pendingRestore = { scene: state.scene, entryId: '' }
+      }
+      setStatus('Restored pre-reload scene snapshot.')
     }
-    if (state) history.replaceState(null, '')
+    if (!disposed && state) history.replaceState(null, '')
+  }).catch(err => {
+    if (!disposed) setStatus((err as Error).message)
   })
 
-  return {
+  const handle: TestingStudioHandle = {
     root,
     pause: setPaused,
     refreshReviews,
     dispose() {
+      if (disposed) return
+      disposed = true
+      if (activeStudioHandle === handle) activeStudioHandle = undefined
       stopSpriteAnim()
       unsubPause()
       unsubHooks()
@@ -1597,4 +1619,6 @@ export function mountTestingStudio(): TestingStudioHandle {
       root.remove()
     }
   }
+  activeStudioHandle = handle
+  return handle
 }

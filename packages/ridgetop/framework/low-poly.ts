@@ -21,7 +21,7 @@ export { color } from './renderer.ts'
 export const LIGHT_FLOATS = 48
 const defaultClear: Color = [0.05, 0.08, 0.12, 1]
 
-function packLighting(options: LightingOptions = {}, prev?: Float32Array<ArrayBuffer>): Float32Array<ArrayBuffer> {
+export function packLighting(options: LightingOptions = {}, prev?: Float32Array<ArrayBuffer>): Float32Array<ArrayBuffer> {
   const out = new Float32Array(LIGHT_FLOATS)
   if (prev && prev.length >= LIGHT_FLOATS) out.set(prev)
   else {
@@ -51,8 +51,9 @@ function packLighting(options: LightingOptions = {}, prev?: Float32Array<ArrayBu
     out[10] = options.fogColor[2]
   }
   if (options.fogNear !== undefined || options.fogFar !== undefined) {
-    const near = options.fogNear ?? out[11]
-    const far = options.fogFar ?? (out[12] > 0 ? near + 1 / out[12] : near)
+    const prevNear = out[11]
+    const near = options.fogNear ?? prevNear
+    const far = options.fogFar ?? (out[12] > 0 ? prevNear + 1 / out[12] : near)
     out[11] = Number.isFinite(near) ? near : 0
     out[12] = Number.isFinite(far) && far > near ? 1 / (far - near) : 0
   }

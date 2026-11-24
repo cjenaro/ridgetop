@@ -611,6 +611,19 @@ test('createAudioBank loads, decodes, caches, routes, loops, stops, and disposes
   bank.setMuted(false)
   assert.equal(createdGains[0].gain.value, 0.5)
 
+  // If source.start() throws, play() must clean up and disconnect nodes without leaking active handles
+  const origCreateBufferSource = mockCtx.createBufferSource
+  mockCtx.createBufferSource = () => {
+    const src = origCreateBufferSource()
+    src.start = () => { throw new RangeError('offset exceeds buffer duration') }
+    return src
+  }
+  const failedHandle = bank.play('jump', { offset: 999 })
+  assert.equal(failedHandle.playing, false)
+  const failedSrc = createdSources[createdSources.length - 1]
+  assert.equal(failedSrc.disconnected, 1)
+  mockCtx.createBufferSource = origCreateBufferSource
+
   // dispose clears cache and does NOT close caller-supplied AudioContext
   const activeBeforeDispose = bank.play('music', { loop: true })
   bank.dispose()

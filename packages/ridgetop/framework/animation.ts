@@ -148,6 +148,49 @@ export interface WorldJoint {
   readonly scale: Vec3
 }
 
+const _tmpPos: [number, number, number] = [0, 0, 0]
+const _tmpScl: [number, number, number] = [1, 1, 1]
+const _tmpQ: [number, number, number, number] = [0, 0, 0, 1]
+const _tmpQ2: [number, number, number, number] = [0, 0, 0, 1]
+const _tmpCol: [number, number, number, number] = [1, 1, 1, 1]
+
+function quatFromEulerInto(out: [number, number, number, number], pitch: number, yaw: number, roll: number) {
+  const hp = pitch * 0.5, hy = yaw * 0.5, hr = roll * 0.5
+  const sp = Math.sin(hp), cp = Math.cos(hp)
+  const sy = Math.sin(hy), cy = Math.cos(hy)
+  const sr = Math.sin(hr), cr = Math.cos(hr)
+  out[0] = cy * sp * cr + sy * cp * sr
+  out[1] = sy * cp * cr - cy * sp * sr
+  out[2] = cy * cp * sr - sy * sp * cr
+  out[3] = cy * cp * cr + sy * sp * sr
+}
+
+function mulQuatInto(out: [number, number, number, number], a: Quaternion, b: Quaternion) {
+  const ax = a[0], ay = a[1], az = a[2], aw = a[3]
+  const bx = b[0], by = b[1], bz = b[2], bw = b[3]
+  out[0] = aw * bx + ax * bw + ay * bz - az * by
+  out[1] = aw * by - ax * bz + ay * bw + az * bx
+  out[2] = aw * bz + ax * by - ay * bx + az * bw
+  out[3] = aw * bw - ax * bx - ay * by - az * bz
+}
+
+function rotatePointAddInto(
+  out: [number, number, number],
+  base: Vec3,
+  q: Quaternion,
+  vx: number,
+  vy: number,
+  vz: number
+) {
+  const qx = q[0], qy = q[1], qz = q[2], qw = q[3]
+  const tx = 2 * (qy * vz - qz * vy)
+  const ty = 2 * (qz * vx - qx * vz)
+  const tz = 2 * (qx * vy - qy * vx)
+  out[0] = base[0] + vx + qw * tx + (qy * tz - qz * ty)
+  out[1] = base[1] + vy + qw * ty + (qz * tx - qx * tz)
+  out[2] = base[2] + vz + qw * tz + (qx * ty - qy * tx)
+}
+
 /**
  * Evaluate forward kinematics for a Rig and emit all joint parts into a MeshPool.
  * Returns world transforms per joint id so callers can attach props or spawn particles at exact bones.
@@ -183,17 +226,20 @@ export function renderRig(
 
     const piv = joint.pivot ?? ZERO3
     const off = pose?.position ?? ZERO3
-    const localPos: Vec3 = [
-      (piv[0] + off[0]) * pScl[0],
-      (piv[1] + off[1]) * pScl[1],
-      (piv[2] + off[2]) * pScl[2]
-    ]
-    const rOff = rotateVec3(pRot, localPos)
-    const jPos: Vec3 = [pPos[0] + rOff[0], pPos[1] + rOff[1], pPos[2] + rOff[2]]
+    const lx = (piv[0] + off[0]) * pScl[0]
+    const ly = (piv[1] + off[1]) * pScl[1]
+    const lz = (piv[2] + off[2]) * pScl[2]
+    const jPos: [number, number, number] = [0, 0, 0]
+    rotatePointAddInto(jPos, pPos, pRot, lx, ly, lz)
 
     const rotEuler = pose?.rotation
-    const jLocalQ = rotEuler ? quaternionFromEuler(rotEuler[0], rotEuler[1], rotEuler[2]) : IDENTITY_Q
-    const jRot = rotEuler ? multiplyQuat(pRot, jLocalQ) : pRot
+    let jRot: Quaternion
+    if (rotEuler) {
+      quatFromEulerInto(_tmpQ, rotEuler[0], rotEuler[1], rotEuler[2])
+      jRot = multiplyQuat(pRot, _tmpQ)
+    } else {
+      jRot = pRot
+    }
 
     const ls = pose?.scale ?? ONE3
     const jScl: Vec3 = [pScl[0] * ls[0], pScl[1] * ls[1], pScl[2] * ls[2]]
@@ -207,22 +253,21 @@ export function renderRig(
       for (const part of joint.parts) {
         const lp = part.position ?? ZERO3
         const ps = part.scale ?? ONE3
-        const scaledOff: Vec3 = [lp[0] * jScl[0], lp[1] * jScl[1], lp[2] * jScl[2]]
-        const rotPartOff = rotateVec3(jRot, scaledOff)
-        const finalPos: Vec3 = [jPos[0] + rotPartOff[0], jPos[1] + rotPartOff[1], jPos[2] + rotPartOff[2]]
-        const finalScale: Vec3 = [
-          Math.max(1e-4, ps[0] * jScl[0]),
-          Math.max(1e-4, ps[1] * jScl[1]),
-          Math.max(1e-4, ps[2] * jScl[2])
-        ]
-        const finalRot = part.rotation
-          ? multiplyQuat(jRot, quaternionFromEuler(part.rotation[0], part.rotation[1], part.rotation[2]))
-          : jRot
+        rotatePointAddInto(_tmpPos, jPos, jRot, lp[0] * jScl[0], lp[1] * jScl[1], lp[2] * jScl[2])
+        _tmpScl[0] = Math.max(1e-4, ps[0] * jScl[0])
+        _tmpScl[1] = Math.max(1e-4, ps[1] * jScl[1])
+        _tmpScl[2] = Math.max(1e-4, ps[2] * jScl[2])
+        let finalRot: Quaternion = jRot
+        if (part.rotation) {
+          quatFromEulerInto(_tmpQ, part.rotation[0], part.rotation[1], part.rotation[2])
+          mulQuatInto(_tmpQ2, jRot, _tmpQ)
+          finalRot = _tmpQ2
+        }
         const tint = partColor ? partColor(joint.id, part) : part.color
         pool.add(
           part.mesh,
-          finalPos,
-          finalScale,
+          _tmpPos,
+          _tmpScl,
           finalRot,
           tint,
           part.unlit ?? 0,
@@ -384,10 +429,12 @@ interface Particle {
 
 /** Lightweight low-poly 3D particle & parabolic item-arc system. */
 export function createParticles(maxParticles = 240) {
+  const limit = Number.isFinite(maxParticles) ? Math.max(0, Math.floor(maxParticles)) : 240
   const list: Particle[] = []
 
   function push(p: Particle) {
-    if (list.length >= maxParticles) list.shift()
+    if (limit <= 0) return
+    if (list.length >= limit) list.shift()
     list.push(p)
   }
 
@@ -488,18 +535,28 @@ export function createParticles(maxParticles = 240) {
       }
     },
     emit(pool: MeshPool) {
-      for (const p of list) {
+      for (let i = 0; i < list.length; i++) {
+        const p = list[i]
         const u = p.age / p.life
         const factor = p.mode === 'arc'
           ? 1 + Math.sin(u * Math.PI) * 0.22 - (1 - p.endScale) * u * 0.5
           : Math.max(0.02, 1 + (p.endScale - 1) * u)
-        const tint: Color = p.alphaFade
-          ? [p.color[0], p.color[1], p.color[2], p.color[3] * (1 - u)]
-          : p.color
+        let tint: Color = p.color
+        if (p.alphaFade) {
+          _tmpCol[0] = p.color[0]
+          _tmpCol[1] = p.color[1]
+          _tmpCol[2] = p.color[2]
+          _tmpCol[3] = p.color[3] * (1 - u)
+          tint = _tmpCol
+        }
+        _tmpPos[0] = p.x; _tmpPos[1] = p.y; _tmpPos[2] = p.z
+        _tmpScl[0] = Math.max(0.01, p.sx * factor)
+        _tmpScl[1] = Math.max(0.01, p.sy * factor)
+        _tmpScl[2] = Math.max(0.01, p.sz * factor)
         pool.add(
           p.mesh,
-          [p.x, p.y, p.z],
-          [Math.max(0.01, p.sx * factor), Math.max(0.01, p.sy * factor), Math.max(0.01, p.sz * factor)],
+          _tmpPos,
+          _tmpScl,
           p.yaw,
           tint,
           p.unlit,

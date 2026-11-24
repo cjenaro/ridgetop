@@ -107,6 +107,73 @@ test('fixedLoop pauses simulation and prevents catch-up lag spikes while testing
   })
 })
 
+test('bindActionControls restarts gamepad polling after Testing Mode pause/resume', t => {
+  t.after(() => {
+    setTestingPaused(false)
+    setTestingActive(false)
+    resetTestingRuntime()
+  })
+
+  const winTarget = new EventTarget()
+  const docTarget = new EventTarget()
+  Object.defineProperty(docTarget, 'hidden', { value: false, configurable: true })
+  let nextId = 1
+  const rafMap = new Map<number, (ts: number) => void>()
+  let startPressed = false
+  const fakePad = {
+    connected: true,
+    buttons: Array.from({ length: 16 }, (_, idx) => ({
+      get pressed() { return idx === 9 ? startPressed : false },
+      get value() { return idx === 9 && startPressed ? 1 : 0 }
+    })),
+    axes: [0, 0, 0, 0]
+  }
+  let pauses = 0
+
+  withGlobals({
+    window: winTarget,
+    document: docTarget,
+    Element: class {},
+    navigator: { getGamepads: () => [fakePad] },
+    requestAnimationFrame: (cb: (ts: number) => void) => {
+      const id = nextId++
+      rafMap.set(id, cb)
+      return id
+    },
+    cancelAnimationFrame: (id: number) => { rafMap.delete(id) }
+  }, () => {
+    const flushRaf = () => {
+      const entries = Array.from(rafMap.entries())
+      rafMap.clear()
+      for (const [, cb] of entries) cb(0)
+    }
+
+    const controls = bindActionControls({
+      keys: { KeyA: 'left' },
+      buttons: [],
+      enabled: () => false,
+      onPause: () => { pauses++ }
+    })
+    // Initial loop is scheduled because pad is connected
+    assert.equal(rafMap.size, 1)
+    flushRaf()
+    assert.equal(rafMap.size, 1)
+
+    // Testing pause stops the pad loop
+    setTestingPaused(true)
+    flushRaf()
+    assert.equal(rafMap.size, 0)
+
+    // Resuming testing mode must restart the pad loop even while enabled() === false
+    setTestingPaused(false)
+    assert.equal(rafMap.size, 1)
+    startPressed = true
+    flushRaf()
+    assert.equal(pauses, 1)
+    controls.dispose()
+  })
+})
+
 test('bindActionControls clears held state and ignores keyboard input while testing mode is paused', t => {
   t.after(() => {
     setTestingPaused(false)

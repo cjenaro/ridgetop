@@ -423,13 +423,49 @@ export function slideSphere(
       let bestDepth = 0
       let bestNx = 0, bestNy = 0, bestNz = 0
 
+      const rSq = radius * radius
       for (let i = 0; i < colliders.length; i++) {
-        const res = resolveSphereAabb({ center: [px, py, pz], radius }, colliders[i])
-        if (res.hit && res.depth > bestDepth) {
-          bestDepth = res.depth
-          bestNx = res.normal[0]
-          bestNy = res.normal[1]
-          bestNz = res.normal[2]
+        const box = colliders[i]
+        if (!isValidAabb(box)) continue
+        const qx = clamp(px, box.min[0], box.max[0])
+        const qy = clamp(py, box.min[1], box.max[1])
+        const qz = clamp(pz, box.min[2], box.max[2])
+        const dx = px - qx
+        const dy = py - qy
+        const dz = pz - qz
+        const distSq = dx * dx + dy * dy + dz * dz
+        if (distSq > 0) {
+          if (distSq >= rSq) continue
+          const dist = Math.sqrt(distSq)
+          const depth = radius - dist
+          if (depth > bestDepth) {
+            const inv = 1 / dist
+            bestDepth = depth
+            bestNx = dx * inv
+            bestNy = dy * inv
+            bestNz = dz * inv
+          }
+        } else {
+          const dNegX = px - box.min[0]
+          const dPosX = box.max[0] - px
+          const dNegY = py - box.min[1]
+          const dPosY = box.max[1] - py
+          const dNegZ = pz - box.min[2]
+          const dPosZ = box.max[2] - pz
+          let minFace = dPosY
+          let nx = 0, ny = 1, nz = 0
+          if (dNegY < minFace) { minFace = dNegY; nx = 0; ny = -1; nz = 0 }
+          if (dNegX < minFace) { minFace = dNegX; nx = -1; ny = 0; nz = 0 }
+          if (dPosX < minFace) { minFace = dPosX; nx = 1; ny = 0; nz = 0 }
+          if (dNegZ < minFace) { minFace = dNegZ; nx = 0; ny = 0; nz = -1 }
+          if (dPosZ < minFace) { minFace = dPosZ; nx = 0; ny = 0; nz = 1 }
+          const depth = minFace + radius
+          if (depth > bestDepth) {
+            bestDepth = depth
+            bestNx = nx
+            bestNy = ny
+            bestNz = nz
+          }
         }
       }
 

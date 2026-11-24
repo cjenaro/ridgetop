@@ -399,12 +399,17 @@ export function createAudioBank(options: AudioBankOptions = {}): AudioBank {
       const offset = playOptions.offset !== undefined && Number.isFinite(playOptions.offset)
         ? Math.max(0, playOptions.offset)
         : 0
-      if (playOptions.duration !== undefined && Number.isFinite(playOptions.duration) && playOptions.duration >= 0) {
-        source.start(0, offset, playOptions.duration)
-      } else if (offset > 0) {
-        source.start(0, offset)
-      } else {
-        source.start(0)
+      try {
+        if (playOptions.duration !== undefined && Number.isFinite(playOptions.duration) && playOptions.duration >= 0) {
+          source.start(0, offset, playOptions.duration)
+        } else if (offset > 0) {
+          source.start(0, offset)
+        } else {
+          source.start(0)
+        }
+      } catch {
+        cleanup()
+        return NOOP_HANDLE
       }
 
       return handle

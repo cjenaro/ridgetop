@@ -54,13 +54,21 @@ interface Face {
   tint: string
   pixel: number
   blend: BlendMode
+  blendRank: number
   alpha: number
   r: number
   g: number
   b: number
 }
 
-function transformBatch(matrix: Matrix, batch: InstanceBatch, polygons: Face[], light: Float32Array, depthTest: boolean) {
+function transformBatch(
+  matrix: Matrix,
+  batch: InstanceBatch,
+  polygons: Face[],
+  light: Float32Array,
+  depthTest: boolean,
+  facePool?: Face[]
+) {
   const lx = light[0], ly = light[1], lz = light[2], ambient = light[3]
   const hasExtended = light.length >= 48
   const sunR = hasExtended ? light[4] : 1
@@ -74,6 +82,7 @@ function transformBatch(matrix: Matrix, batch: InstanceBatch, polygons: Face[], 
   const invFogSpan = hasExtended ? light[12] : 0
   const blend: BlendMode = batch.blend ?? 'opaque'
   const isOpaque = blend === 'opaque'
+  const blendRank = isOpaque ? 0 : blend === 'alpha' ? 1 : 2
 
   const vertices = batch.mesh.data
   const vLen = vertices.length
@@ -149,6 +158,7 @@ function transformBatch(matrix: Matrix, batch: InstanceBatch, polygons: Face[], 
       if (msk0 & msk1 & msk2) continue
       const outsideAny = msk0 | msk1 | msk2
 
+      let reused: Face | undefined
       let flat: number[]
       let depth: number
       if (outsideAny === 0) {
@@ -158,7 +168,16 @@ function transformBatch(matrix: Matrix, batch: InstanceBatch, polygons: Face[], 
         const x1 = p1x * inv1, y1 = p1y * inv1, z1 = p1z * inv1
         const x2 = p2x * inv2, y2 = p2y * inv2, z2 = p2z * inv2
         if ((x1 - x0) * (y2 - y0) - (y1 - y0) * (x2 - x0) <= 0) continue
-        flat = [x0, y0, z0, x1, y1, z1, x2, y2, z2]
+        reused = facePool && facePool.length > 0 ? facePool.pop() : undefined
+        if (reused) {
+          flat = reused.points
+          flat.length = 9
+          flat[0] = x0; flat[1] = y0; flat[2] = z0
+          flat[3] = x1; flat[4] = y1; flat[5] = z1
+          flat[6] = x2; flat[7] = y2; flat[8] = z2
+        } else {
+          flat = [x0, y0, z0, x1, y1, z1, x2, y2, z2]
+        }
         depth = (z0 + z1 + z2) / 3
       } else {
         let polygon: number[][] = [
@@ -252,15 +271,43 @@ function transformBatch(matrix: Matrix, batch: InstanceBatch, polygons: Face[], 
         }
       }
 
-      polygons.push({
-        points: flat, depth,
-        tint: depthTest ? '' : css(red, green, blue),
-        pixel: depthTest && isOpaque ? pixel(red, green, blue) : 0,
-        blend, alpha,
-        r: Math.round(red * 255),
-        g: Math.round(green * 255),
-        b: Math.round(blue * 255)
-      })
+      const ri = (red * 255 + 0.5) | 0
+      const gi = (green * 255 + 0.5) | 0
+      const bi = (blue * 255 + 0.5) | 0
+      const tintStr = depthTest ? '' : `rgb(${ri},${gi},${bi})`
+      let packedPx = 0
+      if (depthTest && isOpaque) {
+        channels[0] = ri
+        channels[1] = gi
+        channels[2] = bi
+        channels[3] = 255
+        packedPx = packed[0]
+      }
+      if (reused) {
+        reused.depth = depth
+        reused.tint = tintStr
+        reused.pixel = packedPx
+        reused.blend = blend
+        reused.blendRank = blendRank
+        reused.alpha = alpha
+        reused.r = ri
+        reused.g = gi
+        reused.b = bi
+        polygons.push(reused)
+      } else {
+        polygons.push({
+          points: flat,
+          depth,
+          tint: tintStr,
+          pixel: packedPx,
+          blend,
+          blendRank,
+          alpha,
+          r: ri,
+          g: gi,
+          b: bi
+        })
+      }
     }
   }
 }
@@ -434,11 +481,22 @@ export function meshViewPixels(cameras: readonly Matrix[], batches: readonly Ins
   return { width, height: size, pixels }
 }
 
-export function canvasMeshes(canvas: HTMLCanvasElement, light: Float32Array<ArrayBuffer>,
+export function canvasMeshes(canvas: HTMLCanvasElement, initialLight: Float32Array<ArrayBuffer>,
   { transparent = false, depthTest = false } = {}): MeshBackend {
   const ctx = canvas.getContext('2d', { alpha: transparent })
   if (!ctx) throw new Error('Canvas 2D is unavailable')
+  let light = initialLight
   const cache = new Map<InstanceBatch, { revision: number; polygons: Face[] }>()
+  const facePool: Face[] = []
+  const MAX_POOL = 16384
+  function recycleFaces(list: Face[]) {
+    for (let i = 0; i < list.length && facePool.length < MAX_POOL; i++) facePool.push(list[i])
+    list.length = 0
+  }
+  function clearCache() {
+    for (const entry of cache.values()) recycleFaces(entry.polygons)
+    cache.clear()
+  }
   const lastCamera = new Float32Array(16)
   let hasCamera = false
   const polygons: Face[] = []
@@ -447,8 +505,9 @@ export function canvasMeshes(canvas: HTMLCanvasElement, light: Float32Array<Arra
   return {
     name: 'Canvas 2D',
     maxDimension: 4096,
-    setLighting() {
-      cache.clear()
+    setLighting(next) {
+      if (next) light = next
+      clearCache()
     },
     draw(matrix, clear, visible, stats) {
       let changed = !hasCamera
@@ -458,7 +517,7 @@ export function canvasMeshes(canvas: HTMLCanvasElement, light: Float32Array<Arra
         }
       }
       if (changed) {
-        cache.clear()
+        clearCache()
         lastCamera.set(matrix)
         hasCamera = true
       }
@@ -467,9 +526,14 @@ export function canvasMeshes(canvas: HTMLCanvasElement, light: Float32Array<Arra
         const batch = visible[b]
         let entry = cache.get(batch)
         if (!entry || entry.revision !== batch.revision) {
-          entry = { revision: batch.revision, polygons: [] }
-          transformBatch(matrix, batch, entry.polygons, light, depthTest)
-          cache.set(batch, entry)
+          if (entry) {
+            recycleFaces(entry.polygons)
+            entry.revision = batch.revision
+          } else {
+            entry = { revision: batch.revision, polygons: [] }
+            cache.set(batch, entry)
+          }
+          transformBatch(matrix, batch, entry.polygons, light, depthTest, facePool)
         }
         const src = entry.polygons
         for (let i = 0; i < src.length; i++) polygons.push(src[i])
@@ -485,13 +549,7 @@ export function canvasMeshes(canvas: HTMLCanvasElement, light: Float32Array<Arra
         return
       }
       stats.drawCalls = polygons.length
-      polygons.sort((a, b) => {
-        const diff = b.depth - a.depth
-        if (diff !== 0) return diff
-        const ra = a.blend === 'opaque' ? 0 : a.blend === 'alpha' ? 1 : 2
-        const rb = b.blend === 'opaque' ? 0 : b.blend === 'alpha' ? 1 : 2
-        return ra - rb
-      })
+      polygons.sort((a, b) => (b.depth - a.depth) || (a.blendRank - b.blendRank))
       const w = canvas.width / 2
       const h = canvas.height / 2
       let lastFill = ''

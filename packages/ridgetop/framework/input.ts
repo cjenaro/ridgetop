@@ -94,7 +94,14 @@ export function bindActionControls<Action extends string>({
     padDown.clear()
   }
 
-  const unsubPause = onTestingPause(paused => { if (paused) clear() })
+  const unsubPause = onTestingPause(paused => {
+    if (paused) {
+      clear()
+      padPauseDown = false
+    } else {
+      ensurePadLoop()
+    }
+  })
 
   function poll() {
     if (disposed || gamepad === false) return false

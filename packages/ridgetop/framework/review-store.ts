@@ -1,3 +1,4 @@
+import { Buffer } from 'node:buffer'
 import { createHash, randomUUID } from 'node:crypto'
 import { lstat, mkdir, readFile, readdir, rename, rm, writeFile } from 'node:fs/promises'
 import { dirname, join, relative, resolve, sep } from 'node:path'

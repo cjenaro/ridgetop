@@ -1,5 +1,6 @@
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import type { GameHost } from './server-types.ts'
+import { Buffer } from 'node:buffer'
 import { createHash } from 'node:crypto'
 import { createServer } from 'node:http'
 import { existsSync } from 'node:fs'

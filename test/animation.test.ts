@@ -130,4 +130,9 @@ test('createArtBuilder supports unlit on solid/attach/adjust, and createRng/crea
   s.tone({ frequency: 440, duration: 0.1 })
   s.noiseBurst({ duration: 0.1 })
   s.close()
+
+  // createParticles(0) must enforce zero capacity
+  const emptyParticles = createParticles(0)
+  emptyParticles.spawn({ mesh: box, position: [0, 0, 0], scale: [1, 1, 1], color: [1, 1, 1, 1], life: 1 })
+  assert.equal(emptyParticles.count, 0)
 })

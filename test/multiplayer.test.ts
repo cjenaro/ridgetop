@@ -929,3 +929,96 @@ test('connectRoom custom equalInput, serializeInput, and flush-driven prediction
     else delete (globalThis as Record<string, unknown>).WebSocket
   }
 })
+
+test('WebSocket RFC 6455 close validation, 64-bit MSB check, 120Hz prediction pacing, and envelope type protection', { timeout: 10_000 }, async t => {
+  const app = createArenaServer({ maxPayloadBytes: 128 })
+  const port = await app.listen()
+  t.after(() => app.close())
+
+  // 1. Forbidden wire close code 1015 -> server replies with 1002
+  const badCloseCode = await openRawWs(port, '/rooms/close-checks/ws')
+  t.after(() => badCloseCode.socket.destroy())
+  await badCloseCode.readFrame()
+  const c1015 = Buffer.allocUnsafe(2)
+  c1015.writeUInt16BE(1015, 0)
+  badCloseCode.socket.write(makeClientWsFrame(0x8, c1015))
+  let reply1015 = -1
+  for (let i = 0; i < 20; i++) {
+    const f = await badCloseCode.readFrame()
+    if (f.opcode === 0x8) { reply1015 = f.payload.readUInt16BE(0); break }
+  }
+  assert.equal(reply1015, 1002)
+
+  // 2. Invalid UTF-8 in Close reason -> server replies with 1007
+  const badCloseUtf8 = await openRawWs(port, '/rooms/close-checks/ws')
+  t.after(() => badCloseUtf8.socket.destroy())
+  await badCloseUtf8.readFrame()
+  const badReason = Buffer.from([0x03, 0xe8, 0xff, 0xfe])
+  badCloseUtf8.socket.write(makeClientWsFrame(0x8, badReason))
+  let replyUtf8 = -1
+  for (let i = 0; i < 20; i++) {
+    const f = await badCloseUtf8.readFrame()
+    if (f.opcode === 0x8) { replyUtf8 = f.payload.readUInt16BE(0); break }
+  }
+  assert.equal(replyUtf8, 1007)
+
+  // 3. 64-bit payload length with MSB=1 -> 1002 Protocol Error
+  const badMsb = await openRawWs(port, '/rooms/close-checks/ws')
+  t.after(() => badMsb.socket.destroy())
+  await badMsb.readFrame()
+  const msbFrame = Buffer.from([0x81, 0xff, 0x80, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0, 0, 0, 0])
+  badMsb.socket.write(msbFrame)
+  let replyMsb = -1
+  for (let i = 0; i < 20; i++) {
+    const f = await badMsb.readFrame()
+    if (f.opcode === 0x8) { replyMsb = f.payload.readUInt16BE(0); break }
+  }
+  assert.equal(replyMsb, 1002)
+
+  // 4. 120Hz flush() paces auto-prediction to 60Hz and cannot clobber envelope type: 'input'
+  const prevWS = Object.getOwnPropertyDescriptor(globalThis, 'WebSocket')
+  const sentFrames: Record<string, unknown>[] = []
+  let fakeWs: FakeWS | undefined
+  class FakeWS {
+    static OPEN = 1
+    readyState = 1
+    onmessage: ((e: MessageEvent) => void) | null = null
+    onerror: (() => void) | null = null
+    onclose: (() => void) | null = null
+    constructor() { fakeWs = this }
+    send(data: string) { sentFrames.push(JSON.parse(data) as Record<string, unknown>) }
+    close() { this.readyState = 3 }
+    deliver(payload: unknown) { this.onmessage?.({ data: JSON.stringify(payload) } as MessageEvent) }
+  }
+  Object.defineProperty(globalThis, 'WebSocket', { value: FakeWS, configurable: true })
+  try {
+    const room = connectRoom<ArenaSnapshot, ArenaInput>({
+      endpoint: '/rooms/pace-120hz',
+      transport: 'ws',
+      readInput: () => ({ ax: 1, az: 0, fire: false }),
+      onStatus() {},
+      serializeInput(inp, meta) {
+        return { type: 'leave', ax: inp.ax, az: inp.az, fire: inp.fire, restart: meta.restart, inputSeq: meta.inputSeq }
+      },
+      predict: {
+        step: (state, inp, dt) => ({ ...state, x: state.x + inp.ax * SPEED * dt })
+      }
+    })
+    fakeWs!.deliver({ type: 'welcome', id: 'p1', token: 't1' })
+    fakeWs!.deliver({
+      type: 'snapshot',
+      tick: 3,
+      players: [{ id: 'p1', slot: 0, x: 0, z: 0, shots: 0, revision: 0, lastProcessedSeq: 0 }]
+    })
+    // 120 frames at 120Hz (~1s): should emit ~61 fixed 60Hz steps, never 120
+    for (let i = 0; i < 120; i++) {
+      await room.flush((i * 1000) / 120)
+    }
+    assert.ok(sentFrames.length >= 59 && sentFrames.length <= 62, `Expected ~60 steps at 120Hz, got ${sentFrames.length}`)
+    assert.ok(sentFrames.every(f => f.type === 'input'), 'Envelope type must remain "input" even if serialized payload has type')
+    room.close()
+  } finally {
+    if (prevWS) Object.defineProperty(globalThis, 'WebSocket', prevWS)
+    else delete (globalThis as Record<string, unknown>).WebSocket
+  }
+})

@@ -315,15 +315,16 @@ export interface AlphaSorter {
 
 /** Reusable scratch buffers for zero-allocation back-to-front alpha sorting. */
 export function createAlphaSorter(initialCapacity = 32): AlphaSorter {
-  let depths = new Float32Array(initialCapacity)
-  let indices = new Int32Array(initialCapacity)
-  let aux = new Int32Array(initialCapacity)
-  let packed = new Float32Array(initialCapacity * INSTANCE_STRIDE)
+  const baseCapacity = Number.isFinite(initialCapacity) ? Math.max(1, Math.floor(initialCapacity)) : 32
+  let depths = new Float32Array(baseCapacity)
+  let indices = new Int32Array(baseCapacity)
+  let aux = new Int32Array(baseCapacity)
+  let packed = new Float32Array(baseCapacity * INSTANCE_STRIDE)
   const result = { inOrder: true, indices }
 
   function ensure(count: number) {
     if (depths.length < count) {
-      let next = Math.max(initialCapacity, depths.length)
+      let next = Math.max(baseCapacity, depths.length, 1)
       while (next < count) next <<= 1
       depths = new Float32Array(next)
       indices = new Int32Array(next)
@@ -335,7 +336,7 @@ export function createAlphaSorter(initialCapacity = 32): AlphaSorter {
   function ensurePacked(count: number) {
     const needed = count * INSTANCE_STRIDE
     if (packed.length < needed) {
-      let next = Math.max(initialCapacity * INSTANCE_STRIDE, packed.length)
+      let next = Math.max(baseCapacity * INSTANCE_STRIDE, packed.length, INSTANCE_STRIDE)
       while (next < needed) next <<= 1
       packed = new Float32Array(next)
     }
@@ -502,7 +503,11 @@ export function projectShadow(
   const fade = 1 - heightT
   const opacity = Math.max(0, Math.min(1, baseOpacity * fade))
 
-  const [lx, ly, lz] = normalizeLight(options.direction)
+  const dir = options.direction ?? DEFAULT_SHADOW_LIGHT
+  const dirLen = Math.hypot(dir[0], dir[1], dir[2])
+  const lx = dirLen > 0 && Number.isFinite(dirLen) ? dir[0] / dirLen : 0
+  const ly = dirLen > 0 && Number.isFinite(dirLen) ? dir[1] / dirLen : 1
+  const lz = dirLen > 0 && Number.isFinite(dirLen) ? dir[2] / dirLen : 0
   const horiz = Math.hypot(lx, lz)
   const effLy = Math.max(ly, minLightY)
   const lateralFactor = (altitude * offsetScale) / effLy

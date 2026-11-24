@@ -73,17 +73,42 @@ function encodeWsFrame(opcode: number, payload: Buffer): Buffer {
   return frame
 }
 
+function truncateUtf8(text: string, maxBytes: number): Buffer {
+  const buf = Buffer.from(text, 'utf8')
+  if (buf.byteLength <= maxBytes) return buf
+  let end = maxBytes
+  // Step back over UTF-8 continuation bytes (10xxxxxx) to find the start of the split character.
+  while (end > 0 && (buf[end] & 0xc0) === 0x80) end--
+  // If the byte at `end` is a multi-byte lead byte whose full sequence exceeds maxBytes, exclude it.
+  if (end > 0 && (buf[end] & 0x80) !== 0) {
+    const lead = buf[end]
+    const charLen = (lead & 0xe0) === 0xc0 ? 2 : (lead & 0xf0) === 0xe0 ? 3 : (lead & 0xf8) === 0xf0 ? 4 : 1
+    if (end + charLen > maxBytes) return buf.subarray(0, end)
+  }
+  return buf.subarray(0, end)
+}
+
 function encodeWsClose(code: number, reason = ''): Buffer {
-  const reasonBuf = reason ? Buffer.from(reason, 'utf8').subarray(0, 123) : Buffer.alloc(0)
+  const reasonBuf = reason ? truncateUtf8(reason, 123) : Buffer.alloc(0)
   const payload = Buffer.allocUnsafe(2 + reasonBuf.byteLength)
   payload.writeUInt16BE(code, 0)
   reasonBuf.copy(payload, 2)
   return encodeWsFrame(0x8, payload)
 }
 
+function isValidWireCloseCode(code: number): boolean {
+  if (code >= 3000 && code <= 4999) return true
+  return (code >= 1000 && code <= 1003) || (code >= 1007 && code <= 1011)
+}
+
 function rejectUpgrade(socket: Duplex, status: number, reason: string, extraHeaders = '') {
+  if (socket.listenerCount('error') === 0) socket.on('error', () => { /* ignore pre-close socket error */ })
   if (!socket.destroyed && socket.writable) {
-    socket.write(`HTTP/1.1 ${status} ${reason}\r\nContent-Length: 0\r\nConnection: close\r\n${extraHeaders}\r\n`)
+    try {
+      socket.write(`HTTP/1.1 ${status} ${reason}\r\nContent-Length: 0\r\nConnection: close\r\n${extraHeaders}\r\n`)
+    } catch {
+      /* ignore write errors on closing socket */
+    }
   }
   socket.destroy()
 }
@@ -350,6 +375,14 @@ export function createRoomService<World, Player, Snapshot extends object, Input 
 
     const { room, member, token } = result
     let closed = false
+    let closeTimer: ReturnType<typeof setTimeout> | undefined
+
+    function clearCloseTimer() {
+      if (closeTimer !== undefined) {
+        clearTimeout(closeTimer)
+        closeTimer = undefined
+      }
+    }
 
     function closeSocket(code = 1000, reason = '') {
       if (closed) return
@@ -358,6 +391,11 @@ export function createRoomService<World, Player, Snapshot extends object, Input 
         try {
           socket.write(encodeWsClose(code, reason))
           socket.end()
+          closeTimer = setTimeout(() => {
+            closeTimer = undefined
+            if (!socket.destroyed) socket.destroy()
+          }, 1500)
+          closeTimer.unref?.()
         } catch {
           socket.destroy()
         }
@@ -367,6 +405,14 @@ export function createRoomService<World, Player, Snapshot extends object, Input 
     }
 
     const transport: MemberTransport = { kind: 'ws', socket, close: closeSocket }
+    const onDisconnect = () => {
+      closed = true
+      clearCloseTimer()
+      detachMember(member, transport)
+    }
+    socket.on('close', onDisconnect)
+    socket.on('error', onDisconnect)
+
     member.transport = transport
     member.expiresAt = Infinity
     member.lastInput = performance.now()
@@ -374,15 +420,21 @@ export function createRoomService<World, Player, Snapshot extends object, Input 
 
     const accept = createHash('sha1').update(wsKey + wsGuid).digest('base64')
     ;(socket as Duplex & { setNoDelay?(noDelay?: boolean): void }).setNoDelay?.(true)
-    socket.write(
-      'HTTP/1.1 101 Switching Protocols\r\n' +
-      'Upgrade: websocket\r\n' +
-      'Connection: Upgrade\r\n' +
-      `Sec-WebSocket-Accept: ${accept}\r\n` +
-      '\r\n'
-    )
-    const welcomeFrame = encodeWsFrame(0x1, Buffer.from(JSON.stringify({ type: 'welcome', id: member.id, token }), 'utf8'))
-    socket.write(welcomeFrame)
+    try {
+      socket.write(
+        'HTTP/1.1 101 Switching Protocols\r\n' +
+        'Upgrade: websocket\r\n' +
+        'Connection: Upgrade\r\n' +
+        `Sec-WebSocket-Accept: ${accept}\r\n` +
+        '\r\n'
+      )
+      const welcomeFrame = encodeWsFrame(0x1, Buffer.from(JSON.stringify({ type: 'welcome', id: member.id, token }), 'utf8'))
+      socket.write(welcomeFrame)
+    } catch {
+      onDisconnect()
+      socket.destroy()
+      return false
+    }
 
     let pending: Buffer = Buffer.alloc(0)
     let fragments: Buffer[] | null = null
@@ -443,6 +495,7 @@ export function createRoomService<World, Player, Snapshot extends object, Input 
         } else if (length === 127) {
           if (pending.byteLength < 10) return
           const hi = pending.readUInt32BE(2)
+          if (hi >= 0x8000_0000) return failWs(1002, 'Invalid 64-bit payload length')
           if (hi > 0x001f_ffff) return failWs(1009, 'Payload too large')
           length = Number(pending.readBigUInt64BE(2))
           offset = 10
@@ -482,9 +535,20 @@ export function createRoomService<World, Player, Snapshot extends object, Input 
 
         if (opcode === 0x8) {
           if (length === 1) return failWs(1002, 'Invalid close payload')
-          const closeCode = length >= 2 ? payload.readUInt16BE(0) : 1000
-          const replyCode = closeCode >= 1000 && closeCode < 5000 && closeCode !== 1004 && closeCode !== 1005 && closeCode !== 1006 ? closeCode : 1000
-          closeSocket(replyCode)
+          if (length >= 2) {
+            const closeCode = payload.readUInt16BE(0)
+            if (!isValidWireCloseCode(closeCode)) return failWs(1002, 'Invalid close code')
+            if (length > 2) {
+              try {
+                utf8Fatal.decode(payload.subarray(2))
+              } catch {
+                return failWs(1007, 'Invalid UTF-8 in close reason')
+              }
+            }
+            closeSocket(closeCode)
+          } else {
+            closeSocket(1000)
+          }
           detachMember(member, transport)
           return
         }
@@ -525,13 +589,7 @@ export function createRoomService<World, Player, Snapshot extends object, Input 
       }
     }
 
-    const onDisconnect = () => {
-      closed = true
-      detachMember(member, transport)
-    }
     socket.on('data', feed)
-    socket.on('close', onDisconnect)
-    socket.on('error', onDisconnect)
     if (head && head.byteLength > 0) feed(head)
     if (socket.destroyed) onDisconnect()
     return true

@@ -7,6 +7,7 @@ import {
 } from '../packages/ridgetop/framework/index.ts'
 import { createAlphaSorter } from '../packages/ridgetop/framework/geometry.ts'
 import { INSTANCE_SIZE } from '../packages/ridgetop/framework/instances.ts'
+import { packLighting } from '../packages/ridgetop/framework/low-poly.ts'
 import { canvasMeshes } from '../packages/ridgetop/framework/mesh-canvas.ts'
 import { glMeshes } from '../packages/ridgetop/framework/mesh-gl.ts'
 import { gpuMeshes } from '../packages/ridgetop/framework/mesh-gpu.ts'
@@ -644,4 +645,56 @@ test('createLowPolyRenderer orders opaque -> back-to-front alpha -> additive and
   const s2 = renderer.render(cam, [opaque])
   assert.equal(s2.uploadBytes, 0)
   renderer.dispose()
+})
+
+test('packLighting preserves fogFar on fogNear-only update, canvasMeshes.setLighting applies next light, and createAlphaSorter(0) is safe', () => {
+  const light = packLighting({ fogNear: 10, fogFar: 50 })
+  assert.equal(light[11], 10)
+  assert.ok(Math.abs(1 / light[12] - 40) < 1e-5)
+
+  const updated = packLighting({ fogNear: 20 }, light)
+  assert.equal(updated[11], 20)
+  // Span must now be 50 - 20 = 30 (not shifted to 60 - 20 = 40)
+  assert.ok(Math.abs(1 / updated[12] - 30) < 1e-5, `Expected fog span 30, got ${1 / updated[12]}`)
+
+  // canvasMeshes.setLighting(next) must update the active lighting buffer
+  const fills: string[] = []
+  const fakeCanvas = {
+    width: 64, height: 64,
+    getContext: () => ({
+      set fillStyle(v: string) { fills.push(v) },
+      get fillStyle() { return fills[fills.length - 1] ?? '' },
+      globalAlpha: 1,
+      globalCompositeOperation: 'source-over',
+      fillRect() {}, clearRect() {}, beginPath() {}, moveTo() {}, lineTo() {}, closePath() {}, fill() {}
+    })
+  } as unknown as HTMLCanvasElement
+  const darkLight = packLighting({ ambient: 0.1, color: [0.1, 0.1, 0.1] })
+  const brightLight = packLighting({ ambient: 1.0, color: [1.0, 1.0, 1.0] })
+  const backend = canvasMeshes(fakeCanvas, darkLight)
+  const batch = instances(box, 1)
+  batch.add([0, 0, 0], [1, 1, 1], 0, [1, 1, 1, 1])
+  const cam = multiply(orthographic(6, 6, 0.1, 100), view([0, 0, 10], [0, 0, 0]))
+  const stats = { drawCalls: 0, triangles: 0, instances: 0, uploadBytes: 0, culledBatches: 0 }
+  backend.draw(cam, [0, 0, 0, 1], [batch], stats)
+  const darkFill = fills[fills.length - 1]
+  fills.length = 0
+  backend.setLighting?.(brightLight)
+  backend.draw(cam, [0, 0, 0, 1], [batch], stats)
+  const brightFill = fills[fills.length - 1]
+  assert.notEqual(brightFill, darkFill, 'canvasMeshes.setLighting(next) must apply the new lighting buffer')
+  assert.equal(brightFill, 'rgb(255,255,255)')
+  backend.dispose()
+
+  // createAlphaSorter(0) must not infinite-loop
+  const sorter = createAlphaSorter(0)
+  const b1 = instances(box, { capacity: 1, blend: 'alpha' })
+  b1.add([0, 0, 0])
+  const out: typeof b1[] = []
+  sorter.sortBatches(cam, [b1], out)
+  assert.equal(out.length, 1)
+  const sorted = sorter.sortInstanceIndices(cam, b1.data, 1)
+  assert.equal(sorted.inOrder, true)
+  const packed = sorter.packInstances(b1.data, 1)
+  assert.ok(packed.length >= INSTANCE_SIZE)
 })

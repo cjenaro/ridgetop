@@ -123,6 +123,7 @@ export function connectRoom<T extends RoomEntity = RoomPlayer, Input = RoomInput
   let inputSeq = 0
   let predicted: T | undefined
   let lastPredictAt: number | undefined
+  let predictAccumulator = 0
   let usedExplicitStep = false
   const pendingInputs: PendingEntry[] = []
 
@@ -170,6 +171,7 @@ export function connectRoom<T extends RoomEntity = RoomPlayer, Input = RoomInput
     sentAt = -Infinity
     predicted = undefined
     lastPredictAt = undefined
+    predictAccumulator = 0
     pendingInputs.length = 0
     onWelcome?.(welcome)
     onStatus('connected')
@@ -310,12 +312,18 @@ export function connectRoom<T extends RoomEntity = RoomPlayer, Input = RoomInput
     if (closed || !token) return
 
     if (predict && !usedExplicitStep) {
-      const dt = lastPredictAt === undefined
-        ? STEP
-        : Math.min(Math.max((now - lastPredictAt) / 1000, 0), STEP * 5)
-      if (lastPredictAt === undefined || dt > 0) {
+      if (lastPredictAt === undefined) {
         lastPredictAt = now
-        recordPredictedStep(dt || STEP)
+        predictAccumulator = 0
+        recordPredictedStep(STEP)
+      } else {
+        const dt = Math.min(Math.max((now - lastPredictAt) / 1000, 0), STEP * 5)
+        lastPredictAt = now
+        predictAccumulator = Math.min(predictAccumulator + dt, STEP * 5)
+        while (predictAccumulator >= STEP - 1e-9) {
+          predictAccumulator = Math.max(0, predictAccumulator - STEP)
+          recordPredictedStep(STEP)
+        }
       }
     }
 
@@ -330,7 +338,7 @@ export function connectRoom<T extends RoomEntity = RoomPlayer, Input = RoomInput
           if (entry.seq <= lastSentSeq) continue
           const payload = buildPayload(entry.input, entry.seq)
           try {
-            ws.send(JSON.stringify({ type: 'input', ...payload }))
+            ws.send(JSON.stringify({ ...payload, type: 'input' }))
           } catch {
             return
           }
@@ -345,7 +353,7 @@ export function connectRoom<T extends RoomEntity = RoomPlayer, Input = RoomInput
           const seq = lastSentSeq || ++inputSeq
           const payload = buildPayload(input, seq)
           try {
-            ws.send(JSON.stringify({ type: 'input', ...payload }))
+            ws.send(JSON.stringify({ ...payload, type: 'input' }))
           } catch {
             return
           }
@@ -363,7 +371,7 @@ export function connectRoom<T extends RoomEntity = RoomPlayer, Input = RoomInput
       const seq = changed ? ++inputSeq : (lastSentSeq || ++inputSeq)
       const payload = buildPayload(input, seq)
       try {
-        ws.send(JSON.stringify({ type: 'input', ...payload }))
+        ws.send(JSON.stringify({ ...payload, type: 'input' }))
       } catch {
         return
       }
