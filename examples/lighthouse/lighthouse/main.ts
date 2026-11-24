@@ -124,7 +124,7 @@ async function start() {
 
   const shopKeyController = new AbortController()
   window.addEventListener('keydown', event => {
-    if (isTestingPaused() || event.repeat || screen !== 'shop') return
+    if (event.defaultPrevented || isTestingPaused() || event.repeat || screen !== 'shop') return
     if (event.code === 'KeyE' && !event.altKey && !event.ctrlKey && !event.metaKey) {
       event.preventDefault()
       setScreen('playing')
