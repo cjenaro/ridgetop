@@ -5,7 +5,7 @@ import { createRequire } from 'node:module'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import test from 'node:test'
-import { fileURLToPath } from 'node:url'
+import { fileURLToPath, pathToFileURL } from 'node:url'
 import { promisify } from 'node:util'
 import vm from 'node:vm'
 import { createArtKit, box, instances } from '../framework/index.ts'
@@ -422,4 +422,95 @@ export const accent = color('#efac62')
   await new Promise(r => setTimeout(r, 15))
   assert.equal(prefStore.get('other.plugin.token'), 'keep-me', 'clear() must not wipe non-ridgetop Preferences keys')
   assert.equal(prefStore.has('ridgetop.native.extra'), false)
+})
+
+test('packageGame builds tree-shaken Web, Steam, Mobile, and Godot outputs for Tidewatch (lighthouse)', async t => {
+  const outDir = await mkdtemp(join(tmpdir(), 'ridgetop-pkg-lighthouse-'))
+  t.after(() => rm(outDir, { recursive: true, force: true }))
+
+  const result = await packageGame({
+    target: 'all',
+    game: 'lighthouse',
+    repoRoot,
+    outDir,
+    steamAppId: '480',
+    appId: 'com.ridgetop.tidewatch'
+  })
+
+  assert.equal(result.name, 'Tidewatch')
+  assert.deepEqual(result.outputs.map(o => o.target), ['web', 'steam', 'mobile', 'godot'])
+
+  // 1. Web build traces lighthouse/main.js cleanly, bundles CSS/HTML, drops studio/testing & unused modules
+  const webDir = join(outDir, 'web')
+  const webHtml = await readFile(join(webDir, 'index.html'), 'utf8')
+  assert.ok(!webHtml.includes('<button'), 'Tidewatch should have zero HTML menu buttons')
+  assert.ok(!webHtml.includes('data-hosted="1"'), 'Standalone build should strip hosted flag')
+  assert.ok(webHtml.includes('href="./game-ui.css"'))
+  assert.ok(webHtml.includes('src="./lighthouse/main.js"'))
+  await access(join(webDir, 'game-ui.css'))
+  for (const mod of ['main.js', 'simulation.js', 'types.js', 'art.js', 'scene.js', 'audio.js']) {
+    await access(join(webDir, 'lighthouse', mod))
+  }
+  await access(join(webDir, 'framework', 'index.js'))
+  await access(join(webDir, 'framework', 'animation.js'))
+  await access(join(webDir, 'framework', 'ui-layout.js'))
+  await access(join(webDir, 'framework', 'ui-button.js'))
+  await access(join(webDir, 'framework', 'ui-canvas.js'))
+  await assert.rejects(access(join(webDir, 'framework', 'verification.js')), 'verification.js must be dropped')
+  await assert.rejects(access(join(webDir, 'framework', 'art-review.js')), 'art-review.js must be dropped')
+  await assert.rejects(access(join(webDir, 'framework', 'art-builder.js')), 'art-builder.js must be dropped')
+  await assert.rejects(access(join(webDir, 'framework', 'ui-slider.js')), 'unused ui-slider.js must be dropped')
+  await assert.rejects(access(join(webDir, 'framework', 'ui-select.js')), 'unused ui-select.js must be dropped')
+  await assert.rejects(access(join(webDir, 'framework', 'ui-toggle.js')), 'unused ui-toggle.js must be dropped')
+  await assert.rejects(access(join(webDir, 'framework', 'ui-menu.js')), 'unused ui-menu.js must be dropped')
+  await assert.rejects(access(join(webDir, 'framework', 'vehicle.js')), 'unused vehicle.js must be dropped')
+  await assert.rejects(access(join(webDir, 'framework', 'platformer.js')), 'unused platformer.js must be dropped')
+  await assert.rejects(access(join(webDir, 'framework', 'room-client.js')), 'unused room-client.js must be dropped')
+  await assert.rejects(access(join(webDir, 'electron')), 'web target must not include Electron')
+
+  // Verify the packaged simulation & art modules import and execute cleanly against the pruned framework/index.js
+  const packagedSim = await import(pathToFileURL(join(webDir, 'lighthouse', 'simulation.js')).href)
+  const simState = packagedSim.createInitialState(1337)
+  packagedSim.stepGame(simState, { x: 1, z: 0 }, 1 / 60)
+  assert.ok(simState.items.length > 0, 'packaged simulation should spawn coastal resources using pruned nextRandom')
+  const packagedArt = await import(pathToFileURL(join(webDir, 'lighthouse', 'art.js')).href)
+  assert.ok(packagedArt.buildStaticIslandBatches().length > 0)
+
+  // 2. Steam (Electron) target
+  const steamDir = join(outDir, 'steam')
+  const steamPkg = JSON.parse(await readFile(join(steamDir, 'package.json'), 'utf8'))
+  assert.equal(steamPkg.main, 'electron/main.cjs')
+  assert.equal((await readFile(join(steamDir, 'steam_appid.txt'), 'utf8')).trim(), '480')
+  const steamHtml = await readFile(join(steamDir, 'www', 'index.html'), 'utf8')
+  assert.ok(steamHtml.includes('viewport-fit=cover'))
+  assert.ok(!steamHtml.includes('data-hosted="1"'))
+  assert.deepEqual(readPngDimensions(await readFile(join(steamDir, 'build', 'icon.png'))), { width: 512, height: 512 })
+
+  // 3. Mobile (Capacitor) target
+  const mobileDir = join(outDir, 'mobile')
+  const capConfig = JSON.parse(await readFile(join(mobileDir, 'capacitor.config.json'), 'utf8'))
+  assert.equal(capConfig.appId, 'com.ridgetop.tidewatch')
+  await access(join(mobileDir, 'www', 'ridgetop-mobile-bridge.js'))
+  assert.deepEqual(readPngDimensions(await readFile(join(mobileDir, 'resources', 'icon.png'))), { width: 1024, height: 1024 })
+
+  // 4. Godot 4 target (representative GLB meshes, WAV SFX, compiled GDScript)
+  const godotDir = join(outDir, 'godot')
+  const godotProject = await readFile(join(godotDir, 'project.godot'), 'utf8')
+  assert.ok(godotProject.includes('config/name="Tidewatch"'))
+  assert.ok(godotProject.includes('InputEventJoypadButton'))
+  for (const modelName of ['island', 'keeper', 'lighthouse', 'ship', 'buoy', 'salvage', 'amber']) {
+    const glb = await readFile(join(godotDir, 'assets', 'models', `${modelName}.glb`))
+    assert.ok(parseGlb(glb).binLength > 0, `expected valid GLB for ${modelName}`)
+  }
+  for (const clip of ['pickup', 'sell', 'fuel', 'upgrade', 'foghorn', 'victory']) {
+    const wav = await readFile(join(godotDir, 'assets', 'audio', `${clip}.wav`))
+    assert.equal(wav.subarray(0, 4).toString('ascii'), 'RIFF', `expected valid WAV for ${clip}`)
+  }
+  const uiTscn = await readFile(join(godotDir, 'scenes', 'ui.tscn'), 'utf8')
+  assert.ok(uiTscn.includes('ridgetop_ui.gd'))
+  await access(join(godotDir, 'scripts', 'compiled', 'rt.gd'))
+  await access(join(godotDir, 'scripts', 'compiled', 'lighthouse', 'simulation.gd'))
+  await access(join(godotDir, 'scripts', 'compiled', 'lighthouse', 'types.gd'))
+  await access(join(godotDir, 'scripts', 'compiled', 'framework', 'ui-layout.gd'))
+  await access(join(godotDir, 'scripts', 'compiled', 'framework', 'ui-button.gd'))
 })

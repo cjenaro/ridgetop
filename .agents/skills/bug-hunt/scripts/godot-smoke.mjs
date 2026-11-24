@@ -55,7 +55,8 @@ const godot = await findGodot()
 const games = [
   { game: 'signal-drift', checkFile: ['scripts', 'compiled', 'racing', 'race.gd'], glb: 'circuit-copper.glb' },
   { game: 'beacon-run', checkFile: ['scripts', 'compiled', 'game', 'simulation.gd'], glb: 'lantern.glb' },
-  { game: 'starter', checkFile: ['scripts', 'compiled', 'starter', 'game.gd'], glb: 'ranger.glb' }
+  { game: 'starter', checkFile: ['scripts', 'compiled', 'starter', 'game.gd'], glb: 'ranger.glb' },
+  { game: 'lighthouse', checkFile: ['scripts', 'compiled', 'lighthouse', 'simulation.gd'], glb: 'island.glb' }
 ]
 for (const entry of games) {
   const outDir = await mkdtemp(join(tmpdir(), `ridgetop-godot-smoke-${entry.game}-`))
@@ -77,7 +78,7 @@ for (const entry of games) {
   }
 }
 if (!godot) {
-  console.log('Godot 4 binary not found; verified export structure, compiled GDScript, and GLB Float32 bounds for all 3 games.')
+  console.log(`Godot 4 binary not found; verified export structure, compiled GDScript, and GLB Float32 bounds for all ${games.length} games.`)
 } else {
-  console.log(`Godot 4 smoke passed cleanly (${godot}): all 3 games status=0, stderr=CLEAN, GLB bounds=0 mismatches.`)
+  console.log(`Godot 4 smoke passed cleanly (${godot}): all ${games.length} games status=0, stderr=CLEAN, GLB bounds=0 mismatches.`)
 }

@@ -46,6 +46,17 @@ function godotEntriesFor(game: string | undefined, projectDir: string | undefine
       ]
     }
   }
+  if (game === 'lighthouse') {
+    return {
+      rootDir: repoRoot,
+      entries: [
+        join(repoRoot, 'lighthouse', 'simulation.ts'),
+        join(repoRoot, 'lighthouse', 'types.ts'),
+        join(repoRoot, 'framework', 'ui-layout.ts'),
+        join(repoRoot, 'framework', 'ui-button.ts')
+      ]
+    }
+  }
   return null
 }
 
@@ -55,7 +66,7 @@ function usage() {
     '',
     'Options:',
     '  --target <web|steam|mobile|godot|all>  Target platform(s) (default: all)',
-    '  --game <signal-drift|beacon-run|starter>  Built-in Ridgetop game (default: signal-drift)',
+    '  --game <signal-drift|beacon-run|starter|lighthouse>  Built-in Ridgetop game (default: signal-drift)',
     '  --project <directory>              Package a generated Ridgetop game project instead of a built-in game',
     '  --out <directory>                  Output directory (default: dist/packages/<game>)',
     '  --name <title>                     Override app display name',
@@ -73,8 +84,8 @@ if (isMain(import.meta.url)) {
       usage()
     } else {
       const game = parsed.projectDir ? undefined : (parsed.game ?? 'signal-drift')
-      if (game && !['signal-drift', 'beacon-run', 'starter'].includes(game)) {
-        throw new Error('Unknown --game "' + game + '". Choose signal-drift, beacon-run, or starter.')
+      if (game && !['signal-drift', 'beacon-run', 'starter', 'lighthouse'].includes(game)) {
+        throw new Error('Unknown --game "' + game + '". Choose signal-drift, beacon-run, starter, or lighthouse.')
       }
       const label = parsed.projectDir ? 'custom' : game
       const outDir = parsed.outDir

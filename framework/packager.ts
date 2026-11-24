@@ -4,9 +4,11 @@ import { fileURLToPath, pathToFileURL } from 'node:url'
 import type { ArtModel, ArtRecipe } from './art.ts'
 import type { InstanceBatch } from './types.ts'
 import type { LayoutNode } from './ui-layout.ts'
+import { createMeshPool, renderRig } from './animation.ts'
 import { createArtKit, modelFromArtRecipe } from './art.ts'
 import { exportGodotProject } from './export-godot.ts'
-import { multiply, orthographic, view } from './geometry.ts'
+import { box, cylinder, multiply, octahedron, orthographic, view } from './geometry.ts'
+import { instances } from './instances.ts'
 import { renderMeshPixels } from './low-poly.ts'
 import { encodePng } from './png.ts'
 import { color } from './renderer.ts'
@@ -18,8 +20,8 @@ export type PackageOrientation = 'landscape' | 'portrait' | 'any'
 export interface PackageGameOptions {
   target: PackageTarget
   outDir: string
-  /** Built-in Ridgetop game (`signal-drift`, `beacon-run`, `starter`) or omitted when `projectDir` is supplied. */
-  game?: 'signal-drift' | 'beacon-run' | 'starter'
+  /** Built-in Ridgetop game (`signal-drift`, `beacon-run`, `starter`, `lighthouse`) or omitted when `projectDir` is supplied. */
+  game?: 'signal-drift' | 'beacon-run' | 'starter' | 'lighthouse'
   /** Path to a generated Ridgetop game project directory (created with `create-game`). */
   projectDir?: string
   /** Path to the Ridgetop checkout root (required when packaging built-in games). */
@@ -448,6 +450,26 @@ function parseStaticImports(code: string) {
     .map(s => ({ specifier: s.specifier, names: s.names }))
 }
 
+const INLINE_RUNTIME_RNG = {
+  nextRandom: `export function nextRandom(seed) {
+  const next = (seed + 0x6d2b79f5) | 0;
+  let t = Math.imul(next ^ (next >>> 15), 1 | next);
+  t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+  return { value: ((t ^ (t >>> 14)) >>> 0) / 4294967296, seed: next };
+}`,
+  createRng: `export function createRng(initialSeed = 1337) {
+  let state = initialSeed | 0;
+  return {
+    get seed() { return state; },
+    next() {
+      const step = nextRandom(state);
+      state = step.seed;
+      return step.value;
+    }
+  };
+}`
+}
+
 function pruneBarrelSource(code: string, usedNames: Set<string> | '*') {
   const stmts = scanStaticModuleStatements(code).filter(s => s.kind === 'export')
   if (!stmts.length) return code
@@ -457,7 +479,15 @@ function pruneBarrelSource(code: string, usedNames: Set<string> | '*') {
     out += code.slice(cursor, stmt.start)
     cursor = stmt.end
     const targetFile = basename(stmt.specifier)
-    if (blockedStudioFiles.has(targetFile)) continue
+    if (blockedStudioFiles.has(targetFile)) {
+      if (targetFile === 'verification.js' && usedNames !== '*') {
+        const needCreateRng = usedNames.has('createRng')
+        const needNextRandom = usedNames.has('nextRandom') || needCreateRng
+        if (needNextRandom) out += INLINE_RUNTIME_RNG.nextRandom + '\n'
+        if (needCreateRng) out += INLINE_RUNTIME_RNG.createRng + '\n'
+      }
+      continue
+    }
     if (stmt.names === '*' || usedNames === '*') {
       out += code.slice(stmt.start, stmt.end)
       continue
@@ -706,8 +736,104 @@ async function resolveProjectAssets(projectGameDir: string): Promise<ResolvedGam
   }
 }
 
-async function resolveBuiltInAssets(kind: 'signal-drift' | 'beacon-run' | 'starter', repoRoot: string): Promise<ResolvedGameAssets> {
+async function resolveBuiltInAssets(kind: 'signal-drift' | 'beacon-run' | 'starter' | 'lighthouse', repoRoot: string): Promise<ResolvedGameAssets> {
   if (kind === 'starter') return resolveProjectAssets(join(repoRoot, 'dist', 'starter'))
+
+  if (kind === 'lighthouse') {
+    const models: Record<string, readonly InstanceBatch[]> = {}
+    let iconBatches: readonly InstanceBatch[] | undefined
+    try {
+      const artMod = await import(pathToFileURL(join(repoRoot, 'dist', 'lighthouse', 'art.js')).href)
+      if (typeof artMod.buildStaticIslandBatches === 'function') {
+        models.island = artMod.buildStaticIslandBatches()
+      }
+      const bakeRig = (rig: Parameters<typeof renderRig>[0]) => {
+        const pool = createMeshPool(32)
+        renderRig(rig, { position: [0, 0, 0], yaw: 0, scale: 1 }, {}, pool)
+        return pool.batches.filter(b => b.count > 0)
+      }
+      if (artMod.keeperRig) {
+        models.keeper = bakeRig(artMod.keeperRig)
+        iconBatches = models.keeper
+      }
+      if (artMod.shipRig) models.ship = bakeRig(artMod.shipRig)
+      if (artMod.buoyRig) models.buoy = bakeRig(artMod.buoyRig)
+      if (artMod.salvageRig) models.salvage = bakeRig(artMod.salvageRig)
+      if (artMod.amberRig) models.amber = bakeRig(artMod.amberRig)
+
+      // Standalone centered Lighthouse Tower mesh built directly from Tidewatch art primitives
+      if (artMod.drum12 && artMod.domeMesh && artMod.cone && artMod.arch && artMod.drum) {
+        const lhPool = createMeshPool(32)
+        const cream = color('f6ebd0')
+        const red = color('da583e')
+        const iron = color('273a45')
+        const stone = color('8f9a97')
+        const copper = color('4b857b')
+        const lampGlow = color('ffe79c')
+        lhPool.add(artMod.drum12, [0, 0.28, 0], [1.74, 0.56, 1.74], 0, color('7d8c8b'))
+        lhPool.add(artMod.drum12, [0, 0.62, 0], [1.54, 0.24, 1.54], 0, stone)
+        const courses = [
+          [0.68, 1.60, 1.36, 1.22, cream],
+          [1.60, 2.52, 1.22, 1.09, red],
+          [2.52, 3.44, 1.09, 0.96, cream],
+          [3.44, 4.36, 0.96, 0.85, red],
+          [4.36, 5.26, 0.85, 0.76, cream]
+        ] as const
+        for (const [low, high, rBot, rTop, tint] of courses) {
+          lhPool.add(cylinder(12, rTop / rBot), [0, (low + high) / 2, 0], [rBot, high - low, rBot], 0, tint)
+        }
+        lhPool.add(artMod.arch, [0, 1.26, 1.28], [0.64, 0.94, 0.16], 0, iron)
+        lhPool.add(box, [0, 1.18, 1.26], [0.46, 0.78, 0.10], 0, color('5c3e2b'))
+        lhPool.add(cylinder(12, 1.32), [0, 5.20, 0], [0.84, 0.22, 0.84], 0, stone)
+        lhPool.add(artMod.drum12, [0, 5.38, 0], [1.14, 0.20, 1.14], 0, iron)
+        lhPool.add(octahedron, [0, 6.02, 0], [0.44, 0.58, 0.44], 0, lampGlow, 0.98)
+        lhPool.add(artMod.drum12, [0, 6.58, 0], [0.84, 0.14, 0.84], 0, copper)
+        lhPool.add(artMod.domeMesh, [0, 6.96, 0], [1.72, 0.72, 1.72], 0, red)
+        lhPool.add(artMod.cone, [0, 7.40, 0], [0.44, 0.42, 0.44], 0, copper)
+        lhPool.add(artMod.drum, [0, 7.72, 0], [0.06, 0.44, 0.06], 0, iron)
+        lhPool.add(octahedron, [0, 7.98, 0], [0.12, 0.12, 0.12], 0, color('f0c056'), 0.5)
+        models.lighthouse = lhPool.batches.filter(b => b.count > 0)
+      }
+    } catch (error) {
+      throw new Error('Failed to load built Tidewatch assets from dist/. Run npm run build first: ' + (error instanceof Error ? error.message : String(error)))
+    }
+    if (!iconBatches) {
+      const fallback = instances(box, 1)
+      fallback.add([0, 0.5, 0], [1, 1, 1], 0, color('ebb336'))
+      models.keeper = [fallback]
+      iconBatches = [fallback]
+    }
+    return {
+      title: 'Tidewatch',
+      icon: { batches: iconBatches, span: 1.9, centerY: 0.85, background: '#142431', accent: '#2c5a66' },
+      models,
+      audio: {
+        pickup: { notes: [[460, 0.11, 0, 690]], waveform: 'triangle' },
+        sell: { notes: [[740, 0.09, 0], [1080, 0.14, 0.055]], waveform: 'triangle' },
+        fuel: { notes: [[220, 0.16, 0, 440]], waveform: 'triangle' },
+        upgrade: { notes: [[392, 0.16, 0], [493.88, 0.16, 0.09], [587.33, 0.22, 0.18], [783.99, 0.36, 0.28]], waveform: 'sine' },
+        foghorn: { notes: [[116.54, 0.85, 0, 110], [174.61, 0.82, 0.02, 168]], waveform: 'sawtooth' },
+        tideLow: { notes: [[523.25, 0.18, 0], [392.0, 0.26, 0.14]], waveform: 'sine' },
+        tideHigh: { notes: [[329.63, 0.18, 0], [440.0, 0.26, 0.14]], waveform: 'sine' },
+        victory: { notes: [[293.66, 0.2, 0], [392.0, 0.2, 0.14], [493.88, 0.24, 0.28], [587.33, 0.52, 0.42]], waveform: 'sine' }
+      },
+      gameData: {
+        game: 'lighthouse',
+        theme: {
+          surface: '#13252ee8',
+          surfaceAlt: '#1e3945f4',
+          top: '#3a627088',
+          border: '#6ea3a699',
+          accent: '#f0b154',
+          accentText: '#142026',
+          text: '#f5f2e1',
+          muted: '#b5d0d1',
+          glow: '#84f2d8'
+        }
+      },
+      uiTree: defaultMenuLayout('Tidewatch', ['Begin Watch', 'Workshop Gear', 'Quit'])
+    }
+  }
 
   if (kind === 'signal-drift') {
     const models: Record<string, readonly InstanceBatch[]> = {}
@@ -912,6 +1038,22 @@ async function assembleWebBundle(options: PackageGameOptions, wwwDir: string, {
     })
     await copyDirFiltered(join(repoRoot, 'game', 'assets'), join(wwwDir, 'game', 'assets'))
     return { detectedName: 'Beacon Run' }
+  }
+
+  if (game === 'lighthouse') {
+    let html = await readFile(join(repoRoot, 'lighthouse.html'), 'utf8')
+    html = html
+      .replace(/\s+data-hosted="1"/g, '')
+      .replaceAll('href="/', 'href="./')
+      .replaceAll('src="/', 'src="./')
+    await writeFile(join(wwwDir, 'index.html'), ensureMobileMeta(html, themeColor, extraHead))
+    await cp(join(repoRoot, 'game-ui.css'), join(wwwDir, 'game-ui.css'))
+    await emitShakenModules({
+      entryRelPath: 'lighthouse/main.js',
+      wwwDir,
+      resolveSource: relPath => join(distDir, relPath)
+    })
+    return { detectedName: 'Tidewatch' }
   }
 
   // Built-in starter (Lantern Grove)
@@ -1464,6 +1606,39 @@ npm run open:android
 `
 }
 
+const GODOT_RUNTIME_RNG_GD = `extends RefCounted
+# Pure deterministic Mulberry32 PRNG runtime shim for Godot 4 (studio verification code stripped).
+
+static func _i32(v: int) -> int:
+\tv = v & 0xFFFFFFFF
+\treturn v - 0x100000000 if v >= 0x80000000 else v
+
+static func _u32(v: int) -> int:
+\treturn v & 0xFFFFFFFF
+
+static func _imul(a: int, b: int) -> int:
+\treturn _i32((a & 0xFFFFFFFF) * (b & 0xFFFFFFFF))
+
+func nextRandom(seed_val = 0) -> Dictionary:
+\tvar next_seed := _i32(int(seed_val) + 0x6d2b79f5)
+\tvar t := _imul(next_seed ^ (_u32(next_seed) >> 15), 1 | next_seed)
+\tt = _i32(t + _imul(t ^ (_u32(t) >> 7), 61 | t)) ^ t
+\treturn { "value": float(_u32(t ^ (_u32(t) >> 14))) / 4294967296.0, "seed": next_seed }
+
+func createRng(initial_seed = 1337) -> Dictionary:
+\tvar box := [int(initial_seed)]
+\treturn {
+\t\t"seed": box[0],
+\t\t"next": func():
+\t\t\tvar step := nextRandom(box[0])
+\t\t\tbox[0] = int(step["seed"])
+\t\t\treturn step["value"]
+\t}
+
+func __init_module() -> void:
+\tpass
+`
+
 async function tryCompileGodotScripts(options: PackageGameOptions, repoRoot: string, godotDir: string): Promise<number> {
   const candidates = [
     join(repoRoot, 'tools', 'ts-to-gd.ts'),
@@ -1511,6 +1686,16 @@ async function tryCompileGodotScripts(options: PackageGameOptions, repoRoot: str
           join(repoRoot, 'framework', 'ui-layout.ts')
         ]
       }
+    } else if (game === 'lighthouse') {
+      spec = {
+        rootDir: repoRoot,
+        entries: [
+          join(repoRoot, 'lighthouse', 'simulation.ts'),
+          join(repoRoot, 'lighthouse', 'types.ts'),
+          join(repoRoot, 'framework', 'ui-layout.ts'),
+          join(repoRoot, 'framework', 'ui-button.ts')
+        ]
+      }
     }
   }
   if (!spec) return 0
@@ -1523,6 +1708,11 @@ async function tryCompileGodotScripts(options: PackageGameOptions, repoRoot: str
       rootDir: spec.rootDir,
       outDir: compiledDir
     })
+    // Strip studio verification helpers if pulled transitively for pure runtime PRNG (nextRandom/createRng).
+    const verificationGd = join(compiledDir, 'framework', 'verification.gd')
+    if (await access(verificationGd).then(() => true, () => false)) {
+      await writeFile(verificationGd, GODOT_RUNTIME_RNG_GD)
+    }
     return Array.isArray(compiled?.files) ? compiled.files.length : 0
   } catch {
     await rm(compiledDir, { recursive: true, force: true }).catch(() => {})
