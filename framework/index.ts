@@ -27,3 +27,4 @@ export { artModels, artPalette, artShapes, createArtKit, createArtRecipe, modelF
 export type { ArtModel, ArtPart, ArtRecipe, ArtRecipePart, ArtShape, ArtTone } from './art.ts'
 export { artBases, artPartBounds, createArtBuilder, fitArtRecipe } from './art-builder.ts'
 export type { ArtBase, ArtBuilderOptions, ArtFace } from './art-builder.ts'
+export * from './physics3d.ts'
