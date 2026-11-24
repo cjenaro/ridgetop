@@ -392,7 +392,9 @@ export function bakeSpritePixels(batches: readonly InstanceBatch[], {
   span, center = [0, 0, 0], frameSize = 64, elevation = Math.PI / 6, lighting
 }: SpriteCamera) {
   if (!Number.isInteger(frameSize) || frameSize < 1 || frameSize > 1024) throw new RangeError('Frame size must be 1–1024 pixels')
-  if (!(Number.isFinite(span) && span > 0 && center.every(Number.isFinite) && Math.abs(elevation) < Math.PI / 2)) {
+  if (!(Number.isFinite(span) && span > 0 && center.length === 3 &&
+      Number.isFinite(center[0]) && Number.isFinite(center[1]) && Number.isFinite(center[2]) &&
+      Math.abs(elevation) < Math.PI / 2)) {
     throw new RangeError('Invalid sprite camera framing')
   }
   const projection = orthographic(span, span, span / 100, span * 8)

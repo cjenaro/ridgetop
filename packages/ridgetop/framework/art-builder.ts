@@ -72,8 +72,10 @@ export function fitArtRecipe(input: ArtRecipe): ArtRecipe {
   const floor = snapZero(bounds.min[1])
   const cz = snapZero((bounds.min[2] + bounds.max[2]) / 2)
   if (source.joints) {
+    const shiftedRoot = cx !== 0 || floor !== 0 || cz !== 0
     for (const j of source.joints) {
-      if (j.pivot) j.pivot = [j.pivot[0] - cx, j.pivot[1] - floor, j.pivot[2] - cz]
+      if (j.pivot) j.pivot = [snapZero(j.pivot[0] - cx), snapZero(j.pivot[1] - floor), snapZero(j.pivot[2] - cz)]
+      else if (j.parent === undefined && shiftedRoot) j.pivot = [snapZero(-cx), snapZero(-floor), snapZero(-cz)]
     }
   }
   let halfWidth = 0, low = Infinity, high = -Infinity

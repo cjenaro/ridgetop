@@ -45,28 +45,73 @@ function isNonDegenerate(positions: ArrayLike<number>, i0: number, i1: number, i
   return Number.isFinite(lenSq) && lenSq > 0
 }
 
-function buildCompactMesh(positions: ArrayLike<number>, indices: readonly number[]): Mesh | null {
-  const compactPositions: number[] = []
-  const compactIndices: number[] = []
-  const remap = new Map<number, number>()
+function buildTriangleMesh(
+  positions: ArrayLike<number>,
+  indices: ArrayLike<number> | null,
+  vertexCount: number,
+  mode: number,
+  flipWinding: boolean
+): Mesh | null {
+  const count = indices ? indices.length : vertexCount
+  let maxTris = 0
+  if (mode === 4) {
+    if (count < 3 || count % 3 !== 0) {
+      throw new RangeError('glTF TRIANGLES primitive must contain complete triangles')
+    }
+    maxTris = count / 3
+  } else if (mode === 5 || mode === 6) {
+    if (count < 3) return null
+    maxTris = count - 2
+  } else {
+    return null
+  }
 
-  for (let i = 0; i + 2 < indices.length; i += 3) {
-    const i0 = indices[i], i1 = indices[i + 1], i2 = indices[i + 2]
-    if (!isNonDegenerate(positions, i0, i1, i2)) continue
-    for (const src of [i0, i1, i2]) {
-      let dst = remap.get(src)
-      if (dst === undefined) {
-        dst = compactPositions.length / 3
-        remap.set(src, dst)
-        const at = src * 3
-        compactPositions.push(positions[at], positions[at + 1], positions[at + 2])
-      }
-      compactIndices.push(dst)
+  const flat = new Float32Array(maxTris * 9)
+  let out = 0
+
+  const emitTri = (a: number, b: number, c: number) => {
+    const i0 = a
+    const i1 = flipWinding ? c : b
+    const i2 = flipWinding ? b : c
+    if (!isNonDegenerate(positions, i0, i1, i2)) return
+    const p0 = i0 * 3, p1 = i1 * 3, p2 = i2 * 3
+    flat[out] = positions[p0]
+    flat[out + 1] = positions[p0 + 1]
+    flat[out + 2] = positions[p0 + 2]
+    flat[out + 3] = positions[p1]
+    flat[out + 4] = positions[p1 + 1]
+    flat[out + 5] = positions[p1 + 2]
+    flat[out + 6] = positions[p2]
+    flat[out + 7] = positions[p2 + 1]
+    flat[out + 8] = positions[p2 + 2]
+    out += 9
+  }
+
+  if (mode === 4) {
+    if (indices) {
+      for (let i = 0; i < count; i += 3) emitTri(indices[i], indices[i + 1], indices[i + 2])
+    } else {
+      for (let i = 0; i < count; i += 3) emitTri(i, i + 1, i + 2)
+    }
+  } else if (mode === 5) {
+    for (let i = 0; i + 2 < count; i++) {
+      const a = indices ? indices[i] : i
+      const b = indices ? indices[i + 1] : i + 1
+      const c = indices ? indices[i + 2] : i + 2
+      if ((i & 1) === 0) emitTri(a, b, c)
+      else emitTri(a, c, b)
+    }
+  } else {
+    const root = indices ? indices[0] : 0
+    for (let i = 1; i + 1 < count; i++) {
+      const b = indices ? indices[i] : i
+      const c = indices ? indices[i + 1] : i + 1
+      emitTri(root, b, c)
     }
   }
 
-  if (!compactIndices.length) return null
-  return mesh(compactPositions, compactIndices)
+  if (out === 0) return null
+  return mesh(out === flat.length ? flat : flat.subarray(0, out))
 }
 
 /**
@@ -91,15 +136,17 @@ export function parseObj(source: string): ImportedMeshPart[] {
 
   const rawLines = source.split(/\r?\n/)
   let lineNo = 0
+  const stripComment = (raw: string) => {
+    const at = raw.indexOf('#')
+    return at >= 0 ? raw.slice(0, at) : raw
+  }
 
   while (lineNo < rawLines.length) {
     const startLine = lineNo + 1
-    let line = rawLines[lineNo++]
+    let line = stripComment(rawLines[lineNo++])
     while (line.endsWith('\\') && lineNo < rawLines.length) {
-      line = line.slice(0, -1) + ' ' + rawLines[lineNo++]
+      line = line.slice(0, -1) + ' ' + stripComment(rawLines[lineNo++])
     }
-    const commentAt = line.indexOf('#')
-    if (commentAt >= 0) line = line.slice(0, commentAt)
     const trimmed = line.trim()
     if (!trimmed) continue
 
@@ -169,7 +216,7 @@ export function parseObj(source: string): ImportedMeshPart[] {
 
   const results: ImportedMeshPart[] = []
   for (const bucket of buckets.values()) {
-    const built = buildCompactMesh(positions, bucket.indices)
+    const built = buildTriangleMesh(positions, bucket.indices, positions.length / 3, 4, false)
     if (!built) continue
     const part: ImportedMeshPart = bucket.material !== undefined
       ? { name: bucket.name, mesh: built, color: WHITE, unlit: 0, material: bucket.material }
@@ -246,9 +293,32 @@ function toUint8Array(input: Uint8Array | ArrayBuffer): Uint8Array {
   throw new TypeError('Expected a Uint8Array or ArrayBuffer')
 }
 
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === 'object' && !Array.isArray(value)
+}
+
+function isFiniteArray(value: unknown, length: number): value is number[] {
+  if (!Array.isArray(value) || value.length !== length) return false
+  for (let i = 0; i < length; i++) {
+    if (!Number.isFinite(value[i])) return false
+  }
+  return true
+}
+
+function getArrayObject<T>(arr: unknown, index: unknown, label: string): T {
+  if (!Array.isArray(arr) || typeof index !== 'number' || !Number.isInteger(index) || index < 0 || index >= arr.length) {
+    throw new RangeError(`Missing glTF ${label} ${String(index)}`)
+  }
+  const item = arr[index]
+  if (!isPlainObject(item)) {
+    throw new RangeError(`Invalid glTF ${label} ${index}`)
+  }
+  return item as T
+}
+
 function nodeLocalMatrix(node: GltfNode): Matrix {
-  if (Array.isArray(node.matrix)) {
-    if (node.matrix.length !== 16 || !node.matrix.every(Number.isFinite)) {
+  if (node.matrix !== undefined) {
+    if (!isFiniteArray(node.matrix, 16)) {
       throw new RangeError('Invalid glTF node matrix')
     }
     return new Float32Array(node.matrix)
@@ -256,8 +326,7 @@ function nodeLocalMatrix(node: GltfNode): Matrix {
   const t = node.translation ?? [0, 0, 0]
   const r = node.rotation ?? [0, 0, 0, 1]
   const s = node.scale ?? [1, 1, 1]
-  if (t.length !== 3 || r.length !== 4 || s.length !== 3 ||
-      ![...t, ...r, ...s].every(Number.isFinite)) {
+  if (!isFiniteArray(t, 3) || !isFiniteArray(r, 4) || !isFiniteArray(s, 3)) {
     throw new RangeError('Invalid glTF node TRS transform')
   }
   const qLen = Math.hypot(r[0], r[1], r[2], r[3])
@@ -279,41 +348,36 @@ function matrixDeterminant3(m: Matrix): number {
   )
 }
 
-function transformPoint(m: Matrix, x: number, y: number, z: number): Vec3 {
-  return [
-    m[0] * x + m[4] * y + m[8] * z + m[12],
-    m[1] * x + m[5] * y + m[9] * z + m[13],
-    m[2] * x + m[6] * y + m[10] * z + m[14]
-  ]
-}
-
 function resolveAccessorSlice(gltf: GltfRoot, bin: Uint8Array | null, accessorIndex: number, minStride: number) {
-  const accessor = gltf.accessors?.[accessorIndex]
-  if (!accessor) throw new RangeError(`Missing glTF accessor ${accessorIndex}`)
-  if (!Number.isInteger(accessor.count) || accessor.count <= 0) {
+  const accessor = getArrayObject<GltfAccessor>(gltf.accessors, accessorIndex, 'accessor')
+  if (typeof accessor.count !== 'number' || !Number.isSafeInteger(accessor.count) || accessor.count <= 0) {
     throw new RangeError(`Invalid glTF accessor count at ${accessorIndex}`)
   }
   if (accessor.bufferView === undefined) {
     throw new RangeError(`glTF accessor ${accessorIndex} has no bufferView`)
   }
-  const viewDef = gltf.bufferViews?.[accessor.bufferView]
-  if (!viewDef) throw new RangeError(`Missing glTF bufferView ${accessor.bufferView}`)
+  const viewDef = getArrayObject<GltfBufferView>(gltf.bufferViews, accessor.bufferView, 'bufferView')
   if ((viewDef.buffer ?? 0) !== 0 || !bin) {
     throw new RangeError(`glTF bufferView ${accessor.bufferView} requires binary chunk buffer 0`)
   }
   const viewOffset = viewDef.byteOffset ?? 0
   const viewLength = viewDef.byteLength
   const accOffset = accessor.byteOffset ?? 0
-  if (viewOffset < 0 || viewLength < 0 || accOffset < 0 || viewOffset + viewLength > bin.byteLength) {
+  if (
+    typeof viewOffset !== 'number' || !Number.isSafeInteger(viewOffset) || viewOffset < 0 ||
+    typeof viewLength !== 'number' || !Number.isSafeInteger(viewLength) || viewLength < 0 ||
+    typeof accOffset !== 'number' || !Number.isSafeInteger(accOffset) || accOffset < 0 ||
+    viewOffset + viewLength > bin.byteLength
+  ) {
     throw new RangeError(`glTF bufferView ${accessor.bufferView} exceeds binary chunk bounds`)
   }
   const stride = viewDef.byteStride ?? minStride
-  if (!Number.isInteger(stride) || stride < minStride) {
+  if (typeof stride !== 'number' || !Number.isSafeInteger(stride) || stride < minStride) {
     throw new RangeError(`Invalid glTF byteStride ${stride} for accessor ${accessorIndex}`)
   }
   const start = viewOffset + accOffset
   const end = start + (accessor.count - 1) * stride + minStride
-  if (end > viewOffset + viewLength || end > bin.byteLength) {
+  if (!Number.isSafeInteger(end) || end > viewOffset + viewLength || end > bin.byteLength) {
     throw new RangeError(`glTF accessor ${accessorIndex} exceeds bufferView bounds`)
   }
   const dv = new DataView(bin.buffer, bin.byteOffset, bin.byteLength)
@@ -326,6 +390,10 @@ function readPositions(gltf: GltfRoot, bin: Uint8Array | null, accessorIndex: nu
     throw new RangeError(`glTF POSITION accessor ${accessorIndex} must be FLOAT VEC3`)
   }
   const out = new Float32Array(accessor.count * 3)
+  const m0 = world[0], m1 = world[1], m2 = world[2]
+  const m4 = world[4], m5 = world[5], m6 = world[6]
+  const m8 = world[8], m9 = world[9], m10 = world[10]
+  const m12 = world[12], m13 = world[13], m14 = world[14]
   for (let i = 0; i < accessor.count; i++) {
     const off = start + i * stride
     const x = dv.getFloat32(off, true)
@@ -334,18 +402,19 @@ function readPositions(gltf: GltfRoot, bin: Uint8Array | null, accessorIndex: nu
     if (!Number.isFinite(x) || !Number.isFinite(y) || !Number.isFinite(z)) {
       throw new RangeError(`Non-finite vertex position in glTF accessor ${accessorIndex}`)
     }
-    const [wx, wy, wz] = transformPoint(world, x, y, z)
     const dst = i * 3
-    out[dst] = wx
-    out[dst + 1] = wy
-    out[dst + 2] = wz
+    out[dst] = m0 * x + m4 * y + m8 * z + m12
+    out[dst + 1] = m1 * x + m5 * y + m9 * z + m13
+    out[dst + 2] = m2 * x + m6 * y + m10 * z + m14
+    if (!Number.isFinite(out[dst]) || !Number.isFinite(out[dst + 1]) || !Number.isFinite(out[dst + 2])) {
+      throw new RangeError(`Transformed vertex position overflowed Float32 in glTF accessor ${accessorIndex}`)
+    }
   }
   return out
 }
 
-function readIndices(gltf: GltfRoot, bin: Uint8Array | null, accessorIndex: number, vertexCount: number): number[] {
-  const accessor = gltf.accessors?.[accessorIndex]
-  if (!accessor) throw new RangeError(`Missing glTF index accessor ${accessorIndex}`)
+function readIndices(gltf: GltfRoot, bin: Uint8Array | null, accessorIndex: number, vertexCount: number): Uint32Array {
+  const accessor = getArrayObject<GltfAccessor>(gltf.accessors, accessorIndex, 'index accessor')
   if (accessor.type !== 'SCALAR') {
     throw new RangeError(`glTF index accessor ${accessorIndex} must be SCALAR`)
   }
@@ -357,7 +426,7 @@ function readIndices(gltf: GltfRoot, bin: Uint8Array | null, accessorIndex: numb
     throw new RangeError(`Unsupported glTF index componentType ${accessor.componentType}`)
   }
   const { dv, start, stride } = resolveAccessorSlice(gltf, bin, accessorIndex, compSize)
-  const out: number[] = new Array(accessor.count)
+  const out = new Uint32Array(accessor.count)
   for (let i = 0; i < accessor.count; i++) {
     const off = start + i * stride
     const idx = compSize === 1 ? dv.getUint8(off)
@@ -372,14 +441,15 @@ function readIndices(gltf: GltfRoot, bin: Uint8Array | null, accessorIndex: numb
 }
 
 function extractMaterial(mat: GltfMaterial | undefined): { color: Color; unlit: number; material?: string } {
-  if (!mat) return { color: WHITE, unlit: 0 }
-  const bcf = mat.pbrMetallicRoughness?.baseColorFactor
+  if (!isPlainObject(mat)) return { color: WHITE, unlit: 0 }
+  const pbr = isPlainObject(mat.pbrMetallicRoughness) ? mat.pbrMetallicRoughness : undefined
+  const bcf = Array.isArray(pbr?.baseColorFactor) ? pbr.baseColorFactor : undefined
   const br = bcf && Number.isFinite(bcf[0]) ? Math.max(0, bcf[0]) : 1
   const bg = bcf && Number.isFinite(bcf[1]) ? Math.max(0, bcf[1]) : 1
   const bb = bcf && Number.isFinite(bcf[2]) ? Math.max(0, bcf[2]) : 1
   const ba = bcf && Number.isFinite(bcf[3]) ? clamp01(bcf[3]) : 1
 
-  const ef = mat.emissiveFactor
+  const ef = Array.isArray(mat.emissiveFactor) ? mat.emissiveFactor : undefined
   const er = ef && Number.isFinite(ef[0]) ? Math.max(0, ef[0]) : 0
   const eg = ef && Number.isFinite(ef[1]) ? Math.max(0, ef[1]) : 0
   const eb = ef && Number.isFinite(ef[2]) ? Math.max(0, ef[2]) : 0
@@ -387,7 +457,7 @@ function extractMaterial(mat: GltfMaterial | undefined): { color: Color; unlit: 
   const baseSum = br + bg + bb
   const emissiveSum = er + eg + eb
   const totalSum = baseSum + emissiveSum
-  const isKhrUnlit = Boolean(mat.extensions && 'KHR_materials_unlit' in mat.extensions)
+  const isKhrUnlit = isPlainObject(mat.extensions) && Object.hasOwn(mat.extensions, 'KHR_materials_unlit')
 
   const unlit = isKhrUnlit ? 1 : (emissiveSum > 0 && totalSum > 0 ? clamp01(emissiveSum / totalSum) : 0)
   const lr = clamp01(br + er)
@@ -395,34 +465,7 @@ function extractMaterial(mat: GltfMaterial | undefined): { color: Color; unlit: 
   const lb = clamp01(bb + eb)
 
   const color: Color = [linearToSrgb(lr), linearToSrgb(lg), linearToSrgb(lb), ba]
-  return mat.name !== undefined ? { color, unlit, material: mat.name } : { color, unlit }
-}
-
-function primitiveTriangles(rawIndices: readonly number[], mode: number, flipWinding: boolean): number[] {
-  const tris: number[] = []
-  const pushTri = (a: number, b: number, c: number) => {
-    if (flipWinding) tris.push(a, c, b)
-    else tris.push(a, b, c)
-  }
-
-  if (mode === 4) {
-    if (rawIndices.length < 3 || rawIndices.length % 3 !== 0) {
-      throw new RangeError('glTF TRIANGLES primitive must contain complete triangles')
-    }
-    for (let i = 0; i < rawIndices.length; i += 3) {
-      pushTri(rawIndices[i], rawIndices[i + 1], rawIndices[i + 2])
-    }
-  } else if (mode === 5) {
-    for (let i = 0; i + 2 < rawIndices.length; i++) {
-      if (i % 2 === 0) pushTri(rawIndices[i], rawIndices[i + 1], rawIndices[i + 2])
-      else pushTri(rawIndices[i], rawIndices[i + 2], rawIndices[i + 1])
-    }
-  } else if (mode === 6) {
-    for (let i = 1; i + 1 < rawIndices.length; i++) {
-      pushTri(rawIndices[0], rawIndices[i], rawIndices[i + 1])
-    }
-  }
-  return tris
+  return typeof mat.name === 'string' ? { color, unlit, material: mat.name } : { color, unlit }
 }
 
 /**
@@ -460,7 +503,11 @@ export function parseGlb(bytes: Uint8Array | ArrayBuffer): ImportedMeshPart[] {
   let gltf: GltfRoot
   try {
     const jsonText = new TextDecoder('utf-8').decode(u8.subarray(offset + 8, offset + 8 + jsonLength))
-    gltf = JSON.parse(jsonText) as GltfRoot
+    const parsed: unknown = JSON.parse(jsonText)
+    if (!isPlainObject(parsed)) {
+      throw new Error('Root JSON value must be an object')
+    }
+    gltf = parsed as GltfRoot
   } catch (error) {
     throw new RangeError(`Invalid GLB JSON chunk: ${(error as Error).message}`)
   }
@@ -482,25 +529,33 @@ export function parseGlb(bytes: Uint8Array | ArrayBuffer): ImportedMeshPart[] {
     offset += 8 + chunkLength
   }
 
-  if (gltf.asset?.version && !gltf.asset.version.startsWith('2.')) {
-    throw new RangeError(`Unsupported glTF asset version ${gltf.asset.version}`)
+  if (gltf.asset !== undefined) {
+    if (!isPlainObject(gltf.asset)) {
+      throw new RangeError('Invalid glTF asset header')
+    }
+    if (gltf.asset.version !== undefined && (typeof gltf.asset.version !== 'string' || !gltf.asset.version.startsWith('2.'))) {
+      throw new RangeError(`Unsupported glTF asset version ${String(gltf.asset.version)}`)
+    }
   }
 
   const parts: ImportedMeshPart[] = []
 
   function emitMesh(meshIndex: number, world: Matrix, nodeName?: string) {
-    const meshDef = gltf.meshes?.[meshIndex]
-    if (!meshDef) throw new RangeError(`Missing glTF mesh ${meshIndex}`)
-    const primitives = meshDef.primitives ?? []
+    const meshDef = getArrayObject<GltfMesh>(gltf.meshes, meshIndex, 'mesh')
+    const primitives = Array.isArray(meshDef.primitives) ? meshDef.primitives : []
     const flipWinding = matrixDeterminant3(world) < 0
-    const baseName = nodeName || meshDef.name || `mesh_${meshIndex}`
+    const baseName = (typeof nodeName === 'string' && nodeName) || (typeof meshDef.name === 'string' && meshDef.name) || `mesh_${meshIndex}`
 
     for (let p = 0; p < primitives.length; p++) {
-      const prim = primitives[p]
+      const rawPrim = primitives[p]
+      if (!isPlainObject(rawPrim)) {
+        throw new RangeError(`Invalid glTF mesh ${meshIndex} primitive ${p}`)
+      }
+      const prim = rawPrim as GltfPrimitive
       const mode = prim.mode ?? 4
       if (mode !== 4 && mode !== 5 && mode !== 6) continue
-      const posAccessor = prim.attributes?.POSITION
-      if (posAccessor === undefined) {
+      const posAccessor = isPlainObject(prim.attributes) ? prim.attributes.POSITION : undefined
+      if (typeof posAccessor !== 'number' || !Number.isInteger(posAccessor)) {
         throw new RangeError(`glTF mesh ${meshIndex} primitive ${p} is missing POSITION attribute`)
       }
 
@@ -508,13 +563,12 @@ export function parseGlb(bytes: Uint8Array | ArrayBuffer): ImportedMeshPart[] {
       const vertexCount = positions.length / 3
       const rawIndices = prim.indices !== undefined
         ? readIndices(gltf, binChunk, prim.indices, vertexCount)
-        : Array.from({ length: vertexCount }, (_, idx) => idx)
+        : null
 
-      const triIndices = primitiveTriangles(rawIndices, mode, flipWinding)
-      const built = buildCompactMesh(positions, triIndices)
+      const built = buildTriangleMesh(positions, rawIndices, vertexCount, mode, flipWinding)
       if (!built) continue
 
-      const matDef = prim.material !== undefined ? gltf.materials?.[prim.material] : undefined
+      const matDef = prim.material !== undefined ? getArrayObject<GltfMaterial>(gltf.materials, prim.material, 'material') : undefined
       const { color, unlit, material } = extractMaterial(matDef)
       const name = primitives.length === 1
         ? baseName
@@ -527,42 +581,69 @@ export function parseGlb(bytes: Uint8Array | ArrayBuffer): ImportedMeshPart[] {
     }
   }
 
-  const nodes = gltf.nodes ?? []
+  const nodes = Array.isArray(gltf.nodes) ? gltf.nodes : []
   const visiting = new Set<number>()
+  const visited = new Set<number>()
 
   function walkNode(nodeIndex: number, parentWorld: Matrix) {
     if (visiting.has(nodeIndex)) {
       throw new RangeError(`Cyclic glTF node hierarchy at node ${nodeIndex}`)
     }
-    const node = nodes[nodeIndex]
-    if (!node) throw new RangeError(`Missing glTF node ${nodeIndex}`)
+    if (visited.has(nodeIndex)) {
+      throw new RangeError(`Invalid glTF node hierarchy: node ${nodeIndex} has multiple parents`)
+    }
+    const node = getArrayObject<GltfNode>(nodes, nodeIndex, 'node')
     visiting.add(nodeIndex)
+    visited.add(nodeIndex)
     const world = multiply(parentWorld, nodeLocalMatrix(node))
     if (node.mesh !== undefined) {
       emitMesh(node.mesh, world, node.name)
     }
-    for (const childIndex of node.children ?? []) {
-      walkNode(childIndex, world)
+    if (node.children !== undefined) {
+      if (!Array.isArray(node.children)) {
+        throw new RangeError(`Invalid glTF children list at node ${nodeIndex}`)
+      }
+      for (let i = 0; i < node.children.length; i++) {
+        walkNode(node.children[i], world)
+      }
     }
     visiting.delete(nodeIndex)
   }
 
-  if (gltf.scenes?.length) {
+  if (Array.isArray(gltf.scenes) && gltf.scenes.length) {
     const sceneIndex = gltf.scene ?? 0
-    const scene = gltf.scenes[sceneIndex]
-    if (!scene) throw new RangeError(`Missing glTF scene ${sceneIndex}`)
-    for (const rootIndex of scene.nodes ?? []) {
-      walkNode(rootIndex, IDENTITY)
+    const scene = getArrayObject<{ name?: string; nodes?: number[] }>(gltf.scenes, sceneIndex, 'scene')
+    const rootNodes = scene.nodes ?? []
+    if (!Array.isArray(rootNodes)) {
+      throw new RangeError(`Invalid glTF scene ${sceneIndex} nodes list`)
+    }
+    for (let i = 0; i < rootNodes.length; i++) {
+      walkNode(rootNodes[i], IDENTITY)
     }
   } else if (nodes.length) {
     const childSet = new Set<number>()
-    for (const node of nodes) {
-      for (const child of node.children ?? []) childSet.add(child)
+    for (let i = 0; i < nodes.length; i++) {
+      const node = getArrayObject<GltfNode>(nodes, i, 'node')
+      if (node.children !== undefined) {
+        if (!Array.isArray(node.children)) {
+          throw new RangeError(`Invalid glTF children list at node ${i}`)
+        }
+        for (let c = 0; c < node.children.length; c++) {
+          const child = node.children[c]
+          if (childSet.has(child)) {
+            throw new RangeError(`Invalid glTF node hierarchy: node ${child} has multiple parents`)
+          }
+          childSet.add(child)
+        }
+      }
     }
     for (let i = 0; i < nodes.length; i++) {
       if (!childSet.has(i)) walkNode(i, IDENTITY)
     }
-  } else if (gltf.meshes?.length) {
+    if (visited.size < nodes.length) {
+      throw new RangeError('Cyclic glTF node hierarchy')
+    }
+  } else if (Array.isArray(gltf.meshes) && gltf.meshes.length) {
     for (let i = 0; i < gltf.meshes.length; i++) {
       emitMesh(i, IDENTITY)
     }

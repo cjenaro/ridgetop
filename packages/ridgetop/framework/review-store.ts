@@ -141,8 +141,11 @@ export function createArtReviewHandler(root: URL, options: ArtReviewHandlerOptio
     if (!loopback || !local || (req.method !== 'GET' && req.headers.origin !== new URL('http://' + host).origin)) bad('Use the local testing origin.', 403)
     if (path === '/__testing/recipe' && req.method === 'POST') {
       const { asset, file, base, recipe } = await payload(req)
-      if (typeof asset !== 'string' || !/^[a-z0-9][a-z0-9_-]*$/i.test(asset)) bad('Invalid model role.')
-      try { modelFromArtRecipe(recipe) } catch (error) { bad(error.message) }
+      if (typeof asset !== 'string' || !/^[a-z0-9][a-z0-9_-]*$/i.test(asset) ||
+          asset === '__proto__' || asset === 'constructor' || asset === 'prototype') {
+        bad('Invalid model role.')
+      }
+      try { modelFromArtRecipe(recipe) } catch (error) { bad((error as Error).message) }
       const useOverrides = file === null || file === undefined
       const destination = useOverrides
         ? join(art, 'overrides.json')
@@ -158,7 +161,8 @@ export function createArtReviewHandler(root: URL, options: ArtReviewHandlerOptio
         const document = parsedDoc as Record<string, unknown>
         const original = useOverrides ? (Object.hasOwn(document, asset) ? document[asset] : null) : (raw ? parsedDoc : null)
         if (!isDeepStrictEqual(original, base)) bad('The model changed on disk. Reload before editing it.', 409)
-        await atomic(destination, JSON.stringify(useOverrides ? { ...document, [asset]: recipe } : recipe, null, 2) + '\n')
+        const nextDoc = useOverrides ? Object.assign(Object.create(null), document, { [asset]: recipe }) : recipe
+        await atomic(destination, JSON.stringify(nextDoc, null, 2) + '\n')
       })
       sendJson(res, { saved: true, file: relative(project, destination).replace(/\\/g, '/') })
       return true
@@ -169,10 +173,15 @@ export function createArtReviewHandler(root: URL, options: ArtReviewHandlerOptio
       let stem: string
       if (file !== undefined && file !== null) {
         const resolvedFile = resolveArtPath(file, /\.(?:png|json)$/i, 'Save sprite assets as .png or .json files inside the art directory.')
+        if (/\.art\.json$/i.test(resolvedFile) || resolvedFile === join(art, 'overrides.json')) {
+          bad('Sprite endpoint cannot overwrite recipe or overrides files.')
+        }
         stem = resolvedFile.replace(/\.(?:png|json)$/i, '')
       } else if (typeof name === 'string' && /^[a-z0-9][a-z0-9 _-]*$/i.test(name)) {
         stem = resolve(art, name)
-        if (!stem.startsWith(art + sep)) bad('Invalid sprite name.')
+        if (!stem.startsWith(art + sep) || stem === join(art, 'overrides') || /\.art$/i.test(stem)) {
+          bad('Invalid sprite name.')
+        }
       } else {
         bad('Provide a valid sprite name or art file path.')
       }
@@ -205,8 +214,8 @@ export function createArtReviewHandler(root: URL, options: ArtReviewHandlerOptio
       sendJson(res, { saved: true, files: savedFiles })
       return true
     }
-    await directory(reviews)
     if (path === '/__testing/reviews' && req.method === 'GET') {
+      await directory(reviews)
       const files = (await readdir(reviews)).filter(file => file.endsWith('.json') && uuid.test(file.slice(0, -5)))
       const entries: Awaited<ReturnType<typeof note>>[] = []
       const errors: string[] = []
@@ -215,6 +224,7 @@ export function createArtReviewHandler(root: URL, options: ArtReviewHandlerOptio
       }))
       sendJson(res, { entries: entries.sort((a, b) => b.note.created.localeCompare(a.note.created)), errors })
     } else if (path === '/__testing/reviews' && req.method === 'POST') {
+      await directory(reviews)
       const { id, target, scene, comment, png } = await payload(req)
       if (typeof id !== 'string' || !uuid.test(id)) bad('Invalid review ID.')
       checkPin(target)
@@ -238,6 +248,7 @@ export function createArtReviewHandler(root: URL, options: ArtReviewHandlerOptio
     } else {
       const match = /^\/__testing\/reviews\/([0-9a-f-]+)(\/before\.png)?$/.exec(path)
       if (!match || !uuid.test(match[1])) bad('Unknown testing endpoint.', 404)
+      await directory(reviews)
       if (req.method === 'GET' && match[2]) {
         await note(match[1])
         const bytes = await regular(join(reviews, match[1] + '.png'))

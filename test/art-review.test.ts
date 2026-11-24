@@ -10,6 +10,7 @@ import { modelFromArtRecipe } from '../packages/ridgetop/framework/art-recipe.ts
 import { pickArtScene, spritePartVisibility } from '../packages/ridgetop/framework/art-review.ts'
 import { box, multiply, orthographic, view } from '../packages/ridgetop/framework/geometry.ts'
 import { createGameHost } from '../packages/ridgetop/framework/host.ts'
+import { bakeSpritePixels } from '../packages/ridgetop/framework/low-poly.ts'
 import { createArtReviewHandler } from '../packages/ridgetop/framework/review-store.ts'
 
 const png = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aDLsAAAAASUVORK5CYII='
@@ -192,15 +193,22 @@ test('createArtReviewHandler supports custom artDir/reviewsDir and saving sprite
   assert.deepEqual(await readFile(join(folder, 'assets', 'art', 'hero.png')), Buffer.from(png, 'base64'))
   assert.deepEqual(JSON.parse(await readFile(join(folder, 'assets', 'art', 'hero.json'), 'utf8')), spriteManifest)
 
-  // Sprite validation rejects empty payloads, bad manifests, and path traversal
+  // Sprite validation rejects empty payloads, bad manifests, path traversal, and overwriting overrides/recipes
   assert.equal((await req('sprite', 'POST', { name: 'hero' })).status, 400)
   assert.equal((await req('sprite', 'POST', { file: '../escape.png', png })).status, 400)
+  assert.equal((await req('sprite', 'POST', { file: 'assets/art/overrides.json', manifest: spriteManifest })).status, 400)
+  assert.equal((await req('sprite', 'POST', { file: 'assets/art/foo.art.json', manifest: spriteManifest })).status, 400)
+  assert.equal((await req('sprite', 'POST', { name: 'overrides', manifest: spriteManifest })).status, 400)
   assert.equal((await req('sprite', 'POST', { name: 'bad', manifest: { src: '../bad.png', frameWidth: 16, frameHeight: 16 } })).status, 400)
   assert.equal((await req('sprite', 'POST', { name: 'bad', png: 'not-a-png' })).status, 400)
+  assert.equal((await req('recipe', 'POST', { asset: 'constructor', file: null, base: null, recipe: ranger })).status, 400)
 
   // Reviews save into custom reviewsDir
   const id = randomUUID()
   assert.equal((await req('reviews', 'POST', { id, comment: 'Stored in qa/reviews.', png, target, scene: {} })).status, 200)
   const savedReview = JSON.parse(await readFile(join(folder, 'qa', 'reviews', id + '.json'), 'utf8'))
   assert.equal(savedReview.id, id)
+
+  // bakeSpritePixels rejects non-3-element center tuples
+  assert.throws(() => bakeSpritePixels([], { span: 2, center: [] as unknown as [number, number, number] }), /Invalid sprite camera framing/i)
 })

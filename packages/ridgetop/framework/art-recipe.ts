@@ -313,6 +313,7 @@ export function compileArtJoints(joints: readonly ArtRecipeJoint[]) {
   const order: number[] = []
   function visit(i: number) {
     if (visited[i] === 2) return
+    if (visited[i] === 1) throw new RangeError('Cyclic joint parent: ' + joints[i].id)
     visited[i] = 1
     if (parentIndex[i] >= 0) visit(parentIndex[i])
     visited[i] = 2

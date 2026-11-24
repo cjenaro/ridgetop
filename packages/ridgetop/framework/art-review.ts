@@ -246,22 +246,27 @@ export function pickSpriteDraws(
   return undefined
 }
 
+const spriteDirectionsByLength = spriteDirections
+  .map((name, index) => ({ name, index }))
+  .sort((a, b) => b.name.length - a.name.length)
+
 /** Recreate an asset at the saved yaw, elevation and framing. IDs use unlit colors for part picking. */
 export function modelReviewFrame(kit: ReviewKit, pose: ArtView, size: number, ids = false) {
   if (!(Number.isFinite(pose.elevation) && Math.abs(pose.elevation) < Math.PI / 2)) {
     throw new RangeError('Review elevation must be strictly between -pi/2 and pi/2')
   }
   const group = kit.group(), canvas = reviewCanvas(size)
-  const sprite = pose.surface !== 'model'
+  const sprite = pose.surface === 'sprite'
   let angle = 0
   if (sprite) {
     if (pose.clip === 'turntable') {
       const frame = Number.isFinite(pose.frame) ? Math.floor(pose.frame!) : 0
       angle = (((frame % spriteDirections.length) + spriteDirections.length) % spriteDirections.length) * Math.PI / 4
     } else {
-      const idx = spriteDirections.indexOf(pose.clip as typeof spriteDirections[number])
-      if (idx < 0) throw new RangeError('Unknown sprite direction clip: ' + pose.clip)
-      angle = idx * Math.PI / 4
+      const clipName = typeof pose.clip === 'string' ? pose.clip : ''
+      const matched = spriteDirectionsByLength.find(d => clipName === d.name || clipName.endsWith('-' + d.name))
+      if (!matched) throw new RangeError('Unknown sprite direction clip: ' + pose.clip)
+      angle = matched.index * Math.PI / 4
     }
   }
   const r = pose.span * 4, horizontal = r * Math.cos(pose.elevation)

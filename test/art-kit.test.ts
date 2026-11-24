@@ -3,6 +3,7 @@ import { readdir, readFile } from 'node:fs/promises'
 import test from 'node:test'
 import { artModels, bakeAnimatedSpritePixels, box, createArtBuilder, createArtKit, createArtRecipe, createMeshPool,
   modelFromArtRecipe, renderRig, rigFromArtModel, rigFromArtRecipe } from '../packages/ridgetop/framework/index.ts'
+import { compileArtJoints } from '../packages/ridgetop/framework/art-recipe.ts'
 import type { ArtModel, ArtRecipe } from '../packages/ridgetop/framework/index.ts'
 
 test('custom art shares mesh buffers and applies the kit palette and object transform', () => {
@@ -256,4 +257,37 @@ test('all existing v1 starter and library .art.json recipes remain 100% compatib
   assert.equal(restSheet.width, 16)
   assert.equal(restSheet.height, 32)
   assert.deepEqual(Object.keys(restSheet.manifest.clips), ['rest-front', 'rest-right'])
+
+  // rigFromArtRecipe handles Object.prototype joint names ('toString') and root + __static__ + unbound parts
+  const trickyRecipe = {
+    format: 'ridgetop-art' as const,
+    version: 2 as const,
+    name: 'tricky',
+    span: 2,
+    centerY: 0.5,
+    frameSize: 64,
+    palette: { wood: '#66aa88' },
+    parts: [
+      { name: 'unbound', shape: 'box' as const, position: [0, 0.5, 0] as [number, number, number], scale: [0.4, 0.4, 0.4] as [number, number, number], tone: 'wood' as const },
+      { name: 'bound', shape: 'box' as const, joint: 'toString', position: [0, 1, 0] as [number, number, number], scale: [0.3, 0.3, 0.3] as [number, number, number], tone: 'wood' as const }
+    ],
+    joints: [
+      { id: 'root', pivot: [0, 0, 0] as [number, number, number] },
+      { id: '__static__', parent: 'root', pivot: [0, 0.2, 0] as [number, number, number] },
+      { id: 'toString', parent: 'root', pivot: [0, 0.8, 0] as [number, number, number] }
+    ],
+    clips: {
+      wave: {
+        duration: 0.5,
+        frames: [
+          { time: 0, poses: { toString: { rotation: [0, 0, 0] as [number, number, number] } } },
+          { time: 0.5, poses: { toString: { rotation: [0.2, 0, 0] as [number, number, number] } } }
+        ]
+      }
+    }
+  }
+  const built = rigFromArtRecipe(trickyRecipe)
+  assert.ok(built.clips.wave.tracks.toString.length === 2)
+  assert.ok(built.rig.joints.some(j => j.id === '__static_1__'))
+  assert.throws(() => compileArtJoints([{ id: 'a', parent: 'b' }, { id: 'b', parent: 'a' }]), /Cyclic joint parent/i)
 })

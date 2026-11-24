@@ -60,33 +60,61 @@ export function perspective(fieldOfView: number, aspect: number, near: number, f
 }
 
 export function mesh(positions: ArrayLike<number>, indices?: ArrayLike<number>): Mesh {
-  if (!positions.length || positions.length % 3 || !Array.from(positions).every(Number.isFinite)) {
+  const posLen = positions.length
+  if (!posLen || posLen % 3) {
     throw new RangeError('Mesh positions must contain finite XYZ triples')
   }
-  const count = indices?.length ?? positions.length / 3
-  if (!count || count % 3) throw new RangeError('Mesh must contain complete triangles')
-  const data = new Float32Array(count * 6)
-  let radius = 0
-  for (let i = 0; i < count; i += 3) {
-    const points: Vec3[] = []
-    for (let corner = 0; corner < 3; corner++) {
-      const index = indices ? indices[i + corner] : i + corner
-      if (!Number.isInteger(index) || index < 0 || index >= positions.length / 3) {
-        throw new RangeError('Mesh index is outside the position array')
-      }
-      const at = index * 3
-      const point: Vec3 = [positions[at], positions[at + 1], positions[at + 2]]
-      radius = Math.max(radius, Math.hypot(...point))
-      points.push(point)
-    }
-    const normal = unit(cross(sub(points[1], points[0]), sub(points[2], points[0])))
-    for (let corner = 0; corner < 3; corner++) {
-      const offset = (i + corner) * 6
-      data.set(points[corner], offset)
-      data.set(normal, offset + 3)
+  for (let i = 0; i < posLen; i++) {
+    if (!Number.isFinite(positions[i])) {
+      throw new RangeError('Mesh positions must contain finite XYZ triples')
     }
   }
-  const created: Mesh = { data, vertexCount: count, radius }
+  const vertMax = posLen / 3
+  const count = indices ? indices.length : vertMax
+  if (!count || count % 3) throw new RangeError('Mesh must contain complete triangles')
+  const data = new Float32Array(count * 6)
+  let radiusSq = 0
+  for (let i = 0; i < count; i += 3) {
+    const i0 = indices ? indices[i] : i
+    const i1 = indices ? indices[i + 1] : i + 1
+    const i2 = indices ? indices[i + 2] : i + 2
+    if (
+      !Number.isInteger(i0) || i0 < 0 || i0 >= vertMax ||
+      !Number.isInteger(i1) || i1 < 0 || i1 >= vertMax ||
+      !Number.isInteger(i2) || i2 < 0 || i2 >= vertMax
+    ) {
+      throw new RangeError('Mesh index is outside the position array')
+    }
+    const a0 = i0 * 3, a1 = i1 * 3, a2 = i2 * 3
+    const x0 = positions[a0], y0 = positions[a0 + 1], z0 = positions[a0 + 2]
+    const x1 = positions[a1], y1 = positions[a1 + 1], z1 = positions[a1 + 2]
+    const x2 = positions[a2], y2 = positions[a2 + 1], z2 = positions[a2 + 2]
+    const r0 = x0 * x0 + y0 * y0 + z0 * z0
+    const r1 = x1 * x1 + y1 * y1 + z1 * z1
+    const r2 = x2 * x2 + y2 * y2 + z2 * z2
+    if (r0 > radiusSq) radiusSq = r0
+    if (r1 > radiusSq) radiusSq = r1
+    if (r2 > radiusSq) radiusSq = r2
+
+    const e1x = x1 - x0, e1y = y1 - y0, e1z = z1 - z0
+    const e2x = x2 - x0, e2y = y2 - y0, e2z = z2 - z0
+    const cx = e1y * e2z - e1z * e2y
+    const cy = e1z * e2x - e1x * e2z
+    const cz = e1x * e2y - e1y * e2x
+    const len = Math.hypot(cx, cy, cz)
+    if (!Number.isFinite(len) || !len) throw new RangeError('Expected a finite, nonzero vector')
+    const inv = 1 / len
+    const nx = cx * inv, ny = cy * inv, nz = cz * inv
+
+    const off = i * 6
+    data[off] = x0; data[off + 1] = y0; data[off + 2] = z0
+    data[off + 3] = nx; data[off + 4] = ny; data[off + 5] = nz
+    data[off + 6] = x1; data[off + 7] = y1; data[off + 8] = z1
+    data[off + 9] = nx; data[off + 10] = ny; data[off + 11] = nz
+    data[off + 12] = x2; data[off + 13] = y2; data[off + 14] = z2
+    data[off + 15] = nx; data[off + 16] = ny; data[off + 17] = nz
+  }
+  const created: Mesh = { data, vertexCount: count, radius: Math.sqrt(radiusSq) }
   if (isTestingActive()) recordMeshMeta(created)
   return created
 }

@@ -305,4 +305,30 @@ test('headless multi-frame animated directional sprite baking produces distinct 
   assert.equal(subset.manifest.clips['walk-front'].frameMs, 100)
   assert.equal(subset.manifest.clips['walk-front'].frames, 8)
   assert.deepEqual(Object.keys(subset.manifest.clips), ['walk-front', 'walk-right', 'walk-back', 'walk-left'])
+
+  // fitArtRecipe shifts root joints with omitted pivot alongside parts and child joints
+  const offsetRecipe = {
+    format: 'ridgetop-art' as const,
+    version: 2 as const,
+    name: 'offset-rig',
+    span: 2,
+    centerY: 0.5,
+    frameSize: 64,
+    palette: { wood: '#aa8866' },
+    parts: [
+      { name: 'torso', shape: 'box' as const, joint: 'root', position: [2, 0.7, 0] as [number, number, number], scale: [1, 1, 1] as [number, number, number], tone: 'wood' as const }
+    ],
+    joints: [
+      { id: 'root' },
+      { id: 'head', parent: 'root', pivot: [2, 1.5, 0] as [number, number, number] }
+    ]
+  }
+  const fitted = fitArtRecipe(offsetRecipe)
+  assert.ok(fitted.joints?.[0].pivot)
+  assert.ok(Math.abs(fitted.joints![0].pivot![0] - (-2)) < 1e-9)
+  assert.ok(Math.abs(fitted.joints![0].pivot![1] - (-0.2)) < 1e-9)
+  assert.equal(fitted.joints![0].pivot![2], 0)
+  assert.ok(Math.abs(fitted.joints![1].pivot![0] - 0) < 1e-9)
+  assert.ok(Math.abs(fitted.joints![1].pivot![1] - 1.3) < 1e-9)
+  assert.equal(fitted.joints![1].pivot![2], 0)
 })

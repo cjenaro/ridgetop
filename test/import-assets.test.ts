@@ -380,6 +380,72 @@ test('parseGlb rejects corrupted headers, bad chunks, cyclic hierarchies, and ou
     accessors: [{ bufferView: 0, componentType: 5126, count: 3, type: 'VEC3' }]
   }, oobBin)
   assert.throws(() => parseGlb(oob), /exceeds bufferView bounds/i)
+
+  // DAG exponential blowup (multi-parent node) must be rejected per glTF 2.0 §3.7.3.1
+  const triBin = new Uint8Array(new Float32Array([0, 0, 0, 1, 0, 0, 0, 1, 0]).buffer)
+  const dag = buildCustomGlb({
+    asset: { version: '2.0' },
+    scenes: [{ nodes: [0] }],
+    nodes: [{ children: [1, 1] }, { mesh: 0 }],
+    meshes: [{ primitives: [{ attributes: { POSITION: 0 } }] }],
+    buffers: [{ byteLength: 36 }],
+    bufferViews: [{ buffer: 0, byteOffset: 0, byteLength: 36 }],
+    accessors: [{ bufferView: 0, componentType: 5126, count: 3, type: 'VEC3' }]
+  }, triBin)
+  assert.throws(() => parseGlb(dag), /multiple parents/i)
+
+  // Pure cycle without scenes must be rejected
+  const pureCycle = buildCustomGlb({
+    asset: { version: '2.0' },
+    nodes: [{ children: [1], mesh: 0 }, { children: [0] }, { mesh: 0 }],
+    meshes: [{ primitives: [{ attributes: { POSITION: 0 } }] }],
+    buffers: [{ byteLength: 36 }],
+    bufferViews: [{ buffer: 0, byteOffset: 0, byteLength: 36 }],
+    accessors: [{ bufferView: 0, componentType: 5126, count: 3, type: 'VEC3' }]
+  }, triBin)
+  assert.throws(() => parseGlb(pureCycle), /Cyclic/i)
+
+  // Missing bufferView.byteLength and prototype-key bufferView lookup must be rejected
+  const missingByteLen = buildCustomGlb({
+    asset: { version: '2.0' },
+    meshes: [{ primitives: [{ attributes: { POSITION: 0 } }] }],
+    buffers: [{ byteLength: 36 }],
+    bufferViews: [{ buffer: 0, byteOffset: 0 }],
+    accessors: [{ bufferView: 0, componentType: 5126, count: 3, type: 'VEC3' }]
+  }, triBin)
+  assert.throws(() => parseGlb(missingByteLen), /exceeds binary chunk bounds/i)
+
+  const protoLookup = buildCustomGlb({
+    asset: { version: '2.0' },
+    meshes: [{ primitives: [{ attributes: { POSITION: 0 } }] }],
+    buffers: [{ byteLength: 36 }],
+    bufferViews: [],
+    accessors: [{ bufferView: 'slice', componentType: 5126, count: 3, type: 'VEC3' }]
+  }, triBin)
+  assert.throws(() => parseGlb(protoLookup), /Missing glTF bufferView/i)
+
+  // Malformed JSON root / non-string version / non-object extensions must throw RangeError (not TypeError)
+  const nullRoot = buildCustomGlb(null as unknown as Record<string, unknown>)
+  assert.throws(() => parseGlb(nullRoot), RangeError)
+
+  const numVersion = buildCustomGlb({ asset: { version: 2 } })
+  assert.throws(() => parseGlb(numVersion), RangeError)
+
+  const badExt = buildCustomGlb({
+    asset: { version: '2.0' },
+    meshes: [{ primitives: [{ attributes: { POSITION: 0 }, material: 0 }] }],
+    materials: [{ extensions: 123 }],
+    buffers: [{ byteLength: 36 }],
+    bufferViews: [{ buffer: 0, byteOffset: 0, byteLength: 36 }],
+    accessors: [{ bufferView: 0, componentType: 5126, count: 3, type: 'VEC3' }]
+  }, triBin)
+  assert.equal(parseGlb(badExt).length, 1)
+
+  // OBJ comment ending with backslash must not swallow the next vertex line
+  const objWithWinPath = '# Exported from C:\\models\\\nv 0 0 0\nv 1 0 0\nv 0 1 0\nf 1 2 3\n'
+  const parsedObj = parseObj(objWithWinPath)
+  assert.equal(parsedObj.length, 1)
+  assert.equal(parsedObj[0].mesh.vertexCount, 3)
 })
 
 test('parseWav round-trips encodeWav and bakeMotifWav and parses stereo float32 WAVs', () => {

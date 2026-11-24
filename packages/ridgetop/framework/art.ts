@@ -190,17 +190,22 @@ export function rigFromArtModel(model: ArtModel, palette: Partial<Record<ArtTone
   })
 
   if (unboundParts.length || !rigJoints.length) {
-    const staticId = indexById.has('root') ? '__static__' : 'root'
+    let staticId = 'root'
+    if (indexById.has(staticId)) {
+      staticId = '__static__'
+      let suffix = 1
+      while (indexById.has(staticId)) staticId = `__static_${suffix++}__`
+    }
     rigJoints.unshift({ id: staticId, pivot: [0, 0, 0], parts: unboundParts })
   }
 
   const rig = createRig(rigJoints)
   const clips: Record<string, AnimationClip> = {}
   for (const [clipName, recipeClip] of Object.entries(model.clips ?? {})) {
-    const tracks: Record<string, Keyframe[]> = {}
+    const tracks: Record<string, Keyframe[]> = Object.create(null)
     for (const frame of recipeClip.frames) {
       for (const [jointId, pose] of Object.entries(frame.poses)) {
-        const list = tracks[jointId] ?? (tracks[jointId] = [])
+        const list = Object.hasOwn(tracks, jointId) ? tracks[jointId] : (tracks[jointId] = [])
         list.push({
           t: frame.time,
           ...(pose.position ? { position: [pose.position[0], pose.position[1], pose.position[2]] as Vec3 } : {}),
