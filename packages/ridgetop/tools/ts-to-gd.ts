@@ -1,5 +1,6 @@
 import { access, mkdir, readFile, writeFile } from 'node:fs/promises'
-import { dirname, join, relative, resolve } from 'node:path'
+import { dirname, join, relative, resolve, sep } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import ts from 'typescript'
 import { isMain } from '../framework/server.ts'
 
@@ -2239,7 +2240,56 @@ export interface CompileProjectOptions {
   resPrefix?: string
 }
 
-async function resolveLocalModulePath(fromFile: string, specifier: string): Promise<string> {
+const packageRootDir = resolve(fileURLToPath(new URL(import.meta.url.endsWith('.ts') ? '..' : '../..', import.meta.url)))
+const packageFrameworkSrcDir = join(packageRootDir, 'framework')
+const packageFrameworkDistDir = join(packageRootDir, 'dist', 'framework')
+
+const RIDGETOP_GD_SPECIFIERS: Readonly<Record<string, string>> = {
+  ridgetop: 'index',
+  'ridgetop/server': 'server',
+  'ridgetop/ui': 'ui',
+  'ridgetop/ui-layout': 'ui-layout',
+  'ridgetop/ui-button': 'ui-button',
+  'ridgetop/ui-toggle': 'ui-toggle',
+  'ridgetop/ui-select': 'ui-select',
+  'ridgetop/ui-slider': 'ui-slider',
+  'ridgetop/ui-menu': 'ui-menu',
+  'ridgetop/ui-canvas': 'ui-canvas',
+  'ridgetop/ui-machine': 'ui-machine',
+  'ridgetop/art-review': 'art-review',
+  'ridgetop/art-review/server': 'review-store',
+  'ridgetop/testing': 'testing-runtime'
+}
+
+function isWithinDir(filePath: string, dirPath: string): boolean {
+  return filePath === dirPath || filePath.startsWith(dirPath + sep)
+}
+
+function computeRelOutputPath(absFile: string, rootDir: string): string {
+  const norm = resolve(absFile)
+  if (isWithinDir(norm, packageFrameworkSrcDir)) {
+    return 'framework/' + relative(packageFrameworkSrcDir, norm).replace(/\\/g, '/')
+  }
+  if (isWithinDir(norm, packageFrameworkDistDir)) {
+    return 'framework/' + relative(packageFrameworkDistDir, norm).replace(/\\/g, '/')
+  }
+  return relative(rootDir, norm).replace(/\\/g, '/')
+}
+
+async function resolveRidgetopSpecifier(specifier: string): Promise<string | null> {
+  if (!Object.hasOwn(RIDGETOP_GD_SPECIFIERS, specifier)) return null
+  const stem = RIDGETOP_GD_SPECIFIERS[specifier]
+  const tsCandidate = join(packageFrameworkSrcDir, stem + '.ts')
+  try { await access(tsCandidate); return tsCandidate } catch {}
+  const jsCandidate = join(packageFrameworkDistDir, stem + '.js')
+  try { await access(jsCandidate); return jsCandidate } catch {}
+  return null
+}
+
+async function resolveLocalModulePath(fromFile: string, specifier: string): Promise<string | null> {
+  if (!specifier.startsWith('.')) {
+    return resolveRidgetopSpecifier(specifier)
+  }
   const raw = resolve(dirname(fromFile), specifier)
   if (raw.endsWith('.js')) {
     const asTs = raw.replace(/\.js$/, '.ts')
@@ -2299,8 +2349,8 @@ async function resolveThroughBarrel(
   for (const stmt of sf.statements) {
     if (!ts.isExportDeclaration(stmt) || stmt.isTypeOnly || !stmt.moduleSpecifier) continue
     const spec = (stmt.moduleSpecifier as ts.StringLiteral).text
-    if (!spec.startsWith('.')) continue
     const target = await resolveLocalModulePath(filePath, spec)
+    if (!target) continue
     if (stmt.exportClause && ts.isNamedExports(stmt.exportClause)) {
       for (const el of stmt.exportClause.elements) {
         if (el.isTypeOnly) continue
@@ -2358,15 +2408,15 @@ export async function compileTsProjectToGodot(options: CompileProjectOptions): P
     for (const stmt of sf.statements) {
       if (!ts.isImportDeclaration(stmt) || stmt.importClause?.isTypeOnly) continue
       const spec = (stmt.moduleSpecifier as ts.StringLiteral).text
-      if (!spec.startsWith('.')) continue
       const direct = await resolveLocalModulePath(normalized, spec)
+      if (!direct) continue
       const bindings = stmt.importClause?.namedBindings
       if (bindings && ts.isNamedImports(bindings)) {
         for (const el of bindings.elements) {
           if (el.isTypeOnly) continue
           const imported = (el.propertyName ?? el.name).text
           const resolved = await resolveThroughBarrel(direct, imported, astCache)
-          const relOut = relative(rootDir, resolved.file).replace(/\\/g, '/').replace(/\.(?:ts|js)$/, '.gd')
+          const relOut = computeRelOutputPath(resolved.file, rootDir).replace(/\.(?:ts|js)$/, '.gd')
           importMap.set(`${spec}::${imported}`, {
             resPath: `${resPrefix}/${relOut}`,
             exportName: resolved.symbol,
@@ -2378,14 +2428,14 @@ export async function compileTsProjectToGodot(options: CompileProjectOptions): P
 
     for (const dep of importMap.values()) await compileOne(dep.absTarget)
 
-    const relDisplay = relative(rootDir, normalized).replace(/\\/g, '/')
+    const relDisplay = computeRelOutputPath(normalized, rootDir)
     const gd = compileTsToGd(source, relDisplay, {
       rtResPath,
       resolveImport(specifier, exportedName) {
         const hit = importMap.get(`${specifier}::${exportedName}`)
         if (hit) return { resPath: hit.resPath, exportName: hit.exportName }
-        const fallback = relative(rootDir, resolve(dirname(normalized), specifier.replace(/\.js$/, '.ts')))
-          .replace(/\\/g, '/').replace(/\.(?:ts|js)$/, '.gd')
+        const fallback = computeRelOutputPath(resolve(dirname(normalized), specifier.replace(/\.js$/, '.ts')), rootDir)
+          .replace(/\.(?:ts|js)$/, '.gd')
         return { resPath: `${resPrefix}/${fallback}`, exportName: exportedName }
       }
     })
@@ -2396,7 +2446,10 @@ export async function compileTsProjectToGodot(options: CompileProjectOptions): P
     emitted.push(outFile)
   }
 
-  for (const entry of options.entries) await compileOne(entry)
+  for (const entry of options.entries) {
+    const bare = await resolveRidgetopSpecifier(entry)
+    await compileOne(bare ?? entry)
+  }
   await writeFile(rtPath, renderRtGd())
   return { files: emitted, rtPath }
 }

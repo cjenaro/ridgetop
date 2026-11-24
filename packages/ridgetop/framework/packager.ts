@@ -1,3 +1,4 @@
+import { existsSync } from 'node:fs'
 import { access, cp, mkdir, mkdtemp, readdir, readFile, rm, stat, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { basename, dirname, extname, join, relative, resolve, sep } from 'node:path'
@@ -6,11 +7,9 @@ import { fileURLToPath, pathToFileURL } from 'node:url'
 import type { ArtModel, ArtRecipe } from './art.ts'
 import type { InstanceBatch } from './types.ts'
 import type { LayoutNode } from './ui-layout.ts'
-import { createMeshPool, renderRig } from './animation.ts'
 import { createArtKit, modelFromArtRecipe } from './art.ts'
 import { exportGodotProject } from './export-godot.ts'
-import { box, cylinder, multiply, octahedron, orthographic, view } from './geometry.ts'
-import { instances } from './instances.ts'
+import { multiply, orthographic, view } from './geometry.ts'
 import { renderMeshPixels } from './low-poly.ts'
 import { encodePng } from './png.ts'
 import { color } from './renderer.ts'
@@ -19,14 +18,39 @@ import { boxNode, column, overlay, row } from './ui-layout.ts'
 export type PackageTarget = 'web' | 'steam' | 'mobile' | 'godot' | 'player' | 'all'
 export type PackageOrientation = 'landscape' | 'portrait' | 'any'
 
+export interface RidgetopProjectConfig {
+  /** Display name for desktop windows, installers, mobile app, and Godot project. */
+  name?: string
+  /** Optional default reverse-DNS bundle identifier. */
+  appId?: string
+  /** Relative path to the entry HTML file inside the project (default: `game/index.html` if present, else `index.html`). */
+  html?: string
+  /** Relative directory containing compiled browser JS modules (default: `dist` if present, else the HTML directory). */
+  moduleRoot?: string
+  /** Relative JS entry module path under `moduleRoot` (default: detected from `<script type="module" src="...">` in HTML). */
+  entry?: string
+  /** Explicit static directories to copy into the bundle (e.g. `['game/assets']` or `['art']`). */
+  staticDirs?: readonly string[]
+  /** Explicit static files to copy into the bundle (e.g. `['game-ui.css']`). */
+  staticFiles?: readonly string[]
+  /** Optional per-module literal string rewrites applied during bundling (e.g. rewriting root-relative asset URLs to `./`). */
+  assetPathRewrites?: Readonly<Record<string, Readonly<Record<string, string>>>>
+  /** Optional path to a compiled JS module exporting `resolvePackageAssets()` for custom icon/Godot models & audio. */
+  assetsModule?: string
+  /** Optional list of TypeScript/JS entry files (or bare `'ridgetop/*'` specifiers) compiled to GDScript for Godot exports. */
+  godotEntries?: readonly string[]
+  /** Optional relative path inside the web bundle to reset to `{}\n` (e.g. `art/overrides.json`). */
+  overridesReset?: string
+}
+
 export interface PackageGameOptions {
   target: PackageTarget
   outDir: string
-  /** Built-in Ridgetop game (`signal-drift`, `beacon-run`, `starter`, `lighthouse`) or omitted when `projectDir` is supplied. */
-  game?: 'signal-drift' | 'beacon-run' | 'starter' | 'lighthouse'
-  /** Path to a generated Ridgetop game project directory (created with `create-game`). */
+  /** Monorepo example game name (resolved to `<repoRoot>/examples/<game>`) when `projectDir` is omitted. */
+  game?: string
+  /** Path to any standalone Ridgetop game project directory (workspace package, external repo, or `ridgetop create` project). */
   projectDir?: string
-  /** Path to the Ridgetop checkout root (required when packaging built-in games). */
+  /** Optional workspace checkout root used to resolve `examples/<game>` when `game` is supplied. */
   repoRoot?: string
   /** Display name for the desktop window, installers, mobile app, and Godot project. */
   name?: string
@@ -751,7 +775,7 @@ async function measureDirectory(dir: string): Promise<{ files: number; totalByte
   return { files, totalBytes }
 }
 
-interface ResolvedGameAssets {
+export interface ResolvedGameAssets {
   title?: string
   icon: { batches: readonly InstanceBatch[]; span: number; centerY: number; background: string; accent: string }
   models: Record<string, readonly InstanceBatch[]>
@@ -760,7 +784,7 @@ interface ResolvedGameAssets {
   uiTree: LayoutNode
 }
 
-function defaultMenuLayout(title: string, actions: readonly string[], anchor: 'center' | 'top-left' = 'center'): LayoutNode {
+export function defaultMenuLayout(title: string, actions: readonly string[], anchor: 'center' | 'top-left' = 'center'): LayoutNode {
   return overlay({ id: 'root', style: { anchor: 'fill' } }, [
     column({ id: 'menu-card', style: { anchor, width: 320, inset: anchor === 'top-left' ? 40 : 16, padding: 20, gap: 10 }, widget: { type: 'panel' } }, [
       boxNode({ id: 'menu-title', style: { height: 34 }, widget: { type: 'text', text: title, size: 24, weight: 800, align: 'center' } }),
@@ -776,8 +800,79 @@ function defaultMenuLayout(title: string, actions: readonly string[], anchor: 'c
   ])
 }
 
-async function resolveProjectAssets(projectGameDir: string): Promise<ResolvedGameAssets> {
-  let title: string | undefined
+function resolvePackageRootDir(): string {
+  if (import.meta.url.endsWith('.ts')) {
+    return resolve(fileURLToPath(new URL('..', import.meta.url)))
+  }
+  const parentTwo = resolve(fileURLToPath(new URL('../..', import.meta.url)))
+  if (existsSync(join(parentTwo, 'package.json'))) return parentTwo
+  return resolve(fileURLToPath(new URL('..', import.meta.url)))
+}
+
+async function resolveTargetProjectDir(options: PackageGameOptions): Promise<string> {
+  if (options.projectDir) return resolve(options.projectDir)
+  if (!options.game) {
+    throw new Error('Specify --project <directory> (or --game <example-name> inside a Ridgetop monorepo).')
+  }
+  const candidates: string[] = []
+  if (options.repoRoot) candidates.push(join(resolve(options.repoRoot), 'examples', options.game))
+  candidates.push(join(process.cwd(), 'examples', options.game))
+  candidates.push(resolve(resolvePackageRootDir(), '..', '..', 'examples', options.game))
+  for (const dir of candidates) {
+    if (existsSync(dir)) return dir
+  }
+  throw new Error(`Could not locate example game "${options.game}" under examples/. Pass --project <directory> for external projects.`)
+}
+
+async function loadProjectConfig(projectDir: string): Promise<{ config: RidgetopProjectConfig; version?: string }> {
+  let config: RidgetopProjectConfig = {}
+  let version: string | undefined
+  try {
+    const pkg = JSON.parse(await readFile(join(projectDir, 'package.json'), 'utf8'))
+    if (pkg.version) version = String(pkg.version)
+    if (pkg.ridgetop && typeof pkg.ridgetop === 'object') config = { ...pkg.ridgetop }
+  } catch {}
+  try {
+    const fileConfig = JSON.parse(await readFile(join(projectDir, 'ridgetop.package.json'), 'utf8'))
+    if (fileConfig && typeof fileConfig === 'object') config = { ...config, ...fileConfig }
+  } catch {}
+  return { config, version }
+}
+
+function detectProjectLayout(projectDir: string, config: RidgetopProjectConfig) {
+  const htmlRel = config.html ?? (existsSync(join(projectDir, 'game', 'index.html')) ? 'game/index.html' : 'index.html')
+  const htmlPath = join(projectDir, htmlRel)
+  const htmlDir = dirname(htmlPath)
+  const isCreateGameLayout = htmlRel === 'game/index.html'
+  const moduleDir = config.moduleRoot
+    ? join(projectDir, config.moduleRoot)
+    : (!isCreateGameLayout && existsSync(join(projectDir, 'dist')) ? join(projectDir, 'dist') : htmlDir)
+  return { htmlRel, htmlPath, htmlDir, isCreateGameLayout, moduleDir }
+}
+
+async function resolveProjectAssets(projectDir: string, config: RidgetopProjectConfig): Promise<ResolvedGameAssets> {
+  if (config.assetsModule) {
+    const modPath = resolve(projectDir, config.assetsModule)
+    try {
+      const mod = await import(pathToFileURL(modPath).href)
+      if (typeof mod.resolvePackageAssets === 'function') {
+        return await mod.resolvePackageAssets({ projectDir, defaultMenuLayout })
+      }
+      throw new Error(`Expected resolvePackageAssets() export in ${config.assetsModule}`)
+    } catch (error) {
+      throw new Error(`Failed to load project assets from ${config.assetsModule}. Build the project first: ` + (error instanceof Error ? error.message : String(error)))
+    }
+  }
+
+  const layout = detectProjectLayout(projectDir, config)
+  const gameModuleCandidates = [
+    join(layout.moduleDir, 'game.js'),
+    join(layout.htmlDir, 'game.js'),
+    join(projectDir, 'game', 'game.js')
+  ]
+  const artBaseDir = layout.isCreateGameLayout ? layout.htmlDir : projectDir
+
+  let title: string | undefined = config.name
   let palette: Record<string, string> = {}
   let customModels: Record<string, ArtModel> = {}
   let modelFiles: Record<string, string> = {}
@@ -785,28 +880,32 @@ async function resolveProjectAssets(projectGameDir: string): Promise<ResolvedGam
   let iconRole = 'ranger'
   const roles = new Set<string>(['ranger', 'tile', 'crystal', 'lantern', 'pine', 'rock', 'crate'])
 
-  try {
-    const mod = await import(pathToFileURL(join(projectGameDir, 'game.js')).href + '?t=' + Date.now())
-    if (mod.game && typeof mod.game === 'object') {
-      gameConfig = { ...mod.game }
-      if (mod.game.title) title = String(mod.game.title)
-      if (mod.game.palette) palette = { ...mod.game.palette }
-      iconRole = mod.game.player ?? mod.game.pickup ?? 'ranger'
-      roles.clear()
-      for (const r of [mod.game.player, mod.game.ground, mod.game.pickup, mod.game.goal, mod.game.effect, ...Object.values(mod.game.scenery ?? {})]) {
-        if (typeof r === 'string') roles.add(r)
+  for (const candidate of gameModuleCandidates) {
+    if (!existsSync(candidate)) continue
+    try {
+      const mod = await import(pathToFileURL(candidate).href + '?t=' + Date.now())
+      if (mod.game && typeof mod.game === 'object') {
+        gameConfig = { ...mod.game }
+        if (mod.game.title) title = String(mod.game.title)
+        if (mod.game.palette) palette = { ...mod.game.palette }
+        iconRole = mod.game.player ?? mod.game.pickup ?? 'ranger'
+        roles.clear()
+        for (const r of [mod.game.player, mod.game.ground, mod.game.pickup, mod.game.goal, mod.game.effect, ...Object.values(mod.game.scenery ?? {})]) {
+          if (typeof r === 'string') roles.add(r)
+        }
       }
-    }
-    if (mod.models) customModels = { ...mod.models }
-    if (mod.modelFiles) modelFiles = { ...mod.modelFiles }
-  } catch { /* Fall back to default art kit. */ }
+      if (mod.models) customModels = { ...mod.models }
+      if (mod.modelFiles) modelFiles = { ...mod.modelFiles }
+      break
+    } catch { /* Fall back to default art kit. */ }
+  }
 
   let overrides: Record<string, ArtRecipe> = {}
-  try { overrides = JSON.parse(await readFile(join(projectGameDir, 'art', 'overrides.json'), 'utf8')) } catch {}
+  try { overrides = JSON.parse(await readFile(join(artBaseDir, 'art', 'overrides.json'), 'utf8')) } catch {}
 
   const loadedModels: Record<string, ArtModel> = {}
   for (const [name, relPath] of Object.entries(modelFiles)) {
-    try { loadedModels[name] = modelFromArtRecipe(JSON.parse(await readFile(join(projectGameDir, relPath), 'utf8'))) } catch {}
+    try { loadedModels[name] = modelFromArtRecipe(JSON.parse(await readFile(join(artBaseDir, relPath), 'utf8'))) } catch {}
   }
   const edited: Record<string, ArtModel> = {}
   for (const [name, recipe] of Object.entries(overrides)) {
@@ -845,203 +944,6 @@ async function resolveProjectAssets(projectGameDir: string): Promise<ResolvedGam
   }
 }
 
-async function resolveBuiltInAssets(kind: 'signal-drift' | 'beacon-run' | 'starter' | 'lighthouse', repoRoot: string): Promise<ResolvedGameAssets> {
-  if (kind === 'starter') return resolveProjectAssets(join(repoRoot, 'dist', 'starter'))
-
-  if (kind === 'lighthouse') {
-    const models: Record<string, readonly InstanceBatch[]> = {}
-    let iconBatches: readonly InstanceBatch[] | undefined
-    try {
-      const artMod = await import(pathToFileURL(join(repoRoot, 'dist', 'lighthouse', 'art.js')).href)
-      if (typeof artMod.buildStaticIslandBatches === 'function') {
-        models.island = artMod.buildStaticIslandBatches()
-      }
-      const bakeRig = (rig: Parameters<typeof renderRig>[0]) => {
-        const pool = createMeshPool(32)
-        renderRig(rig, { position: [0, 0, 0], yaw: 0, scale: 1 }, {}, pool)
-        return pool.batches.filter(b => b.count > 0)
-      }
-      if (artMod.keeperRig) {
-        models.keeper = bakeRig(artMod.keeperRig)
-        iconBatches = models.keeper
-      }
-      if (artMod.shipRig) models.ship = bakeRig(artMod.shipRig)
-      if (artMod.buoyRig) models.buoy = bakeRig(artMod.buoyRig)
-      if (artMod.salvageRig) models.salvage = bakeRig(artMod.salvageRig)
-      if (artMod.amberRig) models.amber = bakeRig(artMod.amberRig)
-
-      // Standalone centered Lighthouse Tower mesh built directly from Tidewatch art primitives
-      if (artMod.drum12 && artMod.domeMesh && artMod.cone && artMod.arch && artMod.drum) {
-        const lhPool = createMeshPool(32)
-        const cream = color('f6ebd0')
-        const red = color('da583e')
-        const iron = color('273a45')
-        const stone = color('8f9a97')
-        const copper = color('4b857b')
-        const lampGlow = color('ffe79c')
-        lhPool.add(artMod.drum12, [0, 0.28, 0], [1.74, 0.56, 1.74], 0, color('7d8c8b'))
-        lhPool.add(artMod.drum12, [0, 0.62, 0], [1.54, 0.24, 1.54], 0, stone)
-        const courses = [
-          [0.68, 1.60, 1.36, 1.22, cream],
-          [1.60, 2.52, 1.22, 1.09, red],
-          [2.52, 3.44, 1.09, 0.96, cream],
-          [3.44, 4.36, 0.96, 0.85, red],
-          [4.36, 5.26, 0.85, 0.76, cream]
-        ] as const
-        for (const [low, high, rBot, rTop, tint] of courses) {
-          lhPool.add(cylinder(12, rTop / rBot), [0, (low + high) / 2, 0], [rBot, high - low, rBot], 0, tint)
-        }
-        lhPool.add(artMod.arch, [0, 1.26, 1.28], [0.64, 0.94, 0.16], 0, iron)
-        lhPool.add(box, [0, 1.18, 1.26], [0.46, 0.78, 0.10], 0, color('5c3e2b'))
-        lhPool.add(cylinder(12, 1.32), [0, 5.20, 0], [0.84, 0.22, 0.84], 0, stone)
-        lhPool.add(artMod.drum12, [0, 5.38, 0], [1.14, 0.20, 1.14], 0, iron)
-        lhPool.add(octahedron, [0, 6.02, 0], [0.44, 0.58, 0.44], 0, lampGlow, 0.98)
-        lhPool.add(artMod.drum12, [0, 6.58, 0], [0.84, 0.14, 0.84], 0, copper)
-        lhPool.add(artMod.domeMesh, [0, 6.96, 0], [1.72, 0.72, 1.72], 0, red)
-        lhPool.add(artMod.cone, [0, 7.40, 0], [0.44, 0.42, 0.44], 0, copper)
-        lhPool.add(artMod.drum, [0, 7.72, 0], [0.06, 0.44, 0.06], 0, iron)
-        lhPool.add(octahedron, [0, 7.98, 0], [0.12, 0.12, 0.12], 0, color('f0c056'), 0.5)
-        models.lighthouse = lhPool.batches.filter(b => b.count > 0)
-      }
-    } catch (error) {
-      throw new Error('Failed to load built Tidewatch assets from dist/. Run npm run build first: ' + (error instanceof Error ? error.message : String(error)))
-    }
-    if (!iconBatches) {
-      const fallback = instances(box, 1)
-      fallback.add([0, 0.5, 0], [1, 1, 1], 0, color('ebb336'))
-      models.keeper = [fallback]
-      iconBatches = [fallback]
-    }
-    return {
-      title: 'Tidewatch',
-      icon: { batches: iconBatches, span: 1.9, centerY: 0.85, background: '#142431', accent: '#2c5a66' },
-      models,
-      audio: {
-        pickup: { notes: [[460, 0.11, 0, 690]], waveform: 'triangle' },
-        sell: { notes: [[740, 0.09, 0], [1080, 0.14, 0.055]], waveform: 'triangle' },
-        fuel: { notes: [[220, 0.16, 0, 440]], waveform: 'triangle' },
-        upgrade: { notes: [[392, 0.16, 0], [493.88, 0.16, 0.09], [587.33, 0.22, 0.18], [783.99, 0.36, 0.28]], waveform: 'sine' },
-        foghorn: { notes: [[116.54, 0.85, 0, 110], [174.61, 0.82, 0.02, 168]], waveform: 'sawtooth' },
-        tideLow: { notes: [[523.25, 0.18, 0], [392.0, 0.26, 0.14]], waveform: 'sine' },
-        tideHigh: { notes: [[329.63, 0.18, 0], [440.0, 0.26, 0.14]], waveform: 'sine' },
-        victory: { notes: [[293.66, 0.2, 0], [392.0, 0.2, 0.14], [493.88, 0.24, 0.28], [587.33, 0.52, 0.42]], waveform: 'sine' }
-      },
-      gameData: {
-        game: 'lighthouse',
-        theme: {
-          surface: '#13252ee8',
-          surfaceAlt: '#1e3945f4',
-          top: '#3a627088',
-          border: '#6ea3a699',
-          accent: '#f0b154',
-          accentText: '#142026',
-          text: '#f5f2e1',
-          muted: '#b5d0d1',
-          glow: '#84f2d8'
-        }
-      },
-      uiTree: defaultMenuLayout('Tidewatch', ['Begin Watch', 'Workshop Gear', 'Quit'])
-    }
-  }
-
-  if (kind === 'signal-drift') {
-    const models: Record<string, readonly InstanceBatch[]> = {}
-    let iconBatches: readonly InstanceBatch[] | undefined
-    const exportedCircuits: Record<string, unknown>[] = []
-    try {
-      const [carMod, trackMod, sceneMod] = await Promise.all([
-        import(pathToFileURL(join(repoRoot, 'dist', 'racing', 'car-art.js')).href),
-        import(pathToFileURL(join(repoRoot, 'dist', 'racing', 'track.js')).href),
-        import(pathToFileURL(join(repoRoot, 'dist', 'racing', 'scene.js')).href)
-      ])
-      if (typeof carMod.createCarModels === 'function') {
-        for (let slot = 0; slot < 4; slot++) {
-          const cars = carMod.createCarModels()
-          cars.add({ x: 0, z: 0, yaw: 0, slot }, 0, 0, false, slot === 0 ? { motor: 1, tires: 1, armor: 1, capacitor: 1 } : undefined)
-          models[`car-${slot}`] = cars.full
-          if (slot === 0) {
-            models['rally-car'] = cars.full
-            iconBatches = cars.full
-          }
-        }
-      }
-      if (Array.isArray(trackMod.circuits) && typeof sceneMod.buildCircuitBatches === 'function') {
-        for (const c of trackMod.circuits) {
-          const built = sceneMod.buildCircuitBatches(c)
-          models[`circuit-${c.id}`] = built.staticBatches
-          const samples: number[][] = []
-          const count = 96
-          for (let i = 0; i < count; i++) {
-            const p = c.route.sample(i / count)
-            samples.push([Number(p.x.toFixed(3)), Number(p.z.toFixed(3)), Number(p.yaw.toFixed(4))])
-          }
-          exportedCircuits.push({
-            id: c.id,
-            name: c.name,
-            description: c.description,
-            width: c.width,
-            laps: c.laps,
-            qualify: c.qualify,
-            purse: c.purse,
-            pace: c.pace,
-            grip: c.grip,
-            clear: built.clear,
-            samples
-          })
-        }
-      }
-    } catch (error) {
-      throw new Error('Failed to load built Signal Drift assets from dist/. Run npm run build first: ' + (error instanceof Error ? error.message : String(error)))
-    }
-    const kit = createArtKit({ palette: { accent: '#f8aa4e', glow: '#8df5d5', leaf: '#56bfae' } })
-    if (!iconBatches) {
-      const g = kit.group(); g.add('crystal', [0, 0, 0])
-      models.crystal = g.batches
-      iconBatches = g.batches
-    }
-    return {
-      title: 'Signal Drift',
-      icon: { batches: iconBatches, span: 3.6, centerY: 0.55, background: '#191b24', accent: '#623a2c' },
-      models,
-      audio: {
-        pulse: { notes: [[610, .12, 0, 240]], waveform: 'triangle' },
-        snare: { notes: [[300, .18, 0, 105]], waveform: 'sine' },
-        hit: { notes: [[175, .2, 0, 68]], waveform: 'triangle' },
-        go: { notes: [[660, .15, 0], [880, .20, .10]], waveform: 'sine' },
-        podium: { notes: [[392, .18, 0], [523, .17, .12], [660, .24, .26], [784, .38, .42]], waveform: 'sine' }
-      },
-      gameData: {
-        game: 'signal-drift',
-        theme: { surface: '#221a19ee', surfaceAlt: '#382924f4', top: '#6b473b88', border: '#e2a77399', accent: '#f8aa4e', accentText: '#1e1410', text: '#fff2e2', muted: '#d8beaa', glow: '#8df5d5' },
-        circuits: exportedCircuits
-      },
-      uiTree: defaultMenuLayout('Signal Drift', ['Start Race', 'Events', 'Quit'], 'top-left')
-    }
-  }
-
-  const kit = createArtKit({ palette: { accent: '#efac62', glow: '#83f0d6', leaf: '#387a65' } })
-  const models: Record<string, readonly InstanceBatch[]> = {}
-  for (const role of ['lantern', 'crystal', 'pine', 'rock'] as const) {
-    const g = kit.group(); g.add(role, [0, 0, 0])
-    models[role] = g.batches
-  }
-  const lantern = kit.model('lantern')
-  return {
-    title: 'Beacon Run',
-    icon: { batches: models.lantern, span: lantern.span, centerY: lantern.centerY, background: '#142431', accent: '#2a5652' },
-    models,
-    audio: {
-      jump: { notes: [[310, .10, 0, 495]], waveform: 'sine' },
-      crystal: { notes: [[660, .12, 0], [990, .13, .07]], waveform: 'sine' },
-      signal: { notes: [[420, .12, 0], [630, .14, .09], [840, .16, .18]], waveform: 'sine' },
-      hit: { notes: [[195, .23, 0, 70]], waveform: 'triangle' },
-      finish: { notes: [[392, .16, 0], [493.9, .17, .13], [587.3, .18, .26], [784, .38, .39]], waveform: 'sine' }
-    },
-    gameData: { game: 'beacon-run', courses: ['ridge', 'ruins', 'summit', 'storm', 'foundry', 'lastlight'] },
-    uiTree: defaultMenuLayout('Beacon Run', ['Start Campaign', 'Practice'])
-  }
-}
-
 function rewriteFrameworkImports(relPath: string, code: string) {
   if (relPath.startsWith('framework/')) return code
   const depth = relPath.split('/').length - 1
@@ -1062,125 +964,129 @@ function findModuleEntryScript(html: string): string {
   return 'main.js'
 }
 
-async function assembleWebBundle(options: PackageGameOptions, wwwDir: string, {
-  themeColor, extraHead = ''
-}: { themeColor: string; extraHead?: string }): Promise<{ detectedName: string }> {
+const skippedProjectRootFiles = new Set([
+  'index.html', 'package.json', 'package-lock.json', 'pnpm-lock.yaml',
+  'tsconfig.json', 'tsconfig.build.json', 'ridgetop.package.json',
+  'README.md', 'AGENTS.md', 'ART.md'
+])
+
+function normalizeStandaloneHtmlPaths(html: string): string {
+  return html
+    .replace(/\s+data-hosted="1"/g, '')
+    .replace(/\b(href|src)=(")\/(?!\/)/g, '$1=$2./')
+    .replace(/\b(href|src)=(')\/(?!\/)/g, '$1=$2./')
+}
+
+async function assembleWebBundle(
+  projectDir: string,
+  config: RidgetopProjectConfig,
+  wwwDir: string,
+  { themeColor, extraHead = '' }: { themeColor: string; extraHead?: string }
+): Promise<{ detectedName: string }> {
   await rm(wwwDir, { recursive: true, force: true })
   await mkdir(wwwDir, { recursive: true })
 
-  if (options.projectDir) {
-    const project = resolve(options.projectDir)
-    const gameDir = join(project, 'game')
-    const fwDir = join(project, 'framework')
-    await access(join(gameDir, 'index.html')).catch(() => {
-      throw new Error('Expected game/index.html inside project directory: ' + project)
-    })
+  const layout = detectProjectLayout(projectDir, config)
+  await access(layout.htmlPath).catch(() => {
+    throw new Error(`Expected ${layout.htmlRel} inside project directory: ${projectDir}`)
+  })
 
-    const rawHtml = await readFile(join(gameDir, 'index.html'), 'utf8')
-    await writeFile(join(wwwDir, 'index.html'), ensureMobileMeta(rawHtml, themeColor, extraHead))
-    for (const entry of await readdir(gameDir, { withFileTypes: true })) {
-      if (entry.isDirectory()) {
-        if (blockedStudioDirs.has(entry.name)) continue
-        await copyDirFiltered(join(gameDir, entry.name), join(wwwDir, entry.name), { skipJs: true })
-      } else if (entry.isFile() && !entry.name.endsWith('.js') && entry.name !== 'index.html' && !blockedStudioFiles.has(entry.name)) {
-        await cp(join(gameDir, entry.name), join(wwwDir, entry.name))
+  const localFrameworkDir = join(projectDir, 'framework')
+  const frameworkDir = existsSync(join(localFrameworkDir, 'index.js'))
+    ? localFrameworkDir
+    : resolvePackageFrameworkDir()
+  await access(join(frameworkDir, 'index.js')).catch(() => {
+    throw new Error('Built Ridgetop framework modules were not found. Run pnpm run build first.')
+  })
+
+  const rawHtml = await readFile(layout.htmlPath, 'utf8')
+  const normalizedHtml = normalizeStandaloneHtmlPaths(rawHtml)
+  await writeFile(join(wwwDir, 'index.html'), ensureMobileMeta(normalizedHtml, themeColor, extraHead))
+
+  const copiedFiles = new Set<string>()
+  if (config.staticFiles?.length || config.staticDirs?.length) {
+    for (const relFile of config.staticFiles ?? []) {
+      const src = join(projectDir, relFile)
+      const dst = join(wwwDir, relFile)
+      await mkdir(dirname(dst), { recursive: true })
+      await cp(src, dst)
+      copiedFiles.add(relFile)
+    }
+    for (const relDir of config.staticDirs ?? []) {
+      await copyDirFiltered(join(projectDir, relDir), join(wwwDir, relDir))
+    }
+    // Also copy any local stylesheet or icon linked from index.html if not already copied.
+    for (const match of normalizedHtml.matchAll(/<link\b([^>]*)>/gi)) {
+      const attrs = match[1]
+      const rel = (getHtmlAttr(attrs, 'rel') ?? '').toLowerCase().split(/\s+/).filter(Boolean)
+      const href = getHtmlAttr(attrs, 'href')
+      if (!href || isExternalUrl(href)) continue
+      if (!rel.includes('stylesheet') && !rel.includes('icon') && !rel.includes('apple-touch-icon')) continue
+      const normHref = normalizeAssetPath(href)
+      if (copiedFiles.has(normHref)) continue
+      const src = join(layout.htmlDir, normHref)
+      if (existsSync(src)) {
+        const dst = join(wwwDir, normHref)
+        await mkdir(dirname(dst), { recursive: true })
+        await cp(src, dst)
+        copiedFiles.add(normHref)
       }
     }
-
-    const entryRel = findModuleEntryScript(rawHtml)
-    await emitShakenModules({
-      entryRelPath: entryRel,
-      wwwDir,
-      resolveSource(relPath) {
-        if (relPath.startsWith('framework/')) return join(fwDir, relPath.slice('framework/'.length))
-        return join(gameDir, relPath)
-      },
-      rewriteSource: rewriteFrameworkImports
-    })
-
-    let detectedName = basename(project)
-    try {
-      const mod = await import(pathToFileURL(join(gameDir, 'game.js')).href + '?n=' + Date.now())
-      if (mod.game?.title) detectedName = String(mod.game.title)
-    } catch {}
-    return { detectedName }
+  } else {
+    for (const entry of await readdir(layout.htmlDir, { withFileTypes: true })) {
+      if (entry.isDirectory()) {
+        if (blockedStudioDirs.has(entry.name) || entry.name === 'framework') continue
+        await copyDirFiltered(join(layout.htmlDir, entry.name), join(wwwDir, entry.name), { skipJs: true })
+      } else if (
+        entry.isFile() &&
+        !entry.name.endsWith('.js') &&
+        !entry.name.endsWith('.ts') &&
+        !entry.name.endsWith('.map') &&
+        !skippedProjectRootFiles.has(entry.name) &&
+        !blockedStudioFiles.has(entry.name)
+      ) {
+        await cp(join(layout.htmlDir, entry.name), join(wwwDir, entry.name))
+      }
+    }
   }
 
-  const repoRoot = resolve(options.repoRoot ?? fileURLToPath(new URL('..', import.meta.url)))
-  const distDir = join(repoRoot, 'dist')
-  await access(join(distDir, 'framework', 'index.js')).catch(() => {
-    throw new Error('Build the repository with npm run build before packaging built-in games.')
-  })
-
-  const game = options.game ?? 'signal-drift'
-  if (game === 'signal-drift') {
-    let html = await readFile(join(repoRoot, 'racing.html'), 'utf8')
-    html = html
-      .replace(/\s+data-hosted="1"/g, '')
-      .replaceAll('href="/', 'href="./')
-      .replaceAll('src="/', 'src="./')
-    await writeFile(join(wwwDir, 'index.html'), ensureMobileMeta(html, themeColor, extraHead))
-    await cp(join(repoRoot, 'game-ui.css'), join(wwwDir, 'game-ui.css'))
-    await emitShakenModules({
-      entryRelPath: 'racing/main.js',
-      wwwDir,
-      resolveSource: relPath => join(distDir, relPath)
-    })
-    return { detectedName: 'Signal Drift' }
+  if (config.overridesReset) {
+    const resetPath = join(wwwDir, config.overridesReset)
+    await mkdir(dirname(resetPath), { recursive: true })
+    await writeFile(resetPath, '{}\n')
   }
 
-  if (game === 'beacon-run') {
-    let html = await readFile(join(repoRoot, 'index.html'), 'utf8')
-    html = html
-      .replace(/\s+data-hosted="1"/g, '')
-      .replaceAll('href="/', 'href="./')
-      .replaceAll('src="/', 'src="./')
-    await writeFile(join(wwwDir, 'index.html'), ensureMobileMeta(html, themeColor, extraHead))
-    await cp(join(repoRoot, 'game-ui.css'), join(wwwDir, 'game-ui.css'))
-    await emitShakenModules({
-      entryRelPath: 'main.js',
-      wwwDir,
-      resolveSource: relPath => join(distDir, relPath),
-      rewriteSource: (relPath, code) => relPath === 'game/sprites.js'
-        ? code.replaceAll("'/game/assets/", "'./game/assets/").replaceAll('"/game/assets/', '"./game/assets/')
-        : code
-    })
-    await copyDirFiltered(join(repoRoot, 'game', 'assets'), join(wwwDir, 'game', 'assets'))
-    return { detectedName: 'Beacon Run' }
-  }
-
-  if (game === 'lighthouse') {
-    let html = await readFile(join(repoRoot, 'lighthouse.html'), 'utf8')
-    html = html
-      .replace(/\s+data-hosted="1"/g, '')
-      .replaceAll('href="/', 'href="./')
-      .replaceAll('src="/', 'src="./')
-    await writeFile(join(wwwDir, 'index.html'), ensureMobileMeta(html, themeColor, extraHead))
-    await cp(join(repoRoot, 'game-ui.css'), join(wwwDir, 'game-ui.css'))
-    await emitShakenModules({
-      entryRelPath: 'lighthouse/main.js',
-      wwwDir,
-      resolveSource: relPath => join(distDir, relPath)
-    })
-    return { detectedName: 'Tidewatch' }
-  }
-
-  // Built-in starter (Lantern Grove)
-  await copyDirFiltered(join(repoRoot, 'starter', 'art'), join(wwwDir, 'art'))
-  await writeFile(join(wwwDir, 'art', 'overrides.json'), '{}\n')
-  const html = ensureMobileMeta(await readFile(join(repoRoot, 'starter', 'index.html'), 'utf8'), themeColor, extraHead)
-  await writeFile(join(wwwDir, 'index.html'), html)
-  await cp(join(repoRoot, 'starter', 'style.css'), join(wwwDir, 'style.css'))
+  const entryRel = config.entry ?? findModuleEntryScript(normalizedHtml)
   await emitShakenModules({
-    entryRelPath: 'main.js',
+    entryRelPath: entryRel,
     wwwDir,
     resolveSource(relPath) {
-      if (relPath.startsWith('framework/')) return join(distDir, relPath)
-      return join(distDir, 'starter', relPath)
+      if (relPath.startsWith('framework/')) return join(frameworkDir, relPath.slice('framework/'.length))
+      return join(layout.moduleDir, relPath)
     },
-    rewriteSource: rewriteFrameworkImports
+    rewriteSource(relPath, code) {
+      let out = layout.isCreateGameLayout ? rewriteFrameworkImports(relPath, code) : code
+      const rewrites = config.assetPathRewrites?.[relPath]
+      if (rewrites) {
+        for (const [from, to] of Object.entries(rewrites)) {
+          out = out.replaceAll(from, to)
+        }
+      }
+      return out
+    }
   })
-  return { detectedName: 'Lantern Grove' }
+
+  let detectedName = config.name ?? basename(projectDir)
+  if (!config.name) {
+    for (const candidate of [join(layout.moduleDir, 'game.js'), join(layout.htmlDir, 'game.js')]) {
+      if (!existsSync(candidate)) continue
+      try {
+        const mod = await import(pathToFileURL(candidate).href + '?n=' + Date.now())
+        if (mod.game?.title) { detectedName = String(mod.game.title); break }
+      } catch {}
+    }
+  }
+  return { detectedName }
 }
 
 function renderElectronMain(name: string, slug: string) {
@@ -1748,10 +1654,11 @@ func __init_module() -> void:
 \tpass
 `
 
-async function tryCompileGodotScripts(options: PackageGameOptions, repoRoot: string, godotDir: string): Promise<number> {
+async function tryCompileGodotScripts(projectDir: string, config: RidgetopProjectConfig, godotDir: string): Promise<number> {
+  const pkgRoot = resolvePackageRootDir()
   const candidates = [
-    join(repoRoot, 'tools', 'ts-to-gd.ts'),
-    join(repoRoot, 'dist', 'tools', 'ts-to-gd.js')
+    join(pkgRoot, 'tools', 'ts-to-gd.ts'),
+    join(pkgRoot, 'dist', 'tools', 'ts-to-gd.js')
   ]
   let compilerPath: string | null = null
   for (const candidate of candidates) {
@@ -1759,62 +1666,25 @@ async function tryCompileGodotScripts(options: PackageGameOptions, repoRoot: str
   }
   if (!compilerPath) return 0
 
-  let spec: { rootDir: string; entries: string[] } | null = null
-  if (options.projectDir) {
-    const project = resolve(options.projectDir)
-    spec = { rootDir: project, entries: [join(project, 'game', 'game.js')] }
+  let entries: string[] = []
+  if (config.godotEntries?.length) {
+    entries = config.godotEntries.map(entry =>
+      entry === 'ridgetop' || entry.startsWith('ridgetop/') ? entry : join(projectDir, entry)
+    )
   } else {
-    const game = options.game ?? 'signal-drift'
-    if (game === 'signal-drift') {
-      spec = {
-        rootDir: repoRoot,
-        entries: [
-          join(repoRoot, 'racing', 'race.ts'),
-          join(repoRoot, 'racing', 'progression.ts'),
-          join(repoRoot, 'framework', 'ui-layout.ts'),
-          join(repoRoot, 'framework', 'ui-button.ts'),
-          join(repoRoot, 'framework', 'ui-toggle.ts')
-        ]
-      }
-    } else if (game === 'beacon-run') {
-      spec = {
-        rootDir: repoRoot,
-        entries: [
-          join(repoRoot, 'game', 'simulation.ts'),
-          join(repoRoot, 'game', 'campaign.ts'),
-          join(repoRoot, 'framework', 'ui-layout.ts'),
-          join(repoRoot, 'framework', 'ui-button.ts'),
-          join(repoRoot, 'framework', 'ui-toggle.ts')
-        ]
-      }
-    } else if (game === 'starter') {
-      spec = {
-        rootDir: repoRoot,
-        entries: [
-          join(repoRoot, 'starter', 'game.ts'),
-          join(repoRoot, 'framework', 'ui-layout.ts')
-        ]
-      }
-    } else if (game === 'lighthouse') {
-      spec = {
-        rootDir: repoRoot,
-        entries: [
-          join(repoRoot, 'lighthouse', 'simulation.ts'),
-          join(repoRoot, 'lighthouse', 'types.ts'),
-          join(repoRoot, 'framework', 'ui-layout.ts'),
-          join(repoRoot, 'framework', 'ui-button.ts')
-        ]
-      }
+    for (const candidate of [join(projectDir, 'game', 'game.js'), join(projectDir, 'game.ts'), join(projectDir, 'game.js')]) {
+      if (existsSync(candidate)) { entries = [candidate]; break }
     }
   }
-  if (!spec) return 0
+  if (!entries.length) return 0
+
   const compiledDir = join(godotDir, 'scripts', 'compiled')
   try {
     const mod = await import(pathToFileURL(compilerPath).href)
     if (typeof mod.compileTsProjectToGodot !== 'function') return 0
     const compiled = await mod.compileTsProjectToGodot({
-      entries: spec.entries,
-      rootDir: spec.rootDir,
+      entries,
+      rootDir: projectDir,
       outDir: compiledDir
     })
     // Strip studio verification helpers if pulled transitively for pure runtime PRNG (nextRandom/createRng).
@@ -2130,19 +2000,11 @@ export async function packageGame(options: PackageGameOptions): Promise<PackageR
     ? ['web', 'steam', 'mobile', 'godot']
     : [options.target]
   const outRoot = resolve(options.outDir)
-  const repoRoot = options.repoRoot ? resolve(options.repoRoot) : resolve(fileURLToPath(new URL('..', import.meta.url)))
+  const projectDir = await resolveTargetProjectDir(options)
+  const { config, version: detectedVersion } = await loadProjectConfig(projectDir)
+  const projectVersion = options.version ?? detectedVersion ?? '1.0.0'
 
-  let projectVersion = options.version ?? '1.0.0'
-  if (options.projectDir && !options.version) {
-    try {
-      const pkg = JSON.parse(await readFile(join(resolve(options.projectDir), 'package.json'), 'utf8'))
-      if (pkg.version) projectVersion = String(pkg.version)
-    } catch {}
-  }
-
-  const assets = options.projectDir
-    ? await resolveProjectAssets(join(resolve(options.projectDir), 'game'))
-    : await resolveBuiltInAssets(options.game ?? 'signal-drift', repoRoot)
+  const assets = await resolveProjectAssets(projectDir, config)
 
   const iconSource = options.iconBatches
     ? { ...options.iconBatches, background: options.backgroundColor ?? '#142431', accent: '#2a5652' }
@@ -2151,10 +2013,10 @@ export async function packageGame(options: PackageGameOptions): Promise<PackageR
   const steamAppId = options.steamAppId ?? '480'
   const orientation = options.orientation ?? 'landscape'
   const outputs: PackagedOutput[] = []
-  const fallbackName = options.projectDir ? basename(resolve(options.projectDir)) : 'Ridgetop Game'
-  let resolvedName = options.name ?? assets.title ?? fallbackName
+  const fallbackName = basename(projectDir)
+  let resolvedName = options.name ?? config.name ?? assets.title ?? fallbackName
   let resolvedSlug = slugify(resolvedName)
-  let resolvedAppId = options.appId ?? defaultAppId(resolvedSlug)
+  let resolvedAppId = options.appId ?? config.appId ?? defaultAppId(resolvedSlug)
 
   const iconCache = new Map<string, Buffer>()
   function getIconPng(size: number, modelScale = 0.78) {
@@ -2180,18 +2042,18 @@ export async function packageGame(options: PackageGameOptions): Promise<PackageR
     await mkdir(dir, { recursive: true })
 
     if (target === 'web') {
-      const { detectedName } = await assembleWebBundle({ ...options, repoRoot }, dir, { themeColor })
+      const { detectedName } = await assembleWebBundle(projectDir, config, dir, { themeColor })
       resolvedName = options.name ?? detectedName
       resolvedSlug = slugify(resolvedName)
-      resolvedAppId = options.appId ?? defaultAppId(resolvedSlug)
+      resolvedAppId = options.appId ?? config.appId ?? defaultAppId(resolvedSlug)
       const stats = await measureDirectory(dir)
       outputs.push({ target, dir, wwwDir: dir, ...stats })
     } else if (target === 'steam') {
       const wwwDir = join(dir, 'www')
-      const { detectedName } = await assembleWebBundle({ ...options, repoRoot }, wwwDir, { themeColor })
+      const { detectedName } = await assembleWebBundle(projectDir, config, wwwDir, { themeColor })
       resolvedName = options.name ?? detectedName
       resolvedSlug = slugify(resolvedName)
-      resolvedAppId = options.appId ?? defaultAppId(resolvedSlug)
+      resolvedAppId = options.appId ?? config.appId ?? defaultAppId(resolvedSlug)
 
       await mkdir(join(dir, 'electron'), { recursive: true })
       await mkdir(join(dir, 'build'), { recursive: true })
@@ -2235,10 +2097,10 @@ export async function packageGame(options: PackageGameOptions): Promise<PackageR
         '  <meta name="mobile-web-app-capable" content="yes">',
         '  <script src="./ridgetop-mobile-bridge.js"></script>'
       ].join('\n')
-      const { detectedName } = await assembleWebBundle({ ...options, repoRoot }, wwwDir, { themeColor, extraHead: mobileMeta })
+      const { detectedName } = await assembleWebBundle(projectDir, config, wwwDir, { themeColor, extraHead: mobileMeta })
       resolvedName = options.name ?? detectedName
       resolvedSlug = slugify(resolvedName)
-      resolvedAppId = options.appId ?? defaultAppId(resolvedSlug)
+      resolvedAppId = options.appId ?? config.appId ?? defaultAppId(resolvedSlug)
 
       await writeFile(join(wwwDir, 'ridgetop-mobile-bridge.js'), renderMobileBridgeJs(orientation))
       await writeFile(join(dir, 'capacitor.config.json'), JSON.stringify({
@@ -2297,10 +2159,10 @@ export async function packageGame(options: PackageGameOptions): Promise<PackageR
     } else if (target === 'player') {
       const stageDir = await mkdtemp(join(tmpdir(), 'ridgetop-player-stage-'))
       try {
-        const { detectedName } = await assembleWebBundle({ ...options, repoRoot }, stageDir, { themeColor })
+        const { detectedName } = await assembleWebBundle(projectDir, config, stageDir, { themeColor })
         resolvedName = options.name ?? detectedName
         resolvedSlug = slugify(resolvedName)
-        resolvedAppId = options.appId ?? defaultAppId(resolvedSlug)
+        resolvedAppId = options.appId ?? config.appId ?? defaultAppId(resolvedSlug)
 
         const stageHtml = await readFile(join(stageDir, 'index.html'), 'utf8')
         const linkedStyles = findLocalStylesheetPaths(stageHtml)
@@ -2341,7 +2203,7 @@ export async function packageGame(options: PackageGameOptions): Promise<PackageR
         uiTree: assets.uiTree,
         iconPng
       })
-      await tryCompileGodotScripts(options, repoRoot, dir)
+      await tryCompileGodotScripts(projectDir, config, dir)
       const stats = await measureDirectory(dir)
       outputs.push({ target, dir, iconPath: join(dir, 'icon.png'), ...stats })
     }
