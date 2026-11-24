@@ -60,6 +60,7 @@ export interface PackageResult {
 
 const blockedStudioFiles = new Set([
   'serve.js', 'testing.js', 'testing-scene.js', 'testing.html', 'testing.css',
+  'testing-runtime.js', 'testing-boot.js', 'testing-studio.js', 'testing-overlay.css',
   'preview-art.js', 'art-library.js', 'package.js',
   'art-review.js', 'review-store.js', 'verification.js',
   'decision-api.js', 'decision-providers.js',
@@ -199,6 +200,7 @@ interface ModuleStatement {
   specifier: string
   names: Set<string> | '*'
   exportedNames?: string[]
+  pairs?: readonly (readonly [string, string])[]
 }
 
 /** Zero-dependency scanner for top-level static ES import/export-from statements, skipping comments, strings, and templates. */
@@ -310,15 +312,16 @@ function scanStaticModuleStatements(code: string): ModuleStatement[] {
     return code.slice(start, i)
   }
 
-  function parseNamedList(): { localOrOrig: Set<string>; exported: string[] } | null {
+  function parseNamedList(): { localOrOrig: Set<string>; exported: string[]; pairs: [string, string][] } | null {
     if (code.charCodeAt(i) !== 123) return null
     i++ // '{'
     const localOrOrig = new Set<string>()
     const exported: string[] = []
+    const pairs: [string, string][] = []
     while (i < len) {
       skipWsAndComments()
       if (i >= len) return null
-      if (code.charCodeAt(i) === 125) { i++; return { localOrOrig, exported } }
+      if (code.charCodeAt(i) === 125) { i++; return { localOrOrig, exported, pairs } }
       const first = readString() ?? readIdent()
       if (!first) return null
       skipWsAndComments()
@@ -330,9 +333,10 @@ function scanStaticModuleStatements(code: string): ModuleStatement[] {
       }
       localOrOrig.add(first)
       exported.push(second)
+      pairs.push([first, second])
       skipWsAndComments()
       if (code.charCodeAt(i) === 44) i++
-      else if (code.charCodeAt(i) === 125) { i++; return { localOrOrig, exported } }
+      else if (code.charCodeAt(i) === 125) { i++; return { localOrOrig, exported, pairs } }
       else return null
     }
     return null
@@ -375,6 +379,7 @@ function scanStaticModuleStatements(code: string): ModuleStatement[] {
         // Parse import/export clause up to `from`
         let names: Set<string> | '*' = '*'
         let exportedNames: string[] | undefined
+        let pairs: [string, string][] | undefined
         let hasClause = false
         let valid = true
         if (code.charCodeAt(i) === 42) {
@@ -395,6 +400,7 @@ function scanStaticModuleStatements(code: string): ModuleStatement[] {
             hasClause = true
             names = list.localOrOrig
             exportedNames = list.exported
+            pairs = list.pairs
           }
         } else if (word === 'import') {
           const defName = readIdent()
@@ -428,7 +434,7 @@ function scanStaticModuleStatements(code: string): ModuleStatement[] {
             if (spec !== null) {
               skipWsAndComments()
               if (code.charCodeAt(i) === 59) i++
-              results.push({ kind: word, start, end: i, specifier: spec, names, exportedNames })
+              results.push({ kind: word, start, end: i, specifier: spec, names, exportedNames, pairs })
               prevToken = ';'
               continue
             }
@@ -470,6 +476,56 @@ const INLINE_RUNTIME_RNG = {
 }`
 }
 
+const INLINE_TESTING_NOOPS: Record<string, string> = {
+  isTestingActive: '() => false',
+  isTestingPaused: '() => false',
+  setTestingActive: '() => {}',
+  setTestingPaused: '() => {}',
+  onTestingPause: '() => () => {}',
+  captureSourceSite: '() => undefined',
+  registerKnownShapes: '() => {}',
+  getKnownShapeName: '() => undefined',
+  recordMeshMeta: '() => {}',
+  getMeshMeta: '() => undefined',
+  recordRigMeta: '() => {}',
+  getRigMeta: '() => undefined',
+  nextTestingGroupId: '() => ""',
+  nextSpriteAtlasId: '() => ""',
+  registerArtKitRuntime: '() => () => {}',
+  getRegisteredArtKits: '() => []',
+  findRegisteredArtModel: '() => undefined',
+  recordFrame: '() => {}',
+  getLastFrame: '() => undefined',
+  recordSpriteBegin: '() => {}',
+  recordSpriteDraw: '() => {}',
+  getLastSpriteDraws: '() => []',
+  registerHudRegion: '() => () => {}',
+  recordCanvasUiRegions: '() => {}',
+  getHudRegions: '() => []',
+  registerTestingHooks: '() => () => {}',
+  getTestingHooks: '() => []',
+  resetTestingRuntime: '() => {}'
+}
+
+function stripTestingRuntimeImports(code: string) {
+  const stmts = scanStaticModuleStatements(code).filter(
+    s => s.kind === 'import' && basename(s.specifier) === 'testing-runtime.js'
+  )
+  if (!stmts.length) return code
+  let out = ''
+  let cursor = 0
+  for (const stmt of stmts) {
+    out += code.slice(cursor, stmt.start)
+    cursor = stmt.end
+    if (stmt.pairs?.length) {
+      const decls = stmt.pairs.map(([orig, local]) => `${local} = ${INLINE_TESTING_NOOPS[orig] ?? '() => {}'}`)
+      out += `const ${decls.join(', ')};`
+    }
+  }
+  out += code.slice(cursor)
+  return out
+}
+
 function pruneBarrelSource(code: string, usedNames: Set<string> | '*') {
   const stmts = scanStaticModuleStatements(code).filter(s => s.kind === 'export')
   if (!stmts.length) return code
@@ -485,6 +541,12 @@ function pruneBarrelSource(code: string, usedNames: Set<string> | '*') {
         const needNextRandom = usedNames.has('nextRandom') || needCreateRng
         if (needNextRandom) out += INLINE_RUNTIME_RNG.nextRandom + '\n'
         if (needCreateRng) out += INLINE_RUNTIME_RNG.createRng + '\n'
+      } else if (targetFile === 'testing-runtime.js' && stmt.pairs?.length) {
+        for (const [orig, exported] of stmt.pairs) {
+          if (usedNames === '*' || usedNames.has(exported)) {
+            out += `export const ${exported} = ${INLINE_TESTING_NOOPS[orig] ?? '() => {}'};\n`
+          }
+        }
       }
       continue
     }
@@ -556,6 +618,7 @@ async function emitShakenModules({
     if (rawSources.has(relPath)) return rawSources.get(relPath)
     let code = stripSourceMap(await readFile(resolveSource(relPath), 'utf8'))
     if (rewriteSource) code = rewriteSource(relPath, code)
+    if (!isBarrel(relPath)) code = stripTestingRuntimeImports(code)
     rawSources.set(relPath, code)
     return code
   }

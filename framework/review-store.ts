@@ -1,12 +1,19 @@
 import { createHash, randomUUID } from 'node:crypto'
 import { lstat, mkdir, readFile, readdir, rename, rm, writeFile } from 'node:fs/promises'
-import { join } from 'node:path'
+import { dirname, join, relative, resolve, sep } from 'node:path'
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import { isDeepStrictEqual } from 'node:util'
 import { fileURLToPath } from 'node:url'
 import { modelFromArtRecipe } from './art-recipe.ts'
 import type { ArtPin, ArtReview, ReviewStatus } from './art-review.ts'
 import { sendJson } from './host.ts'
+
+export interface ArtReviewHandlerOptions {
+  /** Directory (relative to `root` or absolute) for `.art.json`, `overrides.json`, and sprite assets. Defaults to `'art'`. */
+  artDir?: string
+  /** Directory (relative to `root` or absolute) for saved review threads and PNGs. Defaults to `'reviews'`. */
+  reviewsDir?: string
+}
 
 const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
 const states: ReviewStatus[] = ['open', 'ready', 'resolved']
@@ -41,6 +48,15 @@ function checkPin(pin: ArtPin) {
       (!threeDSurfaces.has(v.surface as string) && (typeof v.clip !== 'string' || !v.clip || v.clip.length > 256 ||
         ![v.frame, v.column, v.row].every(n => Number.isSafeInteger(n) && (n as number) >= 0)))) bad('Invalid art review target.')
 }
+function checkPngBytes(raw: unknown, maxDim: number, label = 'PNG preview'): Buffer {
+  const bytes = typeof raw === 'string' ? Buffer.from(raw, 'base64') : Buffer.alloc(0)
+  if (bytes.length < 45 || !bytes.subarray(0, 8).equals(Buffer.from([137, 80, 78, 71, 13, 10, 26, 10])) ||
+      bytes.toString('ascii', 12, 16) !== 'IHDR' || bytes.subarray(-8, -4).toString('ascii') !== 'IEND' ||
+      ![bytes.readUInt32BE(16), bytes.readUInt32BE(20)].every(size => size > 0 && size <= maxDim)) {
+    bad(`Expected a ${label} up to ${maxDim} pixels.`)
+  }
+  return bytes
+}
 async function payload(req: IncomingMessage): Promise<Record<string, any>> {
   const ct = req.headers['content-type']?.split(';')[0]?.trim().toLowerCase()
   if (ct !== 'application/json') bad('Expected JSON.', 415)
@@ -67,8 +83,29 @@ async function atomic(path: string, body: string | Buffer) {
 }
 
 /** Mount only on the author's loopback testing host. Files remain ordinary project assets for editors and agents. */
-export function createArtReviewHandler(root: URL) {
-  const project = fileURLToPath(root), reviews = join(project, 'reviews'), art = join(project, 'art')
+export function createArtReviewHandler(root: URL, options: ArtReviewHandlerOptions = {}) {
+  const project = resolve(fileURLToPath(root))
+  const reviews = options.reviewsDir ? resolve(project, options.reviewsDir) : join(project, 'reviews')
+  const art = options.artDir ? resolve(project, options.artDir) : join(project, 'art')
+  const artPrefix = relative(project, art).replace(/\\/g, '/')
+
+  function resolveArtPath(rawFile: unknown, extPattern: RegExp, errorMessage: string): string {
+    if (typeof rawFile !== 'string' || !rawFile || rawFile.startsWith('/') || /[\\\0]/.test(rawFile) || !extPattern.test(rawFile)) {
+      bad(errorMessage)
+    }
+    let rel = rawFile
+    if (artPrefix && !artPrefix.startsWith('..') && rel.startsWith(artPrefix + '/')) {
+      rel = rel.slice(artPrefix.length + 1)
+    } else if (rel.startsWith('art/')) {
+      rel = rel.slice(4)
+    }
+    const parts = rel.split('/')
+    if (!parts.length || parts.some(part => !part || part === '.' || part === '..')) bad(errorMessage)
+    const destination = resolve(art, rel)
+    if (!destination.startsWith(art + sep)) bad(errorMessage)
+    return destination
+  }
+
   async function directory(path: string) {
     await mkdir(path, { recursive: true })
     if (!(await lstat(path)).isDirectory()) bad('Expected a project directory.')
@@ -105,22 +142,66 @@ export function createArtReviewHandler(root: URL) {
       const { asset, file, base, recipe } = await payload(req)
       if (typeof asset !== 'string' || !/^[a-z0-9][a-z0-9_-]*$/i.test(asset)) bad('Invalid model role.')
       try { modelFromArtRecipe(recipe) } catch (error) { bad(error.message) }
-      if (file !== null && (typeof file !== 'string' || !/^art\/[^/\\\0]+\.art\.json$/i.test(file))) bad('Save editable recipes directly in game/art/.')
+      const useOverrides = file === null || file === undefined
+      const destination = useOverrides
+        ? join(art, 'overrides.json')
+        : resolveArtPath(file, /\.art\.json$/i, 'Save editable recipes as .art.json files inside the art directory.')
       await serialized(async () => {
-        await directory(art)
-        const destination = join(art, file ? file.slice(4) : 'overrides.json')
+        await directory(dirname(destination))
         const raw = await regular(destination)
         let parsedDoc: unknown = {}
         if (raw) {
           try { parsedDoc = JSON.parse(raw.toString()) } catch { bad('Existing art file is not valid JSON.') }
         }
-        if (!file && !isRecord(parsedDoc)) bad('Existing art overrides file must be a JSON object.')
+        if (useOverrides && !isRecord(parsedDoc)) bad('Existing art overrides file must be a JSON object.')
         const document = parsedDoc as Record<string, unknown>
-        const original = file ? (raw ? parsedDoc : null) : (Object.hasOwn(document, asset) ? document[asset] : null)
+        const original = useOverrides ? (Object.hasOwn(document, asset) ? document[asset] : null) : (raw ? parsedDoc : null)
         if (!isDeepStrictEqual(original, base)) bad('The model changed on disk. Reload before editing it.', 409)
-        await atomic(destination, JSON.stringify(file ? recipe : { ...document, [asset]: recipe }, null, 2) + '\n')
+        await atomic(destination, JSON.stringify(useOverrides ? { ...document, [asset]: recipe } : recipe, null, 2) + '\n')
       })
-      sendJson(res, { saved: true })
+      sendJson(res, { saved: true, file: relative(project, destination).replace(/\\/g, '/') })
+      return true
+    }
+    if (path === '/__testing/sprite' && req.method === 'POST') {
+      const { name, file, png, manifest } = await payload(req)
+      if (png === undefined && manifest === undefined) bad('Provide a PNG image, a sprite manifest, or both.')
+      let stem: string
+      if (file !== undefined && file !== null) {
+        const resolvedFile = resolveArtPath(file, /\.(?:png|json)$/i, 'Save sprite assets as .png or .json files inside the art directory.')
+        stem = resolvedFile.replace(/\.(?:png|json)$/i, '')
+      } else if (typeof name === 'string' && /^[a-z0-9][a-z0-9 _-]*$/i.test(name)) {
+        stem = resolve(art, name)
+        if (!stem.startsWith(art + sep)) bad('Invalid sprite name.')
+      } else {
+        bad('Provide a valid sprite name or art file path.')
+      }
+      const pngBytes = png !== undefined ? checkPngBytes(png, 4096, 'sprite PNG') : undefined
+      if (manifest !== undefined) {
+        if (!isRecord(manifest) || typeof manifest.src !== 'string' || !/^[^/\\\0]+\.png$/i.test(manifest.src) ||
+            ![manifest.frameWidth, manifest.frameHeight].every(n => Number.isSafeInteger(n) && (n as number) > 0 && (n as number) <= 4096) ||
+            (manifest.clips !== undefined && !isRecord(manifest.clips))) {
+          bad('Invalid sprite manifest.')
+        }
+      }
+      const savedFiles = await serialized(async () => {
+        const folder = dirname(stem)
+        await directory(folder)
+        const written: string[] = []
+        if (pngBytes) {
+          const pngName = manifest && typeof manifest.src === 'string' ? manifest.src : undefined
+          const pngPath = pngName ? resolve(folder, pngName) : stem + '.png'
+          if (!pngPath.startsWith(art + sep)) bad('Invalid sprite PNG target.')
+          await atomic(pngPath, pngBytes)
+          written.push(relative(project, pngPath).replace(/\\/g, '/'))
+        }
+        if (manifest !== undefined) {
+          const jsonPath = stem + '.json'
+          await atomic(jsonPath, JSON.stringify(manifest, null, 2) + '\n')
+          written.push(relative(project, jsonPath).replace(/\\/g, '/'))
+        }
+        return written
+      })
+      sendJson(res, { saved: true, files: savedFiles })
       return true
     }
     await directory(reviews)
@@ -137,10 +218,7 @@ export function createArtReviewHandler(root: URL) {
       if (typeof id !== 'string' || !uuid.test(id)) bad('Invalid review ID.')
       checkPin(target)
       const text = words(comment)
-      const bytes = typeof png === 'string' ? Buffer.from(png, 'base64') : Buffer.alloc(0)
-      if (bytes.length < 45 || !bytes.subarray(0, 8).equals(Buffer.from([137,80,78,71,13,10,26,10])) ||
-          bytes.toString('ascii', 12, 16) !== 'IHDR' || bytes.subarray(-8, -4).toString('ascii') !== 'IEND' ||
-          ![bytes.readUInt32BE(16), bytes.readUInt32BE(20)].every(size => size > 0 && size <= 1024)) bad('Expected a PNG preview up to 1024 pixels.')
+      const bytes = checkPngBytes(png, 1024)
       const result = await serialized(async () => {
         if (await regular(join(reviews, id + '.json'))) {
           const saved = (await note(id)).note
