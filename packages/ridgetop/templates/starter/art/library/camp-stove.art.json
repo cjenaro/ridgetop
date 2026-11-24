@@ -1,0 +1,24 @@
+{
+  "format": "ridgetop-art",
+  "version": 1,
+  "name": "camp-stove",
+  "span": 1.9554716860428947,
+  "centerY": 0.28322688427351317,
+  "frameSize": 32,
+  "palette": {},
+  "parts": [
+    {"name":"fuel-tank","shape":"cylinder","position":[-0.5044811373562336,0.21,-0.04500005707226977],"scale":[0.36,0.42,0.36],"tone":"accent","yaw":1.57},
+    {"name":"tank-cap","shape":"cylinder","position":[-0.5044811373562336,0.58,-0.04500005707226977],"scale":[0.13,0.1,0.13],"tone":"ink"},
+    {"name":"stove-body","shape":"prism","position":[0.2255188626437664,0.28,0.004999942927730233],"scale":[0.95,0.48,0.78],"tone":"ink"},
+    {"name":"burner-ring","shape":"cylinder","position":[0.2255188626437664,0.57,0.004999942927730233],"scale":[0.34,0.07,0.34],"tone":"stone"},
+    {"name":"burner-core","shape":"cylinder","position":[0.2255188626437664,0.62,0.004999942927730233],"scale":[0.18,0.04,0.18],"tone":"glow","unlit":0.6},
+    {"name":"grate-front","shape":"box","position":[0.2255188626437664,0.68,0.24499994292773022],"scale":[0.74,0.05,0.06],"tone":"stone"},
+    {"name":"grate-back","shape":"box","position":[0.2255188626437664,0.68,-0.23500005707226976],"scale":[0.74,0.05,0.06],"tone":"stone"},
+    {"name":"grate-left","shape":"box","position":[-0.024481137356233612,0.68,0.004999942927730233],"scale":[0.06,0.05,0.55],"tone":"stone"},
+    {"name":"grate-right","shape":"box","position":[0.4755188626437664,0.68,0.004999942927730233],"scale":[0.06,0.05,0.55],"tone":"stone"},
+    {"name":"control-knob","shape":"octahedron","position":[0.7355188626437664,0.32,0.31499994292773026],"scale":[0.12,0.12,0.09],"tone":"accent"}
+  ],
+  "timings": {
+    "turntable": 110
+  }
+}

@@ -1,0 +1,89 @@
+{
+  "name": "ridgetop",
+  "version": "1.0.0",
+  "type": "module",
+  "description": "Dependency-free low-poly WebGPU/WebGL 2/Canvas 2D game framework, Canvas UI SDK, multiplayer rooms, and multi-platform packager",
+  "engines": {
+    "node": ">=22.18"
+  },
+  "bin": {
+    "ridgetop": "./dist/tools/cli.js"
+  },
+  "exports": {
+    ".": {
+      "types": "./dist/framework/index.d.ts",
+      "default": "./dist/framework/index.js"
+    },
+    "./server": {
+      "types": "./dist/framework/server.d.ts",
+      "default": "./dist/framework/server.js"
+    },
+    "./ui": {
+      "types": "./dist/framework/ui.d.ts",
+      "default": "./dist/framework/ui.js"
+    },
+    "./ui-layout": {
+      "types": "./dist/framework/ui-layout.d.ts",
+      "default": "./dist/framework/ui-layout.js"
+    },
+    "./ui-button": {
+      "types": "./dist/framework/ui-button.d.ts",
+      "default": "./dist/framework/ui-button.js"
+    },
+    "./ui-toggle": {
+      "types": "./dist/framework/ui-toggle.d.ts",
+      "default": "./dist/framework/ui-toggle.js"
+    },
+    "./ui-select": {
+      "types": "./dist/framework/ui-select.d.ts",
+      "default": "./dist/framework/ui-select.js"
+    },
+    "./ui-slider": {
+      "types": "./dist/framework/ui-slider.d.ts",
+      "default": "./dist/framework/ui-slider.js"
+    },
+    "./ui-menu": {
+      "types": "./dist/framework/ui-menu.d.ts",
+      "default": "./dist/framework/ui-menu.js"
+    },
+    "./ui-canvas": {
+      "types": "./dist/framework/ui-canvas.d.ts",
+      "default": "./dist/framework/ui-canvas.js"
+    },
+    "./ui-machine": {
+      "types": "./dist/framework/ui-machine.d.ts",
+      "default": "./dist/framework/ui-machine.js"
+    },
+    "./art-review": {
+      "types": "./dist/framework/art-review.d.ts",
+      "default": "./dist/framework/art-review.js"
+    },
+    "./art-review/server": {
+      "types": "./dist/framework/review-store.d.ts",
+      "default": "./dist/framework/review-store.js"
+    },
+    "./testing": {
+      "types": "./dist/framework/testing-runtime.d.ts",
+      "default": "./dist/framework/testing-runtime.js"
+    }
+  },
+  "files": [
+    "dist",
+    "framework",
+    "templates",
+    "README.md"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json && node -e \"import('node:fs').then(fs=>{fs.copyFileSync('framework/testing-overlay.css','dist/framework/testing-overlay.css');fs.chmodSync('dist/tools/cli.js',0o755)})\"",
+    "typecheck": "tsc -p tsconfig.json",
+    "prepack": "npm run build"
+  },
+  "peerDependencies": {
+    "typescript": ">=5.0"
+  },
+  "peerDependenciesMeta": {
+    "typescript": {
+      "optional": true
+    }
+  }
+}

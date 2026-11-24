@@ -1,8 +1,7 @@
-
-/data/
-
-/dist/
-/node_modules/
+data/
+dist/
+node_modules/
+*.tgz
 
 # Beads / Dolt files (added by bd init)
 .dolt/

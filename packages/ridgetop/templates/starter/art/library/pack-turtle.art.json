@@ -1,0 +1,24 @@
+{
+  "format": "ridgetop-art",
+  "version": 1,
+  "name": "pack-turtle",
+  "span": 2.5019422180835145,
+  "centerY": 0.6325789047556132,
+  "frameSize": 32,
+  "palette": {},
+  "parts": [
+    {"name":"body","shape":"prism","position":[0,0.34,-0.1875],"scale":[1.45,0.5,1.05],"tone":"leaf"},
+    {"name":"domed-shell","shape":"prism","position":[0,0.64,-0.2375],"scale":[1.35,0.72,1],"tone":"wood"},
+    {"name":"shell-cap","shape":"prism","position":[0,0.82,-0.2375],"scale":[1.05,0.4,0.78],"tone":"accent"},
+    {"name":"head","shape":"prism","position":[0,0.39,0.5325],"scale":[0.48,0.42,0.45],"tone":"leaf"},
+    {"name":"left-eye","shape":"octahedron","position":[-0.16,0.48,0.7525],"scale":[0.06,0.06,0.06],"tone":"ink"},
+    {"name":"right-eye","shape":"octahedron","position":[0.16,0.48,0.7525],"scale":[0.06,0.06,0.06],"tone":"ink"},
+    {"name":"front-left-leg","shape":"prism","position":[-0.55,0.14,0.2625],"scale":[0.48,0.28,0.35],"tone":"leaf"},
+    {"name":"front-right-leg","shape":"prism","position":[0.55,0.14,0.2625],"scale":[0.48,0.28,0.35],"tone":"leaf"},
+    {"name":"rear-left-leg","shape":"prism","position":[-0.55,0.14,-0.6375],"scale":[0.48,0.28,0.35],"tone":"leaf"},
+    {"name":"rear-right-leg","shape":"prism","position":[0.55,0.14,-0.6375],"scale":[0.48,0.28,0.35],"tone":"leaf"},
+    {"name":"cargo-parcel","shape":"box","position":[0,1.21,-0.2375],"scale":[0.82,0.55,0.7],"tone":"light"},
+    {"name":"parcel-strap-long","shape":"box","position":[0,1.51,-0.2375],"scale":[0.13,0.06,0.76],"tone":"ink"},
+    {"name":"parcel-strap-cross","shape":"box","position":[0,1.51,-0.2375],"scale":[0.88,0.06,0.13],"tone":"ink"}
+  ]
+}

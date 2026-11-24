@@ -1,0 +1,23 @@
+{
+  "format": "ridgetop-art",
+  "version": 1,
+  "name": "marsh-heron",
+  "span": 3.3764857511924733,
+  "centerY": 1.3651014288732923,
+  "frameSize": 32,
+  "palette": {},
+  "parts": [
+    {"name":"left-leg","shape":"box","position":[-0.135,0.58,-0.5150000000000001],"scale":[0.09,1.16,0.09],"tone":"wood"},
+    {"name":"right-leg","shape":"box","position":[0.14500000000000002,0.58,-0.5450000000000002],"scale":[0.09,1.16,0.09],"tone":"wood"},
+    {"name":"left-foot","shape":"box","position":[-0.135,0.05,-0.3150000000000001],"scale":[0.12,0.1,0.48],"tone":"ink"},
+    {"name":"right-foot","shape":"box","position":[0.14500000000000002,0.05,-0.3450000000000001],"scale":[0.12,0.1,0.48],"tone":"ink"},
+    {"name":"body","shape":"prism","position":[0.0050000000000000044,1.42,-0.5150000000000001],"scale":[0.72,0.92,0.88],"tone":"stone"},
+    {"name":"folded-wing","shape":"prism","position":[-0.275,1.47,-0.5350000000000001],"scale":[0.18,0.65,0.66],"tone":"ink"},
+    {"name":"lower-neck","shape":"prism","position":[0.0050000000000000044,1.95,-0.33500000000000013],"scale":[0.3,0.78,0.3],"tone":"light"},
+    {"name":"bent-neck","shape":"prism","position":[0.0050000000000000044,2.25,-0.09500000000000014],"scale":[0.28,0.45,0.28],"tone":"light"},
+    {"name":"head","shape":"prism","position":[0.0050000000000000044,2.48,0.03499999999999992],"scale":[0.43,0.38,0.48],"tone":"stone"},
+    {"name":"long-bill","shape":"prism","position":[0.0050000000000000044,2.48,0.565],"scale":[0.16,0.16,0.78],"tone":"accent"},
+    {"name":"eye","shape":"octahedron","position":[-0.165,2.55,0.20499999999999985],"scale":[0.06,0.06,0.06],"tone":"ink"},
+    {"name":"crest","shape":"cone","position":[0.0050000000000000044,2.7,-0.13500000000000012],"scale":[0.14,0.3,0.14],"tone":"ink"}
+  ]
+}
