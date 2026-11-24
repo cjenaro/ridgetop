@@ -1,5 +1,6 @@
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import type { GameHost } from './server-types.ts'
+import { createHash } from 'node:crypto'
 import { createServer } from 'node:http'
 import { existsSync } from 'node:fs'
 import { lstat, readFile, stat } from 'node:fs/promises'
@@ -15,6 +16,28 @@ const browserModules = [
   'testing-runtime.js', 'testing-boot.js', 'testing-studio.js',
   'ui.js', 'ui-machine.js', 'ui-layout.js', 'ui-button.js', 'ui-toggle.js', 'ui-select.js', 'ui-slider.js', 'ui-menu.js', 'ui-canvas.js'
 ]
+
+export const ridgetopBrowserSpecifiers: Readonly<Record<string, string>> = {
+  ridgetop: '/framework/index.js',
+  'ridgetop/ui': '/framework/ui.js',
+  'ridgetop/ui-layout': '/framework/ui-layout.js',
+  'ridgetop/ui-button': '/framework/ui-button.js',
+  'ridgetop/ui-toggle': '/framework/ui-toggle.js',
+  'ridgetop/ui-select': '/framework/ui-select.js',
+  'ridgetop/ui-slider': '/framework/ui-slider.js',
+  'ridgetop/ui-menu': '/framework/ui-menu.js',
+  'ridgetop/ui-canvas': '/framework/ui-canvas.js',
+  'ridgetop/ui-machine': '/framework/ui-machine.js',
+  'ridgetop/art-review': '/framework/art-review.js',
+  'ridgetop/testing': '/framework/testing-runtime.js'
+}
+
+const importMapJson = JSON.stringify({ imports: ridgetopBrowserSpecifiers })
+const importMapHash = createHash('sha256').update(importMapJson).digest('base64')
+const importMapTag = `\n  <script type="importmap">${importMapJson}</script>\n`
+const contentSecurityPolicy =
+  `default-src 'self'; script-src 'self' 'sha256-${importMapHash}'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'`
+
 const testingBootTag = '\n<script type="module" src="/framework/testing-boot.js"></script>\n'
 const mime = {
   html: 'text/html', css: 'text/css', js: 'text/javascript', png: 'image/png', json: 'application/json',
@@ -22,14 +45,25 @@ const mime = {
 }
 const binaryExtensions = new Set(['png', 'glb', 'wav', 'ogg', 'mp3'])
 
-function injectTestingBoot(html: Buffer): Buffer {
-  const text = html.toString('utf8')
-  if (text.includes('/framework/testing-boot.js')) return html
-  const closeBody = text.lastIndexOf('</body>')
-  const next = closeBody >= 0
-    ? text.slice(0, closeBody) + testingBootTag + text.slice(closeBody)
-    : text + testingBootTag
-  return Buffer.from(next, 'utf8')
+function injectImportMap(text: string): string {
+  if (/<script\b[^>]*\btype\s*=\s*["']importmap["']/i.test(text)) return text
+  const headMatch = /<head\b[^>]*>/i.exec(text)
+  if (headMatch) {
+    const pos = headMatch.index + headMatch[0].length
+    return text.slice(0, pos) + importMapTag + text.slice(pos)
+  }
+  return importMapTag + text
+}
+
+function prepareHtml(html: Buffer, testingEnabled: boolean): Buffer {
+  let text = injectImportMap(html.toString('utf8'))
+  if (testingEnabled && !text.includes('/framework/testing-boot.js')) {
+    const closeBody = text.lastIndexOf('</body>')
+    text = closeBody >= 0
+      ? text.slice(0, closeBody) + testingBootTag + text.slice(closeBody)
+      : text + testingBootTag
+  }
+  return Buffer.from(text, 'utf8')
 }
 
 async function artFile(pathname: string, folders: Map<string, URL>) {
@@ -56,8 +90,14 @@ export function sendJson(res: ServerResponse, value: unknown) {
     .end(JSON.stringify(value))
 }
 
-export function createGameHost({ root, moduleRoot = root, files, artDirectories = [], aliases = {}, testing, handle, stop, save }: {
-  root: URL; moduleRoot?: URL; files: readonly string[]; artDirectories?: readonly string[]; aliases?: Record<string, string>
+export function createGameHost({
+  root, moduleRoot = root, files, routes = {}, artDirectories = [], artMounts = {}, aliases = {}, testing, handle, stop, save
+}: {
+  root: URL; moduleRoot?: URL; files: readonly string[]
+  routes?: Readonly<Record<string, URL>>
+  artDirectories?: readonly string[]
+  artMounts?: Readonly<Record<string, URL>>
+  aliases?: Record<string, string>
   testing?: boolean
   handle?(request: IncomingMessage, response: ServerResponse, pathname: string): boolean | Promise<boolean>
   stop?(): void; save?(): void | Promise<void>
@@ -72,10 +112,15 @@ export function createGameHost({ root, moduleRoot = root, files, artDirectories 
     : new URL('testing-overlay.css', frameworkSourceRoot)
   assets.set('/framework/testing-overlay.css', testingCssAsset)
   for (const file of files) assets.set('/' + file, new URL(file, file.endsWith('.js') ? moduleRoot : root))
+  for (const [routePath, url] of Object.entries(routes)) assets.set(routePath, url)
   const artFolders = new Map<string, URL>()
   for (const directory of artDirectories) {
     const prefix = directory.replace(/\/$/, '') + '/'
     artFolders.set('/' + prefix, new URL(prefix, root))
+  }
+  for (const [mountPath, url] of Object.entries(artMounts)) {
+    const prefix = (mountPath.startsWith('/') ? mountPath : '/' + mountPath).replace(/\/$/, '') + '/'
+    artFolders.set(prefix, url)
   }
   for (const [path, file] of Object.entries(aliases)) assets.set(path, new URL(file, root))
 
@@ -90,7 +135,7 @@ export function createGameHost({ root, moduleRoot = root, files, artDirectories 
   const server = createServer({ requestTimeout: 10_000, headersTimeout: 8_000 }, async (req, res) => {
     res.setHeader('X-Content-Type-Options', 'nosniff')
     res.setHeader('Referrer-Policy', 'same-origin')
-    res.setHeader('Content-Security-Policy', "default-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'")
+    res.setHeader('Content-Security-Policy', contentSecurityPolicy)
     try {
       let pathname: string
       try {
@@ -108,8 +153,8 @@ export function createGameHost({ root, moduleRoot = root, files, artDirectories 
       const extension = asset.pathname.split('.').at(-1).toLowerCase()
       const type = mime[extension]
       const contentType = binaryExtensions.has(extension) ? type : type ? type + '; charset=utf-8' : 'application/octet-stream'
-      if (testingEnabled && extension === 'html') {
-        const body = injectTestingBoot(await readFile(asset))
+      if (extension === 'html') {
+        const body = prepareHtml(await readFile(asset), testingEnabled)
         res.writeHead(200, {
           'Content-Type': contentType,
           'Content-Length': String(body.byteLength),

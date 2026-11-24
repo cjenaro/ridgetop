@@ -1,4 +1,4 @@
-export { createGameHost, isMain, sendJson, sendText, startGameHost } from './host.ts'
+export { createGameHost, isMain, ridgetopBrowserSpecifiers, sendJson, sendText, startGameHost } from './host.ts'
 export { createRoomService } from './room-server.ts'
 export { createCookieSession, createIdentity, createRecords, openRecords } from './records.ts'
 export { createDecisionApi } from './decision-api.ts'

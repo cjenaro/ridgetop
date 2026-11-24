@@ -459,6 +459,42 @@ function scanStaticModuleStatements(code: string): ModuleStatement[] {
   return results
 }
 
+const RIDGETOP_SPECIFIER_FILES: Readonly<Record<string, string>> = {
+  ridgetop: 'index.js',
+  'ridgetop/ui': 'ui.js',
+  'ridgetop/ui-layout': 'ui-layout.js',
+  'ridgetop/ui-button': 'ui-button.js',
+  'ridgetop/ui-toggle': 'ui-toggle.js',
+  'ridgetop/ui-select': 'ui-select.js',
+  'ridgetop/ui-slider': 'ui-slider.js',
+  'ridgetop/ui-menu': 'ui-menu.js',
+  'ridgetop/ui-canvas': 'ui-canvas.js',
+  'ridgetop/ui-machine': 'ui-machine.js',
+  'ridgetop/art-review': 'art-review.js',
+  'ridgetop/testing': 'testing-runtime.js'
+}
+
+function resolvePackageFrameworkDir(): string {
+  if (import.meta.url.endsWith('.ts')) {
+    return resolve(fileURLToPath(new URL('../dist/framework', import.meta.url)))
+  }
+  return resolve(fileURLToPath(new URL('.', import.meta.url)))
+}
+
+function rewriteBareRidgetopSpecifiers(relPath: string, code: string): string {
+  const stmts = scanStaticModuleStatements(code).filter(s => Object.hasOwn(RIDGETOP_SPECIFIER_FILES, s.specifier))
+  if (!stmts.length) return code
+  const depth = relPath.split('/').length - 1
+  const prefix = (depth === 0 ? './' : '../'.repeat(depth)) + 'framework/'
+  let out = code
+  for (const stmt of [...stmts].sort((a, b) => b.specifierStart - a.specifierStart)) {
+    const file = RIDGETOP_SPECIFIER_FILES[stmt.specifier]
+    const quote = out[stmt.specifierStart] === '"' ? '"' : "'"
+    out = out.slice(0, stmt.specifierStart) + quote + prefix + file + quote + out.slice(stmt.specifierEnd)
+  }
+  return out
+}
+
 function parseStaticImports(code: string) {
   return scanStaticModuleStatements(code)
     .filter(s => s.specifier.startsWith('.'))
@@ -626,6 +662,7 @@ async function emitShakenModules({
     assertWithinRoot(relPath)
     if (rawSources.has(relPath)) return rawSources.get(relPath)
     let code = stripSourceMap(await readFile(resolveSource(relPath), 'utf8'))
+    code = rewriteBareRidgetopSpecifiers(relPath, code)
     if (rewriteSource) code = rewriteSource(relPath, code)
     if (!isBarrel(relPath)) code = stripTestingRuntimeImports(code)
     rawSources.set(relPath, code)
@@ -1979,10 +2016,14 @@ export async function bundleStandaloneHtml({
     const stmts = scanStaticModuleStatements(source)
     const children: string[] = []
     for (const stmt of [...stmts].sort((a, b) => b.specifierStart - a.specifierStart)) {
-      if (!stmt.specifier.startsWith('.')) {
+      let child: string
+      if (stmt.specifier.startsWith('.')) {
+        child = normalizeAssetPath(posixJoin(posixDirname(norm), stmt.specifier))
+      } else if (Object.hasOwn(RIDGETOP_SPECIFIER_FILES, stmt.specifier)) {
+        child = 'framework/' + RIDGETOP_SPECIFIER_FILES[stmt.specifier]
+      } else {
         throw new Error('Expected a local module in ' + norm + ', got ' + stmt.specifier)
       }
-      const child = normalizeAssetPath(posixJoin(posixDirname(norm), stmt.specifier))
       if (child.startsWith('../') || child === '..') {
         throw new Error('Module path escapes bundle root: ' + stmt.specifier)
       }
