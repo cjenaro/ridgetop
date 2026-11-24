@@ -1,5 +1,7 @@
-import { access, cp, mkdir, readdir, readFile, rm, stat, writeFile } from 'node:fs/promises'
-import { basename, dirname, join, relative, resolve, sep } from 'node:path'
+import { access, cp, mkdir, mkdtemp, readdir, readFile, rm, stat, writeFile } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { basename, dirname, extname, join, relative, resolve, sep } from 'node:path'
+import { dirname as posixDirname, join as posixJoin, normalize as posixNormalize } from 'node:path/posix'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import type { ArtModel, ArtRecipe } from './art.ts'
 import type { InstanceBatch } from './types.ts'
@@ -14,7 +16,7 @@ import { encodePng } from './png.ts'
 import { color } from './renderer.ts'
 import { boxNode, column, overlay, row } from './ui-layout.ts'
 
-export type PackageTarget = 'web' | 'steam' | 'mobile' | 'godot' | 'all'
+export type PackageTarget = 'web' | 'steam' | 'mobile' | 'godot' | 'player' | 'all'
 export type PackageOrientation = 'landscape' | 'portrait' | 'any'
 
 export interface PackageGameOptions {
@@ -43,10 +45,11 @@ export interface PackageGameOptions {
 }
 
 export interface PackagedOutput {
-  target: 'web' | 'steam' | 'mobile' | 'godot'
+  target: 'web' | 'steam' | 'mobile' | 'godot' | 'player'
   dir: string
   wwwDir?: string
   iconPath?: string
+  playerPath?: string
   files: number
   totalBytes: number
 }
@@ -198,6 +201,8 @@ interface ModuleStatement {
   start: number
   end: number
   specifier: string
+  specifierStart: number
+  specifierEnd: number
   names: Set<string> | '*'
   exportedNames?: string[]
   pairs?: readonly (readonly [string, string])[]
@@ -361,11 +366,13 @@ function scanStaticModuleStatements(code: string): ModuleStatement[] {
         skipWsAndComments()
         // Side-effect import: import './foo.js'
         if (word === 'import' && (code.charCodeAt(i) === 39 || code.charCodeAt(i) === 34)) {
+          const specifierStart = i
           const spec = readString()
+          const specifierEnd = i
           if (spec !== null) {
             skipWsAndComments()
             if (code.charCodeAt(i) === 59) i++
-            results.push({ kind: 'import', start, end: i, specifier: spec, names: '*' })
+            results.push({ kind: 'import', start, end: i, specifier: spec, specifierStart, specifierEnd, names: '*' })
             prevToken = ';'
             continue
           }
@@ -430,11 +437,13 @@ function scanStaticModuleStatements(code: string): ModuleStatement[] {
           if (code.startsWith('from', i) && !/[A-Za-z0-9_$]/.test(code[i + 4] ?? '')) {
             i += 4
             skipWsAndComments()
+            const specifierStart = i
             const spec = readString()
+            const specifierEnd = i
             if (spec !== null) {
               skipWsAndComments()
               if (code.charCodeAt(i) === 59) i++
-              results.push({ kind: word, start, end: i, specifier: spec, names, exportedNames, pairs })
+              results.push({ kind: word, start, end: i, specifier: spec, specifierStart, specifierEnd, names, exportedNames, pairs })
               prevToken = ';'
               continue
             }
@@ -1783,8 +1792,300 @@ async function tryCompileGodotScripts(options: PackageGameOptions, repoRoot: str
   }
 }
 
+const EMBEDDED_ASSET_MIME: Record<string, string> = {
+  '.json': 'application/json; charset=utf-8',
+  '.png': 'image/png',
+  '.glb': 'model/gltf-binary',
+  '.obj': 'text/plain; charset=utf-8',
+  '.wav': 'audio/wav',
+  '.ogg': 'audio/ogg',
+  '.mp3': 'audio/mpeg',
+  '.svg': 'image/svg+xml',
+  '.webp': 'image/webp',
+  '.jpg': 'image/jpeg',
+  '.jpeg': 'image/jpeg',
+  '.ico': 'image/x-icon',
+  '.woff2': 'font/woff2',
+  '.ttf': 'font/ttf',
+  '.txt': 'text/plain; charset=utf-8',
+  '.wasm': 'application/wasm'
+}
+
+export interface EmbeddedAssetEntry {
+  mime: string
+  base64: string
+}
+
+function getHtmlAttr(attrs: string, name: string): string | undefined {
+  const re = new RegExp(`\\b${name}\\s*=\\s*(?:"([^"]*)"|'([^']*)'|([^\\s"'=<>` + '`' + `]+))`, 'i')
+  const match = re.exec(attrs)
+  return match ? (match[1] ?? match[2] ?? match[3]) : undefined
+}
+
+function isExternalUrl(value: string): boolean {
+  return /^(?:[a-z][a-z0-9+.-]*:|\/\/|#)/i.test(value.trim())
+}
+
+function normalizeAssetPath(raw: string): string {
+  const clean = raw.split(/[?#]/, 1)[0].replace(/\\/g, '/').replace(/^\/+/, '')
+  return posixNormalize(clean).replace(/^\.\//, '')
+}
+
+function rewriteCssAssetUrls(css: string, cssRelPath: string, embeddedAssets: Readonly<Record<string, EmbeddedAssetEntry>>): string {
+  const cssDir = posixDirname(cssRelPath)
+  return css.replace(/url\(\s*(?:"([^"]+)"|'([^']+)'|([^)"'\s]+))\s*\)/gi, (full, dq, sq, bare) => {
+    const raw = dq ?? sq ?? bare ?? ''
+    if (!raw || isExternalUrl(raw)) return full
+    const target = normalizeAssetPath(raw.startsWith('/') ? raw : posixJoin(cssDir, raw))
+    const entry = Object.hasOwn(embeddedAssets, target) ? embeddedAssets[target] : undefined
+    if (!entry) return full
+    return `url("data:${entry.mime};base64,${entry.base64}")`
+  })
+}
+
+function renderOfflineAssetShim(embeddedAssets: Readonly<Record<string, EmbeddedAssetEntry>>): string {
+  const compact: Record<string, readonly [string, string]> = {}
+  for (const [key, entry] of Object.entries(embeddedAssets)) {
+    compact[key] = [entry.mime, entry.base64]
+  }
+  const serialized = JSON.stringify(compact).replaceAll('<', '\\u003c')
+  return `(function () {
+  var ASSETS = ${serialized};
+  globalThis.__ridgetopOfflineAssets = ASSETS;
+  var baseHref = typeof location !== 'undefined' && location && location.href
+    ? new URL('./', location.href).href
+    : 'https://ridgetop.local/';
+  function hasAsset(key) {
+    return Object.prototype.hasOwnProperty.call(ASSETS, key);
+  }
+  function resolveAssetKey(raw) {
+    if (typeof raw !== 'string' || !raw || raw.startsWith('data:') || raw.startsWith('blob:')) return null;
+    var cleanRaw = raw.split(/[?#]/, 1)[0];
+    var direct = cleanRaw.replace(/^\\.?\\//, '').replace(/\\\\/g, '/');
+    if (hasAsset(direct)) return direct;
+    try {
+      var decodedDirect = decodeURIComponent(direct);
+      if (hasAsset(decodedDirect)) return decodedDirect;
+    } catch {}
+    try {
+      var resolved = new URL(raw, baseHref).href.split(/[?#]/, 1)[0];
+      if (resolved.startsWith(baseHref)) {
+        var rel = resolved.slice(baseHref.length);
+        if (hasAsset(rel)) return rel;
+        try {
+          var decodedRel = decodeURIComponent(rel);
+          if (hasAsset(decodedRel)) return decodedRel;
+        } catch {}
+      }
+    } catch {}
+    return null;
+  }
+  function decodeBase64(b64) {
+    var bin = atob(b64);
+    var out = new Uint8Array(bin.length);
+    for (var i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
+    return out;
+  }
+  function dataUriFor(key) {
+    var entry = ASSETS[key];
+    return 'data:' + entry[0] + ';base64,' + entry[1];
+  }
+  var origFetch = typeof globalThis.fetch === 'function' ? globalThis.fetch.bind(globalThis) : null;
+  globalThis.fetch = function (input, init) {
+    var rawUrl = typeof input === 'string'
+      ? input
+      : input instanceof URL
+        ? input.href
+        : input && typeof input === 'object' && 'url' in input
+          ? String(input.url)
+          : '';
+    var key = resolveAssetKey(rawUrl);
+    if (key) {
+      var entry = ASSETS[key];
+      var bytes = decodeBase64(entry[1]);
+      var method = ((init && init.method) || (input && typeof input === 'object' && input.method) || 'GET').toUpperCase();
+      var res = new Response(method === 'HEAD' ? null : bytes, {
+        status: 200,
+        statusText: 'OK',
+        headers: {
+          'Content-Type': entry[0],
+          'Content-Length': String(bytes.byteLength)
+        }
+      });
+      try {
+        Object.defineProperty(res, 'url', { value: new URL(key, baseHref).href, configurable: true });
+      } catch {}
+      return Promise.resolve(res);
+    }
+    if (!origFetch) return Promise.reject(new TypeError('Offline asset not found: ' + rawUrl));
+    return origFetch(input, init);
+  };
+  function patchSrcSetter(ctor) {
+    if (typeof ctor === 'undefined' || !ctor.prototype) return;
+    var desc = Object.getOwnPropertyDescriptor(ctor.prototype, 'src');
+    if (!desc || !desc.set) return;
+    Object.defineProperty(ctor.prototype, 'src', {
+      configurable: true,
+      enumerable: desc.enumerable,
+      get: desc.get,
+      set: function (value) {
+        var key = resolveAssetKey(String(value));
+        desc.set.call(this, key ? dataUriFor(key) : value);
+      }
+    });
+  }
+  patchSrcSetter(globalThis.HTMLImageElement);
+  patchSrcSetter(globalThis.HTMLMediaElement);
+  if (typeof Element !== 'undefined' && Element.prototype && typeof Element.prototype.setAttribute === 'function') {
+    var origSetAttribute = Element.prototype.setAttribute;
+    Element.prototype.setAttribute = function (name, value) {
+      if (String(name).toLowerCase() === 'src' && (this.tagName === 'IMG' || this.tagName === 'AUDIO' || this.tagName === 'VIDEO')) {
+        var key = resolveAssetKey(String(value));
+        if (key) return origSetAttribute.call(this, name, dataUriFor(key));
+      }
+      return origSetAttribute.call(this, name, value);
+    };
+  }
+})();`
+}
+
+/**
+ * Bundle an HTML page's local stylesheets, static ES module graph, and optional local assets into a
+ * single self-contained offline HTML document that runs directly from `file://` without external dependencies.
+ */
+export async function bundleStandaloneHtml({
+  html,
+  readAsset,
+  readModule,
+  embeddedAssets = {}
+}: {
+  html: string
+  readAsset(relPath: string): Promise<string>
+  readModule(relPath: string): Promise<string>
+  embeddedAssets?: Readonly<Record<string, EmbeddedAssetEntry>>
+}): Promise<string> {
+  const imports: Record<string, string> = {}
+  const moduleName = (rel: string) => 'ridgetop-offline/' + rel
+  const visited = new Set<string>()
+
+  async function includeModule(relPath: string) {
+    const norm = normalizeAssetPath(relPath)
+    if (norm.startsWith('../') || norm === '..') {
+      throw new Error('Module path escapes bundle root: ' + relPath)
+    }
+    if (visited.has(norm)) return
+    visited.add(norm)
+    let source = stripSourceMap(await readModule(norm))
+    const stmts = scanStaticModuleStatements(source)
+    const children: string[] = []
+    for (const stmt of [...stmts].sort((a, b) => b.specifierStart - a.specifierStart)) {
+      if (!stmt.specifier.startsWith('.')) {
+        throw new Error('Expected a local module in ' + norm + ', got ' + stmt.specifier)
+      }
+      const child = normalizeAssetPath(posixJoin(posixDirname(norm), stmt.specifier))
+      if (child.startsWith('../') || child === '..') {
+        throw new Error('Module path escapes bundle root: ' + stmt.specifier)
+      }
+      children.push(child)
+      source = source.slice(0, stmt.specifierStart) + JSON.stringify(moduleName(child)) + source.slice(stmt.specifierEnd)
+    }
+    imports[moduleName(norm)] = 'data:text/javascript;base64,' + Buffer.from(source, 'utf8').toString('base64')
+    for (const child of children) await includeModule(child)
+  }
+
+  let page = html
+
+  // Inline local stylesheets and inline icon links matching embedded assets
+  const linkMatches = [...page.matchAll(/<link\b([^>]*)>/gi)]
+  for (const match of linkMatches) {
+    const tag = match[0]
+    const attrs = match[1]
+    const rel = (getHtmlAttr(attrs, 'rel') ?? '').toLowerCase()
+    const href = getHtmlAttr(attrs, 'href')
+    if (!href || isExternalUrl(href)) continue
+    const relTokens = rel.split(/\s+/).filter(Boolean)
+    const normHref = normalizeAssetPath(href)
+    if (relTokens.includes('stylesheet')) {
+      const rawCss = await readAsset(normHref)
+      const rewrittenCss = rewriteCssAssetUrls(rawCss, normHref, embeddedAssets)
+      const safeCss = rewrittenCss.replace(/<\/style/gi, '<\\/style')
+      page = page.replace(tag, () => '<style>\n' + safeCss + '\n</style>')
+    } else if (relTokens.includes('icon') || relTokens.includes('apple-touch-icon')) {
+      const asset = Object.hasOwn(embeddedAssets, normHref) ? embeddedAssets[normHref] : undefined
+      if (asset) {
+        const dataUri = `data:${asset.mime};base64,${asset.base64}`
+        const updatedTag = tag.replace(/\bhref\s*=\s*(?:"[^"]*"|'[^']*'|[^\s"'=<>`]+)/i, () => `href="${dataUri}"`)
+        page = page.replace(tag, () => updatedTag)
+      }
+    }
+  }
+
+  // Inline the single local ES module entry point using an importmap + base64 data URIs
+  const moduleEntries: { tag: string; entry: string }[] = []
+  for (const match of page.matchAll(/<script\b([^>]*)>([\s\S]*?)<\/script>/gi)) {
+    const attrs = match[1]
+    const typeAttr = (getHtmlAttr(attrs, 'type') ?? '').toLowerCase()
+    const srcAttr = getHtmlAttr(attrs, 'src')
+    if (typeAttr !== 'module' || !srcAttr || isExternalUrl(srcAttr)) continue
+    moduleEntries.push({ tag: match[0], entry: normalizeAssetPath(srcAttr) })
+  }
+  if (moduleEntries.length !== 1) {
+    throw new Error('Expected one local ES module entry point in the player page')
+  }
+  const [{ tag, entry }] = moduleEntries
+  await includeModule(entry)
+
+  const scriptParts: string[] = []
+  if (Object.keys(embeddedAssets).length > 0) {
+    scriptParts.push('<script>\n' + renderOfflineAssetShim(embeddedAssets) + '\n</script>')
+  }
+  scriptParts.push('<script type="importmap">' + JSON.stringify({ imports }).replaceAll('<', '\\u003c') + '</script>')
+  const entryLiteral = JSON.stringify(moduleName(entry)).replaceAll('<', '\\u003c')
+  scriptParts.push(`<script type="module">import ${entryLiteral}</script>`)
+  return page.replace(tag, () => scriptParts.join('\n'))
+}
+
+async function collectEmbeddedAssets(wwwDir: string, inlinedStylesheets: ReadonlySet<string>): Promise<Record<string, EmbeddedAssetEntry>> {
+  const assets: Record<string, EmbeddedAssetEntry> = {}
+  async function walk(dir: string) {
+    for (const entry of await readdir(dir, { withFileTypes: true })) {
+      const full = join(dir, entry.name)
+      const rel = relative(wwwDir, full).replace(/\\/g, '/')
+      if (entry.isDirectory()) {
+        if (blockedStudioDirs.has(entry.name)) continue
+        await walk(full)
+      } else if (entry.isFile()) {
+        if (blockedStudioFiles.has(entry.name)) continue
+        if (rel === 'index.html' || inlinedStylesheets.has(rel)) continue
+        const ext = extname(entry.name).toLowerCase()
+        if (ext === '.js' || ext === '.mjs' || ext === '.map') continue
+        const bytes = await readFile(full)
+        assets[rel] = {
+          mime: EMBEDDED_ASSET_MIME[ext] ?? 'application/octet-stream',
+          base64: bytes.toString('base64')
+        }
+      }
+    }
+  }
+  await walk(wwwDir)
+  return assets
+}
+
+function findLocalStylesheetPaths(html: string): Set<string> {
+  const paths = new Set<string>()
+  for (const match of html.matchAll(/<link\b([^>]*)>/gi)) {
+    const attrs = match[1]
+    const rel = (getHtmlAttr(attrs, 'rel') ?? '').toLowerCase().split(/\s+/).filter(Boolean)
+    const href = getHtmlAttr(attrs, 'href')
+    if (rel.includes('stylesheet') && href && !isExternalUrl(href)) {
+      paths.add(normalizeAssetPath(href))
+    }
+  }
+  return paths
+}
+
 export async function packageGame(options: PackageGameOptions): Promise<PackageResult> {
-  const targets: ('web' | 'steam' | 'mobile' | 'godot')[] = options.target === 'all'
+  const targets: ('web' | 'steam' | 'mobile' | 'godot' | 'player')[] = options.target === 'all'
     ? ['web', 'steam', 'mobile', 'godot']
     : [options.target]
   const outRoot = resolve(options.outDir)
@@ -1952,6 +2253,39 @@ export async function packageGame(options: PackageGameOptions): Promise<PackageR
       await writeFile(join(resourcesDir, 'splash-dark.png'), splashPng)
       const stats = await measureDirectory(wwwDir)
       outputs.push({ target, dir, wwwDir, iconPath, ...stats })
+    } else if (target === 'player') {
+      const stageDir = await mkdtemp(join(tmpdir(), 'ridgetop-player-stage-'))
+      try {
+        const { detectedName } = await assembleWebBundle({ ...options, repoRoot }, stageDir, { themeColor })
+        resolvedName = options.name ?? detectedName
+        resolvedSlug = slugify(resolvedName)
+        resolvedAppId = options.appId ?? defaultAppId(resolvedSlug)
+
+        const stageHtml = await readFile(join(stageDir, 'index.html'), 'utf8')
+        const linkedStyles = findLocalStylesheetPaths(stageHtml)
+        const embeddedAssets = await collectEmbeddedAssets(stageDir, linkedStyles)
+        const playerHtml = await bundleStandaloneHtml({
+          html: stageHtml,
+          readAsset: relPath => readFile(join(stageDir, relPath), 'utf8'),
+          readModule: relPath => readFile(join(stageDir, relPath), 'utf8'),
+          embeddedAssets
+        })
+
+        const playerDir = basename(outRoot) === 'player' ? outRoot : join(outRoot, 'player')
+        await rm(playerDir, { recursive: true, force: true })
+        await mkdir(playerDir, { recursive: true })
+        const playerPath = join(playerDir, `${resolvedSlug}-player.html`)
+        await writeFile(playerPath, playerHtml, 'utf8')
+        outputs.push({
+          target,
+          dir: playerDir,
+          playerPath,
+          files: 1,
+          totalBytes: Buffer.byteLength(playerHtml, 'utf8')
+        })
+      } finally {
+        await rm(stageDir, { recursive: true, force: true })
+      }
     } else {
       await rm(dir, { recursive: true, force: true })
       await mkdir(dir, { recursive: true })
@@ -1991,8 +2325,8 @@ export function parsePackageArgs(argv: readonly string[]) {
     }
   }
   const target = (values.target ?? 'all') as PackageTarget
-  if (!['web', 'steam', 'mobile', 'godot', 'all'].includes(target)) {
-    throw new Error('Unknown --target "' + target + '". Choose web, steam, mobile, godot, or all.')
+  if (!['web', 'steam', 'mobile', 'godot', 'player', 'all'].includes(target)) {
+    throw new Error('Unknown --target "' + target + '". Choose web, steam, mobile, godot, player, or all.')
   }
   const orientation = (values.orientation ?? 'landscape') as PackageOrientation
   if (!['landscape', 'portrait', 'any'].includes(orientation)) {
