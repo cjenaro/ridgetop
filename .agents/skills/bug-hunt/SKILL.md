@@ -28,8 +28,8 @@ Always partition work cleanly into Ridgetop's four modules:
 
 1. Read [references/patterns.md](./references/patterns.md) and [references/benchmarks.md](./references/benchmarks.md).
 2. Decide scope:
-   - **Incremental run (default after new features/changes):** inspect `git log --oneline <last_audited_commit>..HEAD` and `git diff --stat <last_audited_commit>..HEAD`, focusing first on changed files and the modules they belong to (plus any modules coupled via shared exports or compilers).
-   - **Full sweep (when requested or after major refactors):** audit all 4 modules in parallel with dedicated `research` subagents (one per module), passing them the relevant section of `references/patterns.md`.
+   - **Incremental run (default after new features/changes):** inspect `git log --oneline <last_audited_commit>..HEAD` and `git diff --stat <last_audited_commit>..HEAD`, focusing first on changed files and the modules they belong to (plus any modules coupled via shared exports or compilers). If there are no product-code changes since `last_audited_commit`, fall back automatically to a **full sweep**.
+   - **Full sweep (when requested, after major refactors, or on zero diff):** audit all 4 modules in parallel with dedicated `research` subagents (one per module), passing them the relevant section of `references/patterns.md` and explicitly instructing them to trace **cross-module seams** (caller↔callee contracts across framework primitives/bridges, example game loops, and the Godot compiler/packager).
 
 ### 2. Baseline Performance (Before Perf Edits)
 
