@@ -8,11 +8,16 @@ import { pathToFileURL } from 'node:url'
 const browserModules = [
   'index.js', 'verification.js', 'loop.js', 'renderer.js', 'room-client.js',
   'geometry.js', 'instances.js', 'low-poly.js', 'mesh-gpu.js', 'mesh-gl.js', 'mesh-canvas.js',
-  'input.js', 'vehicle.js', 'page.js', 'platform.js', 'audio.js', 'hud.js', 'sprites.js', 'sprite-sheet.js',
+  'input.js', 'vehicle.js', 'page.js', 'platform.js', 'audio.js', 'audio-assets.js', 'import-mesh.js',
+  'hud.js', 'sprites.js', 'sprite-sheet.js',
   'art.js', 'art-recipe.js', 'art-review.js', 'art-builder.js', 'platformer.js', 'animation.js', 'physics3d.js',
   'ui.js', 'ui-machine.js', 'ui-layout.js', 'ui-button.js', 'ui-toggle.js', 'ui-select.js', 'ui-slider.js', 'ui-menu.js', 'ui-canvas.js'
 ]
-const mime = { html: 'text/html', css: 'text/css', js: 'text/javascript', png: 'image/png', json: 'application/json' }
+const mime = {
+  html: 'text/html', css: 'text/css', js: 'text/javascript', png: 'image/png', json: 'application/json',
+  glb: 'model/gltf-binary', obj: 'text/plain', wav: 'audio/wav', ogg: 'audio/ogg', mp3: 'audio/mpeg'
+}
+const binaryExtensions = new Set(['png', 'glb', 'wav', 'ogg', 'mp3'])
 
 async function artFile(pathname: string, folders: Map<string, URL>) {
   const start = pathname.lastIndexOf('/') + 1
@@ -20,7 +25,7 @@ async function artFile(pathname: string, folders: Map<string, URL>) {
   if (!folder) return
   let name: string
   try { name = decodeURIComponent(pathname.slice(start)) } catch { return }
-  if (!/\.(png|json)$/i.test(name) || /[/\\\0]/.test(name)) return
+  if (!/\.(png|json|glb|obj|wav|ogg|mp3)$/i.test(name) || /[/\\\0]/.test(name)) return
   const file = new URL(encodeURIComponent(name), folder)
   try { if ((await lstat(file)).isFile()) return file }
   catch (error) {
@@ -72,7 +77,7 @@ export function createGameHost({ root, moduleRoot = root, files, artDirectories 
       if (!asset) return sendText(res, 404, 'Not found')
       const extension = asset.pathname.split('.').at(-1).toLowerCase()
       const type = mime[extension]
-      const contentType = extension === 'png' ? type : type ? type + '; charset=utf-8' : 'application/octet-stream'
+      const contentType = binaryExtensions.has(extension) ? type : type ? type + '; charset=utf-8' : 'application/octet-stream'
       if (req.method === 'HEAD') {
         const info = await stat(asset)
         res.writeHead(200, {
