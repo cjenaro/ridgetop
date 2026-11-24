@@ -1,5 +1,6 @@
+import { createAlphaSorter } from './geometry.ts'
 import { INSTANCE_SIZE } from './instances.ts'
-import type { BlendMode, MeshBackend } from './types.ts'
+import type { BlendMode, InstanceBatch, MeshBackend } from './types.ts'
 
 const shader = `
 struct Camera {
@@ -97,13 +98,24 @@ export async function gpuMeshes(canvas: HTMLCanvasElement, light: Float32Array<A
       ? device.createPipelineLayout({ bindGroupLayouts: [bindLayout] })
       : 'auto'
 
-    const makePipeline = (entryPoint: string, blend?: GPUBlendState, depthWriteEnabled = true) =>
+    const makePipeline = (
+      entryPoint: string,
+      blend?: GPUBlendState,
+      depthWriteEnabled = true,
+      depthBias = 0,
+      depthBiasSlopeScale = 0
+    ) =>
       device.createRenderPipelineAsync({
         layout,
         vertex: { module, entryPoint: 'vertex', buffers: vertexBuffers },
         fragment: { module, entryPoint, targets: [{ format, ...(blend ? { blend } : {}) }] },
         primitive: { topology: 'triangle-list', cullMode: 'back' },
-        depthStencil: { format: 'depth24plus', depthWriteEnabled, depthCompare: 'less' }
+        depthStencil: {
+          format: 'depth24plus',
+          depthWriteEnabled,
+          depthCompare: 'less',
+          ...(depthBias || depthBiasSlopeScale ? { depthBias, depthBiasSlopeScale } : {})
+        }
       })
 
     const [opaquePipe, alphaPipe, additivePipe] = await Promise.all([
@@ -111,7 +123,7 @@ export async function gpuMeshes(canvas: HTMLCanvasElement, light: Float32Array<A
       makePipeline('fragmentAlpha', {
         color: { srcFactor: 'src-alpha', dstFactor: 'one-minus-src-alpha', operation: 'add' },
         alpha: { srcFactor: 'one', dstFactor: 'one-minus-src-alpha', operation: 'add' }
-      }, false),
+      }, false, -1, -1),
       makePipeline('fragmentAdditive', {
         color: { srcFactor: 'src-alpha', dstFactor: 'one', operation: 'add' },
         alpha: { srcFactor: 'zero', dstFactor: 'one', operation: 'add' }
@@ -131,11 +143,21 @@ export async function gpuMeshes(canvas: HTMLCanvasElement, light: Float32Array<A
     const context = canvas.getContext('webgpu')
     context.configure({ device, format, alphaMode: 'opaque' })
     const meshes = new Map()
-    const buffers = new Map()
+    const buffers = new Map<InstanceBatch, {
+      buffer: GPUBuffer
+      revision: number
+      cameraRevision?: number
+      lastOrder?: Int32Array
+      lastCount?: number
+      sorted?: boolean
+    }>()
+    const batchSorter = createAlphaSorter(16)
+    const instanceSorter = createAlphaSorter(32)
     let depth
     let depthView
     const lastCamera = new Float32Array(16)
     let hasCamera = false
+    let cameraRevision = 0
     function vertexBuffer(mesh) {
       if (!meshes.has(mesh)) {
         const buffer = device.createBuffer({
@@ -162,6 +184,7 @@ export async function gpuMeshes(canvas: HTMLCanvasElement, light: Float32Array<A
           device.queue.writeBuffer(camera, 0, matrix)
           lastCamera.set(matrix)
           hasCamera = true
+          cameraRevision++
         }
         if (!depth || depth.width !== canvas.width || depth.height !== canvas.height) {
           depth?.destroy()
@@ -183,7 +206,7 @@ export async function gpuMeshes(canvas: HTMLCanvasElement, light: Float32Array<A
         pass.setBindGroup(0, bindGroup)
         let lastMesh
         let lastBlend: BlendMode | undefined
-        for (const batch of visible) {
+        const drawBatch = (batch: InstanceBatch) => {
           const blend: BlendMode = batch.blend ?? 'opaque'
           if (blend !== lastBlend) {
             pass.setPipeline(pipelines[blend])
@@ -203,9 +226,35 @@ export async function gpuMeshes(canvas: HTMLCanvasElement, light: Float32Array<A
             }
             buffers.set(batch, entry)
           }
-          if (entry.revision !== batch.revision) {
+          if (blend === 'alpha' && batch.count > 1) {
+            const revisionChanged = entry.revision !== batch.revision
+            if (revisionChanged || entry.cameraRevision !== cameraRevision || !entry.sorted) {
+              const count = batch.count
+              const { inOrder, indices } = instanceSorter.sortInstanceIndices(matrix, batch.data, count)
+              let orderChanged = revisionChanged || !entry.sorted || entry.lastCount !== count
+              if (!orderChanged && entry.lastOrder) {
+                for (let k = 0; k < count; k++) {
+                  if (entry.lastOrder[k] !== indices[k]) { orderChanged = true; break }
+                }
+              }
+              if (orderChanged) {
+                const uploadData = inOrder ? batch.data : instanceSorter.packInstances(batch.data, count)
+                device.queue.writeBuffer(entry.buffer, 0, uploadData, 0, count * INSTANCE_SIZE)
+                if (!entry.lastOrder || entry.lastOrder.length < count) {
+                  entry.lastOrder = new Int32Array(Math.max(count, entry.lastOrder ? entry.lastOrder.length * 2 : 16))
+                }
+                for (let k = 0; k < count; k++) entry.lastOrder[k] = indices[k]
+                entry.lastCount = count
+                entry.revision = batch.revision
+                entry.sorted = true
+                stats.uploadBytes += size
+              }
+              entry.cameraRevision = cameraRevision
+            }
+          } else if (entry.revision !== batch.revision) {
             device.queue.writeBuffer(entry.buffer, 0, batch.data, 0, batch.count * INSTANCE_SIZE)
             entry.revision = batch.revision
+            entry.sorted = false
             stats.uploadBytes += size
           }
           if (lastMesh !== batch.mesh) {
@@ -214,6 +263,25 @@ export async function gpuMeshes(canvas: HTMLCanvasElement, light: Float32Array<A
           }
           pass.setVertexBuffer(1, entry.buffer)
           pass.draw(batch.mesh.vertexCount, batch.count)
+        }
+        for (let i = 0; i < visible.length; i++) {
+          const batch = visible[i]
+          if ((batch.blend ?? 'opaque') === 'alpha') {
+            let j = i + 1
+            while (j < visible.length && (visible[j].blend ?? 'opaque') === 'alpha') j++
+            const runLen = j - i
+            if (runLen > 1) {
+              const { inOrder, indices } = batchSorter.sortBatchIndices(matrix, visible, i, runLen)
+              if (inOrder) {
+                for (let k = i; k < j; k++) drawBatch(visible[k])
+              } else {
+                for (let k = 0; k < runLen; k++) drawBatch(visible[i + indices[k]])
+              }
+              i = j - 1
+              continue
+            }
+          }
+          drawBatch(batch)
         }
         pass.end()
         device.queue.submit([encoder.finish()])
