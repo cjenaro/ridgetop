@@ -61,6 +61,12 @@ export async function createGame(destination: string) {
     ])
     if (overlayCss) await cp(overlayCss, join(temporary, 'framework', 'testing-overlay.css'))
 
+    const tsToGdDist = join(distDir, 'tools', 'ts-to-gd.js')
+    if (await firstExisting([tsToGdDist])) {
+      await mkdir(join(temporary, 'tools'), { recursive: true })
+      await copyModule(tsToGdDist, join(temporary, 'tools', 'ts-to-gd.js'))
+    }
+
     // Optional offline studio companions when available in the workspace or package dist.
     const monorepoDist = resolve(packageRoot, '..', '..', 'dist')
     const workshopHtml = await firstExisting([
@@ -85,7 +91,8 @@ export async function createGame(destination: string) {
         'package:web': 'node game/package.js --target web',
         'package:steam': 'node game/package.js --target steam',
         'package:mobile': 'node game/package.js --target mobile',
-        'package:godot': 'node game/package.js --target godot'
+        'package:godot': 'node game/package.js --target godot',
+        'package:player': 'node game/package.js --target player'
       }, engines: { node: '>=22.18' }
     }, null, 2) + '\n')
 

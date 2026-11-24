@@ -608,13 +608,69 @@ export function testEdge2() {
   let finRan = 0
   try { finRan += 1 } finally { finRan += 10 }
 
+  // 14. arr.length = 0 resizing, nested switch continue, else-if multi-line lambda, optional call arg short-circuit,
+  //     LHS-before-RHS assignment order, numeric dict key in / Object.hasOwn / computed key, Map/Set chaining
+  const shrink = [1, 2, 3]
+  shrink.length = 0
+  const growEmpty: number[] = []
+  growEmpty.length = 0
+
+  const nestedSw: number[] = []
+  for (let i = 0; i < 3; i++) {
+    switch (i) {
+      case 0:
+        switch (1) {
+          case 1:
+            continue
+        }
+      case 1:
+        nestedSw.push(10)
+        break
+      default:
+        nestedSw.push(20)
+    }
+    nestedSw.push(i)
+  }
+
+  let elifHit = 0
+  if (false) {
+    elifHit = 1
+  } else if ([1, 2, 3].some(x => {
+    const y = x + 1
+    return y > 3
+  })) {
+    elifHit = 2
+  }
+
+  let optArgHits = 0
+  const nullFn: ((n: number) => number) | null = null
+  const optCallRes = (nullFn as ((n: number) => number) | null)?.(++optArgHits)
+  const optMethodRes = (nullArr as number[] | null)?.map(() => ++optArgHits)
+
+  const orderArr = [0, 0, 0]
+  let idxOrder = 0
+  orderArr[idxOrder] = (idxOrder = 2)
+
+  const numKeyIdx = 7
+  const compDict: Record<string, string> = { [numKeyIdx]: 'seven' }
+  const inNumKey = 7 in compDict
+  const ownNumKey = Object.hasOwn(compDict, 7 as unknown as string)
+  const compLookup = compDict['7']
+
+  const chainMap = new Map<string, number>().set('a', 1).set('b', 2)
+  const chainSet = new Set<number>().add(5).add(6)
+
   return {
     lenFallback, thisDouble, swLoop, doN, safeOk, safeBig, optMap, optTrim,
     head, tail, a, restObj, restCall, getterVal: boxGetter.v, fib6: fib(6), lastOf: readLast(),
     side, cacheHit: cache.hit, cacheMiss: cache.miss,
     setSpread, strSpread, merged, sp, dictStr, growLen: grow.length, grow2: grow[2], strFoo,
     red1, setTicks, sliced, joined, strAt, customPop,
-    hasDrop: Object.hasOwn(delObj, 'drop'), hasKeep: Object.hasOwn(delObj, 'keep'), finRan
+    hasDrop: Object.hasOwn(delObj, 'drop'), hasKeep: Object.hasOwn(delObj, 'keep'), finRan,
+    shrinkLen: shrink.length, growEmptyLen: growEmpty.length, nestedSw, elifHit,
+    optArgHits, optCallRes, optMethodRes, orderArr,
+    inNumKey, ownNumKey, compLookup,
+    chainMapSize: chainMap.size, chainMapB: chainMap.get('b'), chainSetSize: chainSet.size, chainSetHas6: chainSet.has(6)
   }
 }
 `)
@@ -693,4 +749,19 @@ func _init() -> void:
   assert.equal(r.hasDrop, false)
   assert.equal(r.hasKeep, true)
   assert.equal(r.finRan, 11)
+  assert.equal(r.shrinkLen, 0)
+  assert.equal(r.growEmptyLen, 0)
+  assert.deepEqual(r.nestedSw, [10, 1, 20, 2])
+  assert.equal(r.elifHit, 2)
+  assert.equal(r.optArgHits, 0)
+  assert.equal(r.optCallRes, null)
+  assert.equal(r.optMethodRes, null)
+  assert.deepEqual(r.orderArr, [2, 0, 0])
+  assert.equal(r.inNumKey, true)
+  assert.equal(r.ownNumKey, true)
+  assert.equal(r.compLookup, 'seven')
+  assert.equal(r.chainMapSize, 2)
+  assert.equal(r.chainMapB, 2)
+  assert.equal(r.chainSetSize, 2)
+  assert.equal(r.chainSetHas6, true)
 })

@@ -230,6 +230,16 @@ interface ModuleStatement {
   names: Set<string> | '*'
   exportedNames?: string[]
   pairs?: readonly (readonly [string, string])[]
+  namespace?: string
+}
+
+function resolveContained(baseDir: string, relPath: string, label: string): string {
+  const base = resolve(baseDir)
+  const target = resolve(base, relPath)
+  if (target !== base && !target.startsWith(base + sep)) {
+    throw new Error(`${label} escapes project root: ${relPath}`)
+  }
+  return target
 }
 
 /** Zero-dependency scanner for top-level static ES import/export-from statements, skipping comments, strings, and templates. */
@@ -325,6 +335,11 @@ function scanStaticModuleStatements(code: string): ModuleStatement[] {
           }
           if (ch === 123) depth++
           else if (ch === 125) depth--
+          if ((ch === 43 || ch === 45) && code.charCodeAt(i + 1) === ch) {
+            tplPrev = ch === 43 ? '++' : '--'
+            i += 2
+            continue
+          }
           tplPrev = code[i++]
         }
       }
@@ -411,6 +426,7 @@ function scanStaticModuleStatements(code: string): ModuleStatement[] {
         let names: Set<string> | '*' = '*'
         let exportedNames: string[] | undefined
         let pairs: [string, string][] | undefined
+        let namespace: string | undefined
         let hasClause = false
         let valid = true
         if (code.charCodeAt(i) === 42) {
@@ -421,7 +437,7 @@ function scanStaticModuleStatements(code: string): ModuleStatement[] {
           if (code.startsWith('as', i) && !/[A-Za-z0-9_$]/.test(code[i + 2] ?? '')) {
             i += 2
             skipWsAndComments()
-            readIdent()
+            namespace = readIdent() || undefined
           }
           names = '*'
         } else if (code.charCodeAt(i) === 123) {
@@ -448,7 +464,7 @@ function scanStaticModuleStatements(code: string): ModuleStatement[] {
                 if (code.startsWith('as', i) && !/[A-Za-z0-9_$]/.test(code[i + 2] ?? '')) {
                   i += 2
                   skipWsAndComments()
-                  readIdent()
+                  namespace = readIdent() || undefined
                 }
               } else if (code.charCodeAt(i) === 123) {
                 if (!parseNamedList()) valid = false
@@ -467,7 +483,7 @@ function scanStaticModuleStatements(code: string): ModuleStatement[] {
             if (spec !== null) {
               skipWsAndComments()
               if (code.charCodeAt(i) === 59) i++
-              results.push({ kind: word, start, end: i, specifier: spec, specifierStart, specifierEnd, names, exportedNames, pairs })
+              results.push({ kind: word, start, end: i, specifier: spec, specifierStart, specifierEnd, names, exportedNames, pairs, namespace })
               prevToken = ';'
               continue
             }
@@ -476,6 +492,11 @@ function scanStaticModuleStatements(code: string): ModuleStatement[] {
         i = saved
       }
       prevToken = word
+      continue
+    }
+    if ((ch === 43 || ch === 45) && code.charCodeAt(i + 1) === ch) {
+      prevToken = ch === 43 ? '++' : '--'
+      i += 2
       continue
     }
     prevToken = code[i++]
@@ -576,9 +597,14 @@ const INLINE_TESTING_NOOPS: Record<string, string> = {
   resetTestingRuntime: '() => {}'
 }
 
+function renderTestingNoopNamespaceObject(): string {
+  const entries = Object.entries(INLINE_TESTING_NOOPS).map(([k, v]) => `${k}: ${v}`).join(', ')
+  return `Object.freeze({ ${entries} })`
+}
+
 function stripTestingRuntimeImports(code: string) {
   const stmts = scanStaticModuleStatements(code).filter(
-    s => s.kind === 'import' && basename(s.specifier) === 'testing-runtime.js'
+    s => basename(s.specifier) === 'testing-runtime.js'
   )
   if (!stmts.length) return code
   let out = ''
@@ -586,9 +612,25 @@ function stripTestingRuntimeImports(code: string) {
   for (const stmt of stmts) {
     out += code.slice(cursor, stmt.start)
     cursor = stmt.end
-    if (stmt.pairs?.length) {
-      const decls = stmt.pairs.map(([orig, local]) => `${local} = ${INLINE_TESTING_NOOPS[orig] ?? '() => {}'}`)
-      out += `const ${decls.join(', ')};`
+    if (stmt.kind === 'import') {
+      if (stmt.pairs?.length) {
+        const decls = stmt.pairs.map(([orig, local]) => `${local} = ${INLINE_TESTING_NOOPS[orig] ?? '() => {}'}`)
+        out += `const ${decls.join(', ')};`
+      } else if (stmt.namespace) {
+        out += `const ${stmt.namespace} = ${renderTestingNoopNamespaceObject()};`
+      }
+    } else if (stmt.kind === 'export') {
+      if (stmt.pairs?.length) {
+        for (const [orig, exported] of stmt.pairs) {
+          out += `export const ${exported} = ${INLINE_TESTING_NOOPS[orig] ?? '() => {}'};\n`
+        }
+      } else if (stmt.namespace) {
+        out += `export const ${stmt.namespace} = ${renderTestingNoopNamespaceObject()};\n`
+      } else if (stmt.names === '*') {
+        for (const [orig, body] of Object.entries(INLINE_TESTING_NOOPS)) {
+          out += `export const ${orig} = ${body};\n`
+        }
+      }
     }
   }
   out += code.slice(cursor)
@@ -605,9 +647,9 @@ function pruneBarrelSource(code: string, usedNames: Set<string> | '*') {
     cursor = stmt.end
     const targetFile = basename(stmt.specifier)
     if (blockedStudioFiles.has(targetFile)) {
-      if (targetFile === 'verification.js' && usedNames !== '*') {
-        const needCreateRng = usedNames.has('createRng')
-        const needNextRandom = usedNames.has('nextRandom') || needCreateRng
+      if (targetFile === 'verification.js') {
+        const needCreateRng = usedNames === '*' || usedNames.has('createRng')
+        const needNextRandom = usedNames === '*' || usedNames.has('nextRandom') || needCreateRng
         if (needNextRandom) out += INLINE_RUNTIME_RNG.nextRandom + '\n'
         if (needCreateRng) out += INLINE_RUNTIME_RNG.createRng + '\n'
       } else if (targetFile === 'testing-runtime.js' && stmt.pairs?.length) {
@@ -986,7 +1028,7 @@ async function assembleWebBundle(
   config: RidgetopProjectConfig,
   wwwDir: string,
   { themeColor, extraHead = '' }: { themeColor: string; extraHead?: string }
-): Promise<{ detectedName: string }> {
+): Promise<{ detectedName?: string }> {
   await rm(wwwDir, { recursive: true, force: true })
   await mkdir(wwwDir, { recursive: true })
 
@@ -1010,14 +1052,16 @@ async function assembleWebBundle(
   const copiedFiles = new Set<string>()
   if (config.staticFiles?.length || config.staticDirs?.length) {
     for (const relFile of config.staticFiles ?? []) {
-      const src = join(projectDir, relFile)
-      const dst = join(wwwDir, relFile)
+      const src = resolveContained(projectDir, relFile, 'staticFile')
+      const dst = resolveContained(wwwDir, relFile, 'staticFile')
       await mkdir(dirname(dst), { recursive: true })
       await cp(src, dst)
       copiedFiles.add(relFile)
     }
     for (const relDir of config.staticDirs ?? []) {
-      await copyDirFiltered(join(projectDir, relDir), join(wwwDir, relDir))
+      const srcDir = resolveContained(projectDir, relDir, 'staticDir')
+      const dstDir = resolveContained(wwwDir, relDir, 'staticDir')
+      await copyDirFiltered(srcDir, dstDir)
     }
     // Also copy any local stylesheet or icon linked from index.html if not already copied.
     for (const match of normalizedHtml.matchAll(/<link\b([^>]*)>/gi)) {
@@ -1027,10 +1071,13 @@ async function assembleWebBundle(
       if (!href || isExternalUrl(href)) continue
       if (!rel.includes('stylesheet') && !rel.includes('icon') && !rel.includes('apple-touch-icon')) continue
       const normHref = normalizeAssetPath(href)
+      if (!normHref || normHref === '..' || normHref.startsWith('../')) {
+        throw new Error(`Linked asset escapes project root: ${href}`)
+      }
       if (copiedFiles.has(normHref)) continue
-      const src = join(layout.htmlDir, normHref)
+      const src = resolveContained(layout.htmlDir, normHref, 'linked asset')
       if (existsSync(src)) {
-        const dst = join(wwwDir, normHref)
+        const dst = resolveContained(wwwDir, normHref, 'linked asset')
         await mkdir(dirname(dst), { recursive: true })
         await cp(src, dst)
         copiedFiles.add(normHref)
@@ -1055,7 +1102,7 @@ async function assembleWebBundle(
   }
 
   if (config.overridesReset) {
-    const resetPath = join(wwwDir, config.overridesReset)
+    const resetPath = resolveContained(wwwDir, config.overridesReset, 'overridesReset')
     await mkdir(dirname(resetPath), { recursive: true })
     await writeFile(resetPath, '{}\n')
   }
@@ -1080,8 +1127,8 @@ async function assembleWebBundle(
     }
   })
 
-  let detectedName = config.name ?? basename(projectDir)
-  if (!config.name) {
+  let detectedName: string | undefined = config.name
+  if (!detectedName) {
     for (const candidate of [join(layout.moduleDir, 'game.js'), join(layout.htmlDir, 'game.js')]) {
       if (!existsSync(candidate)) continue
       try {
@@ -1645,9 +1692,9 @@ func nextRandom(seed_val = 0) -> Dictionary:
 \treturn { "value": float(_u32(t ^ (_u32(t) >> 14))) / 4294967296.0, "seed": next_seed }
 
 func createRng(initial_seed = 1337) -> Dictionary:
-\tvar box := [int(initial_seed)]
+\tvar box := [_i32(int(initial_seed))]
 \treturn {
-\t\t"seed": box[0],
+\t\t"seed": { "__rt_getter": func(): return box[0] },
 \t\t"next": func():
 \t\t\tvar step := nextRandom(box[0])
 \t\t\tbox[0] = int(step["seed"])
@@ -1662,7 +1709,8 @@ async function tryCompileGodotScripts(projectDir: string, config: RidgetopProjec
   const pkgRoot = resolvePackageRootDir()
   const candidates = [
     join(pkgRoot, 'tools', 'ts-to-gd.ts'),
-    join(pkgRoot, 'dist', 'tools', 'ts-to-gd.js')
+    join(pkgRoot, 'dist', 'tools', 'ts-to-gd.js'),
+    join(projectDir, 'tools', 'ts-to-gd.js')
   ]
   let compilerPath: string | null = null
   for (const candidate of candidates) {
@@ -1763,9 +1811,12 @@ function renderOfflineAssetShim(embeddedAssets: Readonly<Record<string, Embedded
   return `(function () {
   var ASSETS = ${serialized};
   globalThis.__ridgetopOfflineAssets = ASSETS;
-  var baseHref = typeof location !== 'undefined' && location && location.href
-    ? new URL('./', location.href).href
-    : 'https://ridgetop.local/';
+  var baseHref = 'https://ridgetop.local/';
+  try {
+    if (typeof location !== 'undefined' && location && location.href) {
+      baseHref = new URL('./', location.href).href;
+    }
+  } catch {}
   function hasAsset(key) {
     return Object.prototype.hasOwnProperty.call(ASSETS, key);
   }
@@ -1920,6 +1971,9 @@ export async function bundleStandaloneHtml({
     if (!href || isExternalUrl(href)) continue
     const relTokens = rel.split(/\s+/).filter(Boolean)
     const normHref = normalizeAssetPath(href)
+    if (!normHref || normHref === '..' || normHref.startsWith('../')) {
+      throw new Error(`Linked asset escapes bundle root: ${href}`)
+    }
     if (relTokens.includes('stylesheet')) {
       const rawCss = await readAsset(normHref)
       const rewrittenCss = rewriteCssAssetUrls(rawCss, normHref, embeddedAssets)
@@ -2047,7 +2101,7 @@ export async function packageGame(options: PackageGameOptions): Promise<PackageR
 
     if (target === 'web') {
       const { detectedName } = await assembleWebBundle(projectDir, config, dir, { themeColor })
-      resolvedName = options.name ?? detectedName
+      resolvedName = options.name ?? config.name ?? detectedName ?? assets.title ?? fallbackName
       resolvedSlug = slugify(resolvedName)
       resolvedAppId = options.appId ?? config.appId ?? defaultAppId(resolvedSlug)
       const stats = await measureDirectory(dir)
@@ -2055,7 +2109,7 @@ export async function packageGame(options: PackageGameOptions): Promise<PackageR
     } else if (target === 'steam') {
       const wwwDir = join(dir, 'www')
       const { detectedName } = await assembleWebBundle(projectDir, config, wwwDir, { themeColor })
-      resolvedName = options.name ?? detectedName
+      resolvedName = options.name ?? config.name ?? detectedName ?? assets.title ?? fallbackName
       resolvedSlug = slugify(resolvedName)
       resolvedAppId = options.appId ?? config.appId ?? defaultAppId(resolvedSlug)
 
@@ -2102,7 +2156,7 @@ export async function packageGame(options: PackageGameOptions): Promise<PackageR
         '  <script src="./ridgetop-mobile-bridge.js"></script>'
       ].join('\n')
       const { detectedName } = await assembleWebBundle(projectDir, config, wwwDir, { themeColor, extraHead: mobileMeta })
-      resolvedName = options.name ?? detectedName
+      resolvedName = options.name ?? config.name ?? detectedName ?? assets.title ?? fallbackName
       resolvedSlug = slugify(resolvedName)
       resolvedAppId = options.appId ?? config.appId ?? defaultAppId(resolvedSlug)
 
@@ -2164,7 +2218,7 @@ export async function packageGame(options: PackageGameOptions): Promise<PackageR
       const stageDir = await mkdtemp(join(tmpdir(), 'ridgetop-player-stage-'))
       try {
         const { detectedName } = await assembleWebBundle(projectDir, config, stageDir, { themeColor })
-        resolvedName = options.name ?? detectedName
+        resolvedName = options.name ?? config.name ?? detectedName ?? assets.title ?? fallbackName
         resolvedSlug = slugify(resolvedName)
         resolvedAppId = options.appId ?? config.appId ?? defaultAppId(resolvedSlug)
 
@@ -2173,8 +2227,8 @@ export async function packageGame(options: PackageGameOptions): Promise<PackageR
         const embeddedAssets = await collectEmbeddedAssets(stageDir, linkedStyles)
         const playerHtml = await bundleStandaloneHtml({
           html: stageHtml,
-          readAsset: relPath => readFile(join(stageDir, relPath), 'utf8'),
-          readModule: relPath => readFile(join(stageDir, relPath), 'utf8'),
+          readAsset: relPath => readFile(resolveContained(stageDir, relPath, 'asset'), 'utf8'),
+          readModule: relPath => readFile(resolveContained(stageDir, relPath, 'module'), 'utf8'),
           embeddedAssets
         })
 

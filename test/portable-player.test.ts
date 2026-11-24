@@ -9,6 +9,7 @@ import vm from 'node:vm'
 import { BACKUP_FORMAT, BACKUP_SCHEMA_VERSION, createSaveBackup } from '../packages/ridgetop/framework/index.ts'
 import type { SaveBackupEnvelope, SaveBackupStorage } from '../packages/ridgetop/framework/index.ts'
 import { bakeMotifWav, packageGame, parsePackageArgs } from '../packages/ridgetop/framework/server.ts'
+import { bundleStandaloneHtml } from '../packages/ridgetop/framework/packager.ts'
 import { createGame } from '../packages/ridgetop/tools/create-game.ts'
 
 const repoRoot = fileURLToPath(new URL('../', import.meta.url))
@@ -506,4 +507,46 @@ test('packageGame(--target player) works for built-in games (beacon-run, signal-
   assert.equal(backupRes.status, 200, 'Generated game host should serve /framework/backup.js')
   assert.match(backupRes.headers.get('content-type') ?? '', /text\/javascript/)
   assert.ok((await backupRes.text()).includes('createSaveBackup'))
+})
+
+test('packager rejects path traversal, scans ++/division cleanly, and handles namespace testing/ridgetop imports', async t => {
+  const work = await mkdtemp(join(tmpdir(), 'ridgetop-pack-sec-'))
+  t.after(() => rm(work, { recursive: true, force: true }))
+
+  // 1. bundleStandaloneHtml rejects <link href="../../secret.css">
+  await assert.rejects(
+    () => bundleStandaloneHtml({
+      html: '<!doctype html><html><head><link rel="stylesheet" href="../../secret.css"><script type="module" src="./main.js"></script></head><body></body></html>',
+      readAsset: async () => 'body{}',
+      readModule: async () => 'console.log(1)'
+    }),
+    /escapes bundle root/i
+  )
+
+  // 2. Module with postfix ++ followed by division (i++ / n) and namespace imports of ridgetop + ridgetop/testing
+  const proj = join(work, 'proj')
+  await mkdir(proj, { recursive: true })
+  await writeFile(join(proj, 'index.html'), '<!doctype html><html><head><script type="module" src="./main.js"></script></head><body></body></html>')
+  await writeFile(join(proj, 'helper.js'), 'export const val = 99\n')
+  await writeFile(join(proj, 'main.js'), [
+    'import * as R from "ridgetop"',
+    'import * as T from "ridgetop/testing"',
+    'let i = 4',
+    'const ratio = (i++ / 2)',
+    'export { val } from "./helper.js"',
+    'export const rngVal = R.createRng(7).next()',
+    'export const active = T.isTestingActive()',
+    'export const out = ratio + rngVal'
+  ].join('\n'))
+
+  const outWeb = join(work, 'out-web')
+  await packageGame({ target: 'web', projectDir: proj, outDir: outWeb })
+  // helper.js must have been traced despite (i++ / 2) before its export!
+  const helperBuilt = await readFile(join(outWeb, 'helper.js'), 'utf8')
+  assert.ok(helperBuilt.includes('val = 99'))
+  const mainBuilt = await readFile(join(outWeb, 'main.js'), 'utf8')
+  assert.ok(mainBuilt.includes('const T = Object.freeze('), 'Namespace testing import must be replaced with no-op object')
+  assert.ok(!mainBuilt.includes('testing-runtime.js'))
+  const idxBuilt = await readFile(join(outWeb, 'framework', 'index.js'), 'utf8')
+  assert.ok(idxBuilt.includes('createRng'), 'Namespace import of ridgetop must preserve createRng in pruned barrel')
 })

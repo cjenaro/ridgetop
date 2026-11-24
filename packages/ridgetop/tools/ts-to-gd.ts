@@ -257,11 +257,72 @@ static func iter(v: Variant) -> Variant:
 \t\t\treturn obj_entries(d["__store"] as Dictionary)
 \treturn v
 
+static func norm_key(key: Variant) -> Variant:
+\tif typeof(key) == TYPE_INT or typeof(key) == TYPE_FLOAT:
+\t\treturn js_str(key)
+\treturn key
+
+static func has_prop(obj: Variant, key: Variant) -> bool:
+\tif obj is Dictionary:
+\t\tvar d := obj as Dictionary
+\t\tif d.has(key):
+\t\t\treturn true
+\t\tif typeof(key) == TYPE_INT or typeof(key) == TYPE_FLOAT:
+\t\t\treturn d.has(js_str(key))
+\t\treturn false
+\tif obj is Array:
+\t\tif key is String and (key as String) == "length":
+\t\t\treturn true
+\t\tif typeof(key) == TYPE_INT or typeof(key) == TYPE_FLOAT or (key is String and (key as String).is_valid_int()):
+\t\t\tvar idx := int(key)
+\t\t\treturn idx >= 0 and idx < (obj as Array).size()
+\treturn false
+
 static func get_prop(obj: Variant, key: Variant) -> Variant:
 \tif obj == null:
 \t\treturn null
 \tif obj is Dictionary:
 \t\tvar d := obj as Dictionary
+\t\tif d.has("__is_map") and key is String:
+\t\t\tvar sk := key as String
+\t\t\tvar store := d["__store"] as Dictionary
+\t\t\tif sk == "size":
+\t\t\t\treturn store.size()
+\t\t\tif sk == "get":
+\t\t\t\treturn func(k): return store.get(k, null)
+\t\t\tif sk == "set":
+\t\t\t\treturn func(k, val):
+\t\t\t\t\tstore[k] = val
+\t\t\t\t\treturn d
+\t\t\tif sk == "has":
+\t\t\t\treturn func(k): return store.has(k)
+\t\t\tif sk == "delete":
+\t\t\t\treturn func(k): return store.erase(k)
+\t\t\tif sk == "clear":
+\t\t\t\treturn func(): store.clear()
+\t\t\tif sk == "keys":
+\t\t\t\treturn func(): return store.keys()
+\t\t\tif sk == "values":
+\t\t\t\treturn func(): return store.values()
+\t\t\tif sk == "entries":
+\t\t\t\treturn func(): return obj_entries(store)
+\t\tif d.has("__is_set") and key is String:
+\t\t\tvar sk := key as String
+\t\t\tvar store := d["__store"] as Dictionary
+\t\t\tif sk == "size":
+\t\t\t\treturn store.size()
+\t\t\tif sk == "add":
+\t\t\t\treturn func(val):
+\t\t\t\t\tstore[val] = true
+\t\t\t\t\treturn d
+\t\t\tif sk == "has":
+\t\t\t\treturn func(val): return store.has(val)
+\t\t\tif sk == "delete":
+\t\t\t\treturn func(val): return store.erase(val)
+\t\t\tif sk == "clear":
+\t\t\t\treturn func(): store.clear()
+\t\t\tif sk == "values":
+\t\t\t\treturn func(): return store.keys()
 \t\tvar v: Variant = null
 \t\tif d.has(key):
 \t\t\tv = d[key]
@@ -302,11 +363,14 @@ static func set_prop(obj: Variant, key: Variant, value: Variant) -> Variant:
 \t\t\td[key] = value
 \telif obj is Array:
 \t\tvar arr := obj as Array
-\t\tvar idx := int(key)
-\t\tif idx >= 0:
-\t\t\tif idx >= arr.size():
-\t\t\t\tarr.resize(idx + 1)
-\t\t\tarr[idx] = value
+\t\tif key is String and (key as String) == "length":
+\t\t\tarr.resize(maxi(0, int(num(value))))
+\t\telif typeof(key) == TYPE_INT or typeof(key) == TYPE_FLOAT or (key is String and (key as String).is_valid_int()):
+\t\t\tvar idx := int(key)
+\t\t\tif idx >= 0:
+\t\t\t\tif idx >= arr.size():
+\t\t\t\t\tarr.resize(idx + 1)
+\t\t\t\tarr[idx] = value
 \telif obj is Object:
 \t\tobj.set(str(key), value)
 \treturn value
@@ -748,43 +812,18 @@ static func arr_from(iterable: Variant, mapper: Variant = null) -> Array:
 
 static func make_map(init: Variant = null) -> Dictionary:
 \tvar store: Dictionary = {}
-\tvar map_obj: Dictionary = {}
 \tif init != null:
 \t\tfor pair in iter(init):
 \t\t\tif pair is Array and (pair as Array).size() >= 2:
 \t\t\t\tstore[pair[0]] = pair[1]
-\tvar fn_set := func(k, v):
-\t\tstore[k] = v
-\t\treturn map_obj
-\tmap_obj["__is_map"] = true
-\tmap_obj["__store"] = store
-\tmap_obj["get"] = func(k): return store.get(k, null)
-\tmap_obj["set"] = fn_set
-\tmap_obj["has"] = func(k): return store.has(k)
-\tmap_obj["delete"] = func(k): return store.erase(k)
-\tmap_obj["clear"] = func(): store.clear()
-\tmap_obj["keys"] = func(): return store.keys()
-\tmap_obj["values"] = func(): return store.values()
-\tmap_obj["entries"] = func(): return obj_entries(store)
-\treturn map_obj
+\treturn { "__is_map": true, "__store": store }
 
 static func make_set(init: Variant = null) -> Dictionary:
 \tvar store: Dictionary = {}
-\tvar set_obj: Dictionary = {}
 \tif init != null:
 \t\tfor item in iter(init):
 \t\t\tstore[item] = true
-\tvar fn_add := func(v):
-\t\tstore[v] = true
-\t\treturn set_obj
-\tset_obj["__is_set"] = true
-\tset_obj["__store"] = store
-\tset_obj["add"] = fn_add
-\tset_obj["has"] = func(v): return store.has(v)
-\tset_obj["delete"] = func(v): return store.erase(v)
-\tset_obj["clear"] = func(): store.clear()
-\tset_obj["values"] = func(): return store.keys()
-\treturn set_obj
+\treturn { "__is_set": true, "__store": store }
 `
 }
 
@@ -1437,7 +1476,7 @@ export function compileTsToGd(sourceText: string, fileName = 'module.ts', option
 
   function propKeyExpr(name: ts.PropertyName, indent: string): string {
     if (ts.isIdentifier(name) || ts.isStringLiteral(name) || ts.isNumericLiteral(name)) return gdString(name.text)
-    if (ts.isComputedPropertyName(name)) return emitExpr(name.expression, indent)
+    if (ts.isComputedPropertyName(name)) return `RT.norm_key(${emitExpr(name.expression, indent)})`
     return '""'
   }
 
@@ -1509,52 +1548,100 @@ export function compileTsToGd(sourceText: string, fileName = 'module.ts', option
     if (op === ts.SyntaxKind.LessThanLessThanToken) return `(int(${L}) << int(${R}))`
     if (op === ts.SyntaxKind.GreaterThanGreaterThanToken) return `(int(${L}) >> int(${R}))`
     if (op === ts.SyntaxKind.GreaterThanGreaterThanGreaterThanToken) return `((int(${L}) & 0xffffffff) >> (int(${R}) & 31))`
-    if (op === ts.SyntaxKind.InKeyword) return `(${R} is Dictionary and ${R}.has(${L}))`
+    if (op === ts.SyntaxKind.InKeyword) return `RT.has_prop(${R}, ${L})`
     return `(${L})`
   }
 
   function emitCall(node: ts.CallExpression, indent: string): string {
     const callee = unwrapTs(node.expression)
-    const argIndent = indent + '\t'
     const hasSpread = node.arguments.some(arg => ts.isSpreadElement(arg))
-    const args = node.arguments.map(arg =>
-      ts.isSpreadElement(arg) ? emitExpr(arg.expression, argIndent) : emitExpr(arg, argIndent)
-    )
     const isOptionalCall = Boolean(
       node.questionDotToken ||
       (ts.isPropertyAccessExpression(callee) && callee.questionDotToken) ||
       (ts.isElementAccessExpression(callee) && callee.questionDotToken)
     )
     const invokeFn = isOptionalCall ? 'RT.invoke_opt' : 'RT.invoke'
-    const argsArr = hasSpread
-      ? `RT.spread_arr(${formatList('[', node.arguments.map((arg, i) => ts.isSpreadElement(arg) ? args[i] : `[${args[i]}]`), ']', indent)})`
-      : formatList('[', args, ']', indent)
-    const sliceArgsArr = (startIdx: number) => {
-      const tailNodes = node.arguments.slice(startIdx)
-      const tailExprs = args.slice(startIdx)
-      if (!tailNodes.some(arg => ts.isSpreadElement(arg))) return formatList('[', tailExprs, ']', indent)
-      return `RT.spread_arr(${formatList('[', tailNodes.map((arg, i) => ts.isSpreadElement(arg) ? tailExprs[i] : `[${tailExprs[i]}]`), ']', indent)})`
+
+    const emitArgs = (useIndent: string) => {
+      const argIndent = useIndent + '\t'
+      const args = node.arguments.map(arg =>
+        ts.isSpreadElement(arg) ? emitExpr(arg.expression, argIndent) : emitExpr(arg, argIndent)
+      )
+      const argsArr = hasSpread
+        ? `RT.spread_arr(${formatList('[', node.arguments.map((arg, i) => ts.isSpreadElement(arg) ? args[i] : `[${args[i]}]`), ']', useIndent)})`
+        : formatList('[', args, ']', useIndent)
+      const sliceArgsArr = (startIdx: number) => {
+        const tailNodes = node.arguments.slice(startIdx)
+        const tailExprs = args.slice(startIdx)
+        if (!tailNodes.some(arg => ts.isSpreadElement(arg))) return formatList('[', tailExprs, ']', useIndent)
+        return `RT.spread_arr(${formatList('[', tailNodes.map((arg, i) => ts.isSpreadElement(arg) ? tailExprs[i] : `[${tailExprs[i]}]`), ']', useIndent)})`
+      }
+      return { args, argsArr, sliceArgsArr }
+    }
+
+    const emitGuardedCall = (
+      checkVar: string,
+      checkCond: string,
+      build: (useIndent: string) => string
+    ): string => {
+      const hoist = hoistStack[hoistStack.length - 1]
+      if (hoist) {
+        const resTmp = nextTemp('_cr')
+        const innerIndent = hoist.indent + '\t'
+        const callFrame = { indent: innerIndent, lines: [] as string[] }
+        hoistStack.push(callFrame)
+        const callExpr = build(innerIndent)
+        hoistStack.pop()
+        hoist.lines.push(`${hoist.indent}var ${resTmp} = null`)
+        hoist.lines.push(`${hoist.indent}if ${checkCond}:`)
+        hoist.lines.push(...callFrame.lines, `${innerIndent}${resTmp} = ${callExpr}`)
+        return resTmp
+      }
+      return `(${build(indent)} if ${checkCond} else null)`
     }
 
     if (ts.isIdentifier(callee)) {
-      if (callee.text === 'Number') return `RT.num(${args[0] ?? '0'})`
-      if (callee.text === 'Boolean') return `RT.truthy(${args[0] ?? 'false'})`
-      if (callee.text === 'String') return `RT.js_str(${args[0] ?? '""'})`
+      if (callee.text === 'Number') {
+        const { args } = emitArgs(indent)
+        return `RT.num(${args[0] ?? '0'})`
+      }
+      if (callee.text === 'Boolean') {
+        const { args } = emitArgs(indent)
+        return `RT.truthy(${args[0] ?? 'false'})`
+      }
+      if (callee.text === 'String') {
+        const { args } = emitArgs(indent)
+        return `RT.js_str(${args[0] ?? '""'})`
+      }
       const local = resolveLocal(callee.text)
       if (!local.isLocal && topFuncs.has(callee.text)) {
-        if (hasSpread) return `Callable(self, ${gdString(safeIdent(callee.text))}).callv(${argsArr})`
+        const { args, argsArr } = emitArgs(indent)
+        if (hasSpread) return `RT.invoke(Callable(self, ${gdString(safeIdent(callee.text))}), ${argsArr})`
         return `${safeIdent(callee.text)}${formatList('(', args, ')', indent)}`
       }
-      return `${invokeFn}(${varRef(callee.text)}, ${argsArr})`
+      const fnExpr = varRef(callee.text)
+      if (isOptionalCall) {
+        const hoist = hoistStack[hoistStack.length - 1]
+        if (hoist) {
+          const fnTmp = nextTemp('_cf')
+          hoist.lines.push(`${hoist.indent}var ${fnTmp} = ${fnExpr}`)
+          return emitGuardedCall(fnTmp, `${fnTmp} is Callable`, useIndent => {
+            const { argsArr } = emitArgs(useIndent)
+            return `RT.invoke(${fnTmp}, ${argsArr})`
+          })
+        }
+      }
+      const { argsArr } = emitArgs(indent)
+      return `${invokeFn}(${fnExpr}, ${argsArr})`
     }
 
     if (ts.isPropertyAccessExpression(callee)) {
       const objNode = unwrapTs(callee.expression)
       const method = callee.name.text
-      const obj = emitExpr(objNode, indent)
 
       // Math.*
       if (ts.isIdentifier(objNode) && objNode.text === 'Math') {
+        const { args, argsArr } = emitArgs(indent)
         if (method === 'max') return !hasSpread && args.length === 2 ? `RT.max_two(${args[0]}, ${args[1]})` : `RT.max_all(${argsArr})`
         if (method === 'min') return !hasSpread && args.length === 2 ? `RT.min_two(${args[0]}, ${args[1]})` : `RT.min_all(${argsArr})`
         if (method === 'abs') return `absf(RT.num(${args[0]}))`
@@ -1582,6 +1669,7 @@ export function compileTsToGd(sourceText: string, fileName = 'module.ts', option
 
       // Number.*
       if (ts.isIdentifier(objNode) && objNode.text === 'Number') {
+        const { args } = emitArgs(indent)
         if (method === 'isFinite') return `RT.is_finite_num(${args[0]})`
         if (method === 'isInteger') return `RT.is_int(${args[0]})`
         if (method === 'isSafeInteger') return `RT.is_safe_int(${args[0]})`
@@ -1590,75 +1678,130 @@ export function compileTsToGd(sourceText: string, fileName = 'module.ts', option
 
       // JSON.*
       if (ts.isIdentifier(objNode) && objNode.text === 'JSON') {
+        const { args } = emitArgs(indent)
         if (method === 'parse') return `RT.json_parse(${args[0] ?? 'null'})`
         if (method === 'stringify') return `JSON.stringify(${args[0] ?? 'null'})`
       }
 
       // Object.*
       if (ts.isIdentifier(objNode) && objNode.text === 'Object') {
+        const { args, sliceArgsArr } = emitArgs(indent)
         if (method === 'freeze') return args[0] ?? '{}'
         if (method === 'assign') return `RT.assign(${args[0]}, ${sliceArgsArr(1)})`
         if (method === 'keys') return `(${args[0]}).keys()`
         if (method === 'values') return `(${args[0]}).values()`
         if (method === 'entries') return `RT.obj_entries(${args[0]})`
         if (method === 'fromEntries') return `RT.from_entries(${args[0]})`
-        if (method === 'hasOwn') return `(${args[0]} is Dictionary and (${args[0]}).has(${args[1]}))`
+        if (method === 'hasOwn') return `RT.has_prop(${args[0]}, ${args[1]})`
       }
 
       // Array.*
       if (ts.isIdentifier(objNode) && objNode.text === 'Array') {
+        const { args } = emitArgs(indent)
         if (method === 'isArray') return `(${args[0]} is Array)`
         if (method === 'from') return `RT.arr_from${formatList('(', [args[0], args[1] ?? 'null'], ')', indent)}`
       }
 
-      const wrapOpt = (build: (ref: string) => string) => {
-        if (!isOptionalCall) return build(obj)
-        const hoist = hoistStack[hoistStack.length - 1]
+      // Evaluate receiver BEFORE arguments (JS evaluation order & optional-chaining short-circuit).
+      const obj = emitExpr(objNode, indent)
+      const hoist = hoistStack[hoistStack.length - 1]
+      const builtinMethod = new Set([
+        'map', 'flatMap', 'filter', 'some', 'every', 'find', 'findIndex', 'forEach', 'reduce',
+        'slice', 'subarray', 'set', 'at', 'entries', 'includes', 'indexOf', 'push', 'pop',
+        'shift', 'splice', 'sort', 'join', 'toFixed', 'trim', 'toLowerCase', 'toUpperCase',
+        'startsWith', 'endsWith', 'split', 'padStart', 'replaceAll'
+      ]).has(method)
+
+      const emitBuiltin = (o: string, useIndent: string): string => {
+        const { args, argsArr, sliceArgsArr } = emitArgs(useIndent)
+        if (method === 'map') return `RT.map${formatList('(', [o, args[0]], ')', useIndent)}`
+        if (method === 'flatMap') return `RT.flat_map${formatList('(', [o, args[0]], ')', useIndent)}`
+        if (method === 'filter') return `RT.filter${formatList('(', [o, args[0]], ')', useIndent)}`
+        if (method === 'some') return `RT.some${formatList('(', [o, args[0]], ')', useIndent)}`
+        if (method === 'every') return `RT.every${formatList('(', [o, args[0]], ')', useIndent)}`
+        if (method === 'find') return `RT.find${formatList('(', [o, args[0]], ')', useIndent)}`
+        if (method === 'findIndex') return `RT.find_index${formatList('(', [o, args[0]], ')', useIndent)}`
+        if (method === 'forEach') return `RT.for_each${formatList('(', [o, args[0]], ')', useIndent)}`
+        if (method === 'reduce') return `RT.reduce${formatList('(', [o, args[0], args.length > 1 ? 'true' : 'false', args[1] ?? 'null'], ')', useIndent)}`
+        if (method === 'slice' || method === 'subarray') return `RT.slice(${o}, ${args[0] ?? '0'}, ${args[1] ?? 'null'})`
+        if (method === 'set') return `RT.call_set(${o}, ${argsArr})`
+        if (method === 'at') return `RT.at(${o}, ${args[0] ?? '0'})`
+        if (method === 'entries') return `RT.entries(${o})`
+        if (method === 'includes') return `RT.includes(${o}, ${args[0]})`
+        if (method === 'indexOf') return `RT.index_of(${o}, ${args[0]}, ${args[1] ?? '0'})`
+        if (method === 'push') return `RT.push_many(${o}, ${argsArr})`
+        if (method === 'pop') return `RT.pop_arr(${o})`
+        if (method === 'shift') return `RT.shift_arr(${o})`
+        if (method === 'splice') return `RT.splice_arr(${o}, ${args[0] ?? '0'}, ${args[1] ?? 'null'}, ${sliceArgsArr(2)})`
+        if (method === 'sort') return `RT.sort_arr${formatList('(', [o, args[0] ?? 'null'], ')', useIndent)}`
+        if (method === 'join') return `RT.join_arr(${o}, ${args[0] ?? '","'})`
+        if (method === 'toFixed') return `("%." + str(int(${args[0] ?? '0'})) + "f") % RT.num(${o})`
+        if (method === 'trim') return `RT.js_str(${o}).strip_edges()`
+        if (method === 'toLowerCase') return `RT.js_str(${o}).to_lower()`
+        if (method === 'toUpperCase') return `RT.js_str(${o}).to_upper()`
+        if (method === 'startsWith') return `RT.js_str(${o}).begins_with(RT.js_str(${args[0] ?? '""'}))`
+        if (method === 'endsWith') return `RT.js_str(${o}).ends_with(RT.js_str(${args[0] ?? '""'}))`
+        if (method === 'split') return `RT.str_split(${o}, ${args[0] ?? 'null'})`
+        if (method === 'padStart') return `RT.str_pad_start(${o}, ${args[0] ?? '0'}, ${args[1] ?? '" "' })`
+        return `RT.js_str(${o}).replace(RT.js_str(${args[0] ?? '""'}), RT.js_str(${args[1] ?? '""'}))`
+      }
+
+      if (builtinMethod) {
+        if (!isOptionalCall) {
+          if (hoist && !ts.isIdentifier(objNode) && node.arguments.length > 0) {
+            const oc = nextTemp('_oc')
+            hoist.lines.push(`${hoist.indent}var ${oc} = ${obj}`)
+            return emitBuiltin(oc, indent)
+          }
+          return emitBuiltin(obj, indent)
+        }
         if (hoist) {
           const oc = nextTemp('_oc')
           hoist.lines.push(`${hoist.indent}var ${oc} = ${obj}`)
-          return `(null if ${oc} == null else ${build(oc)})`
+          return emitGuardedCall(oc, `${oc} != null`, useIndent => emitBuiltin(oc, useIndent))
         }
-        return `(null if (${obj}) == null else ${build(obj)})`
+        return `(null if (${obj}) == null else ${emitBuiltin(obj, indent)})`
       }
 
-      // Built-in Array / String / Map / Set methods
-      if (method === 'map') return wrapOpt(o => `RT.map${formatList('(', [o, args[0]], ')', indent)}`)
-      if (method === 'flatMap') return wrapOpt(o => `RT.flat_map${formatList('(', [o, args[0]], ')', indent)}`)
-      if (method === 'filter') return wrapOpt(o => `RT.filter${formatList('(', [o, args[0]], ')', indent)}`)
-      if (method === 'some') return wrapOpt(o => `RT.some${formatList('(', [o, args[0]], ')', indent)}`)
-      if (method === 'every') return wrapOpt(o => `RT.every${formatList('(', [o, args[0]], ')', indent)}`)
-      if (method === 'find') return wrapOpt(o => `RT.find${formatList('(', [o, args[0]], ')', indent)}`)
-      if (method === 'findIndex') return wrapOpt(o => `RT.find_index${formatList('(', [o, args[0]], ')', indent)}`)
-      if (method === 'forEach') return wrapOpt(o => `RT.for_each${formatList('(', [o, args[0]], ')', indent)}`)
-      if (method === 'reduce') return wrapOpt(o => `RT.reduce${formatList('(', [o, args[0], args.length > 1 ? 'true' : 'false', args[1] ?? 'null'], ')', indent)}`)
-      if (method === 'slice' || method === 'subarray') return wrapOpt(o => `RT.slice(${o}, ${args[0] ?? '0'}, ${args[1] ?? 'null'})`)
-      if (method === 'set') return wrapOpt(o => `RT.call_set(${o}, ${argsArr})`)
-      if (method === 'at') return wrapOpt(o => `RT.at(${o}, ${args[0] ?? '0'})`)
-      if (method === 'entries') return wrapOpt(o => `RT.entries(${o})`)
-      if (method === 'includes') return wrapOpt(o => `RT.includes(${o}, ${args[0]})`)
-      if (method === 'indexOf') return wrapOpt(o => `RT.index_of(${o}, ${args[0]}, ${args[1] ?? '0'})`)
-      if (method === 'push') return wrapOpt(o => `RT.push_many(${o}, ${argsArr})`)
-      if (method === 'pop') return wrapOpt(o => `RT.pop_arr(${o})`)
-      if (method === 'shift') return wrapOpt(o => `RT.shift_arr(${o})`)
-      if (method === 'splice') return wrapOpt(o => `RT.splice_arr(${o}, ${args[0] ?? '0'}, ${args[1] ?? 'null'}, ${sliceArgsArr(2)})`)
-      if (method === 'sort') return wrapOpt(o => `RT.sort_arr${formatList('(', [o, args[0] ?? 'null'], ')', indent)}`)
-      if (method === 'join') return wrapOpt(o => `RT.join_arr(${o}, ${args[0] ?? '","'})`)
-      if (method === 'toFixed') return wrapOpt(o => `("%." + str(int(${args[0] ?? '0'})) + "f") % RT.num(${o})`)
-      if (method === 'trim') return wrapOpt(o => `RT.js_str(${o}).strip_edges()`)
-      if (method === 'toLowerCase') return wrapOpt(o => `RT.js_str(${o}).to_lower()`)
-      if (method === 'toUpperCase') return wrapOpt(o => `RT.js_str(${o}).to_upper()`)
-      if (method === 'startsWith') return wrapOpt(o => `RT.js_str(${o}).begins_with(RT.js_str(${args[0] ?? '""'}))`)
-      if (method === 'endsWith') return wrapOpt(o => `RT.js_str(${o}).ends_with(RT.js_str(${args[0] ?? '""'}))`)
-      if (method === 'split') return wrapOpt(o => `RT.str_split(${o}, ${args[0] ?? 'null'})`)
-      if (method === 'padStart') return wrapOpt(o => `RT.str_pad_start(${o}, ${args[0] ?? '0'}, ${args[1] ?? '" "' })`)
-      if (method === 'replaceAll') return wrapOpt(o => `RT.js_str(${o}).replace(RT.js_str(${args[0] ?? '""'}), RT.js_str(${args[1] ?? '""'}))`)
-
       // General method call on an object / dictionary / module
+      if (isOptionalCall && hoist) {
+        const oc = nextTemp('_oc')
+        hoist.lines.push(`${hoist.indent}var ${oc} = ${obj}`)
+        if (node.questionDotToken) {
+          const fnTmp = nextTemp('_cf')
+          hoist.lines.push(`${hoist.indent}var ${fnTmp} = null if ${oc} == null else RT.get_prop(${oc}, ${gdString(method)})`)
+          return emitGuardedCall(fnTmp, `${fnTmp} is Callable`, useIndent => {
+            const { argsArr } = emitArgs(useIndent)
+            return `RT.invoke(${fnTmp}, ${argsArr})`
+          })
+        }
+        return emitGuardedCall(oc, `${oc} != null`, useIndent => {
+          const { argsArr } = emitArgs(useIndent)
+          return `RT.invoke_opt(RT.get_prop(${oc}, ${gdString(method)}), ${argsArr})`
+        })
+      }
+      if (hoist && !ts.isIdentifier(objNode) && node.arguments.length > 0) {
+        const oc = nextTemp('_oc')
+        hoist.lines.push(`${hoist.indent}var ${oc} = ${obj}`)
+        const { argsArr } = emitArgs(indent)
+        return `${invokeFn}(RT.get_prop(${oc}, ${gdString(method)}), ${argsArr})`
+      }
+      const { argsArr } = emitArgs(indent)
       return `${invokeFn}(RT.get_prop(${obj}, ${gdString(method)}), ${argsArr})`
     }
 
-    return `${invokeFn}(${emitExpr(callee, indent)}, ${argsArr})`
+    const calleeExpr = emitExpr(callee, indent)
+    const hoist = hoistStack[hoistStack.length - 1]
+    if (isOptionalCall && hoist) {
+      const fnTmp = nextTemp('_cf')
+      hoist.lines.push(`${hoist.indent}var ${fnTmp} = ${calleeExpr}`)
+      return emitGuardedCall(fnTmp, `${fnTmp} is Callable`, useIndent => {
+        const { argsArr } = emitArgs(useIndent)
+        return `RT.invoke(${fnTmp}, ${argsArr})`
+      })
+    }
+    const { argsArr } = emitArgs(indent)
+    return `${invokeFn}(${calleeExpr}, ${argsArr})`
   }
 
   function emitLambda(params: readonly ts.ParameterDeclaration[], body: ts.ConciseBody | undefined, _indent: string): string {
@@ -1784,19 +1927,44 @@ export function compileTsToGd(sourceText: string, fileName = 'module.ts', option
       }
     }
 
-    const rhs = ts.isBinaryExpression(node.right) && isAssignmentOp(node.right.operatorToken.kind)
-      ? emitAssignValue(node.right, indent)
-      : { lines: [] as string[], value: emitExpr(node.right, indent) }
+    const capture = (fn: () => string): { lines: string[]; value: string } => {
+      const frame = { indent, lines: [] as string[] }
+      hoistStack.push(frame)
+      try {
+        const value = fn()
+        return { lines: frame.lines, value }
+      } finally {
+        hoistStack.pop()
+      }
+    }
 
-    const lines = [...rhs.lines]
+    const emitRhs = (): { lines: string[]; value: string } => {
+      const unwrappedRight = unwrapTs(node.right)
+      if (ts.isBinaryExpression(unwrappedRight) && isAssignmentOp(unwrappedRight.operatorToken.kind)) {
+        const frame = { indent, lines: [] as string[] }
+        hoistStack.push(frame)
+        try {
+          const res = emitAssignValue(unwrappedRight, indent)
+          return { lines: [...frame.lines, ...res.lines], value: res.value }
+        } finally {
+          hoistStack.pop()
+        }
+      }
+      return capture(() => emitExpr(node.right, indent))
+    }
 
     if (ts.isIdentifier(lhs)) {
+      const rhs = emitRhs()
+      const lines = [...rhs.lines]
       const target = varRef(lhs.text)
       lines.push(`${indent}${target} = ${applyAssignOp(op, target, rhs.value)}`)
       return { lines, value: target }
     } else if (ts.isPropertyAccessExpression(lhs)) {
       const objTmp = nextTemp('_ao')
-      lines.push(`${indent}var ${objTmp} = ${emitExpr(lhs.expression, indent)}`)
+      const objCap = capture(() => emitExpr(lhs.expression, indent))
+      const lines: string[] = [...objCap.lines, `${indent}var ${objTmp} = ${objCap.value}`]
+      const rhs = emitRhs()
+      lines.push(...rhs.lines)
       const key = gdString(lhs.name.text)
       const valTmp = nextTemp('_av')
       const nextVal = op === ts.SyntaxKind.EqualsToken ? rhs.value : applyAssignOp(op, `RT.get_prop(${objTmp}, ${key})`, rhs.value)
@@ -1805,14 +1973,23 @@ export function compileTsToGd(sourceText: string, fileName = 'module.ts', option
     } else if (ts.isElementAccessExpression(lhs)) {
       const objTmp = nextTemp('_ao')
       const keyTmp = nextTemp('_ak')
-      lines.push(`${indent}var ${objTmp} = ${emitExpr(lhs.expression, indent)}`)
-      lines.push(`${indent}var ${keyTmp} = ${emitExpr(lhs.argumentExpression, indent)}`)
+      const objCap = capture(() => emitExpr(lhs.expression, indent))
+      const keyCap = capture(() => emitExpr(lhs.argumentExpression, indent))
+      const lines: string[] = [
+        ...objCap.lines,
+        `${indent}var ${objTmp} = ${objCap.value}`,
+        ...keyCap.lines,
+        `${indent}var ${keyTmp} = ${keyCap.value}`
+      ]
+      const rhs = emitRhs()
+      lines.push(...rhs.lines)
       const valTmp = nextTemp('_av')
       const nextVal = op === ts.SyntaxKind.EqualsToken ? rhs.value : applyAssignOp(op, `RT.get_prop(${objTmp}, ${keyTmp})`, rhs.value)
       lines.push(`${indent}var ${valTmp} = RT.set_prop(${objTmp}, ${keyTmp}, ${nextVal})`)
       return { lines, value: valTmp }
     }
-    return { lines, value: rhs.value }
+    const rhs = emitRhs()
+    return { lines: [...rhs.lines], value: rhs.value }
   }
 
   function emitAssignStmt(node: ts.BinaryExpression, indent: string): string[] {
@@ -1952,7 +2129,7 @@ export function compileTsToGd(sourceText: string, fileName = 'module.ts', option
             lines.push(...elifLines)
           } else {
             lines.push(`${indent}else:`)
-            lines.push(...elifLines.map(line => '\t' + line))
+            lines.push(...elifLines.flatMap(line => line.split('\n').map(sub => '\t' + sub)))
           }
         } else {
           lines.push(`${indent}else:`)
@@ -2006,8 +2183,14 @@ export function compileTsToGd(sourceText: string, fileName = 'module.ts', option
       }
       lines.push(`${indent}\tbreak`)
       if (contFlag) {
+        const outerSwCont = switchContStack[switchContStack.length - 1]
         lines.push(`${indent}if ${contFlag}:`)
-        lines.push(`${indent}\tcontinue`)
+        if (outerSwCont) {
+          lines.push(`${indent}\t${outerSwCont} = true`)
+          lines.push(`${indent}\tbreak`)
+        } else {
+          lines.push(`${indent}\tcontinue`)
+        }
       }
       return lines
     }
@@ -2273,7 +2456,11 @@ function computeRelOutputPath(absFile: string, rootDir: string): string {
   if (isWithinDir(norm, packageFrameworkDistDir)) {
     return 'framework/' + relative(packageFrameworkDistDir, norm).replace(/\\/g, '/')
   }
-  return relative(rootDir, norm).replace(/\\/g, '/')
+  const rel = relative(rootDir, norm).replace(/\\/g, '/')
+  if (!rel || rel === '..' || rel.startsWith('../')) {
+    throw new Error(`Compiled module escapes rootDir (${rootDir}): ${norm}`)
+  }
+  return rel
 }
 
 async function resolveRidgetopSpecifier(specifier: string): Promise<string | null> {
@@ -2560,7 +2747,7 @@ if (isMain(import.meta.url)) {
     process.exitCode = outDir === '--help' ? 0 : 1
   } else {
     const result = await compileTsProjectToGodot({
-      entries: entries.map(e => resolve(e)),
+      entries: entries.map(e => (e === 'ridgetop' || e.startsWith('ridgetop/') ? e : resolve(e))),
       rootDir: process.cwd(),
       outDir: resolve(outDir)
     })

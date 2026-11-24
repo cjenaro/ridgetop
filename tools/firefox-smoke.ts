@@ -91,6 +91,15 @@ class FirefoxBiDi {
 
   private constructor(ws: WebSocket) {
     this.ws = ws
+    const rejectAll = (reason: string) => {
+      for (const [id, entry] of this.pending) {
+        clearTimeout(entry.timeout)
+        entry.reject(new Error(reason))
+        this.pending.delete(id)
+      }
+    }
+    this.ws.onclose = () => rejectAll('Firefox BiDi WebSocket closed unexpectedly')
+    this.ws.onerror = () => rejectAll('Firefox BiDi WebSocket error')
     this.ws.onmessage = ({ data }: MessageEvent) => {
       const msg = JSON.parse(String(data))
       if (typeof msg.id === 'number') {
@@ -248,39 +257,54 @@ async function launchFirefox(): Promise<{ client: FirefoxBiDi; stop: () => Promi
     { stdio: ['ignore', 'pipe', 'pipe'] }
   )
 
-  let logs = ''
-  const wsUrl = await new Promise<string>((resolve, reject) => {
-    const timer = setTimeout(() => reject(new Error(`Firefox BiDi startup timed out:\n${logs}`)), 20_000)
-    const onData = (chunk: Buffer) => {
-      logs += chunk.toString()
-      const match = /WebDriver BiDi listening on (ws:\/\/[^\s]+)/.exec(logs)
-      if (match) {
-        clearTimeout(timer)
-        resolve(match[1])
+  async function cleanupFirefox() {
+    if (ff.exitCode === null && ff.signalCode === null) {
+      const exited = once(ff, 'exit')
+      ff.kill('SIGTERM')
+      const killer = setTimeout(() => ff.kill('SIGKILL'), 5_000)
+      try {
+        await exited
+      } finally {
+        clearTimeout(killer)
       }
     }
-    ff.stdout?.on('data', onData)
-    ff.stderr?.on('data', onData)
-    ff.once('error', err => { clearTimeout(timer); reject(err) })
-    ff.once('exit', code => { clearTimeout(timer); reject(new Error(`Firefox exited early (${code}):\n${logs}`)) })
-  })
+    await rm(profileDir, { recursive: true, force: true })
+  }
 
-  const client = await FirefoxBiDi.connect(wsUrl)
+  let logs = ''
+  let client: FirefoxBiDi
+  try {
+    const wsUrl = await new Promise<string>((resolve, reject) => {
+      const timer = setTimeout(() => reject(new Error(`Firefox BiDi startup timed out:\n${logs}`)), 20_000)
+      const detach = () => {
+        clearTimeout(timer)
+        ff.stdout?.off('data', onData)
+        ff.stderr?.off('data', onData)
+      }
+      const onData = (chunk: Buffer) => {
+        logs += chunk.toString()
+        const match = /WebDriver BiDi listening on (ws:\/\/[^\s]+)/.exec(logs)
+        if (match) {
+          detach()
+          resolve(match[1])
+        }
+      }
+      ff.stdout?.on('data', onData)
+      ff.stderr?.on('data', onData)
+      ff.once('error', err => { detach(); reject(err) })
+      ff.once('exit', code => { detach(); reject(new Error(`Firefox exited early (${code}):\n${logs}`)) })
+    })
+
+    client = await FirefoxBiDi.connect(wsUrl)
+  } catch (error) {
+    await cleanupFirefox().catch(() => {})
+    throw error
+  }
   return {
     client,
     async stop() {
       await client.close()
-      if (ff.exitCode === null && ff.signalCode === null) {
-        const exited = once(ff, 'exit')
-        ff.kill('SIGTERM')
-        const killer = setTimeout(() => ff.kill('SIGKILL'), 5_000)
-        try {
-          await exited
-        } finally {
-          clearTimeout(killer)
-        }
-      }
-      await rm(profileDir, { recursive: true, force: true })
+      await cleanupFirefox()
     }
   }
 }
@@ -304,10 +328,12 @@ async function assertGameViewport(client: FirefoxBiDi, stage: string, hud: strin
         Math.abs(rect.width - innerWidth) <= 1 && Math.abs(rect.height - innerHeight) <= 1
     }
     const ctx = layer.getContext('2d')
-    const data = ctx.getImageData(0, 0, layer.width, layer.height).data
     let painted = false
-    for (let i = 3; i < data.length; i += 64) {
-      if (data[i] > 0) { painted = true; break }
+    if (ctx && layer.width > 0 && layer.height > 0) {
+      const data = ctx.getImageData(0, 0, layer.width, layer.height).data
+      for (let i = 3; i < data.length; i += 64) {
+        if (data[i] > 0) { painted = true; break }
+      }
     }
     return {
       playfield: fillsViewport(world),
@@ -328,12 +354,14 @@ async function assertGameViewport(client: FirefoxBiDi, stage: string, hud: strin
   }, `viewport check failed for ${stage}`)
 }
 
-const server = await startServer()
-const firefox = await launchFirefox()
-const { client } = firefox
+let server: { origin: string; stop: () => Promise<void> } | undefined
+let firefox: { client: FirefoxBiDi; stop: () => Promise<void> } | undefined
 const benchmarkResults: BenchmarkRecord[] = []
 
 try {
+  server = await startServer()
+  firefox = await launchFirefox()
+  const { client } = firefox
   // 0. Inspect Firefox capabilities & GPU renderer info
   await client.navigate(`${server.origin}/benchmark`)
   const gpuInfo = await client.evaluate<{
@@ -508,6 +536,6 @@ try {
   console.log('FIREFOX_BENCHMARK_JSON=' + JSON.stringify(benchmarkResults, null, 2))
   console.log('All Firefox headless smoke & benchmark checks passed.')
 } finally {
-  await firefox.stop()
-  await server.stop()
+  if (firefox) await firefox.stop()
+  if (server) await server.stop()
 }

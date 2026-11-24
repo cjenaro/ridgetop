@@ -793,7 +793,7 @@ class InstancedBatch extends RefCounted:
 \t\t_ensure_capacity(count + 1)
 \t\tvar q := _coerce_quat(rot)
 \t\tvar safe_scl := Vector3(maxf(0.0001, scl.x), maxf(0.0001, scl.y), maxf(0.0001, scl.z))
-\t\tvar xf := Transform3D(Basis(q).scaled(safe_scl), pos)
+\t\tvar xf := Transform3D(Basis(q).scaled_local(safe_scl), pos)
 \t\t_transforms.append(xf)
 \t\t_colors.append(col)
 \t\tmultimesh.set_instance_transform(count, xf)
@@ -976,7 +976,14 @@ class RigInstance extends RefCounted:
 \t\t\tvar off := _vec3_from(pose.get("position", Vector3.ZERO), Vector3.ZERO) if pose.has("position") else Vector3.ZERO
 \t\t\tvar local_pos := piv + off
 \t\t\tvar local_rot := InstancedBatch._coerce_quat(pose["rotation"]) if pose.has("rotation") else Quaternion.IDENTITY
-\t\t\tvar raw_scl := _vec3_from(pose.get("scale", Vector3.ONE), Vector3.ONE) if pose.has("scale") else Vector3.ONE
+\t\t\tvar raw_scl := Vector3.ONE
+\t\t\tif pose.has("scale"):
+\t\t\t\tvar jsv = pose["scale"]
+\t\t\t\tif jsv is float or jsv is int:
+\t\t\t\t\tvar jsf := float(jsv)
+\t\t\t\t\traw_scl = Vector3(jsf, jsf, jsf)
+\t\t\t\telse:
+\t\t\t\t\traw_scl = _vec3_from(jsv, Vector3.ONE)
 \t\t\tvar local_scl := Vector3(maxf(0.0001, raw_scl.x), maxf(0.0001, raw_scl.y), maxf(0.0001, raw_scl.z))
 
 \t\t\tvar jnode: Node3D = joints[jid] as Node3D
@@ -1287,6 +1294,7 @@ func cleanup() -> void:
 \t\tif bp is AudioStreamPlayer and is_instance_valid(bp):
 \t\t\t(bp as AudioStreamPlayer).stop()
 \t\t\t(bp as AudioStreamPlayer).stream = null
+\t\t\t(bp as AudioStreamPlayer).queue_free()
 \tambient_beds.clear()
 \tfor b in _batches:
 \t\tif b != null:

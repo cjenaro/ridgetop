@@ -19,15 +19,6 @@ function usage() {
   ].join('\n'))
 }
 
-async function detectRepoRoot(cwd: string): Promise<string> {
-  try {
-    await access(join(cwd, 'examples'))
-    return cwd
-  } catch {
-    return cwd
-  }
-}
-
 export async function runPackageCli(argv: readonly string[], cwd = process.cwd()) {
   const parsed = parsePackageArgs(argv)
   if (parsed.help) {
@@ -36,7 +27,7 @@ export async function runPackageCli(argv: readonly string[], cwd = process.cwd()
   }
   let projectDir = parsed.projectDir ? resolve(cwd, parsed.projectDir) : undefined
   let game = parsed.projectDir ? undefined : parsed.game
-  const repoRoot = await detectRepoRoot(cwd)
+  const repoRoot = cwd
 
   if (!projectDir && !game) {
     // If run inside a standalone project directory (has index.html or game/index.html), package cwd.
