@@ -1,6 +1,7 @@
 {
   "name": "ridgetop",
   "version": "1.0.0",
+  "license": "MIT",
   "type": "module",
   "description": "Dependency-free low-poly WebGPU/WebGL 2/Canvas 2D game framework, Canvas UI SDK, multiplayer rooms, and multi-platform packager",
   "engines": {
@@ -71,7 +72,8 @@
     "dist",
     "framework",
     "templates",
-    "README.md"
+    "README.md",
+    "LICENSE"
   ],
   "scripts": {
     "build": "tsc -p tsconfig.build.json && node -e \"import('node:fs').then(fs=>{fs.copyFileSync('framework/testing-overlay.css','dist/framework/testing-overlay.css');fs.chmodSync('dist/tools/cli.js',0o755)})\"",

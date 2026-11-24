@@ -2,6 +2,7 @@
   "name": "ridgetop-monorepo",
   "private": true,
   "version": "1.0.0",
+  "license": "MIT",
   "type": "module",
   "description": "Ridgetop monorepo: standalone ridgetop framework package and independent example games",
   "engines": {
@@ -19,6 +20,7 @@
     "art-library": "node packages/ridgetop/dist/tools/cli.js art-library",
     "test": "node --test test/*.test.ts",
     "test:browser": "node tools/browser-smoke.ts",
+    "test:firefox": "node tools/firefox-smoke.ts",
     "test:review": "node tools/art-review-smoke.ts",
     "test:player": "node tools/player-smoke.ts",
     "create-game": "node packages/ridgetop/dist/tools/cli.js create",

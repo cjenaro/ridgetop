@@ -149,6 +149,7 @@ interface TestingRuntimeState {
   manualHudRegions: Map<string, HudRegion>
   canvasUiRegions: Map<HTMLCanvasElement, HudRegion[]>
   hooks: Set<TestingHooks>
+  hookListeners?: Set<(hooks: TestingHooks) => void>
   artKits: Set<RegisteredArtKit>
   meshMeta: WeakMap<Mesh, MeshMeta>
   rigMeta: WeakMap<object, RigMeta>
@@ -427,7 +428,19 @@ export function getHudRegions(): readonly HudRegion[] {
 export function registerTestingHooks(hooks: TestingHooks): () => void {
   const state = getState()
   state.hooks.add(hooks)
+  if (state.hookListeners) {
+    for (const listener of Array.from(state.hookListeners)) {
+      try { listener(hooks) } catch { /* Listener errors must not break hook registration. */ }
+    }
+  }
   return () => { state.hooks.delete(hooks) }
+}
+
+export function onTestingHooksRegistered(listener: (hooks: TestingHooks) => void): () => void {
+  const state = getState()
+  state.hookListeners ??= new Set()
+  state.hookListeners.add(listener)
+  return () => { state.hookListeners?.delete(listener) }
 }
 
 export function getTestingHooks(): readonly TestingHooks[] {

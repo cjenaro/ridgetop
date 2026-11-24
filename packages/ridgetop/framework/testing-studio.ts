@@ -8,7 +8,7 @@ import { multiply, orthographic, view } from './geometry.ts'
 import { bakeSpriteDirections, renderMeshFrame, spriteDirections } from './low-poly.ts'
 import {
   findRegisteredArtModel, getHudRegions, getLastFrame, getLastSpriteDraws, getTestingHooks,
-  isTestingPaused, onTestingPause, recognizeAssetFromPick, setTestingActive, setTestingPaused
+  isTestingPaused, onTestingHooksRegistered, onTestingPause, recognizeAssetFromPick, setTestingActive, setTestingPaused
 } from './testing-runtime.ts'
 import type { ArtSourceInfo, HudRegion, RecognizedAsset, SpriteDrawRecord } from './testing-runtime.ts'
 import type { InstanceBatch, Vec3 } from './types.ts'
@@ -1374,15 +1374,27 @@ export function mountTestingStudio(): TestingStudioHandle {
       }
     }
 
-    // 2. Check 2D sprite draws (reverse draw order with alpha hit-test)
+    // 2. Check 2D sprite draws (group per visible canvas; reverse draw order with alpha hit-test)
     const spriteDraws = getLastSpriteDraws()
     if (spriteDraws.length) {
-      const spriteCanvas = spriteDraws[spriteDraws.length - 1].canvas
-      const rect = spriteCanvas.getBoundingClientRect()
-      if (rect.width > 0 && rect.height > 0 && cx >= rect.left && cx <= rect.right && cy >= rect.top && cy <= rect.bottom) {
+      const byCanvas = new Map<HTMLCanvasElement, SpriteDrawRecord[]>()
+      for (let i = 0; i < spriteDraws.length; i++) {
+        const d = spriteDraws[i]
+        let list = byCanvas.get(d.canvas)
+        if (!list) {
+          list = []
+          byCanvas.set(d.canvas, list)
+        }
+        list.push(d)
+      }
+      const canvases = Array.from(byCanvas.keys())
+      for (let c = canvases.length - 1; c >= 0; c--) {
+        const spriteCanvas = canvases[c]
+        const rect = spriteCanvas.getBoundingClientRect()
+        if (!(rect.width > 0 && rect.height > 0 && cx >= rect.left && cx <= rect.right && cy >= rect.top && cy <= rect.bottom)) continue
         const u = (cx - rect.left) / rect.width
         const v = (cy - rect.top) / rect.height
-        const hit = pickSpriteDraws(spriteDraws, u, v)
+        const hit = pickSpriteDraws(byCanvas.get(spriteCanvas)!, u, v)
         if (hit) {
           const d = hit.draw
           const scaleX = rect.width / d.canvasWidth
@@ -1484,9 +1496,36 @@ export function mountTestingStudio(): TestingStudioHandle {
     }
   }
 
+  let pendingRestore: { scene: unknown; entryId: string } | undefined
+  const unsubHooks = onTestingHooksRegistered(hooks => {
+    if (!pendingRestore || !hooks.restore) return
+    const { scene, entryId } = pendingRestore
+    pendingRestore = undefined
+    Promise.resolve(hooks.restore(scene)).then(() => {
+      if (activeReview?.note.id === entryId && selection) {
+        const v = activeReview.note.target.view
+        if (v.surface === 'model' && !selection.artSource) {
+          const artSource = lookupArtSource(v.asset)
+          if (artSource) {
+            selection.artSource = artSource
+            selection.originalRecipe = artSource.recipe ? structuredClone(artSource.recipe) : undefined
+            selection.draftRecipe = selection.originalRecipe ? structuredClone(selection.originalRecipe) : undefined
+          }
+        }
+        renderSelection()
+      }
+    }).catch(err => setStatus((err as Error).message))
+  })
+
   async function openReview(entry: ReviewEntry) {
     if (!isTestingPaused()) setTestingPaused(true)
-    await restoreSnapshot(entry.note.scene)
+    const hasRestore = getTestingHooks().some(h => typeof h.restore === 'function')
+    if (hasRestore) {
+      pendingRestore = undefined
+      await restoreSnapshot(entry.note.scene)
+    } else if (entry.note.scene !== undefined && entry.note.scene !== null) {
+      pendingRestore = { scene: entry.note.scene, entryId: entry.note.id }
+    }
     const pin = entry.note.target
     const v = pin.view
     const artSource = v.surface === 'model' ? lookupArtSource(v.asset) : undefined
@@ -1552,6 +1591,7 @@ export function mountTestingStudio(): TestingStudioHandle {
     dispose() {
       stopSpriteAnim()
       unsubPause()
+      unsubHooks()
       controller.abort()
       if (isTestingPaused()) setTestingPaused(false)
       root.remove()

@@ -480,7 +480,7 @@ try {
           `Firefox benchmark ${backend} ${workload}`,
           300
         )
-        assert.ok(line.startsWith(RENDERER_NAMES[backend] + ' ·'), `Unexpected benchmark result: ${line}`)
+        assert.ok(line !== null && line.startsWith(RENDERER_NAMES[backend] + ' ·'), `Unexpected benchmark result: ${line}`)
         const rawJson = await until(
           () => client.evaluate<string | null>('window.__ridgetopLastBenchmarkJson'),
           Boolean,

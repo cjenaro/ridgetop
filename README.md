@@ -200,7 +200,7 @@ Signal Drift is the first downloadable single-player example. The framework arch
 
 | Priority | Evidence to collect |
 | --- | --- |
-| Commercial use | The rights holder chooses the terms for distributing the engine, starter, and bundled art in someone else's paid game. Record the source, permissions, and required credits for each imported asset. This checkout has no project license. |
+| Commercial use | Ridgetop is licensed under the [MIT License](LICENSE) for personal and commercial games. Record the source, permissions, and required credits for any third-party imported assets. |
 | Art production | Give a new creator a character brief. Have them reopen a workshop recipe, change its silhouette and palette, and regenerate the in-game art and icon. Time the second edit. A shared set of idle and walk poses with aligned feet is the next addition to test. |
 | Customer download and updates | Give the player a versioned build, keep the previous release, and exercise a fresh install and an update with an existing save. The racer provides an offline release check and portable garage backups. Extend that path to custom games, including their imported art and audio. |
 | Supported devices | Name the browsers, input methods, and minimum hardware you will advertise. Measure cold start, memory over repeated level changes, and 95th-percentile frame time in the busiest playable scene on each target. Test audio and pause/resume after switching away and returning. |
