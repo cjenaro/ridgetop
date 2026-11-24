@@ -1,7 +1,7 @@
 import {
   archMesh, box, chamferedPrism, color, createRig, cylinder, instances, mesh, octahedron, revolvedMesh
 } from 'ridgetop'
-import type { AnimationClip, Color, InstanceBatch, Mesh, Rig, Vec3 } from 'ridgetop'
+import type { AnimationClip, InstanceBatch, Mesh, Rig, Vec3 } from 'ridgetop'
 import { COTTAGE_POS, LIGHTHOUSE_POS, PIER_POS, islandHeight } from './types.ts'
 
 export const TIDEWATCH_PALETTE = {

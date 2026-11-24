@@ -1,4 +1,4 @@
-import { quaternionFromEuler, rotateVec3 } from './geometry.ts'
+import { quaternionFromEuler } from './geometry.ts'
 import { instances } from './instances.ts'
 import { getRigMeta, isTestingActive, nextTestingGroupId, recordRigMeta } from './testing-runtime.ts'
 import type { BlendMode, Color, InstanceBatch, InstanceTag, LowPolyRenderer, Mesh, Quaternion, Vec3 } from './types.ts'
@@ -57,7 +57,6 @@ export interface MeshPool {
 
 const ZERO3: Vec3 = [0, 0, 0]
 const ONE3: Vec3 = [1, 1, 1]
-const IDENTITY_Q: Quaternion = [0, 0, 0, 1]
 
 /** Multiply two XYZW quaternions (apply b first, then a). */
 export function multiplyQuat(a: Quaternion, b: Quaternion): Quaternion {
@@ -207,9 +206,9 @@ export function renderRig(
     ? [root.scale, root.scale, root.scale]
     : (root.scale ?? ONE3)
 
-  const worldPos: Vec3[] = new Array(rig.joints.length)
-  const worldRot: Quaternion[] = new Array(rig.joints.length)
-  const worldScale: Vec3[] = new Array(rig.joints.length)
+  const worldPos: Vec3[] = Array.from({ length: rig.joints.length }, () => ZERO3)
+  const worldRot: Quaternion[] = Array.from({ length: rig.joints.length }, () => rootRot)
+  const worldScale: Vec3[] = Array.from({ length: rig.joints.length }, () => ONE3)
   const out: Record<string, WorldJoint> = {}
   const testing = isTestingActive()
   const rigMeta = testing ? getRigMeta(rig) : undefined

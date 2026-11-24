@@ -1,0 +1,33 @@
+{
+  "$schema": "./node_modules/oxlint/configuration_schema.json",
+  "plugins": ["eslint", "typescript", "unicorn", "oxc"],
+  "jsPlugins": ["./tools/oxlint-ridgetop-plugin.mjs"],
+  "categories": {
+    "correctness": "error"
+  },
+  "ignorePatterns": [
+    "dist/**",
+    "packages/*/dist/**",
+    "examples/*/dist/**",
+    "node_modules/**",
+    "test/**",
+    ".agents/**"
+  ],
+  "rules": {
+    "typescript/consistent-type-assertions": ["error", { "assertionStyle": "never" }],
+    "typescript/no-non-null-assertion": "error",
+    "typescript/no-explicit-any": "error",
+    "typescript/ban-ts-comment": ["error", {
+      "ts-expect-error": true,
+      "ts-ignore": true,
+      "ts-nocheck": true,
+      "ts-check": false
+    }],
+    "eslint/eqeqeq": "error",
+    "eslint/no-eval": "error",
+    "eslint/no-new-func": "error",
+    "eslint/no-debugger": "error",
+    "eslint/no-empty": ["error", { "allowEmptyCatch": false }],
+    "ridgetop/no-math-spread": "error"
+  }
+}

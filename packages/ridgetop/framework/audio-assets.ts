@@ -1,3 +1,15 @@
+declare global {
+  var webkitAudioContext: typeof AudioContext | undefined
+}
+
+type AudioSource = string | URL | ArrayBuffer | Uint8Array
+
+function isAudioEntryIterable(
+  entries: Record<string, AudioSource> | Iterable<readonly [string, AudioSource]>
+): entries is Iterable<readonly [string, AudioSource]> {
+  return Symbol.iterator in Object(entries)
+}
+
 export interface ParsedWav {
   readonly sampleRate: number
   readonly channels: number
@@ -251,8 +263,7 @@ export function createAudioBank(options: AudioBankOptions = {}): AudioBank {
   function ensureContext(): AudioContext | null {
     if (disposed) return null
     if (!ctx) {
-      const AudioCtor = globalThis.AudioContext ??
-        (globalThis as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext
+      const AudioCtor = globalThis.AudioContext ?? globalThis.webkitAudioContext
       if (!AudioCtor) return null
       try {
         ctx = new AudioCtor()
@@ -315,10 +326,9 @@ export function createAudioBank(options: AudioBankOptions = {}): AudioBank {
       | Record<string, string | URL | ArrayBuffer | Uint8Array>
       | Iterable<readonly [string, string | URL | ArrayBuffer | Uint8Array]>
   ): Promise<Record<string, boolean>> {
-    const pairs: [string, string | URL | ArrayBuffer | Uint8Array][] =
-      Symbol.iterator in Object(entries)
-        ? Array.from(entries as Iterable<readonly [string, string | URL | ArrayBuffer | Uint8Array]>).map(([k, v]) => [k, v])
-        : Object.entries(entries as Record<string, string | URL | ArrayBuffer | Uint8Array>)
+    const pairs: [string, AudioSource][] = isAudioEntryIterable(entries)
+      ? Array.from(entries, ([k, v]) => [k, v])
+      : Object.entries(entries)
 
     const results: Record<string, boolean> = {}
     await Promise.all(pairs.map(async ([name, source]) => {
@@ -419,7 +429,7 @@ export function createAudioBank(options: AudioBankOptions = {}): AudioBank {
   }
 
   function stopAll() {
-    for (const handle of [...active]) {
+    for (const handle of Array.from(active)) {
       handle.stop()
     }
     active.clear()

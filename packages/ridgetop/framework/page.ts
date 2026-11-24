@@ -5,9 +5,12 @@ export function createGamePage() {
   const platform = createPlatform()
 
   function element<T extends HTMLElement = HTMLElement>(id: string): T {
-    const node = document.getElementById(id)
+    const selector = typeof CSS !== 'undefined' && typeof CSS.escape === 'function'
+      ? '#' + CSS.escape(id)
+      : `[id="${id.replace(/["\\]/g, '\\$&')}"]`
+    const node = document.querySelector<T>(selector)
     if (!node) throw new Error('Game page is missing #' + id)
-    return node as T
+    return node
   }
   return {
     element,
@@ -41,10 +44,10 @@ export function createGamePage() {
         value.toString(36)).join('-')
     },
     async copy(text: string) { await navigator.clipboard.writeText(text) },
-    async requestJson<T = unknown>(path: string, options?: RequestInit, errorMessage = 'Request failed') {
+    async requestJson<T = unknown>(path: string, options?: RequestInit, errorMessage = 'Request failed'): Promise<T> {
       const response = await fetch(path, options)
       if (!response.ok) throw new Error(errorMessage)
-      return response.json() as Promise<T>
+      return response.json()
     },
     lifecycle({ hide, restore }: { hide(persisted: boolean): void; restore(): void }) {
       window.addEventListener('pagehide', event => hide(event.persisted))

@@ -50,6 +50,10 @@ function bindingActive(pad: Gamepad, binding: GamepadBinding) {
   return binding.direction < 0 ? value <= -threshold : value >= threshold
 }
 
+function isOwnKey<K extends string>(record: Partial<Record<K, unknown>>, key: string): key is K {
+  return Object.hasOwn(record, key)
+}
+
 export function bindActionControls<Action extends string>({
   keys, buttons, enabled, onPause = () => {}, onGesture = () => {}, onPress = () => {},
   gamepad, pauseButtons = [9]
@@ -72,7 +76,9 @@ export function bindActionControls<Action extends string>({
   const controller = new AbortController()
   const listeners = { signal: controller.signal }
 
-  const actions = Array.from(new Set(Object.values(keys))) as Action[]
+  const actions: Action[] = Array.from(new Set(Object.values(keys)))
+  const knownActions = new Map<string, Action>()
+  for (const action of actions) knownActions.set(action, action)
   const pauseBindings: readonly GamepadBinding[] = pauseButtons.map(button => ({ button }))
   const padBindings = new Map<Action, readonly GamepadBinding[]>()
   if (gamepad !== false) {
@@ -82,8 +88,12 @@ export function bindActionControls<Action extends string>({
       if (chosen?.length) padBindings.set(action, chosen)
     }
     if (gamepad) {
-      for (const [action, list] of Object.entries(gamepad) as [Action, readonly GamepadBinding[] | undefined][]) {
-        if (list?.length) padBindings.set(action, list)
+      for (const key of Object.keys(gamepad)) {
+        if (isOwnKey(gamepad, key)) {
+          knownActions.set(key, key)
+          const list = gamepad[key]
+          if (list?.length) padBindings.set(key, list)
+        }
       }
     }
   }
@@ -200,7 +210,9 @@ export function bindActionControls<Action extends string>({
   }
 
   for (const button of buttons) {
-    const action = button.dataset.control as Action
+    const control = button.dataset.control
+    const action = control !== undefined ? knownActions.get(control) : undefined
+    if (action === undefined) continue
     button.addEventListener('pointerdown', event => {
       if (isTestingPaused() || event.button !== 0 || !enabled()) return
       event.preventDefault()
@@ -215,9 +227,10 @@ export function bindActionControls<Action extends string>({
         onPress(action)
       }
     }, listeners)
-    for (const type of ['pointerup', 'pointercancel', 'lostpointercapture']) {
-      button.addEventListener(type, event => pointers.delete((event as PointerEvent).pointerId), listeners)
-    }
+    const releasePointer = (event: PointerEvent) => { pointers.delete(event.pointerId) }
+    button.addEventListener('pointerup', releasePointer, listeners)
+    button.addEventListener('pointercancel', releasePointer, listeners)
+    button.addEventListener('lostpointercapture', releasePointer, listeners)
   }
 
   return {
@@ -484,11 +497,12 @@ export function bindVirtualStick(
     }
   }, signal)
 
-  for (const type of ['pointerup', 'pointercancel', 'lostpointercapture'] as const) {
-    element.addEventListener(type, event => {
-      if ((event as PointerEvent).pointerId === pointerId) clear()
-    }, signal)
+  const releasePointer = (event: PointerEvent) => {
+    if (event.pointerId === pointerId) clear()
   }
+  element.addEventListener('pointerup', releasePointer, signal)
+  element.addEventListener('pointercancel', releasePointer, signal)
+  element.addEventListener('lostpointercapture', releasePointer, signal)
   globalThis.window?.addEventListener('blur', clear, signal)
   globalThis.document?.addEventListener('visibilitychange', () => {
     if (globalThis.document.hidden) clear()

@@ -69,13 +69,15 @@ async function start() {
     left: false, right: false, throttle: false, brake: false, drift: false, recover: false, pulse: false, snare: false
   }
 
+  const actions: readonly Action[] = ['left', 'right', 'throttle', 'brake', 'drift', 'recover', 'pulse', 'snare']
+
   function persist() {
     saveFailed = !saveChampionship(page.storage, progress)
     return !saveFailed
   }
 
   function clearTouch() {
-    for (const k of Object.keys(touchHeld) as Action[]) touchHeld[k] = false
+    for (const k of actions) touchHeld[k] = false
     ui.clearHolds()
   }
 
@@ -425,38 +427,42 @@ async function start() {
   }
   let lastW = 0, lastH = 0, lastRatio = 0
 
-  ;(globalThis as { __ridgetopUi?: unknown }).__ridgetopUi = {
-    snapshot: () => ui.snapshot(),
-    query: (filter?: { id?: string; kind?: string; state?: string; label?: string }) => ui.query(filter),
-    act: (id: string, action: string, payload?: unknown) => {
-      if (uiDirty) renderUiNow()
-      const ok = ui.act(id, action, payload)
-      renderUiNow()
-      return ok
-    },
-    rects: () => Object.fromEntries(ui.rects),
-    state: () => {
-      const player = race.drivers[0]
-      const g = garage.view()
-      return {
-        screen,
-        backend: renderer.name,
-        hosted: isHosted,
-        overlayTitle: overlayTitleText(),
-        purse: `${progress.credits} credits`,
-        speed: `${Math.round(Math.hypot(player.vx, player.vz) * 3.6)} km/h`,
-        shield: `Shield ${player.shield} / ${player.maxShield}`,
-        ammo: `Pulse ${player.pulses}  ·  Snare ${player.snares}`,
-        eventsLocked: circuits.map((_, i) => !unlocked(progress, i)),
-        garageCredits: g.creditsText,
-        garagePart: g.partName,
-        garageTier: g.tierText,
-        garageStats: g.statLines.join(' | '),
-        saveStatus: saves.status,
-        hasSaveCandidate: saves.hasCandidate
+  Object.defineProperty(globalThis, '__ridgetopUi', {
+    configurable: true,
+    writable: true,
+    value: {
+      snapshot: () => ui.snapshot(),
+      query: (filter?: { id?: string; kind?: string; state?: string; label?: string }) => ui.query(filter),
+      act: (id: string, action: string, payload?: unknown) => {
+        if (uiDirty) renderUiNow()
+        const ok = ui.act(id, action, payload)
+        renderUiNow()
+        return ok
+      },
+      rects: () => Object.fromEntries(ui.rects),
+      state: () => {
+        const player = race.drivers[0]
+        const g = garage.view()
+        return {
+          screen,
+          backend: renderer.name,
+          hosted: isHosted,
+          overlayTitle: overlayTitleText(),
+          purse: `${progress.credits} credits`,
+          speed: `${Math.round(Math.hypot(player.vx, player.vz) * 3.6)} km/h`,
+          shield: `Shield ${player.shield} / ${player.maxShield}`,
+          ammo: `Pulse ${player.pulses}  ·  Snare ${player.snares}`,
+          eventsLocked: circuits.map((_, i) => !unlocked(progress, i)),
+          garageCredits: g.creditsText,
+          garagePart: g.partName,
+          garageTier: g.tierText,
+          garageStats: g.statLines.join(' | '),
+          saveStatus: saves.status,
+          hasSaveCandidate: saves.hasCandidate
+        }
       }
     }
-  }
+  })
 
   const stopPlatformLifecycle = page.platform.onLifecycle({
     pause() {

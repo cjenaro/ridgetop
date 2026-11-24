@@ -18,7 +18,7 @@ async function detectPalette(recipeFile: string): Promise<Record<string, string>
     try {
       const mod = await import(pathToFileURL(candidate).href)
       if (mod.game?.palette && typeof mod.game.palette === 'object') return { ...mod.game.palette }
-    } catch {}
+    } catch { /* Ignore missing or unimportable candidate game module. */ }
   }
   return {}
 }

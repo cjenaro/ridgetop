@@ -404,7 +404,7 @@ export function layoutToGodotTscn(root: LayoutNode, sceneName = 'GameUI'): strin
 
   function emit(node: LayoutNode, parentPath: string, siblingNames: Set<string>, inContainer: boolean) {
     if (node.hidden) return
-    const widget = node.widget as Record<string, unknown> | undefined
+    const widget = node.widget
     const isPanelContainer = widget?.type === 'panel' && (node.kind === 'column' || node.kind === 'row')
     const type = widget?.type === 'button' ? 'Button'
       : widget?.type === 'toggle' ? 'CheckButton'
@@ -2936,7 +2936,7 @@ export interface GodotExportOptions {
 
 /** Emit a complete Godot 4 project (GLB 3D models, WAV SFX, JSON data, Control UI scene, Keyboard+Switch/Gamepad input map). */
 export async function exportGodotProject(options: GodotExportOptions) {
-  const { outDir, name, slug, models, audio = {}, gameData, uiTree, iconPng } = options
+  const { outDir, name, slug, models, audio = {}, gameData, iconPng } = options
   const modelsDir = join(outDir, 'assets', 'models')
   const audioDir = join(outDir, 'assets', 'audio')
   const dataDir = join(outDir, 'data')

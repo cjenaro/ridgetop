@@ -47,8 +47,12 @@ export interface RidgetopPlatform {
   }
 }
 
+declare global {
+  var __ridgetopPlatform: RidgetopNativeBridge | undefined
+}
+
 function getBridge(): RidgetopNativeBridge | undefined {
-  return (globalThis as { __ridgetopPlatform?: RidgetopNativeBridge }).__ridgetopPlatform
+  return globalThis.__ridgetopPlatform
 }
 
 function createBridgeStorage(native: NonNullable<RidgetopNativeBridge['storage']>): Storage {
@@ -175,7 +179,7 @@ export function createPlatform(): RidgetopPlatform {
       if (globalThis.window) {
         globalThis.window.addEventListener('pagehide', () => pause?.(), options)
         globalThis.window.addEventListener('pageshow', event => {
-          if ((event as PageTransitionEvent).persisted) resume?.()
+          if (event.persisted) resume?.()
         }, options)
       }
       const unsubscribeNative = bridge?.lifecycle?.subscribe?.({ pause, resume })

@@ -1,4 +1,4 @@
-import type { Color, Matrix, Mesh, Vec3 } from './types.ts'
+import type { Color, Matrix, Mesh } from './types.ts'
 import { mesh, multiply, rotationMatrix } from './geometry.ts'
 
 export interface ImportedMeshPart {
@@ -230,63 +230,6 @@ export function parseObj(source: string): ImportedMeshPart[] {
   return results
 }
 
-interface GltfBufferView {
-  buffer?: number
-  byteOffset?: number
-  byteLength: number
-  byteStride?: number
-}
-
-interface GltfAccessor {
-  bufferView?: number
-  byteOffset?: number
-  componentType: number
-  count: number
-  type: string
-}
-
-interface GltfMaterial {
-  name?: string
-  pbrMetallicRoughness?: {
-    baseColorFactor?: number[]
-  }
-  emissiveFactor?: number[]
-  extensions?: Record<string, unknown>
-}
-
-interface GltfPrimitive {
-  attributes?: Record<string, number>
-  indices?: number
-  material?: number
-  mode?: number
-}
-
-interface GltfMesh {
-  name?: string
-  primitives?: GltfPrimitive[]
-}
-
-interface GltfNode {
-  name?: string
-  mesh?: number
-  children?: number[]
-  matrix?: number[]
-  translation?: number[]
-  rotation?: number[]
-  scale?: number[]
-}
-
-interface GltfRoot {
-  asset?: { version?: string }
-  scene?: number
-  scenes?: { name?: string; nodes?: number[] }[]
-  nodes?: GltfNode[]
-  meshes?: GltfMesh[]
-  materials?: GltfMaterial[]
-  bufferViews?: GltfBufferView[]
-  accessors?: GltfAccessor[]
-}
-
 function toUint8Array(input: Uint8Array | ArrayBuffer): Uint8Array {
   if (input instanceof Uint8Array) return input
   if (input instanceof ArrayBuffer) return new Uint8Array(input)
@@ -300,12 +243,12 @@ function isPlainObject(value: unknown): value is Record<string, unknown> {
 function isFiniteArray(value: unknown, length: number): value is number[] {
   if (!Array.isArray(value) || value.length !== length) return false
   for (let i = 0; i < length; i++) {
-    if (!Number.isFinite(value[i])) return false
+    if (typeof value[i] !== 'number' || !Number.isFinite(value[i])) return false
   }
   return true
 }
 
-function getArrayObject<T>(arr: unknown, index: unknown, label: string): T {
+function getArrayObject(arr: unknown, index: unknown, label: string): Record<string, unknown> {
   if (!Array.isArray(arr) || typeof index !== 'number' || !Number.isInteger(index) || index < 0 || index >= arr.length) {
     throw new RangeError(`Missing glTF ${label} ${String(index)}`)
   }
@@ -313,10 +256,10 @@ function getArrayObject<T>(arr: unknown, index: unknown, label: string): T {
   if (!isPlainObject(item)) {
     throw new RangeError(`Invalid glTF ${label} ${index}`)
   }
-  return item as T
+  return item
 }
 
-function nodeLocalMatrix(node: GltfNode): Matrix {
+function nodeLocalMatrix(node: Record<string, unknown>): Matrix {
   if (node.matrix !== undefined) {
     if (!isFiniteArray(node.matrix, 16)) {
       throw new RangeError('Invalid glTF node matrix')
@@ -348,17 +291,18 @@ function matrixDeterminant3(m: Matrix): number {
   )
 }
 
-function resolveAccessorSlice(gltf: GltfRoot, bin: Uint8Array | null, accessorIndex: number, minStride: number) {
-  const accessor = getArrayObject<GltfAccessor>(gltf.accessors, accessorIndex, 'accessor')
+function resolveAccessorSlice(gltf: Record<string, unknown>, bin: Uint8Array | null, accessorIndex: number, minStride: number) {
+  const accessor = getArrayObject(gltf.accessors, accessorIndex, 'accessor')
   if (typeof accessor.count !== 'number' || !Number.isSafeInteger(accessor.count) || accessor.count <= 0) {
     throw new RangeError(`Invalid glTF accessor count at ${accessorIndex}`)
   }
+  const count = accessor.count
   if (accessor.bufferView === undefined) {
     throw new RangeError(`glTF accessor ${accessorIndex} has no bufferView`)
   }
-  const viewDef = getArrayObject<GltfBufferView>(gltf.bufferViews, accessor.bufferView, 'bufferView')
+  const viewDef = getArrayObject(gltf.bufferViews, accessor.bufferView, 'bufferView')
   if ((viewDef.buffer ?? 0) !== 0 || !bin) {
-    throw new RangeError(`glTF bufferView ${accessor.bufferView} requires binary chunk buffer 0`)
+    throw new RangeError(`glTF bufferView ${String(accessor.bufferView)} requires binary chunk buffer 0`)
   }
   const viewOffset = viewDef.byteOffset ?? 0
   const viewLength = viewDef.byteLength
@@ -369,32 +313,32 @@ function resolveAccessorSlice(gltf: GltfRoot, bin: Uint8Array | null, accessorIn
     typeof accOffset !== 'number' || !Number.isSafeInteger(accOffset) || accOffset < 0 ||
     viewOffset + viewLength > bin.byteLength
   ) {
-    throw new RangeError(`glTF bufferView ${accessor.bufferView} exceeds binary chunk bounds`)
+    throw new RangeError(`glTF bufferView ${String(accessor.bufferView)} exceeds binary chunk bounds`)
   }
   const stride = viewDef.byteStride ?? minStride
   if (typeof stride !== 'number' || !Number.isSafeInteger(stride) || stride < minStride) {
-    throw new RangeError(`Invalid glTF byteStride ${stride} for accessor ${accessorIndex}`)
+    throw new RangeError(`Invalid glTF byteStride ${String(stride)} for accessor ${accessorIndex}`)
   }
   const start = viewOffset + accOffset
-  const end = start + (accessor.count - 1) * stride + minStride
+  const end = start + (count - 1) * stride + minStride
   if (!Number.isSafeInteger(end) || end > viewOffset + viewLength || end > bin.byteLength) {
     throw new RangeError(`glTF accessor ${accessorIndex} exceeds bufferView bounds`)
   }
   const dv = new DataView(bin.buffer, bin.byteOffset, bin.byteLength)
-  return { accessor, dv, start, stride }
+  return { accessor, count, dv, start, stride }
 }
 
-function readPositions(gltf: GltfRoot, bin: Uint8Array | null, accessorIndex: number, world: Matrix): Float32Array {
-  const { accessor, dv, start, stride } = resolveAccessorSlice(gltf, bin, accessorIndex, 12)
+function readPositions(gltf: Record<string, unknown>, bin: Uint8Array | null, accessorIndex: number, world: Matrix): Float32Array {
+  const { accessor, count, dv, start, stride } = resolveAccessorSlice(gltf, bin, accessorIndex, 12)
   if (accessor.type !== 'VEC3' || accessor.componentType !== 5126) {
     throw new RangeError(`glTF POSITION accessor ${accessorIndex} must be FLOAT VEC3`)
   }
-  const out = new Float32Array(accessor.count * 3)
+  const out = new Float32Array(count * 3)
   const m0 = world[0], m1 = world[1], m2 = world[2]
   const m4 = world[4], m5 = world[5], m6 = world[6]
   const m8 = world[8], m9 = world[9], m10 = world[10]
   const m12 = world[12], m13 = world[13], m14 = world[14]
-  for (let i = 0; i < accessor.count; i++) {
+  for (let i = 0; i < count; i++) {
     const off = start + i * stride
     const x = dv.getFloat32(off, true)
     const y = dv.getFloat32(off + 4, true)
@@ -413,8 +357,8 @@ function readPositions(gltf: GltfRoot, bin: Uint8Array | null, accessorIndex: nu
   return out
 }
 
-function readIndices(gltf: GltfRoot, bin: Uint8Array | null, accessorIndex: number, vertexCount: number): Uint32Array {
-  const accessor = getArrayObject<GltfAccessor>(gltf.accessors, accessorIndex, 'index accessor')
+function readIndices(gltf: Record<string, unknown>, bin: Uint8Array | null, accessorIndex: number, vertexCount: number): Uint32Array {
+  const accessor = getArrayObject(gltf.accessors, accessorIndex, 'index accessor')
   if (accessor.type !== 'SCALAR') {
     throw new RangeError(`glTF index accessor ${accessorIndex} must be SCALAR`)
   }
@@ -423,11 +367,11 @@ function readIndices(gltf: GltfRoot, bin: Uint8Array | null, accessorIndex: numb
     : accessor.componentType === 5125 ? 4
     : 0
   if (!compSize) {
-    throw new RangeError(`Unsupported glTF index componentType ${accessor.componentType}`)
+    throw new RangeError(`Unsupported glTF index componentType ${String(accessor.componentType)}`)
   }
-  const { dv, start, stride } = resolveAccessorSlice(gltf, bin, accessorIndex, compSize)
-  const out = new Uint32Array(accessor.count)
-  for (let i = 0; i < accessor.count; i++) {
+  const { count, dv, start, stride } = resolveAccessorSlice(gltf, bin, accessorIndex, compSize)
+  const out = new Uint32Array(count)
+  for (let i = 0; i < count; i++) {
     const off = start + i * stride
     const idx = compSize === 1 ? dv.getUint8(off)
       : compSize === 2 ? dv.getUint16(off, true)
@@ -440,19 +384,19 @@ function readIndices(gltf: GltfRoot, bin: Uint8Array | null, accessorIndex: numb
   return out
 }
 
-function extractMaterial(mat: GltfMaterial | undefined): { color: Color; unlit: number; material?: string } {
+function extractMaterial(mat: Record<string, unknown> | undefined): { color: Color; unlit: number; material?: string } {
   if (!isPlainObject(mat)) return { color: WHITE, unlit: 0 }
   const pbr = isPlainObject(mat.pbrMetallicRoughness) ? mat.pbrMetallicRoughness : undefined
   const bcf = Array.isArray(pbr?.baseColorFactor) ? pbr.baseColorFactor : undefined
-  const br = bcf && Number.isFinite(bcf[0]) ? Math.max(0, bcf[0]) : 1
-  const bg = bcf && Number.isFinite(bcf[1]) ? Math.max(0, bcf[1]) : 1
-  const bb = bcf && Number.isFinite(bcf[2]) ? Math.max(0, bcf[2]) : 1
-  const ba = bcf && Number.isFinite(bcf[3]) ? clamp01(bcf[3]) : 1
+  const br = bcf && typeof bcf[0] === 'number' && Number.isFinite(bcf[0]) ? Math.max(0, bcf[0]) : 1
+  const bg = bcf && typeof bcf[1] === 'number' && Number.isFinite(bcf[1]) ? Math.max(0, bcf[1]) : 1
+  const bb = bcf && typeof bcf[2] === 'number' && Number.isFinite(bcf[2]) ? Math.max(0, bcf[2]) : 1
+  const ba = bcf && typeof bcf[3] === 'number' && Number.isFinite(bcf[3]) ? clamp01(bcf[3]) : 1
 
   const ef = Array.isArray(mat.emissiveFactor) ? mat.emissiveFactor : undefined
-  const er = ef && Number.isFinite(ef[0]) ? Math.max(0, ef[0]) : 0
-  const eg = ef && Number.isFinite(ef[1]) ? Math.max(0, ef[1]) : 0
-  const eb = ef && Number.isFinite(ef[2]) ? Math.max(0, ef[2]) : 0
+  const er = ef && typeof ef[0] === 'number' && Number.isFinite(ef[0]) ? Math.max(0, ef[0]) : 0
+  const eg = ef && typeof ef[1] === 'number' && Number.isFinite(ef[1]) ? Math.max(0, ef[1]) : 0
+  const eb = ef && typeof ef[2] === 'number' && Number.isFinite(ef[2]) ? Math.max(0, ef[2]) : 0
 
   const baseSum = br + bg + bb
   const emissiveSum = er + eg + eb
@@ -500,16 +444,16 @@ export function parseGlb(bytes: Uint8Array | ArrayBuffer): ImportedMeshPart[] {
   if (jsonLength === 0 || offset + 8 + jsonLength > totalLength) {
     throw new RangeError('GLB JSON chunk exceeds container length')
   }
-  let gltf: GltfRoot
+  let gltf: Record<string, unknown>
   try {
     const jsonText = new TextDecoder('utf-8').decode(u8.subarray(offset + 8, offset + 8 + jsonLength))
     const parsed: unknown = JSON.parse(jsonText)
     if (!isPlainObject(parsed)) {
       throw new Error('Root JSON value must be an object')
     }
-    gltf = parsed as GltfRoot
+    gltf = parsed
   } catch (error) {
-    throw new RangeError(`Invalid GLB JSON chunk: ${(error as Error).message}`)
+    throw new RangeError(`Invalid GLB JSON chunk: ${error instanceof Error ? error.message : String(error)}`)
   }
   offset += 8 + jsonLength
 
@@ -540,35 +484,38 @@ export function parseGlb(bytes: Uint8Array | ArrayBuffer): ImportedMeshPart[] {
 
   const parts: ImportedMeshPart[] = []
 
-  function emitMesh(meshIndex: number, world: Matrix, nodeName?: string) {
-    const meshDef = getArrayObject<GltfMesh>(gltf.meshes, meshIndex, 'mesh')
+  function emitMesh(meshIndex: unknown, world: Matrix, nodeName?: string) {
+    const meshDef = getArrayObject(gltf.meshes, meshIndex, 'mesh')
     const primitives = Array.isArray(meshDef.primitives) ? meshDef.primitives : []
     const flipWinding = matrixDeterminant3(world) < 0
-    const baseName = (typeof nodeName === 'string' && nodeName) || (typeof meshDef.name === 'string' && meshDef.name) || `mesh_${meshIndex}`
+    const baseName = (typeof nodeName === 'string' && nodeName) || (typeof meshDef.name === 'string' && meshDef.name) || `mesh_${String(meshIndex)}`
 
     for (let p = 0; p < primitives.length; p++) {
-      const rawPrim = primitives[p]
-      if (!isPlainObject(rawPrim)) {
-        throw new RangeError(`Invalid glTF mesh ${meshIndex} primitive ${p}`)
+      const prim = primitives[p]
+      if (!isPlainObject(prim)) {
+        throw new RangeError(`Invalid glTF mesh ${String(meshIndex)} primitive ${p}`)
       }
-      const prim = rawPrim as GltfPrimitive
       const mode = prim.mode ?? 4
       if (mode !== 4 && mode !== 5 && mode !== 6) continue
       const posAccessor = isPlainObject(prim.attributes) ? prim.attributes.POSITION : undefined
       if (typeof posAccessor !== 'number' || !Number.isInteger(posAccessor)) {
-        throw new RangeError(`glTF mesh ${meshIndex} primitive ${p} is missing POSITION attribute`)
+        throw new RangeError(`glTF mesh ${String(meshIndex)} primitive ${p} is missing POSITION attribute`)
       }
 
       const positions = readPositions(gltf, binChunk, posAccessor, world)
       const vertexCount = positions.length / 3
-      const rawIndices = prim.indices !== undefined
-        ? readIndices(gltf, binChunk, prim.indices, vertexCount)
-        : null
+      let rawIndices: Uint32Array | null = null
+      if (prim.indices !== undefined) {
+        if (typeof prim.indices !== 'number' || !Number.isInteger(prim.indices)) {
+          throw new RangeError(`Missing glTF index accessor ${String(prim.indices)}`)
+        }
+        rawIndices = readIndices(gltf, binChunk, prim.indices, vertexCount)
+      }
 
       const built = buildTriangleMesh(positions, rawIndices, vertexCount, mode, flipWinding)
       if (!built) continue
 
-      const matDef = prim.material !== undefined ? getArrayObject<GltfMaterial>(gltf.materials, prim.material, 'material') : undefined
+      const matDef = prim.material !== undefined ? getArrayObject(gltf.materials, prim.material, 'material') : undefined
       const { color, unlit, material } = extractMaterial(matDef)
       const name = primitives.length === 1
         ? baseName
@@ -585,19 +532,22 @@ export function parseGlb(bytes: Uint8Array | ArrayBuffer): ImportedMeshPart[] {
   const visiting = new Set<number>()
   const visited = new Set<number>()
 
-  function walkNode(nodeIndex: number, parentWorld: Matrix) {
+  function walkNode(nodeIndex: unknown, parentWorld: Matrix) {
+    if (typeof nodeIndex !== 'number' || !Number.isInteger(nodeIndex)) {
+      throw new RangeError(`Missing glTF node ${String(nodeIndex)}`)
+    }
     if (visiting.has(nodeIndex)) {
       throw new RangeError(`Cyclic glTF node hierarchy at node ${nodeIndex}`)
     }
     if (visited.has(nodeIndex)) {
       throw new RangeError(`Invalid glTF node hierarchy: node ${nodeIndex} has multiple parents`)
     }
-    const node = getArrayObject<GltfNode>(nodes, nodeIndex, 'node')
+    const node = getArrayObject(nodes, nodeIndex, 'node')
     visiting.add(nodeIndex)
     visited.add(nodeIndex)
     const world = multiply(parentWorld, nodeLocalMatrix(node))
     if (node.mesh !== undefined) {
-      emitMesh(node.mesh, world, node.name)
+      emitMesh(node.mesh, world, typeof node.name === 'string' ? node.name : undefined)
     }
     if (node.children !== undefined) {
       if (!Array.isArray(node.children)) {
@@ -612,10 +562,10 @@ export function parseGlb(bytes: Uint8Array | ArrayBuffer): ImportedMeshPart[] {
 
   if (Array.isArray(gltf.scenes) && gltf.scenes.length) {
     const sceneIndex = gltf.scene ?? 0
-    const scene = getArrayObject<{ name?: string; nodes?: number[] }>(gltf.scenes, sceneIndex, 'scene')
+    const scene = getArrayObject(gltf.scenes, sceneIndex, 'scene')
     const rootNodes = scene.nodes ?? []
     if (!Array.isArray(rootNodes)) {
-      throw new RangeError(`Invalid glTF scene ${sceneIndex} nodes list`)
+      throw new RangeError(`Invalid glTF scene ${String(sceneIndex)} nodes list`)
     }
     for (let i = 0; i < rootNodes.length; i++) {
       walkNode(rootNodes[i], IDENTITY)
@@ -623,13 +573,16 @@ export function parseGlb(bytes: Uint8Array | ArrayBuffer): ImportedMeshPart[] {
   } else if (nodes.length) {
     const childSet = new Set<number>()
     for (let i = 0; i < nodes.length; i++) {
-      const node = getArrayObject<GltfNode>(nodes, i, 'node')
+      const node = getArrayObject(nodes, i, 'node')
       if (node.children !== undefined) {
         if (!Array.isArray(node.children)) {
           throw new RangeError(`Invalid glTF children list at node ${i}`)
         }
         for (let c = 0; c < node.children.length; c++) {
           const child = node.children[c]
+          if (typeof child !== 'number' || !Number.isInteger(child)) {
+            throw new RangeError(`Missing glTF node ${String(child)}`)
+          }
           if (childSet.has(child)) {
             throw new RangeError(`Invalid glTF node hierarchy: node ${child} has multiple parents`)
           }

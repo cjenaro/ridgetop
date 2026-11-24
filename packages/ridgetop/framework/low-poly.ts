@@ -1,7 +1,7 @@
 import type {
   Backend, Color, InstanceBatch, LightingOptions, LowPolyRenderer, Matrix, MeshBackend,
   ProjectedShadowOptions, ShadowBatch, ShadowBatchOptions, ShadowCasterOptions,
-  ShadowProjection, ShadowProjectionOptions, Vec3
+  ShadowProjection, Vec3
 } from './types.ts'
 import type { SpriteClip } from './sprites.ts'
 import { createAlphaSorter, multiply, orthographic, projectShadow, shadowDisc, view } from './geometry.ts'
@@ -100,7 +100,8 @@ export async function createLowPolyRenderer(canvas: HTMLCanvasElement,
   const stats = { drawCalls: 0, triangles: 0, instances: 0, uploadBytes: 0, culledBatches: 0 }
 
   function replaceCanvas() {
-    const next = canvas.cloneNode() as HTMLCanvasElement
+    const next = canvas.cloneNode()
+    if (!(next instanceof HTMLCanvasElement)) throw new Error('Could not clone canvas element')
     canvas.replaceWith(next)
     canvas = next
   }
@@ -210,6 +211,10 @@ export const spriteDirections = ['front', 'front-right', 'right', 'back-right', 
 const defaultShadowColor: Vec3 = [0.04, 0.06, 0.1]
 const defaultShadowDirection: Vec3 = [-0.48, 0.8, 0.36]
 
+function isVec3Direction(lighting: Pick<LightingOptions, 'direction'> | Vec3): lighting is Vec3 {
+  return Array.isArray(lighting)
+}
+
 /**
  * Create a reusable alpha-blended shadow batch that projects contact/blob shadows or pre-projected
  * mesh shadows onto horizontal ground planes across WebGPU, WebGL 2, and Canvas 2D without Z-fighting.
@@ -289,7 +294,7 @@ export function createShadowBatch(options: ShadowBatchOptions = {}): ShadowBatch
       batch.clear()
     },
     setLighting(lighting) {
-      if (Array.isArray(lighting)) setDirection(lighting as Vec3)
+      if (isVec3Direction(lighting)) setDirection(lighting)
       else if (lighting && 'direction' in lighting && lighting.direction) setDirection(lighting.direction)
     },
     add(position: Vec3, caster?: ShadowCasterOptions) {
@@ -304,7 +309,7 @@ export function createShadowBatch(options: ShadowBatchOptions = {}): ShadowBatch
       projOpts.offsetScale = caster?.offsetScale ?? defaultOffsetScale
       projOpts.bias = caster?.bias ?? defaultBias
 
-      projectShadow(position, projOpts as ShadowProjectionOptions, projOut)
+      projectShadow(position, projOpts, projOut)
       if (!projOut.visible) return
 
       const rgb = caster?.color ?? baseColor

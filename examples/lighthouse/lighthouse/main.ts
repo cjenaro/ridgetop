@@ -171,14 +171,14 @@ async function start() {
   const closeShopBtn = buttonPrimitive.create({ id: 'lh-shop-close', label: 'Back to Island (E)', onPress: () => setScreen('playing') })
   const continueVictoryBtn = buttonPrimitive.create({ id: 'lh-continue', label: 'Keep Watching (Endless)', onPress: () => setScreen('playing') })
 
-  const upgradeButtons = Object.fromEntries(UPGRADES.map(spec => [
-    spec.id,
-    buttonPrimitive.create({
-      id: `lh-upg-${spec.id}`,
-      label: spec.name,
+  function makeUpgradeButton(id: UpgradeId) {
+    const spec = UPGRADES.find(u => u.id === id)
+    return buttonPrimitive.create({
+      id: `lh-upg-${id}`,
+      label: spec?.name ?? id,
       onPress: () => {
         audio.unlock()
-        if (buyUpgrade(state, spec.id)) {
+        if (buyUpgrade(state, id)) {
           persistSave(page.storage, state)
           hudRev++
           uiDirty = true
@@ -189,7 +189,16 @@ async function start() {
         }
       }
     })
-  ])) as Record<UpgradeId, ReturnType<typeof buttonPrimitive.create>>
+  }
+
+  const upgradeButtons: Record<UpgradeId, ReturnType<typeof buttonPrimitive.create>> = {
+    boots: makeUpgradeButton('boots'),
+    pack: makeUpgradeButton('pack'),
+    cloak: makeUpgradeButton('cloak'),
+    lens: makeUpgradeButton('lens'),
+    winch: makeUpgradeButton('winch'),
+    charter: makeUpgradeButton('charter')
+  }
 
   const ui = createCanvasUi(uiCanvas, {
     theme: createUiTheme({
@@ -231,7 +240,7 @@ async function start() {
     return { x, z }
   }
 
-  function buildUiTree(w: number, h: number) {
+  function buildUiTree(w: number) {
     const compact = w < 640
     const canBuy = hasAffordableUpgrade()
 
@@ -515,36 +524,40 @@ async function start() {
     const h = Math.max(1, canvas.clientHeight || canvas.height || 540)
     lastW = w
     lastH = h
-    ui.render(buildUiTree(w, h), { width: w, height: h, pixelRatio: Math.min(devicePixelRatio || 1, 2) })
+    ui.render(buildUiTree(w), { width: w, height: h, pixelRatio: Math.min(devicePixelRatio || 1, 2) })
     uiDirty = false
   }
 
   renderUiNow()
 
-  ;(globalThis as { __ridgetopUi?: unknown }).__ridgetopUi = {
-    snapshot: () => ui.snapshot(),
-    query: (filter?: { id?: string; kind?: string; state?: string; label?: string }) => ui.query(filter),
-    act: (id: string, action: string, payload?: unknown) => {
-      renderUiNow()
-      const ok = ui.act(id, action, payload)
-      uiDirty = true
-      renderUiNow()
-      return ok
-    },
-    rects: () => Object.fromEntries(ui.rects),
-    state: () => ({
-      screen,
-      day: state.day,
-      coins: state.coins,
-      fuel: Math.round(state.fuel),
-      warmth: Math.round(state.player.warmth),
-      carry: state.player.carry.length,
-      weather: state.weather,
-      tidePhase: state.tidePhase,
-      shipsGuided: state.shipsGuided,
-      upgrades: state.upgrades
-    })
-  }
+  Object.defineProperty(globalThis, '__ridgetopUi', {
+    configurable: true,
+    writable: true,
+    value: {
+      snapshot: () => ui.snapshot(),
+      query: (filter?: { id?: string; kind?: string; state?: string; label?: string }) => ui.query(filter),
+      act: (id: string, action: string, payload?: unknown) => {
+        renderUiNow()
+        const ok = ui.act(id, action, payload)
+        uiDirty = true
+        renderUiNow()
+        return ok
+      },
+      rects: () => Object.fromEntries(ui.rects),
+      state: () => ({
+        screen,
+        day: state.day,
+        coins: state.coins,
+        fuel: Math.round(state.fuel),
+        warmth: Math.round(state.player.warmth),
+        carry: state.player.carry.length,
+        weather: state.weather,
+        tidePhase: state.tidePhase,
+        shipsGuided: state.shipsGuided,
+        upgrades: state.upgrades
+      })
+    }
+  })
 
   const stop = fixedLoop({
     update(dt) {

@@ -11,7 +11,11 @@ const source = new URL('../dist/signal-drift.html', import.meta.url)
 const backup = join(temp, 'signal-drift-save.json')
 const backend = process.env.RIDGETOP_BACKENDS?.split(',')[0] ?? 'auto'
 
-const uiState = <T = any>(tab: BrowserTab, field: string) => tab.evaluate<T>(`window.__ridgetopUi?.state?.()?.[${JSON.stringify(field)}]`)
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
+}
+
+const uiState = (tab: BrowserTab, field: string) => tab.evaluate(`window.__ridgetopUi?.state?.()?.[${JSON.stringify(field)}]`)
 const uiAct = (tab: BrowserTab, id: string, action = 'press') => tab.evaluate(`window.__ridgetopUi?.act(${JSON.stringify(id)}, ${JSON.stringify(action)})`)
 
 async function launch(folder: string) {
@@ -23,7 +27,9 @@ async function launch(folder: string) {
     const url = pathToFileURL(file)
     url.searchParams.set('renderer', backend)
     const navigation = await tab.call('Page.navigate', { url: url.href })
-    if (navigation.errorText) throw new Error('Chromium could not open the local player file: ' + navigation.errorText)
+    if (typeof navigation.errorText === 'string' && navigation.errorText) {
+      throw new Error('Chromium could not open the local player file: ' + navigation.errorText)
+    }
     await until(() => uiState(tab, 'screen'), 'home', 'offline player started')
     assert.equal(await uiState(tab, 'hosted'), false)
     return tab
@@ -32,7 +38,9 @@ async function launch(folder: string) {
 
 async function chooseFile(tab: BrowserTab, file: string) {
   const { root } = await tab.call('DOM.getDocument')
+  if (!isRecord(root) || typeof root.nodeId !== 'number') throw new Error('Missing DOM root node')
   const { nodeId } = await tab.call('DOM.querySelector', { nodeId: root.nodeId, selector: '#race-save-file' })
+  if (typeof nodeId !== 'number') throw new Error('Missing #race-save-file input')
   await tab.call('DOM.setFileInputFiles', { nodeId, files: [file] })
 }
 async function checkOffline(tab: BrowserTab) {
@@ -56,7 +64,7 @@ try {
     await uiAct(first, 'saves-back')
     await uiAct(first, 'race-start')
     await key(first, 'keyDown', 'KeyW', 'w')
-    await until(() => uiState(first, 'speed'), n => Number.parseInt(n) >= 12, 'offline race accepted throttle')
+    await until(() => uiState(first, 'speed'), n => typeof n === 'string' && Number.parseInt(n) >= 12, 'offline race accepted throttle')
     await key(first, 'keyUp', 'KeyW', 'w')
     await uiAct(first, 'race-pause')
     assert.equal(await uiState(first, 'overlayTitle'), 'Race paused')
@@ -70,7 +78,7 @@ try {
     const damaged = join(temp, 'incomplete.json')
     await writeFile(damaged, '{"game":"signal-drift","version":1}')
     await chooseFile(update, damaged)
-    await until(() => uiState(update, 'saveStatus'), s => s?.includes('invalid'), 'damaged backup explained')
+    await until(() => uiState(update, 'saveStatus'), s => typeof s === 'string' && s.includes('invalid'), 'damaged backup explained')
     assert.equal(await uiState(update, 'hasSaveCandidate'), false)
     await chooseFile(update, backup)
     await until(() => uiState(update, 'hasSaveCandidate'), true, 'backup preview')
@@ -81,7 +89,9 @@ try {
     await until(() => uiState(update, 'purse'), '20 credits', 'restored progress survived reload')
     await uiAct(update, 'race-garage')
     await uiAct(update, 'upgrade-armor')
-    assert.match(await uiState(update, 'garageTier'), /Tier 1/)
+    const tier = await uiState(update, 'garageTier')
+    assert.ok(typeof tier === 'string')
+    assert.match(tier, /Tier 1/)
     await checkOffline(update)
   } finally { await update.close() }
   console.log('Offline player launched, drove, paused, exported a backup, and restored the garage in a second clean browser profile.')

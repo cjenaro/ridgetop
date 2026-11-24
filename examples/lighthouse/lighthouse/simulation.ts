@@ -136,14 +136,44 @@ export function serializeSave(state: GameState): GameSave {
   }
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
+}
+
 export function loadSave(storage: Storage | null | undefined): Partial<GameSave> | undefined {
   if (!storage) return undefined
   try {
     const raw = storage.getItem(SAVE_KEY)
     if (!raw) return undefined
-    const parsed = JSON.parse(raw)
-    if (!parsed || parsed.version !== 1) return undefined
-    return parsed as Partial<GameSave>
+    const parsed: unknown = JSON.parse(raw)
+    if (!isRecord(parsed) || parsed.version !== 1) return undefined
+    const save: {
+      version: 1
+      coins?: number
+      totalEarned?: number
+      shipsGuided?: number
+      day?: number
+      fuel?: number
+      upgrades?: Record<UpgradeId, number>
+      victoryClaimed?: boolean
+    } = { version: 1 }
+    if (typeof parsed.coins === 'number') save.coins = parsed.coins
+    if (typeof parsed.totalEarned === 'number') save.totalEarned = parsed.totalEarned
+    if (typeof parsed.shipsGuided === 'number') save.shipsGuided = parsed.shipsGuided
+    if (typeof parsed.day === 'number') save.day = parsed.day
+    if (typeof parsed.fuel === 'number') save.fuel = parsed.fuel
+    if (isRecord(parsed.upgrades)) {
+      save.upgrades = {
+        boots: clampLevel(parsed.upgrades.boots, 1, 5),
+        pack: clampLevel(parsed.upgrades.pack, 1, 5),
+        cloak: clampLevel(parsed.upgrades.cloak, 1, 5),
+        lens: clampLevel(parsed.upgrades.lens, 1, 5),
+        winch: clampLevel(parsed.upgrades.winch, 0, 4),
+        charter: clampLevel(parsed.upgrades.charter, 1, 5)
+      }
+    }
+    if (typeof parsed.victoryClaimed === 'boolean') save.victoryClaimed = parsed.victoryClaimed
+    return save
   } catch {
     return undefined
   }
@@ -443,8 +473,8 @@ export function stepGame(state: GameState, input: MoveInput, dt: number): void {
   }
 
   // 5. Warmth system (cold in fog/rain/storm/water, reheated by Cottage Brazier or Clear skies)
-  const brazier = PADS.find(pad => pad.id === 'brazier')!
-  const nearFire = Math.hypot(p.x - brazier.x, p.z - brazier.z) <= brazier.radius + 0.75
+  const brazier = PADS.find(pad => pad.id === 'brazier')
+  const nearFire = brazier ? Math.hypot(p.x - brazier.x, p.z - brazier.z) <= brazier.radius + 0.75 : false
   const nearCottage = Math.hypot(p.x - COTTAGE_POS.x, p.z - COTTAGE_POS.z) <= 3.1
   if (nearFire || nearCottage) {
     p.warmth = Math.min(100, p.warmth + 34 * dt)
@@ -531,20 +561,22 @@ export function stepGame(state: GameState, input: MoveInput, dt: number): void {
 
   p.transferTimer = Math.max(0, p.transferTimer - dt)
   if (currentPad === 'sell' && p.carry.length > 0 && p.transferTimer <= 0) {
-    const kind = p.carry.pop()!
-    const value = sellValue(state, kind)
-    state.coins += value
-    state.totalEarned += value
-    p.transferTimer = 0.11
-    pushSound(state, 'sell', 0.95 + (1 - p.carry.length / Math.max(1, cap)) * 0.4)
-    state.vfx.push({
-      kind: 'sell',
-      itemKind: kind,
-      from: [p.x, p.y + 1.15, p.z],
-      to: [PIER_POS.x - 1.2, 1.55, PIER_POS.z - 0.35]
-    })
-    addPopup(state, PIER_POS.x + 0.5, 1.8, PIER_POS.z - 0.3, `+${value}g`, '#ffe17a', 1.1)
-    checkVictory(state)
+    const kind = p.carry.pop()
+    if (kind) {
+      const value = sellValue(state, kind)
+      state.coins += value
+      state.totalEarned += value
+      p.transferTimer = 0.11
+      pushSound(state, 'sell', 0.95 + (1 - p.carry.length / Math.max(1, cap)) * 0.4)
+      state.vfx.push({
+        kind: 'sell',
+        itemKind: kind,
+        from: [p.x, p.y + 1.15, p.z],
+        to: [PIER_POS.x - 1.2, 1.55, PIER_POS.z - 0.35]
+      })
+      addPopup(state, PIER_POS.x + 0.5, 1.8, PIER_POS.z - 0.3, `+${value}g`, '#ffe17a', 1.1)
+      checkVictory(state)
+    }
   } else if (currentPad === 'fuel' && p.carry.length > 0 && state.fuel < 99.5 && p.transferTimer <= 0) {
     // Prefer driftwood first, then amber, then salvage
     let idx = p.carry.lastIndexOf('driftwood')

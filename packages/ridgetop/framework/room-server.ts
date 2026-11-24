@@ -35,18 +35,66 @@ export interface RoomServiceOptions<World, Player, Snapshot extends object, Inpu
   maxPayloadBytes?: number
 }
 
+export interface RoomService<World> {
+  join(req: IncomingMessage, res: ServerResponse, options: RoomJoinOptions<World>): void
+  upgrade(req: IncomingMessage, socket: Duplex, head: Buffer, options: RoomJoinOptions<World>): boolean
+  receive(req: IncomingMessage, res: ServerResponse, key: string, action: 'input' | 'leave'): Promise<void>
+  close(): void
+}
+
+type CustomRoomServiceOptions<World, Player, Snapshot extends object, Input> =
+  RoomServiceOptions<World, Player, Snapshot, Input> & {
+    parseInput(raw: unknown, previous: Input): Input | null
+    initialInput(): Input
+  }
+
+interface ResolvedRoomServiceOptions<World, Player, Snapshot extends object, Input> {
+  createPlayer(id: string, slot: number, world: World): Player
+  restartPlayer?(player: Player, input: Input & { restart: number }, world: World): Player
+  stepPlayer(player: Player, input: Input, dt: number, world: World, identity?: string): void
+  snapshot(player: Player, world: World, identity?: string): Snapshot
+  beforePublish?(world: World, connected: readonly { player: Player; identity?: string }[], tick: number): void
+  parseInput(raw: unknown, previous: Input): Input | null
+  initialInput(): Input
+  mergeInput(previous: Input, next: Input): Input
+  idleInput(previous: Input): Input
+  customSchema: boolean
+  maxPayloadBytes?: number
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === 'object'
+}
+
+function isSafeInt(value: unknown): value is number {
+  return typeof value === 'number' && Number.isSafeInteger(value)
+}
+
+function hasCustomInputSchema<World, Player, Snapshot extends object, Input>(
+  options:
+    | RoomServiceOptions<World, Player, Snapshot, RoomInput>
+    | CustomRoomServiceOptions<World, Player, Snapshot, Input>
+): options is CustomRoomServiceOptions<World, Player, Snapshot, Input> {
+  return typeof options.parseInput === 'function' && typeof options.initialInput === 'function'
+}
+
+function disableNagle(socket: Duplex): void {
+  if ('setNoDelay' in socket && typeof socket.setNoDelay === 'function') {
+    socket.setNoDelay(true)
+  }
+}
+
 function defaultParseInput(raw: unknown, previous: RoomInput): RoomInput | null {
-  if (!raw || typeof raw !== 'object') return null
-  const candidate = raw as Record<string, unknown>
+  if (!isRecord(raw)) return null
   if (
-    typeof candidate.left !== 'boolean' ||
-    typeof candidate.right !== 'boolean' ||
-    !Number.isSafeInteger(candidate.jump) ||
-    (candidate.jump as number) < previous.jump
+    typeof raw.left !== 'boolean' ||
+    typeof raw.right !== 'boolean' ||
+    !isSafeInt(raw.jump) ||
+    raw.jump < previous.jump
   ) {
     return null
   }
-  return { left: candidate.left, right: candidate.right, jump: candidate.jump as number }
+  return { left: raw.left, right: raw.right, jump: raw.jump }
 }
 
 function defaultIdleInput(previous: RoomInput): RoomInput {
@@ -127,28 +175,52 @@ function extractResumeFromUrl(url: string | undefined): string {
   }
 }
 
-export function createRoomService<World, Player, Snapshot extends object, Input = RoomInput>({
+export function createRoomService<World, Player, Snapshot extends object>(
+  options: RoomServiceOptions<World, Player, Snapshot, RoomInput>
+): RoomService<World>
+export function createRoomService<World, Player, Snapshot extends object, Input>(
+  options: CustomRoomServiceOptions<World, Player, Snapshot, Input>
+): RoomService<World>
+export function createRoomService<World, Player, Snapshot extends object, Input = RoomInput>(
+  options:
+    | RoomServiceOptions<World, Player, Snapshot, RoomInput>
+    | CustomRoomServiceOptions<World, Player, Snapshot, Input>
+): RoomService<World> {
+  if (hasCustomInputSchema(options)) {
+    const initialInput = options.initialInput
+    return createRoomServiceImpl({
+      ...options,
+      customSchema: true,
+      initialInput,
+      parseInput: options.parseInput,
+      mergeInput: options.mergeInput ?? ((_previous, next) => next),
+      idleInput: options.idleInput ?? (() => initialInput())
+    })
+  }
+  const customInitial = options.initialInput
+  return createRoomServiceImpl<World, Player, Snapshot, RoomInput>({
+    ...options,
+    customSchema: Boolean(options.parseInput || customInitial || options.mergeInput || options.idleInput),
+    initialInput: customInitial ?? (() => ({ ...emptyInput })),
+    parseInput: options.parseInput ?? defaultParseInput,
+    mergeInput: options.mergeInput ?? ((_previous, next) => next),
+    idleInput: options.idleInput ?? (customInitial ? () => customInitial() : defaultIdleInput)
+  })
+}
+
+function createRoomServiceImpl<World, Player, Snapshot extends object, Input>({
   createPlayer,
   restartPlayer,
   stepPlayer,
   snapshot,
   beforePublish,
-  parseInput,
-  initialInput,
-  mergeInput,
-  idleInput,
+  parseInput: validateInput,
+  initialInput: makeInitialInput,
+  mergeInput: combineInput,
+  idleInput: toIdleInput,
+  customSchema,
   maxPayloadBytes
-}: RoomServiceOptions<World, Player, Snapshot, Input>) {
-  const customSchema = Boolean(parseInput || initialInput || mergeInput || idleInput)
-  const makeInitialInput: () => Input = initialInput ?? (() => ({ ...emptyInput }) as unknown as Input)
-  const validateInput: (raw: unknown, previous: Input) => Input | null =
-    parseInput ?? ((raw, previous) => defaultParseInput(raw, previous as unknown as RoomInput) as unknown as Input | null)
-  const combineInput: (previous: Input, next: Input) => Input = mergeInput ?? ((_previous, next) => next)
-  const toIdleInput: (previous: Input) => Input =
-    idleInput ??
-    (initialInput
-      ? () => makeInitialInput()
-      : previous => defaultIdleInput(previous as unknown as RoomInput) as unknown as Input)
+}: ResolvedRoomServiceOptions<World, Player, Snapshot, Input>): RoomService<World> {
   const httpPayloadLimit = maxPayloadBytes ?? 512
   const wsPayloadLimit = maxPayloadBytes ?? 4096
 
@@ -220,7 +292,8 @@ export function createRoomService<World, Player, Snapshot extends object, Input 
     if (!member) {
       const used = new Set(Array.from(room.members.values(), item => item.slot))
       if (used.size >= 8) return { ok: false, status: 409, message: 'Room is full' }
-      const slot = [0, 1, 2, 3, 4, 5, 6, 7].find(index => !used.has(index))!
+      const slot = [0, 1, 2, 3, 4, 5, 6, 7].find(index => !used.has(index))
+      if (slot === undefined) return { ok: false, status: 409, message: 'Room is full' }
       const id = randomUUID()
       token = randomUUID()
       member = {
@@ -245,35 +318,34 @@ export function createRoomService<World, Player, Snapshot extends object, Input 
   }
 
   function applyInputPayload(room: Room, member: Member, raw: unknown): boolean {
-    if (!raw || typeof raw !== 'object') return false
-    const envelope = raw as Record<string, unknown>
+    if (!isRecord(raw)) return false
     const inputSource =
-      envelope.type === 'input' && envelope.input && typeof envelope.input === 'object'
-        ? envelope.input
+      raw.type === 'input' && isRecord(raw.input)
+        ? raw.input
         : raw
 
     const rawRestart =
-      envelope.restart !== undefined
-        ? envelope.restart
-        : (inputSource as Record<string, unknown>).restart
+      raw.restart !== undefined
+        ? raw.restart
+        : inputSource.restart
     let restart = member.restart
     if (rawRestart !== undefined) {
-      if (!Number.isSafeInteger(rawRestart) || (rawRestart as number) < member.restart) return false
-      restart = rawRestart as number
+      if (!isSafeInt(rawRestart) || rawRestart < member.restart) return false
+      restart = rawRestart
     } else if (!customSchema) {
       return false
     }
 
     const rawSeq =
-      envelope.inputSeq !== undefined
-        ? envelope.inputSeq
-        : (inputSource as Record<string, unknown>).inputSeq
+      raw.inputSeq !== undefined
+        ? raw.inputSeq
+        : inputSource.inputSeq
     let seq: number | undefined
     if (rawSeq !== undefined) {
-      if (!Number.isSafeInteger(rawSeq) || (rawSeq as number) < 0 || (rawSeq as number) < member.receivedSeq) {
+      if (!isSafeInt(rawSeq) || rawSeq < 0 || rawSeq < member.receivedSeq) {
         return false
       }
-      seq = rawSeq as number
+      seq = rawSeq
     }
 
     const latestInput = member.inputQueue.length > 0 ? member.inputQueue[member.inputQueue.length - 1].input : member.input
@@ -285,10 +357,7 @@ export function createRoomService<World, Player, Snapshot extends object, Input 
       member.restart = restart
       member.inputQueue.length = 0
       if (restartPlayer) {
-        const restartInput =
-          parsed && typeof parsed === 'object'
-            ? ({ ...(parsed as Record<string, unknown>), restart } as Input & { restart: number })
-            : ({ restart } as unknown as Input & { restart: number })
+        const restartInput: Input & { restart: number } = Object.assign({}, parsed, { restart })
         member.player = restartPlayer(member.player, restartInput, room.world)
       }
       member.input = parsed
@@ -307,8 +376,8 @@ export function createRoomService<World, Player, Snapshot extends object, Input 
       if (seq > member.receivedSeq) {
         member.receivedSeq = seq
         if (member.inputQueue.length >= maxInputQueue) {
-          const dropped = member.inputQueue.shift()!
-          member.input = combineInput(member.input, dropped.input)
+          const dropped = member.inputQueue.shift()
+          if (dropped) member.input = combineInput(member.input, dropped.input)
         }
         member.inputQueue.push({ input: parsed, seq })
       } else {
@@ -419,7 +488,7 @@ export function createRoomService<World, Player, Snapshot extends object, Input 
     startTimer()
 
     const accept = createHash('sha1').update(wsKey + wsGuid).digest('base64')
-    ;(socket as Duplex & { setNoDelay?(noDelay?: boolean): void }).setNoDelay?.(true)
+    disableNagle(socket)
     try {
       socket.write(
         'HTTP/1.1 101 Switching Protocols\r\n' +
@@ -450,13 +519,12 @@ export function createRoomService<World, Player, Snapshot extends object, Input 
       if (member.transport !== transport || room.members.get(token) !== member) return
       let parsed: unknown
       try { parsed = JSON.parse(text) } catch { return }
-      if (!parsed || typeof parsed !== 'object') return
-      const msg = parsed as Record<string, unknown>
-      if (msg.type === 'leave') {
+      if (!isRecord(parsed)) return
+      if (parsed.type === 'leave') {
         removeMember(key, room, token, member)
         return
       }
-      if (msg.type === 'ping') {
+      if (parsed.type === 'ping') {
         if (!socket.destroyed && socket.writable && socket.writableLength < frameBudget) {
           socket.write(encodeWsFrame(0x1, Buffer.from(JSON.stringify({ type: 'pong' }), 'utf8')))
         }
@@ -570,11 +638,12 @@ export function createRoomService<World, Player, Snapshot extends object, Input 
             fragments = [payload]
             fragmentBytes = length
           } else {
-            fragments!.push(payload)
+            if (!fragments) return failWs(1002, 'Unexpected continuation frame')
+            fragments.push(payload)
             fragmentBytes += length
           }
           if (!fin) continue
-          complete = Buffer.concat(fragments!, fragmentBytes)
+          complete = Buffer.concat(fragments, fragmentBytes)
           fragments = null
           fragmentBytes = 0
         }
@@ -609,7 +678,11 @@ export function createRoomService<World, Player, Snapshot extends object, Input 
     const chunks: Buffer[] = []
     let bytes = 0
     for await (const chunk of req) {
-      const buf = typeof chunk === 'string' ? Buffer.from(chunk) : chunk as Buffer
+      const buf = typeof chunk === 'string'
+        ? Buffer.from(chunk)
+        : Buffer.isBuffer(chunk)
+          ? chunk
+          : Buffer.from(chunk)
       bytes += buf.byteLength
       if (bytes > httpPayloadLimit) {
         res.setHeader('Connection', 'close')
@@ -654,8 +727,8 @@ export function createRoomService<World, Player, Snapshot extends object, Input 
               room.members.delete(token)
               continue
             }
-            if (member.inputQueue.length > 0) {
-              const queued = member.inputQueue.shift()!
+            const queued = member.inputQueue.shift()
+            if (queued) {
               member.input = combineInput(member.input, queued.input)
               member.idle = false
               stepPlayer(member.player, member.input, STEP, room.world, member.identity)
@@ -680,21 +753,21 @@ export function createRoomService<World, Player, Snapshot extends object, Input 
           }
           if (!connected.length) continue
           if (beforePublish) {
-            const participants = new Array(connected.length)
+            const participants: { player: Player; identity?: string }[] = []
             for (let i = 0; i < connected.length; i++) {
-              participants[i] = { player: connected[i].player, identity: connected[i].identity }
+              participants.push({ player: connected[i].player, identity: connected[i].identity })
             }
             beforePublish(room.world, participants, tick)
           }
-          const players = new Array(connected.length)
+          const players: (Snapshot & { id: string; slot: number; lastProcessedSeq: number })[] = []
           for (let i = 0; i < connected.length; i++) {
             const member = connected[i]
-            players[i] = {
+            players.push({
               ...snapshot(member.player, room.world, member.identity),
               id: member.id,
               slot: member.slot,
               lastProcessedSeq: member.lastProcessedSeq
-            }
+            })
           }
           let ssePacket: string | undefined
           let wsFrame: Buffer | undefined

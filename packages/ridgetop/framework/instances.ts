@@ -49,7 +49,7 @@ export function instances(
         throw new RangeError('Instance scale must contain three finite, positive values')
       }
       const [r, g, b] = color
-      const rawA = color.length >= 4 ? (color as Color)[3] : 1
+      const rawA = color.length === 4 ? color[3] : 1
       const alpha = Number.isFinite(rawA) ? Math.max(0, Math.min(1, rawA)) : 1
       const at = count * INSTANCE_SIZE
       data[at] = x

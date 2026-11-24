@@ -6,7 +6,7 @@ import { bakeSpriteDirections, bakeSpritePixels, renderMeshPixels, spriteDirecti
 import { color } from './renderer.ts'
 import type { SpriteAtlasSource, SpriteClip, SpriteSheetImage } from './sprites.ts'
 import { artPalette, artPoseBounds, artShapes, checkArtModel, checkArtPalette, checkFrameSize, compileArtJoints, modelFromArtRecipe } from './art-recipe.ts'
-import type { ArtModel, ArtPart, ArtRecipe, ArtRecipeClip, ArtRecipeClipFrame, ArtRecipeJoint, ArtRecipeJointPose, ArtShape, ArtTone } from './art-recipe.ts'
+import type { ArtModel, ArtPart, ArtRecipe, ArtShape, ArtTone } from './art-recipe.ts'
 import { captureSourceSite, isTestingActive, nextTestingGroupId, registerArtKitRuntime } from './testing-runtime.ts'
 import type { Color, InstanceBatch, LightingOptions, Mesh, Vec3 } from './types.ts'
 export { artPalette, artShapes, modelFromArtRecipe } from './art-recipe.ts'
@@ -123,7 +123,14 @@ export const artModels = {
   ] }
 } satisfies Record<string, ArtModel>
 
-const shapeNames = new Map(Object.entries(artShapes).map(([key, mesh]) => [mesh, key as ArtShape]))
+function isArtShape(key: string): key is ArtShape {
+  return Object.hasOwn(artShapes, key)
+}
+
+const shapeNames = new Map<Mesh, ArtShape>()
+for (const key of Object.keys(artShapes)) {
+  if (isArtShape(key)) shapeNames.set(artShapes[key], key)
+}
 
 /** Make an independent, editable source file for a built-in model. */
 export function createArtRecipe(name: keyof typeof artModels): ArtRecipe {
@@ -137,14 +144,16 @@ export function createArtRecipe(name: keyof typeof artModels): ArtRecipe {
       const shape = shapeNames.get(p.mesh)
       if (!shape) throw new Error('Unknown art shape in built-in model: ' + name)
       return {
-        name: p.name ?? 'part-' + (index + 1), shape, position: [...p.position] as Vec3, scale: [...p.scale] as Vec3,
+        name: p.name ?? 'part-' + (index + 1), shape,
+        position: [p.position[0], p.position[1], p.position[2]] as const,
+        scale: [p.scale[0], p.scale[1], p.scale[2]] as const,
         tone: p.tone, ...(p.pitch ? { pitch: p.pitch } : {}), ...(p.yaw ? { yaw: p.yaw } : {}),
         ...(p.roll ? { roll: p.roll } : {}), ...(p.unlit ? { unlit: p.unlit } : {}),
         ...(p.joint ? { joint: p.joint } : {})
       }
     }),
-    ...(entry.joints ? { joints: structuredClone(entry.joints) as ArtRecipeJoint[] } : {}),
-    ...(entry.clips ? { clips: structuredClone(entry.clips) as Record<string, ArtRecipeClip> } : {})
+    ...(entry.joints ? { joints: Array.from(entry.joints, j => structuredClone(j)) } : {}),
+    ...(entry.clips ? { clips: Object.fromEntries(Object.entries(entry.clips).map(([k, v]) => [k, structuredClone(v)])) } : {})
   }
 }
 
@@ -164,13 +173,15 @@ export function rigFromArtModel(model: ArtModel, palette: Partial<Record<ArtTone
   for (const p of model.parts) {
     const jIdx = p.joint !== undefined ? indexById.get(p.joint) : undefined
     const rp = jIdx !== undefined ? restPos[jIdx] : [0, 0, 0]
+    const partColor = toneColors.get(p.tone)
+    if (!partColor) throw new RangeError('Unknown palette tone: ' + p.tone)
     const rigPart: RigPart = {
       ...(p.name !== undefined ? { name: p.name } : {}),
       mesh: p.mesh,
       position: [p.position[0] - rp[0], p.position[1] - rp[1], p.position[2] - rp[2]],
       scale: [p.scale[0], p.scale[1], p.scale[2]],
       ...(p.pitch || p.yaw || p.roll ? { rotation: [p.pitch ?? 0, p.yaw ?? 0, p.roll ?? 0] as const } : {}),
-      color: toneColors.get(p.tone)!,
+      color: partColor,
       ...(p.unlit ? { unlit: p.unlit } : {})
     }
     if (jIdx !== undefined) partsByJoint[jIdx].push(rigPart)
@@ -208,9 +219,9 @@ export function rigFromArtModel(model: ArtModel, palette: Partial<Record<ArtTone
         const list = Object.hasOwn(tracks, jointId) ? tracks[jointId] : (tracks[jointId] = [])
         list.push({
           t: frame.time,
-          ...(pose.position ? { position: [pose.position[0], pose.position[1], pose.position[2]] as Vec3 } : {}),
+          ...(pose.position ? { position: [pose.position[0], pose.position[1], pose.position[2]] as const } : {}),
           ...(pose.rotation ? { rotation: [pose.rotation[0], pose.rotation[1], pose.rotation[2]] as const } : {}),
-          ...(pose.scale ? { scale: [pose.scale[0], pose.scale[1], pose.scale[2]] as Vec3 } : {}),
+          ...(pose.scale ? { scale: [pose.scale[0], pose.scale[1], pose.scale[2]] as const } : {}),
           ...(recipeClip.easing ? { ease: recipeClip.easing } : {})
         })
       }
@@ -244,11 +255,15 @@ export function rigFromArtRecipe(recipe: unknown, palette?: Partial<Record<ArtTo
   return rigFromArtModel(modelFromArtRecipe(recipe), palette)
 }
 
+function isArtRecipe(source: ArtModel | ArtRecipe): source is ArtRecipe {
+  return source !== null && typeof source === 'object' && 'format' in source && source.format === 'ridgetop-art'
+}
+
 function resolveArtModel(source: ArtModel | ArtRecipe): ArtModel {
-  if (source && typeof source === 'object' && 'format' in source && source.format === 'ridgetop-art') {
+  if (isArtRecipe(source)) {
     return modelFromArtRecipe(source)
   }
-  return source as ArtModel
+  return source
 }
 
 const directionIndex = new Map<string, number>(spriteDirections.map((d, i) => [d, i]))
@@ -408,7 +423,7 @@ export function bakeAnimatedSpritePixels(source: ArtModel | ArtRecipe, options: 
       const { poses, liftY } = entry.samples[f]
       pool.clear()
       renderRig(rig, { position: [0, liftY, 0] }, poses, pool)
-      if (allEightCanonical) {
+      if (cameras === null) {
         const strip = bakeSpritePixels(pool.batches, {
           span, center: [0, centerY, 0], frameSize, elevation, lighting: options.lighting
         })
@@ -422,7 +437,7 @@ export function bakeAnimatedSpritePixels(source: ArtModel | ArtRecipe, options: 
         }
       } else {
         for (let row = 0; row < directions.length; row++) {
-          const tile = renderMeshPixels(cameras![row], pool.batches, frameSize, options.lighting)
+          const tile = renderMeshPixels(cameras[row], pool.batches, frameSize, options.lighting)
           for (let y = 0; y < frameSize; y++) {
             const srcStart = y * rowBytes
             const dstStart = ((row * frameSize + y) * width + col * frameSize) * 4
@@ -471,10 +486,10 @@ export function createArtKit<Extra extends string = never>({
     return new Map(Object.entries(values).map(([role, hex]) => [role, color(hex)]))
   }
   const colors = colorsFor(rgb)
-  const overrides = new Map<Name, typeof colors>()
+  const overrides = new Map<string, typeof colors>()
   for (const [name, recipe] of Object.entries(catalog)) {
     checkArtModel(recipe, name, rgb)
-    if (recipe.palette) overrides.set(name as Name, colorsFor({ ...rgb, ...recipe.palette }))
+    if (recipe.palette) overrides.set(name, colorsFor({ ...rgb, ...recipe.palette }))
   }
   const sprites = new Map<Name, ReturnType<typeof bakeSpriteDirections>>()
   const rigs = new Map<Name, ArtRig>()
@@ -491,8 +506,8 @@ export function createArtKit<Extra extends string = never>({
       recipeParts.push({
         name: p.name ?? ('part-' + (i + 1)),
         shape,
-        position: [...p.position] as Vec3,
-        scale: [...p.scale] as Vec3,
+        position: [p.position[0], p.position[1], p.position[2]] as const,
+        scale: [p.scale[0], p.scale[1], p.scale[2]] as const,
         tone: p.tone,
         ...(p.pitch ? { pitch: p.pitch } : {}),
         ...(p.yaw ? { yaw: p.yaw } : {}),
@@ -500,7 +515,7 @@ export function createArtKit<Extra extends string = never>({
         ...(p.unlit ? { unlit: p.unlit } : {})
       })
     }
-    const mergedPalette = { ...rgb, ...(m.palette ?? {}) }
+    const mergedPalette = { ...rgb, ...m.palette }
     const usedPalette = Object.fromEntries(recipeParts.map(p => [p.tone, mergedPalette[p.tone]]))
     return {
       format: 'ridgetop-art',
@@ -540,9 +555,10 @@ export function createArtKit<Extra extends string = never>({
 
   function group() {
     const batches: InstanceBatch[] = []
+    const readonlyBatches: readonly InstanceBatch[] = batches
     const byMesh = new Map<Mesh, InstanceBatch>()
     return {
-      batches: batches as readonly InstanceBatch[],
+      batches: readonlyBatches,
       clear() { for (const batch of batches) batch.clear() },
       add(name: Name, [x, y, z]: Vec3, { yaw = 0, scale = 1, partTint, id }:
         { yaw?: number; scale?: number; partTint?: (part: ArtPart, index: number) => Color; id?: string } = {}) {

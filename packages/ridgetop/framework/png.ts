@@ -11,9 +11,8 @@ for (let n = 0; n < 256; n++) {
   crcTable[n] = c >>> 0
 }
 
-const nativeCrc32 = typeof (zlib as { crc32?: (buf: Uint8Array) => number }).crc32 === 'function'
-  ? (zlib as { crc32: (buf: Uint8Array) => number }).crc32
-  : null
+const nativeCrc32: ((buf: Uint8Array) => number) | null =
+  typeof zlib.crc32 === 'function' ? zlib.crc32 : null
 
 function computeCrc32(bytes: Uint8Array) {
   if (nativeCrc32) return nativeCrc32(bytes) >>> 0

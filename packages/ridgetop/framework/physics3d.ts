@@ -77,11 +77,12 @@ export interface SpatialHash<T> {
   clear(): void
   queryAabb(bounds: Aabb, out?: T[]): T[]
   queryRadius(center: Vec3, radius: number, out?: T[]): T[]
+  raycast(origin: Vec3, direction: Vec3, maxDist?: number, test?: undefined): SpatialRaycastHit<T, RaycastHit> | null
   raycast<R extends { readonly distance: number } = RaycastHit>(
     origin: Vec3,
     direction: Vec3,
-    maxDist?: number,
-    test?: (item: T, id: SpatialHashKey, bounds: Aabb, bestDist: number) => R | null | undefined
+    maxDist: number | undefined,
+    test: (item: T, id: SpatialHashKey, bounds: Aabb, bestDist: number) => R | null | undefined
   ): SpatialRaycastHit<T, R> | null
 }
 
@@ -1186,11 +1187,11 @@ export function createSpatialHash<T>(cellSize: number): SpatialHash<T> {
     return result
   }
 
-  function raycast<R extends { readonly distance: number } = RaycastHit>(
+  function raycastWith<R extends { readonly distance: number }>(
     origin: Vec3,
     direction: Vec3,
-    maxDist = Infinity,
-    test?: (item: T, id: SpatialHashKey, bounds: Aabb, bestDist: number) => R | null | undefined
+    maxDist: number,
+    test: (item: T, id: SpatialHashKey, bounds: Aabb, bestDist: number) => R | null | undefined
   ): SpatialRaycastHit<T, R> | null {
     if (!isFiniteVec3(origin) || !(maxDist >= 0) || Number.isNaN(maxDist) || entries.size === 0) return null
     const dir = normalizeDirection(direction)
@@ -1294,9 +1295,7 @@ export function createSpatialHash<T>(cellSize: number): SpatialHash<T> {
           const entry = bucket[i]
           if (entry.stamp === stamp) continue
           entry.stamp = stamp
-          const res = test
-            ? test(entry.item, entry.id, entry.bounds, bestDist)
-            : (raycastAabb(origin, dir, entry.bounds, bestDist) as unknown as R | null)
+          const res = test(entry.item, entry.id, entry.bounds, bestDist)
           if (res && Number.isFinite(res.distance) && res.distance >= 0 && res.distance <= bestDist) {
             if (!bestHit || res.distance < bestDist) {
               bestDist = res.distance
@@ -1329,6 +1328,25 @@ export function createSpatialHash<T>(cellSize: number): SpatialHash<T> {
 
     if (!bestHit || !bestEntry) return null
     return { ...bestHit, id: bestEntry.id, item: bestEntry.item }
+  }
+
+  function raycast(origin: Vec3, direction: Vec3, maxDist?: number, test?: undefined): SpatialRaycastHit<T, RaycastHit> | null
+  function raycast<R extends { readonly distance: number } = RaycastHit>(
+    origin: Vec3,
+    direction: Vec3,
+    maxDist: number | undefined,
+    test: (item: T, id: SpatialHashKey, bounds: Aabb, bestDist: number) => R | null | undefined
+  ): SpatialRaycastHit<T, R> | null
+  function raycast(
+    origin: Vec3,
+    direction: Vec3,
+    maxDist = Infinity,
+    test?: (item: T, id: SpatialHashKey, bounds: Aabb, bestDist: number) => { readonly distance: number } | null | undefined
+  ): SpatialRaycastHit<T, { readonly distance: number }> | null {
+    if (test) return raycastWith(origin, direction, maxDist, test)
+    const dir = normalizeDirection(direction)
+    if (!dir) return null
+    return raycastWith(origin, direction, maxDist, (_item, _id, bounds, bestDist) => raycastAabb(origin, dir, bounds, bestDist))
   }
 
   return {

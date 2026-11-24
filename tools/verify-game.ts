@@ -76,6 +76,75 @@ function observe(initial: Player, step: ReturnType<typeof stepFor>, actions: typ
   return result.final
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
+}
+
+function isCourseId(id: string): id is CourseId {
+  return Object.hasOwn(courses, id)
+}
+
+function isGoalId(id: string): id is GoalId {
+  return Object.hasOwn(goals, id)
+}
+
+function isStepAction(value: unknown): value is StepAction {
+  return isRecord(value) &&
+    typeof value.left === 'boolean' &&
+    typeof value.right === 'boolean' &&
+    typeof value.jump === 'boolean'
+}
+
+function isCourseRouteAction(value: unknown): value is CourseRouteAction {
+  return isRecord(value) &&
+    typeof value.left === 'boolean' &&
+    typeof value.right === 'boolean' &&
+    typeof value.jump === 'number' &&
+    typeof value.frames === 'number'
+}
+
+function isPlayer(value: unknown): value is Player {
+  return isRecord(value) &&
+    typeof value.id === 'string' &&
+    typeof value.slot === 'number' &&
+    typeof value.x === 'number' &&
+    typeof value.y === 'number' &&
+    typeof value.vy === 'number' &&
+    typeof value.grounded === 'boolean' &&
+    typeof value.facing === 'number' &&
+    typeof value.moving === 'boolean' &&
+    typeof value.crystals === 'number' &&
+    typeof value.falls === 'number' &&
+    typeof value.finished === 'boolean' &&
+    typeof value.jump === 'number' &&
+    typeof value.ticks === 'number' &&
+    typeof value.started === 'boolean' &&
+    typeof value.checkpoint === 'boolean' &&
+    typeof value.signal === 'boolean' &&
+    typeof value.coyote === 'number' &&
+    typeof value.buffer === 'number' &&
+    typeof value.revision === 'number'
+}
+
+function parseRoutes(raw: unknown): Record<CourseId, CourseRouteAction[]> {
+  if (!isRecord(raw)) throw new TypeError('Expected verification routes object')
+  const readCourse = (id: CourseId): CourseRouteAction[] => {
+    const entry = raw[id]
+    if (!Array.isArray(entry) || !entry.every(isCourseRouteAction)) {
+      throw new TypeError('Invalid verification route for course ' + id)
+    }
+    return entry
+  }
+  return {
+    ridge: readCourse('ridge'),
+    ruins: readCourse('ruins'),
+    summit: readCourse('summit'),
+    storm: readCourse('storm'),
+    foundry: readCourse('foundry'),
+    lastlight: readCourse('lastlight')
+  }
+}
+
 async function certify(api?: ReturnType<typeof createDecisionApi>) {
   const [routeBytes, provenance] = await Promise.all([
     readFile(new URL('../examples/beacon-run/game/verification-routes.json', import.meta.url)),
@@ -84,10 +153,11 @@ async function certify(api?: ReturnType<typeof createDecisionApi>) {
       return [path, createHash('sha256').update(bytes).digest('hex')] as const
     }))
   ])
-  const routes = JSON.parse(routeBytes.toString('utf8')) as Record<CourseId, CourseRouteAction[]>
+  const routes = parseRoutes(JSON.parse(routeBytes.toString('utf8')))
   const reports = []
   const finishedStates: { id: CourseId; state: Player }[] = []
-  for (const [id, course] of Object.entries(courses) as [CourseId, Course][]) {
+  for (const id of Object.keys(courses).filter(isCourseId)) {
+    const course = courses[id]
     const spawn = createPlayer('verification', 0, course)
     const checks = platformerRules(course)
     const step = stepFor(course)
@@ -170,29 +240,30 @@ async function certify(api?: ReturnType<typeof createDecisionApi>) {
 }
 
 async function replay(path: string) {
-  const fixture = JSON.parse(await readFile(path, 'utf8')) as {
-    course?: unknown
-    actions?: unknown
-    initial?: Player
-    goal?: unknown
-  }
-  if (typeof fixture.course !== 'string' || !Object.hasOwn(courses, fixture.course) || !Array.isArray(fixture.actions) ||
-      fixture.actions.some((action: unknown) => {
-        if (!action || typeof action !== 'object') return true
-        const a = action as Record<string, unknown>
-        return typeof a.left !== 'boolean' || typeof a.right !== 'boolean' || typeof a.jump !== 'boolean'
-      })) {
+  const fixture: unknown = JSON.parse(await readFile(path, 'utf8'))
+  if (!isRecord(fixture) || typeof fixture.course !== 'string' || !isCourseId(fixture.course) ||
+      !Array.isArray(fixture.actions) || !fixture.actions.every(isStepAction)) {
     throw new TypeError('Expected a course ID and replay actions with Boolean left, right and jump')
   }
-  const courseId = fixture.course as CourseId
+  const courseId: CourseId = fixture.course
   const course = courses[courseId]
-  const initial = fixture.initial ?? createPlayer('verification', 0, course)
-  const checks = platformerRules(course)
-  if (fixture.goal !== undefined && (typeof fixture.goal !== 'string' || !Object.hasOwn(goals, fixture.goal))) {
-    throw new TypeError('Unknown replay goal')
+  let initial: Player
+  if (fixture.initial === undefined) {
+    initial = createPlayer('verification', 0, course)
+  } else if (isPlayer(fixture.initial)) {
+    initial = fixture.initial
+  } else {
+    throw new TypeError('Invalid replay initial player state')
   }
-  const goal = fixture.goal === undefined ? undefined : goals[fixture.goal as GoalId]
-  return { course: courseId, ...verifyTrace({ initial, step: stepFor(course), actions: fixture.actions as StepAction[], checks, goal }) }
+  const checks = platformerRules(course)
+  let goal
+  if (fixture.goal !== undefined) {
+    if (typeof fixture.goal !== 'string' || !isGoalId(fixture.goal)) {
+      throw new TypeError('Unknown replay goal')
+    }
+    goal = goals[fixture.goal]
+  }
+  return { course: courseId, ...verifyTrace({ initial, step: stepFor(course), actions: fixture.actions, checks, goal }) }
 }
 
 try {

@@ -56,8 +56,9 @@ export function createCircuit(points: readonly TrackPoint[], subdivisions = 8) {
     if (!Number.isFinite(lengthSquared) || lengthSquared === 0) throw new RangeError('Circuit has a degenerate segment')
     return { x, z, dx, dz, lengthSquared, yaw: Math.atan2(dx, dz) }
   })
+  const readonlyNodes: readonly TrackPoint[] = nodes
   return {
-    nodes: nodes as readonly TrackPoint[],
+    nodes: readonlyNodes,
     sample(progress: number) {
       const slot = ((progress % 1 + 1) % 1) * segments.length
       const i = Math.floor(slot)

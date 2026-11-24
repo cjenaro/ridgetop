@@ -13,7 +13,11 @@ export interface CampaignProgress {
   sound: boolean
 }
 
-export const ROUTE: readonly CourseId[] = Object.freeze(Object.keys(courses) as CourseId[])
+function isCourseId(id: string): id is CourseId {
+  return Object.hasOwn(courses, id)
+}
+
+export const ROUTE: readonly CourseId[] = Object.freeze(Object.keys(courses).filter(isCourseId))
 export const SAVE_KEY = 'ridgetop.campaign.v1'
 
 export function loadCampaign(storage?: Pick<Storage, 'getItem'> | null): CampaignProgress {
@@ -49,13 +53,12 @@ export function recordRelay(
   id: string,
   player: { finished: false } | Pick<PlayerSnapshot, 'finished' | 'ticks' | 'signal' | 'falls'>
 ) {
-  if (!player.finished || !Object.hasOwn(courses, id)) return
-  const courseId = id as CourseId
-  const previous = progress.levels[courseId]
-  progress.levels[courseId] = {
+  if (!player.finished || !isCourseId(id)) return
+  const previous = progress.levels[id]
+  progress.levels[id] = {
     ticks: Math.min(previous?.ticks ?? Infinity, player.ticks),
     signal: Boolean(previous?.signal || player.signal),
-    medal: Math.max(previous?.medal ?? 0, medal(courses[courseId], player))
+    medal: Math.max(previous?.medal ?? 0, medal(courses[id], player))
   }
 }
 

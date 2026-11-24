@@ -5,7 +5,7 @@ import type { ArtRecipe, ArtShape, ArtTone } from './art-recipe.ts'
 import { modelReviewFrame, pickRenderedScene, pickSpriteDraws } from './art-review.ts'
 import type { ArtPin, ArtReview, ArtView, PickedSpriteDraw, ReviewScope, ReviewSurface } from './art-review.ts'
 import { multiply, orthographic, view } from './geometry.ts'
-import { bakeSpriteDirections, renderMeshFrame, spriteDirections } from './low-poly.ts'
+import { bakeSpriteDirections, renderMeshFrame } from './low-poly.ts'
 import {
   findRegisteredArtModel, getHudRegions, getLastFrame, getLastSpriteDraws, getTestingHooks,
   isTestingPaused, onTestingHooksRegistered, onTestingPause, recognizeAssetFromPick, setTestingActive, setTestingPaused
@@ -45,16 +45,74 @@ interface Selection {
 const REVIEWS_API = '/__testing/reviews'
 const RECIPE_API = '/__testing/recipe'
 
-async function apiJson<T = unknown>(url: string, method = 'GET', body?: unknown): Promise<T> {
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === 'object' && !Array.isArray(value)
+}
+
+function errorMessage(error: unknown): string {
+  if (error instanceof Error) return error.message
+  if (typeof error === 'object' && error !== null && 'message' in error && typeof error.message === 'string') {
+    return error.message
+  }
+  return String(error)
+}
+
+function isBuiltInArtModel(name: string): name is keyof typeof artModels {
+  return Object.hasOwn(artModels, name)
+}
+
+function isArtShape(value: string): value is ArtShape {
+  return Object.hasOwn(artShapes, value)
+}
+
+function isArtTone(value: string): value is ArtTone {
+  return Object.hasOwn(artPalette, value)
+}
+
+function isReviewScope(value: string): value is ReviewScope {
+  return value === 'asset' || value === 'instance' || value === 'sprite' || value === 'hud'
+}
+
+function isReviewEntry(value: unknown): value is ReviewEntry {
+  return (
+    isRecord(value) &&
+    typeof value.revision === 'string' &&
+    isRecord(value.note) &&
+    typeof value.note.id === 'string' &&
+    typeof value.note.comment === 'string' &&
+    isRecord(value.note.target) &&
+    isRecord(value.note.target.view) &&
+    Array.isArray(value.note.replies)
+  )
+}
+
+function parseReviewEntry(value: unknown): ReviewEntry {
+  if (!isReviewEntry(value)) throw new Error('Unexpected review response from server.')
+  return value
+}
+
+function parseReviewList(value: unknown): { entries: ReviewEntry[]; errors: string[] } {
+  if (!isRecord(value) || !Array.isArray(value.entries) || !Array.isArray(value.errors)) {
+    throw new Error('Unexpected reviews list response from server.')
+  }
+  const entries = value.entries.filter(isReviewEntry)
+  const errors = value.errors.filter((item): item is string => typeof item === 'string')
+  return { entries, errors }
+}
+
+async function apiJson(url: string, method = 'GET', body?: unknown): Promise<unknown> {
   const res = await fetch(url, {
     method,
     cache: 'no-store',
     headers: body !== undefined ? { 'Content-Type': 'application/json' } : {},
     body: body !== undefined ? JSON.stringify(body) : undefined
   })
-  const data = await res.json().catch(() => ({}))
-  if (!res.ok) throw new Error((data as { error?: string }).error ?? `Request failed (${res.status})`)
-  return data as T
+  const data: unknown = await res.json().catch(() => ({}))
+  if (!res.ok) {
+    const msg = isRecord(data) && typeof data.error === 'string' ? data.error : `Request failed (${res.status})`
+    throw new Error(msg)
+  }
+  return data
 }
 
 function el<K extends keyof HTMLElementTagNameMap>(
@@ -67,7 +125,14 @@ function el<K extends keyof HTMLElementTagNameMap>(
   if (attrs?.text !== undefined) node.textContent = attrs.text
   if (attrs?.id) node.id = attrs.id
   if (attrs?.title) node.title = attrs.title
-  if (attrs?.type && 'type' in node) (node as HTMLInputElement).type = attrs.type
+  if (attrs?.type) {
+    if (node instanceof HTMLInputElement) node.type = attrs.type
+    else if (node instanceof HTMLButtonElement && (attrs.type === 'button' || attrs.type === 'submit' || attrs.type === 'reset')) {
+      node.type = attrs.type
+    } else if ('type' in node) {
+      node.setAttribute('type', attrs.type)
+    }
+  }
   if (children.length) node.append(...children)
   return node
 }
@@ -118,12 +183,12 @@ function lookupArtSource(asset: string): ArtSourceInfo | undefined {
       recipe
     }
   }
-  if (Object.hasOwn(artModels, asset)) {
+  if (isBuiltInArtModel(asset)) {
     return {
       path: `art/overrides.json#${asset}`,
       file: null,
       base: null,
-      recipe: createArtRecipe(asset as keyof typeof artModels)
+      recipe: createArtRecipe(asset)
     }
   }
   return undefined
@@ -330,7 +395,6 @@ export function mountTestingStudio(): TestingStudioHandle {
   document.body.append(root)
 
   const entries = new Map<string, ReviewEntry>()
-  let activeTab: 'editor' | 'reviews' = 'editor'
   let selection: Selection | undefined
   let activeReview: ReviewEntry | undefined
   let dirty = false
@@ -351,7 +415,6 @@ export function mountTestingStudio(): TestingStudioHandle {
   }
 
   function setTab(next: 'editor' | 'reviews') {
-    activeTab = next
     editorTabBtn.classList.toggle('rt-tab-active', next === 'editor')
     reviewsTabBtn.classList.toggle('rt-tab-active', next === 'reviews')
     editorPane.hidden = next !== 'editor'
@@ -418,8 +481,8 @@ export function mountTestingStudio(): TestingStudioHandle {
       event.preventDefault()
       setPaused(!isTestingPaused())
     } else if (event.code === 'Escape' && isTestingPaused()) {
-      const target = event.target as HTMLElement | null
-      if (target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.tagName === 'SELECT')) return
+      const target = event.target
+      if (target instanceof HTMLElement && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.tagName === 'SELECT')) return
       event.preventDefault()
       setPaused(false)
     }
@@ -506,8 +569,8 @@ export function mountTestingStudio(): TestingStudioHandle {
   }
 
   function renderCurrentAssetImage(sel: Selection): HTMLCanvasElement {
-    if (sel.surface === 'model' && (sel.draftRecipe || sel.originalRecipe)) {
-      const recipe = sel.draftRecipe ?? sel.originalRecipe!
+    const recipe = sel.draftRecipe ?? sel.originalRecipe
+    if (sel.surface === 'model' && recipe) {
       const model = modelFromArtRecipe(recipe)
       const kit = createArtKit<string>({ palette: recipe.palette, models: { [sel.asset]: model } })
       const pose = buildArtView(sel)
@@ -552,16 +615,15 @@ export function mountTestingStudio(): TestingStudioHandle {
   function renderEditorPane(sel: Selection) {
     editorPane.replaceChildren()
     if (sel.surface === 'model' && sel.draftRecipe) {
-      renderArtRecipeEditor(sel)
+      renderArtRecipeEditor(sel, sel.draftRecipe)
     } else if (sel.surface === 'sprite' && sel.spriteHit) {
-      renderSpriteEditor(sel)
+      renderSpriteEditor(sel, sel.spriteHit)
     } else {
       renderReadOnlyInspector(sel)
     }
   }
 
-  function renderArtRecipeEditor(sel: Selection) {
-    const recipe = sel.draftRecipe!
+  function renderArtRecipeEditor(sel: Selection, recipe: ArtRecipe) {
     let selectedPartIndex = Math.max(0, recipe.parts.findIndex(p => p.name === sel.part))
 
     // Live interactive preview section
@@ -643,7 +705,8 @@ export function mountTestingStudio(): TestingStudioHandle {
     const paletteSection = el('div', { className: 'rt-section' })
     paletteSection.append(el('h3', { className: 'rt-section-title', text: 'Palette Swatches' }))
     const swatches = el('div', { className: 'rt-swatches' })
-    for (const tone of Object.keys(artPalette) as ArtTone[]) {
+    for (const tone of Object.keys(artPalette)) {
+      if (!isArtTone(tone)) continue
       const picker = el('input', { type: 'color' })
       picker.value = recipe.palette[tone] ?? artPalette[tone]
       picker.oninput = () => {
@@ -690,7 +753,7 @@ export function mountTestingStudio(): TestingStudioHandle {
           cell.canvas.getContext('2d')?.drawImage(sheet.image, clip.column * fw, (clip.row ?? 0) * fh, fw, fh, 0, 0, fw, fh)
         }
       } catch (error) {
-        setStatus((error as Error).message)
+        setStatus(errorMessage(error))
       }
     }
 
@@ -722,8 +785,8 @@ export function mountTestingStudio(): TestingStudioHandle {
         sel.part = nextName
         partSelect.options[selectedPartIndex].text = nextName
       }
-      part.shape = shapeSelect.value as ArtShape
-      part.tone = toneSelect.value as ArtTone
+      if (isArtShape(shapeSelect.value)) part.shape = shapeSelect.value
+      if (isArtTone(toneSelect.value)) part.tone = toneSelect.value
       const pos: Vec3 = [posCtrl.inputs[0].valueAsNumber, posCtrl.inputs[1].valueAsNumber, posCtrl.inputs[2].valueAsNumber]
       const scl: Vec3 = [sclCtrl.inputs[0].valueAsNumber, sclCtrl.inputs[1].valueAsNumber, sclCtrl.inputs[2].valueAsNumber]
       if (!pos.every(Number.isFinite) || !scl.every(n => Number.isFinite(n) && n > 0)) {
@@ -801,7 +864,7 @@ export function mountTestingStudio(): TestingStudioHandle {
         setStatus('Grounded and fitted model bounds.')
         renderSelection()
       } catch (error) {
-        setStatus((error as Error).message)
+        setStatus(errorMessage(error))
       }
     }
 
@@ -836,7 +899,7 @@ export function mountTestingStudio(): TestingStudioHandle {
         for (const hook of getTestingHooks()) hook.onRecipeSaved?.(sel.asset, structuredClone(recipe))
         setStatus(`Saved ${src?.file ?? 'art/overrides.json'}! Reload to apply in-game.`)
       } catch (error) {
-        setStatus((error as Error).message)
+        setStatus(errorMessage(error))
       } finally {
         busy = false
         syncSaveButtons()
@@ -865,8 +928,8 @@ export function mountTestingStudio(): TestingStudioHandle {
     paintPreviews()
   }
 
-  function renderSpriteEditor(sel: Selection) {
-    const draw = sel.spriteHit!.draw
+  function renderSpriteEditor(sel: Selection, spriteHit: PickedSpriteDraw) {
+    const draw = spriteHit.draw
     const atlas = draw.atlas
     const clipNames = Object.keys(atlas.clips)
     if (!sel.spriteClip && clipNames.length) sel.spriteClip = draw.clip ?? clipNames[0]
@@ -1197,7 +1260,9 @@ export function mountTestingStudio(): TestingStudioHandle {
     if (!allowedScopes.includes(sel.scope)) sel.scope = allowedScopes[0]
     scopeSelect.value = sel.scope
     scopeSelect.disabled = Boolean(activeReview)
-    scopeSelect.onchange = () => { sel.scope = scopeSelect.value as ReviewScope }
+    scopeSelect.onchange = () => {
+      if (isReviewScope(scopeSelect.value)) sel.scope = scopeSelect.value
+    }
 
     const partInput = el('input', { className: 'rt-input', type: 'text' })
     partInput.value = sel.part ?? ''
@@ -1256,11 +1321,11 @@ export function mountTestingStudio(): TestingStudioHandle {
       submitBtn.disabled = true
       try {
         if (activeReview) {
-          const updated = await apiJson<ReviewEntry>(`${REVIEWS_API}/${activeReview.note.id}`, 'PATCH', {
+          const updated = parseReviewEntry(await apiJson(`${REVIEWS_API}/${activeReview.note.id}`, 'PATCH', {
             revision: activeReview.revision,
             status: activeReview.note.status,
             reply: commentText
-          })
+          }))
           activeReview = updated
           await refreshReviews()
           setStatus(`Saved reply on reviews/${updated.note.id}.json.`)
@@ -1275,13 +1340,13 @@ export function mountTestingStudio(): TestingStudioHandle {
             editSource: sel.source,
             region: [...sel.region]
           }
-          const created = await apiJson<ReviewEntry>(REVIEWS_API, 'POST', {
+          const created = parseReviewEntry(await apiJson(REVIEWS_API, 'POST', {
             id: draftReviewId,
             target,
             scene: resolveSnapshot(),
             comment: commentText,
             png: pngBase64
-          })
+          }))
           activeReview = created
           draftReviewId = crypto.randomUUID()
           await refreshReviews()
@@ -1290,7 +1355,7 @@ export function mountTestingStudio(): TestingStudioHandle {
           renderReviewsPane(sel)
         }
       } catch (error) {
-        setStatus((error as Error).message)
+        setStatus(errorMessage(error))
       } finally {
         busy = false
         submitBtn.disabled = false
@@ -1303,17 +1368,17 @@ export function mountTestingStudio(): TestingStudioHandle {
       resolveBtn.disabled = true
       try {
         const nextStatus = activeReview.note.status === 'resolved' ? 'open' : 'resolved'
-        const updated = await apiJson<ReviewEntry>(`${REVIEWS_API}/${activeReview.note.id}`, 'PATCH', {
+        const updated = parseReviewEntry(await apiJson(`${REVIEWS_API}/${activeReview.note.id}`, 'PATCH', {
           revision: activeReview.revision,
           status: nextStatus,
           reply: textarea.value.trim() || undefined
-        })
+        }))
         activeReview = updated
         await refreshReviews()
         setStatus(`Marked review ${nextStatus}.`)
         renderReviewsPane(sel)
       } catch (error) {
-        setStatus((error as Error).message)
+        setStatus(errorMessage(error))
       } finally {
         busy = false
         resolveBtn.disabled = false
@@ -1401,7 +1466,9 @@ export function mountTestingStudio(): TestingStudioHandle {
         if (!(rect.width > 0 && rect.height > 0 && cx >= rect.left && cx <= rect.right && cy >= rect.top && cy <= rect.bottom)) continue
         const u = (cx - rect.left) / rect.width
         const v = (cy - rect.top) / rect.height
-        const hit = pickSpriteDraws(byCanvas.get(spriteCanvas)!, u, v)
+        const canvasDraws = byCanvas.get(spriteCanvas)
+        if (!canvasDraws) continue
+        const hit = pickSpriteDraws(canvasDraws, u, v)
         if (hit) {
           const d = hit.draw
           const scaleX = rect.width / d.canvasWidth
@@ -1486,20 +1553,23 @@ export function mountTestingStudio(): TestingStudioHandle {
 
   async function refreshReviews() {
     try {
-      const { entries: saved, errors } = await apiJson<{ entries: ReviewEntry[]; errors: string[] }>(REVIEWS_API)
+      const { entries: saved, errors } = parseReviewList(await apiJson(REVIEWS_API))
       entries.clear()
       reviewSelect.replaceChildren(new Option(`Reviews (${saved.length})`, ''))
       for (const e of saved) {
         entries.set(e.note.id, e)
         reviewSelect.append(new Option(`${e.note.status} · ${e.note.target.view.asset} · ${e.note.comment.slice(0, 32)}`, e.note.id))
       }
-      if (activeReview && entries.has(activeReview.note.id)) {
-        activeReview = entries.get(activeReview.note.id)
-        reviewSelect.value = activeReview!.note.id
+      if (activeReview) {
+        const refreshed = entries.get(activeReview.note.id)
+        if (refreshed) {
+          activeReview = refreshed
+          reviewSelect.value = refreshed.note.id
+        }
       }
       if (errors.length) setStatus('Could not load: ' + errors.join(', '))
     } catch (error) {
-      setStatus((error as Error).message)
+      setStatus(errorMessage(error))
     }
   }
 
@@ -1521,7 +1591,7 @@ export function mountTestingStudio(): TestingStudioHandle {
         }
         renderSelection()
       }
-    }).catch(err => setStatus((err as Error).message))
+    }).catch(err => setStatus(errorMessage(err)))
   })
 
   async function openReview(entry: ReviewEntry) {
@@ -1569,7 +1639,7 @@ export function mountTestingStudio(): TestingStudioHandle {
       setStatus('Save or discard pending edits first.')
       return
     }
-    openReview(chosen).catch(err => setStatus((err as Error).message))
+    openReview(chosen).catch(err => setStatus(errorMessage(err)))
   }
 
   refreshBtn.onclick = () => {
@@ -1583,24 +1653,30 @@ export function mountTestingStudio(): TestingStudioHandle {
   // Initial load + resume review from URL or reload-compare state
   refreshReviews().then(async () => {
     if (disposed) return
-    const state = history.state?.ridgetopStudio as { reviewId?: string; scene?: unknown } | undefined
+    const rawState: unknown = history.state
+    const studioState = isRecord(rawState) && isRecord(rawState.ridgetopStudio)
+      ? rawState.ridgetopStudio
+      : undefined
+    const stateReviewId = typeof studioState?.reviewId === 'string' ? studioState.reviewId : undefined
+    const stateScene = studioState?.scene
     const urlReview = new URLSearchParams(location.search).get('review')
-    const wanted = state?.reviewId ?? urlReview
-    if (wanted && entries.has(wanted)) {
-      await openReview(entries.get(wanted)!)
-    } else if (state && state.scene !== undefined && state.scene !== null) {
+    const wanted = stateReviewId ?? urlReview
+    const wantedEntry = wanted ? entries.get(wanted) : undefined
+    if (wantedEntry) {
+      await openReview(wantedEntry)
+    } else if (studioState && stateScene !== undefined && stateScene !== null) {
       if (!isTestingPaused()) setTestingPaused(true)
       const hasRestore = getTestingHooks().some(h => typeof h.restore === 'function')
       if (hasRestore) {
-        await restoreSnapshot(state.scene)
+        await restoreSnapshot(stateScene)
       } else {
-        pendingRestore = { scene: state.scene, entryId: '' }
+        pendingRestore = { scene: stateScene, entryId: '' }
       }
       setStatus('Restored pre-reload scene snapshot.')
     }
-    if (!disposed && state) history.replaceState(null, '')
+    if (!disposed && studioState) history.replaceState(null, '')
   }).catch(err => {
-    if (!disposed) setStatus((err as Error).message)
+    if (!disposed) setStatus(errorMessage(err))
   })
 
   const handle: TestingStudioHandle = {

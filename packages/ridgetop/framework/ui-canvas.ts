@@ -137,6 +137,33 @@ function collectNodes(node: LayoutNode, out: LayoutNode[]) {
   for (const child of node.children ?? []) collectNodes(child, out)
 }
 
+function isCanvasWidget(value: unknown): value is CanvasWidget {
+  if (typeof value !== 'object' || value === null || !('type' in value)) return false
+  const t = value.type
+  return t === 'panel' || t === 'text' || t === 'icon' || t === 'button' ||
+    t === 'toggle' || t === 'select' || t === 'slider' || t === 'bar'
+}
+
+function getCanvasWidget(node: LayoutNode): CanvasWidget | undefined {
+  return isCanvasWidget(node.widget) ? node.widget : undefined
+}
+
+function isUiPrimitiveInstance(value: unknown): value is UiPrimitiveInstance {
+  return typeof value === 'object' && value !== null &&
+    'id' in value && typeof value.id === 'string' &&
+    'snapshot' in value && typeof value.snapshot === 'function' &&
+    'act' in value && typeof value.act === 'function'
+}
+
+function isEditableTarget(target: EventTarget | null): boolean {
+  if (typeof target !== 'object' || target === null) return false
+  if ('isContentEditable' in target && Boolean(target.isContentEditable)) return true
+  if ('closest' in target && typeof target.closest === 'function') {
+    return Boolean(Reflect.apply(target.closest, target, ['input, textarea, select']))
+  }
+  return false
+}
+
 function isInteractive(widget?: CanvasWidget): widget is Extract<CanvasWidget, { type: 'button' | 'toggle' | 'select' | 'slider' }> {
   return Boolean(widget && (widget.type === 'button' || widget.type === 'toggle' || widget.type === 'select' || widget.type === 'slider'))
 }
@@ -196,7 +223,7 @@ export function createCanvasUi(canvas: HTMLCanvasElement, options: {
     if (respectScrim) {
       for (let i = nodes.length - 1; i >= 0; i--) {
         const node = nodes[i]
-        const widget = node.widget as CanvasWidget | undefined
+        const widget = getCanvasWidget(node)
         if (widget?.type === 'panel' && widget.scrim && node.id) {
           const rect = rects.get(node.id)
           if (rect && rect.width > 0 && rect.height > 0) {
@@ -209,7 +236,7 @@ export function createCanvasUi(canvas: HTMLCanvasElement, options: {
     const hits: CanvasUiHit[] = []
     for (let i = startIndex; i < nodes.length; i++) {
       const node = nodes[i]
-      const widget = node.widget as CanvasWidget | undefined
+      const widget = getCanvasWidget(node)
       if (!node.id || !isInteractive(widget)) continue
       if (!includeDisabled && isDisabled(widget)) continue
       const rect = rects.get(node.id)
@@ -222,7 +249,7 @@ export function createCanvasUi(canvas: HTMLCanvasElement, options: {
     for (let i = nodes.length - 1; i >= 0; i--) {
       const node = nodes[i]
       if (!node.id) continue
-      const widget = node.widget as CanvasWidget | undefined
+      const widget = getCanvasWidget(node)
       if (!widget) continue
       const rect = rects.get(node.id)
       if (!rect || rect.width <= 0 || rect.height <= 0) continue
@@ -237,8 +264,8 @@ export function createCanvasUi(canvas: HTMLCanvasElement, options: {
     const prim = widget.primitive
     if (prim) {
       const fn = phase === 'start' ? prim.api.dragStart : prim.api.dragMove
-      if (typeof fn === 'function') fn(ratio)
-      else prim.api.setRatio?.(ratio)
+      if (typeof fn === 'function') Reflect.apply(fn, prim.api, [ratio])
+      else if (typeof prim.api.setRatio === 'function') Reflect.apply(prim.api.setRatio, prim.api, [ratio])
     } else {
       widget.onChange?.(ratio)
     }
@@ -362,10 +389,15 @@ export function createCanvasUi(canvas: HTMLCanvasElement, options: {
       isHold,
       onHold: holdCb,
       isSlider,
-      onDragEnd: sliderPrimitiveRef ? () => sliderPrimitiveRef.api.dragEnd?.() : undefined
+      onDragEnd: sliderPrimitiveRef
+        ? () => {
+            const end = sliderPrimitiveRef.api.dragEnd
+            if (typeof end === 'function') Reflect.apply(end, sliderPrimitiveRef.api, [])
+          }
+        : undefined
     })
-    if (isHold && hit.widget.type === 'button') {
-      if (!wasPressed) holdCb!(true)
+    if (holdCb && hit.widget.type === 'button') {
+      if (!wasPressed) holdCb(true)
       hit.widget.onPress?.()
     } else if (hit.widget.type === 'slider') {
       const ratio = Math.max(0, Math.min(1, (x - hit.rect.x) / Math.max(1, hit.rect.width)))
@@ -380,9 +412,9 @@ export function createCanvasUi(canvas: HTMLCanvasElement, options: {
     releasePointer(event.pointerId, x, y)
   }, signal)
 
-  for (const type of ['pointercancel', 'lostpointercapture'] as const) {
-    canvas.addEventListener(type, event => releasePointer((event as PointerEvent).pointerId), signal)
-  }
+  const onPointerCancel = (event: PointerEvent) => releasePointer(event.pointerId)
+  canvas.addEventListener('pointercancel', onPointerCancel, signal)
+  canvas.addEventListener('lostpointercapture', onPointerCancel, signal)
 
   globalThis.window?.addEventListener('blur', clearHolds, signal)
   globalThis.document?.addEventListener('visibilitychange', () => {
@@ -393,8 +425,7 @@ export function createCanvasUi(canvas: HTMLCanvasElement, options: {
     if (isTestingPaused()) return
     if (options.keyboardEnabled && !options.keyboardEnabled()) return
     if (event.altKey || event.ctrlKey || event.metaKey) return
-    const target = event.target as { closest?: (sel: string) => unknown; isContentEditable?: boolean } | null
-    if (target && (target.isContentEditable || target.closest?.('input, textarea, select'))) return
+    if (isEditableTarget(event.target)) return
     const hits = interactiveHits().filter(h => !(h.widget.type === 'button' && h.widget.onHold))
     if (!hits.length) return
     if (event.code === 'ArrowDown' || (event.code === 'Tab' && !event.shiftKey)) {
@@ -490,7 +521,7 @@ export function createCanvasUi(canvas: HTMLCanvasElement, options: {
   function paintNode(node: LayoutNode) {
     if (node.hidden) return
     const rect = node.id ? rects.get(node.id) : undefined
-    const widget = node.widget as CanvasWidget | undefined
+    const widget = getCanvasWidget(node)
     if (rect && widget) {
       if (widget.type === 'panel') {
         if (widget.scrim) {
@@ -649,8 +680,8 @@ export function createCanvasUi(canvas: HTMLCanvasElement, options: {
   function primitives() {
     const out: UiPrimitiveInstance[] = []
     for (const node of nodes) {
-      const w = node.widget as { primitive?: UiPrimitiveInstance } | undefined
-      if (w?.primitive) out.push(w.primitive)
+      const prim = node.widget?.primitive
+      if (isUiPrimitiveInstance(prim)) out.push(prim)
     }
     return out
   }
@@ -686,7 +717,7 @@ export function createCanvasUi(canvas: HTMLCanvasElement, options: {
         const hudRegions: HudRegion[] = []
         for (const node of nodes) {
           if (!node.id) continue
-          const widget = node.widget as CanvasWidget | undefined
+          const widget = getCanvasWidget(node)
           if (!widget || (widget.type === 'panel' && widget.scrim)) continue
           const rect = rects.get(node.id)
           if (!rect || rect.width <= 0 || rect.height <= 0) continue

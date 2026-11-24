@@ -22,10 +22,15 @@ function percentile(values: number[], fraction: number) {
   return Number(values[Math.ceil(values.length * fraction) - 1].toFixed(2))
 }
 
+function parseBackend(value: FormDataEntryValue | null): Backend {
+  if (value === 'auto' || value === 'webgpu' || value === 'webgl2' || value === 'canvas') return value
+  throw new Error('Unknown renderer backend: ' + String(value))
+}
+
 config.addEventListener('submit', async event => {
   event.preventDefault()
   const options = new FormData(config)
-  const backend = options.get('backend') as Backend
+  const backend = parseBackend(options.get('backend'))
   const count = Number(options.get('count'))
   const workload = options.get('workload')
   runButton.disabled = true

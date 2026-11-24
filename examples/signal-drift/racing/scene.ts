@@ -1,5 +1,5 @@
 import {
-  box, chamferedPrism, color, cylinder, instances, mesh, multiply, octahedron, orthographic,
+  box, chamferedPrism, color, instances, mesh, multiply, octahedron, orthographic,
   projectPoint, view
 } from 'ridgetop'
 import type { Color, LowPolyRenderer, Matrix, Vec3 } from 'ridgetop'
@@ -47,7 +47,7 @@ function terrainTiles(sand: Color[]) {
   const cols = 17
   const rows = 13
   const points: Vec3[] = []
-  const faces = sand.map(() => [] as number[])
+  const faces: number[][] = sand.map(() => [])
   for (let row = 0; row <= rows; row++) {
     for (let col = 0; col <= cols; col++) {
       const x = (col - cols / 2) * 10 + Math.sin(row * 4.8 + col * 2.32) * 1.65
@@ -233,15 +233,28 @@ export function createRaceScene(renderer: LowPolyRenderer, circuit: Circuit) {
   const simpleBatches = [...trackBatches, ...models.common]
   const all = [...trackBatches, ...models.full, ...line, trim, scenery]
 
-  const xs = route.nodes.map(([x]) => x)
-  const zs = route.nodes.map(([, z]) => z)
-  const centerX = (Math.max(...xs) + Math.min(...xs)) / 2
-  const centerZ = (Math.max(...zs) + Math.min(...zs)) / 2
+  let minX = Infinity, maxX = -Infinity, minZ = Infinity, maxZ = -Infinity
+  for (let i = 0; i < route.nodes.length; i++) {
+    const [x, z] = route.nodes[i]
+    if (x < minX) minX = x
+    if (x > maxX) maxX = x
+    if (z < minZ) minZ = z
+    if (z > maxZ) maxZ = z
+  }
+  const centerX = (maxX + minX) / 2
+  const centerZ = (maxZ + minZ) / 2
   const isometric = (x: number, z: number) => view([x + 70, 70, z + 70], [x, 0, z])
   const circuitView = isometric(centerX, centerZ)
-  const bounds = route.nodes.map(([x, z]) => projectPoint(circuitView, x, 0, z))
-  const fitWidth = Math.max(...bounds.map(([x]) => Math.abs(x))) * 2 + trackWidth + 8
-  const fitHeight = Math.max(...bounds.map(([, y]) => Math.abs(y))) * 2 + trackWidth + 8
+  let maxAbsX = -Infinity, maxAbsY = -Infinity
+  for (let i = 0; i < route.nodes.length; i++) {
+    const [x, z] = route.nodes[i]
+    const [px, py] = projectPoint(circuitView, x, 0, z)
+    const ax = Math.abs(px), ay = Math.abs(py)
+    if (ax > maxAbsX) maxAbsX = ax
+    if (ay > maxAbsY) maxAbsY = ay
+  }
+  const fitWidth = maxAbsX * 2 + trackWidth + 8
+  const fitHeight = maxAbsY * 2 + trackWidth + 8
   let wide: Matrix
   let close: Matrix
   let previousAspect = 0

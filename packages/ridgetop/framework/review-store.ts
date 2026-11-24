@@ -6,7 +6,7 @@ import type { IncomingMessage, ServerResponse } from 'node:http'
 import { isDeepStrictEqual } from 'node:util'
 import { fileURLToPath } from 'node:url'
 import { modelFromArtRecipe } from './art-recipe.ts'
-import type { ArtPin, ArtReview, ReviewStatus } from './art-review.ts'
+import type { ArtPin, ArtReview, ReviewScope, ReviewStatus, ReviewSurface } from './art-review.ts'
 import { sendJson } from './host.ts'
 
 export interface ArtReviewHandlerOptions {
@@ -17,7 +17,6 @@ export interface ArtReviewHandlerOptions {
 }
 
 const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
-const states: ReviewStatus[] = ['open', 'ready', 'resolved']
 const digest = (data: string) => createHash('sha256').update(data).digest('hex')
 function bad(message: string, status = 400): never { throw Object.assign(new Error(message), { status }) }
 function words(value: unknown) {
@@ -27,27 +26,72 @@ function words(value: unknown) {
 function isRecord(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === 'object' && !Array.isArray(value)
 }
+function errorCode(error: unknown): string | undefined {
+  if (typeof error === 'object' && error !== null && 'code' in error && typeof error.code === 'string') {
+    return error.code
+  }
+  return undefined
+}
 const validSurfaces = new Set(['model', 'rig', 'mesh', 'sprite', 'hud'])
 const validScopes = new Set(['asset', 'instance', 'sprite', 'hud'])
 const threeDSurfaces = new Set(['model', 'rig', 'mesh'])
 
-function checkPin(pin: ArtPin) {
-  const v = pin?.view
-  if (!isRecord(pin) || !isRecord(v) || !validSurfaces.has(v.surface as string) || !validScopes.has(pin.scope as string) ||
-      (pin.scope === 'hud' && v.surface !== 'hud') || (pin.scope === 'sprite' && threeDSurfaces.has(v.surface as string)) ||
-      ![v.asset, v.instance, v.source].every(s => typeof s === 'string' && s.length && s.length <= 1024) ||
-      ![v.span, v.width, v.height].every(n => typeof n === 'number' && Number.isFinite(n) && n > 0) ||
-      ![v.centerY, v.yaw, v.elevation].every(n => typeof n === 'number' && Number.isFinite(n)) ||
-      Math.abs(v.elevation as number) >= Math.PI / 2 ||
+function isReviewSurface(value: unknown): value is ReviewSurface {
+  return typeof value === 'string' && validSurfaces.has(value)
+}
+function isReviewScope(value: unknown): value is ReviewScope {
+  return typeof value === 'string' && validScopes.has(value)
+}
+function isReviewStatus(value: unknown): value is ReviewStatus {
+  return value === 'open' || value === 'ready' || value === 'resolved'
+}
+function isFiniteNumber(value: unknown): value is number {
+  return typeof value === 'number' && Number.isFinite(value)
+}
+function isSafeNonNegativeInt(value: unknown): value is number {
+  return typeof value === 'number' && Number.isSafeInteger(value) && value >= 0
+}
+function isSafePositiveIntUpTo(value: unknown, max: number): value is number {
+  return typeof value === 'number' && Number.isSafeInteger(value) && value > 0 && value <= max
+}
+function isNonEmptyBoundedString(value: unknown, maxLen: number): value is string {
+  return typeof value === 'string' && value.length > 0 && value.length <= maxLen
+}
+function isUnitRegion(value: unknown): value is [number, number, number, number] {
+  return (
+    Array.isArray(value) &&
+    value.length === 4 &&
+    value.every(n => isFiniteNumber(n) && n >= 0 && n <= 1) &&
+    value[0] <= value[2] &&
+    value[1] <= value[3]
+  )
+}
+
+function checkPin(pin: unknown): asserts pin is ArtPin {
+  if (!isRecord(pin)) bad('Invalid art review target.')
+  const v = pin.view
+  if (!isRecord(v) || !isReviewSurface(v.surface) || !isReviewScope(pin.scope) ||
+      (pin.scope === 'hud' && v.surface !== 'hud') || (pin.scope === 'sprite' && threeDSurfaces.has(v.surface)) ||
+      ![v.asset, v.instance, v.source].every(s => isNonEmptyBoundedString(s, 1024)) ||
+      ![v.span, v.width, v.height].every(n => isFiniteNumber(n) && n > 0) ||
+      !isFiniteNumber(v.centerY) || !isFiniteNumber(v.yaw) || !isFiniteNumber(v.elevation) ||
+      Math.abs(v.elevation) >= Math.PI / 2 ||
       (pin.part !== undefined && (typeof pin.part !== 'string' || pin.part.length > 256)) ||
       (pin.editSource !== undefined && (typeof pin.editSource !== 'string' || pin.editSource.length > 1024)) ||
       (v.sheet !== undefined && (typeof v.sheet !== 'string' || v.sheet.length > 1024)) ||
       (v.handDrawn !== undefined && typeof v.handDrawn !== 'boolean') ||
-      !Array.isArray(v.position) || v.position.length !== 3 || !v.position.every(n => typeof n === 'number' && Number.isFinite(n)) ||
-      !Array.isArray(pin.region) || pin.region.length !== 4 || !pin.region.every(n => typeof n === 'number' && Number.isFinite(n) && n >= 0 && n <= 1) ||
-      pin.region[0] > pin.region[2] || pin.region[1] > pin.region[3] ||
-      (!threeDSurfaces.has(v.surface as string) && (typeof v.clip !== 'string' || !v.clip || v.clip.length > 256 ||
-        ![v.frame, v.column, v.row].every(n => Number.isSafeInteger(n) && (n as number) >= 0)))) bad('Invalid art review target.')
+      !Array.isArray(v.position) || v.position.length !== 3 || !v.position.every(isFiniteNumber) ||
+      !isUnitRegion(pin.region) ||
+      (!threeDSurfaces.has(v.surface) && (!isNonEmptyBoundedString(v.clip, 256) ||
+        ![v.frame, v.column, v.row].every(isSafeNonNegativeInt)))) bad('Invalid art review target.')
+}
+function checkReview(value: unknown, id: string): asserts value is ArtReview {
+  if (!isRecord(value) || value.version !== 1 || value.id !== id || !isReviewStatus(value.status) ||
+      typeof value.created !== 'string' || typeof value.comment !== 'string' || !Array.isArray(value.replies) ||
+      value.replies.some(r => !isRecord(r) || typeof r.text !== 'string')) {
+    bad('Invalid review file.')
+  }
+  checkPin(value.target)
 }
 function checkPngBytes(raw: unknown, maxDim: number, label = 'PNG preview'): Buffer {
   const bytes = typeof raw === 'string' ? Buffer.from(raw, 'base64') : Buffer.alloc(0)
@@ -58,7 +102,7 @@ function checkPngBytes(raw: unknown, maxDim: number, label = 'PNG preview'): Buf
   }
   return bytes
 }
-async function payload(req: IncomingMessage): Promise<Record<string, any>> {
+async function payload(req: IncomingMessage): Promise<Record<string, unknown>> {
   const ct = req.headers['content-type']?.split(';')[0]?.trim().toLowerCase()
   if (ct !== 'application/json') bad('Expected JSON.', 415)
   const chunks: Buffer[] = []
@@ -75,7 +119,7 @@ async function payload(req: IncomingMessage): Promise<Record<string, any>> {
 }
 async function regular(path: string) {
   try { if (!(await lstat(path)).isFile()) bad('Expected a regular project file.'); return await readFile(path) }
-  catch (error) { if ((error as NodeJS.ErrnoException | undefined)?.code !== 'ENOENT') throw error }
+  catch (error) { if (errorCode(error) !== 'ENOENT') throw error }
 }
 async function atomic(path: string, body: string | Buffer) {
   const temp = path + '.' + randomUUID() + '.tmp'
@@ -118,12 +162,8 @@ export function createArtReviewHandler(root: URL, options: ArtReviewHandlerOptio
     const source = raw.toString()
     let parsed: unknown
     try { parsed = JSON.parse(source) } catch { bad('Invalid review file.') }
-    if (!isRecord(parsed)) bad('Invalid review file.')
-    const value = parsed as unknown as ArtReview
-    if (value.version !== 1 || value.id !== id || !states.includes(value.status) || typeof value.created !== 'string' ||
-        typeof value.comment !== 'string' || !Array.isArray(value.replies) || value.replies.some(r => typeof r?.text !== 'string')) bad('Invalid review file.')
-    checkPin(value.target)
-    return { note: value, revision: digest(source) }
+    checkReview(parsed, id)
+    return { note: parsed, revision: digest(source) }
   }
   let queue = Promise.resolve()
   function serialized<T>(fn: () => Promise<T>): Promise<T> {
@@ -145,7 +185,7 @@ export function createArtReviewHandler(root: URL, options: ArtReviewHandlerOptio
           asset === '__proto__' || asset === 'constructor' || asset === 'prototype') {
         bad('Invalid model role.')
       }
-      try { modelFromArtRecipe(recipe) } catch (error) { bad((error as Error).message) }
+      try { modelFromArtRecipe(recipe) } catch (error) { bad(error instanceof Error ? error.message : String(error)) }
       const useOverrides = file === null || file === undefined
       const destination = useOverrides
         ? join(art, 'overrides.json')
@@ -157,12 +197,17 @@ export function createArtReviewHandler(root: URL, options: ArtReviewHandlerOptio
         if (raw) {
           try { parsedDoc = JSON.parse(raw.toString()) } catch { bad('Existing art file is not valid JSON.') }
         }
-        if (useOverrides && !isRecord(parsedDoc)) bad('Existing art overrides file must be a JSON object.')
-        const document = parsedDoc as Record<string, unknown>
-        const original = useOverrides ? (Object.hasOwn(document, asset) ? document[asset] : null) : (raw ? parsedDoc : null)
-        if (!isDeepStrictEqual(original, base)) bad('The model changed on disk. Reload before editing it.', 409)
-        const nextDoc = useOverrides ? Object.assign(Object.create(null), document, { [asset]: recipe }) : recipe
-        await atomic(destination, JSON.stringify(nextDoc, null, 2) + '\n')
+        if (useOverrides) {
+          if (!isRecord(parsedDoc)) bad('Existing art overrides file must be a JSON object.')
+          const original = Object.hasOwn(parsedDoc, asset) ? parsedDoc[asset] : null
+          if (!isDeepStrictEqual(original, base)) bad('The model changed on disk. Reload before editing it.', 409)
+          const nextDoc = Object.assign(Object.create(null), parsedDoc, { [asset]: recipe })
+          await atomic(destination, JSON.stringify(nextDoc, null, 2) + '\n')
+        } else {
+          const original = raw ? parsedDoc : null
+          if (!isDeepStrictEqual(original, base)) bad('The model changed on disk. Reload before editing it.', 409)
+          await atomic(destination, JSON.stringify(recipe, null, 2) + '\n')
+        }
       })
       sendJson(res, { saved: true, file: relative(project, destination).replace(/\\/g, '/') })
       return true
@@ -188,7 +233,7 @@ export function createArtReviewHandler(root: URL, options: ArtReviewHandlerOptio
       const pngBytes = png !== undefined ? checkPngBytes(png, 4096, 'sprite PNG') : undefined
       if (manifest !== undefined) {
         if (!isRecord(manifest) || typeof manifest.src !== 'string' || !/^[^/\\\0]+\.png$/i.test(manifest.src) ||
-            ![manifest.frameWidth, manifest.frameHeight].every(n => Number.isSafeInteger(n) && (n as number) > 0 && (n as number) <= 4096) ||
+            ![manifest.frameWidth, manifest.frameHeight].every(n => isSafePositiveIntUpTo(n, 4096)) ||
             (manifest.clips !== undefined && !isRecord(manifest.clips))) {
           bad('Invalid sprite manifest.')
         }
@@ -198,7 +243,7 @@ export function createArtReviewHandler(root: URL, options: ArtReviewHandlerOptio
         await directory(folder)
         const written: string[] = []
         if (pngBytes) {
-          const pngName = manifest && typeof manifest.src === 'string' ? manifest.src : undefined
+          const pngName = isRecord(manifest) && typeof manifest.src === 'string' ? manifest.src : undefined
           const pngPath = pngName ? resolve(folder, pngName) : stem + '.png'
           if (!pngPath.startsWith(art + sep)) bad('Invalid sprite PNG target.')
           await atomic(pngPath, pngBytes)
@@ -259,7 +304,7 @@ export function createArtReviewHandler(root: URL, options: ArtReviewHandlerOptio
         const updated = await serialized(async () => {
           const entry = await note(match[1])
           if (entry.revision !== revision) bad('The review changed on disk. Refresh the reviews and try again.', 409)
-          if (!states.includes(status)) bad('Invalid review status.')
+          if (!isReviewStatus(status)) bad('Invalid review status.')
           entry.note.status = status
           if (reply) entry.note.replies.push({ text: words(reply), date: new Date().toISOString() })
           await atomic(join(reviews, match[1] + '.json'), JSON.stringify(entry.note, null, 2) + '\n')
@@ -273,9 +318,16 @@ export function createArtReviewHandler(root: URL, options: ArtReviewHandlerOptio
   return async (req: IncomingMessage, res: ServerResponse, path: string) => {
     if (!path.startsWith('/__testing/')) return false
     try { return await handle(req, res, path) } catch (error) {
-      const err = error as { status?: number; message?: string } | undefined
-      res.writeHead(err?.status ?? 500, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' })
-        .end(JSON.stringify({ error: err?.status ? err.message : 'Could not read or write the project review files.' }))
+      const status = typeof error === 'object' && error !== null && 'status' in error && typeof error.status === 'number'
+        ? error.status
+        : undefined
+      const message = error instanceof Error
+        ? error.message
+        : typeof error === 'object' && error !== null && 'message' in error && typeof error.message === 'string'
+          ? error.message
+          : undefined
+      res.writeHead(status ?? 500, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' })
+        .end(JSON.stringify({ error: status ? message : 'Could not read or write the project review files.' }))
       return true
     }
   }

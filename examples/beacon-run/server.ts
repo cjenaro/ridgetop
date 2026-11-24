@@ -17,6 +17,7 @@ const files = [
 const roomRoute = /^\/rooms(?:\/([a-z0-9-]+))?\/([a-z0-9-]{1,32})\/(events|input|leave)$/
 const expeditionRoute = /^\/expeditions\/([a-z0-9-]+)\/([a-z0-9-]{1,32})\/(events|input|leave)$/
 const session = createCookieSession({ name: 'ridgetop_character', path: '/expeditions', maxAge: 31536000 })
+function isCourseId(value: string): value is CourseId { return Object.hasOwn(courses, value) }
 
 export function createBeaconRunServer({ characters = createCharacterStore(), testing }: {
   characters?: ReturnType<typeof createCharacterStore>
@@ -85,9 +86,9 @@ export function createBeaconRunServer({ characters = createCharacterStore(), tes
       if (!match) return false
       const [, zone = 'ridge', code, action] = match
       const key = (expedition ? 'expedition/' : 'race/') + zone + '/' + code
-      if (!Object.hasOwn(courses, zone)) sendText(res, 404, 'Course not found')
+      if (!isCourseId(zone)) sendText(res, 404, 'Course not found')
       else if (action === 'events' && req.method === 'GET') {
-        const courseZone = zone as CourseId
+        const courseZone: CourseId = zone
         const identity = expedition ? session.read(req) : undefined
         const profile = identity ? characters.get(identity) : undefined
         if (expedition && !profile) sendText(res, 401, 'Enter the expedition to create a character')

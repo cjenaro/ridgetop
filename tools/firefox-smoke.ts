@@ -10,9 +10,17 @@ import { createInterface } from 'node:readline'
 import { setTimeout as wait } from 'node:timers/promises'
 
 interface BiDiPending {
-  resolve: (value: any) => void
+  resolve: (value: Record<string, unknown>) => void
   reject: (error: Error) => void
   timeout: ReturnType<typeof setTimeout>
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
+}
+
+function isPredicate<T>(expected: T | ((value: T) => boolean)): expected is (value: T) => boolean {
+  return typeof expected === 'function'
 }
 
 interface BenchmarkRecord {
@@ -34,6 +42,26 @@ interface BenchmarkRecord {
   browser: string
 }
 
+function parseBenchmarkRecord(value: unknown): BenchmarkRecord {
+  if (!isRecord(value)) throw new TypeError('Expected benchmark record object')
+  const {
+    backend, workload, width, height, count, drawCalls, triangles, instances,
+    uploadBytes, culledBatches, samples, cpuMedianMs, cpuP95Ms, frameMedianMs, frameP95Ms, browser
+  } = value
+  if (typeof backend !== 'string' || typeof workload !== 'string' || typeof browser !== 'string' ||
+      typeof width !== 'number' || typeof height !== 'number' || typeof count !== 'number' ||
+      typeof drawCalls !== 'number' || typeof triangles !== 'number' || typeof instances !== 'number' ||
+      typeof uploadBytes !== 'number' || typeof culledBatches !== 'number' || typeof samples !== 'number' ||
+      typeof cpuMedianMs !== 'number' || typeof cpuP95Ms !== 'number' ||
+      typeof frameMedianMs !== 'number' || typeof frameP95Ms !== 'number') {
+    throw new TypeError('Invalid benchmark record fields')
+  }
+  return {
+    backend, workload, width, height, count, drawCalls, triangles, instances,
+    uploadBytes, culledBatches, samples, cpuMedianMs, cpuP95Ms, frameMedianMs, frameP95Ms, browser
+  }
+}
+
 const RENDERER_NAMES = {
   webgl2: 'WebGL 2',
   canvas: 'Canvas 2D'
@@ -41,8 +69,17 @@ const RENDERER_NAMES = {
 
 type FirefoxBackend = keyof typeof RENDERER_NAMES
 
-const BACKENDS: FirefoxBackend[] = (process.env.RIDGETOP_FIREFOX_BACKENDS?.split(',') as FirefoxBackend[] | undefined)
-  ?? ['webgl2', 'canvas']
+function isFirefoxBackend(value: string): value is FirefoxBackend {
+  return Object.hasOwn(RENDERER_NAMES, value)
+}
+
+const rawBackends = process.env.RIDGETOP_FIREFOX_BACKENDS?.split(',')
+const BACKENDS: FirefoxBackend[] = rawBackends
+  ? rawBackends.map(name => {
+    if (!isFirefoxBackend(name)) throw new Error(`Unknown Firefox backend: ${name}`)
+    return name
+  })
+  : ['webgl2', 'canvas']
 const BENCHMARK_COUNT = Number(process.env.RIDGETOP_BENCHMARK_COUNT ?? '1024')
 const FIREFOX_BIN = process.env.RIDGETOP_FIREFOX ?? 'firefox'
 
@@ -74,7 +111,7 @@ async function until<T>(
   let actual: T | undefined
   for (let i = 0; i < limit; i++) {
     actual = await read()
-    if (typeof expected === 'function' ? (expected as (value: T) => boolean)(actual) : expected === actual) {
+    if (isPredicate(expected) ? expected(actual) : expected === actual) {
       return actual
     }
     await wait(100)
@@ -110,7 +147,7 @@ class FirefoxBiDi {
         if (msg.type === 'error') {
           entry.reject(new Error(`BiDi ${msg.error}: ${msg.message}`))
         } else {
-          entry.resolve(msg.result)
+          entry.resolve(isRecord(msg.result) ? msg.result : {})
         }
         return
       }
@@ -133,9 +170,11 @@ class FirefoxBiDi {
     const client = new FirefoxBiDi(ws)
     await client.send('session.new', { capabilities: {} })
     await client.send('session.subscribe', { events: ['log.entryAdded'] })
-    const tree = await client.send<{ contexts: Array<{ context: string }> }>('browsingContext.getTree', {})
-    assert.ok(tree.contexts.length > 0, 'Firefox BiDi opened a browsing context')
-    client.context = tree.contexts[0].context
+    const tree = await client.send('browsingContext.getTree', {})
+    const contexts = Array.isArray(tree.contexts) ? tree.contexts : []
+    const firstContext = contexts[0]
+    assert.ok(isRecord(firstContext) && typeof firstContext.context === 'string', 'Firefox BiDi opened a browsing context')
+    client.context = firstContext.context
     await client.send('browsingContext.setViewport', {
       context: client.context,
       viewport: { width: 1280, height: 800 }
@@ -143,8 +182,8 @@ class FirefoxBiDi {
     return client
   }
 
-  send<T = any>(method: string, params: Record<string, unknown> = {}): Promise<T> {
-    return new Promise<T>((resolve, reject) => {
+  send(method: string, params: Record<string, unknown> = {}): Promise<Record<string, unknown>> {
+    return new Promise<Record<string, unknown>>((resolve, reject) => {
       const id = ++this.nextId
       const timeout = setTimeout(() => {
         this.pending.delete(id)
@@ -156,7 +195,8 @@ class FirefoxBiDi {
   }
 
   async addPreloadScript(functionDeclaration: string): Promise<string> {
-    const res = await this.send<{ script: string }>('script.addPreloadScript', { functionDeclaration })
+    const res = await this.send('script.addPreloadScript', { functionDeclaration })
+    if (typeof res.script !== 'string') throw new Error('Missing preload script id from BiDi')
     return res.script
   }
 
@@ -172,25 +212,25 @@ class FirefoxBiDi {
     })
   }
 
-  async evaluate<T = any>(expression: string): Promise<T> {
+  async evaluate(expression: string): Promise<unknown> {
     const wrapped = `(async () => { const __v = await (${expression}); return JSON.stringify(__v === undefined ? null : __v); })()`
-    const res = await this.send<{
-      type: string
-      result?: { type: string; value?: string }
-      exceptionDetails?: { text?: string }
-    }>('script.evaluate', {
+    const res = await this.send('script.evaluate', {
       expression: wrapped,
       target: { context: this.context },
       awaitPromise: true,
       resultOwnership: 'none'
     })
     if (res.type === 'exception') {
-      throw new Error(`Page evaluation exception: ${res.exceptionDetails?.text ?? JSON.stringify(res)}`)
+      const detail = isRecord(res.exceptionDetails) && typeof res.exceptionDetails.text === 'string'
+        ? res.exceptionDetails.text
+        : JSON.stringify(res)
+      throw new Error(`Page evaluation exception: ${detail}`)
     }
-    if (res.result?.type === 'string' && typeof res.result.value === 'string') {
-      return JSON.parse(res.result.value) as T
+    if (isRecord(res.result) && res.result.type === 'string' && typeof res.result.value === 'string') {
+      const parsed: unknown = JSON.parse(res.result.value)
+      return parsed
     }
-    return undefined as T
+    return undefined
   }
 
   clearErrors(): void {
@@ -317,7 +357,7 @@ const uiAct = (client: FirefoxBiDi, id: string, action = 'press', payload?: unkn
 
 async function assertGameViewport(client: FirefoxBiDi, stage: string, hud: string, uiLayer: string): Promise<void> {
   await client.evaluate('new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))')
-  const layout = await client.evaluate<Record<string, boolean>>(`(() => {
+  const layout = await client.evaluate(`(() => {
     const world = document.getElementById(${JSON.stringify(stage)})
     const layer = document.getElementById(${JSON.stringify(hud)})
     const ui = document.getElementById(${JSON.stringify(uiLayer)})
@@ -364,11 +404,7 @@ try {
   const { client } = firefox
   // 0. Inspect Firefox capabilities & GPU renderer info
   await client.navigate(`${server.origin}/benchmark`)
-  const gpuInfo = await client.evaluate<{
-    userAgent: string
-    hasWebGPU: boolean
-    webgl2: Record<string, string | null> | null
-  }>(`(() => {
+  const gpuInfo = await client.evaluate(`(() => {
     const c = document.createElement('canvas')
     const gl = c.getContext('webgl2')
     const dbg = gl?.getExtension('WEBGL_debug_renderer_info')
@@ -385,7 +421,7 @@ try {
     }
   })()`)
   console.log('Firefox GPU info:', JSON.stringify(gpuInfo))
-  assert.ok(gpuInfo.webgl2, 'Firefox WebGL 2 context available')
+  assert.ok(isRecord(gpuInfo) && gpuInfo.webgl2, 'Firefox WebGL 2 context available')
 
   // 1. Verify all 4 games across WebGL 2 and Canvas 2D
   for (const backend of BACKENDS) {
@@ -424,9 +460,10 @@ try {
     await uiAct(client, 'lh-play')
     await until(() => uiState(client, 'screen'), 'playing', `Tidewatch ${backend} playing`)
     await assertGameViewport(client, 'lh-stage', 'lh-hud', 'lh-ui')
-    const lhState = await client.evaluate<Record<string, unknown>>('window.__ridgetopUi?.state?.()')
+    const lhState = await client.evaluate('window.__ridgetopUi?.state?.()')
+    assert.ok(isRecord(lhState), `Tidewatch ${backend} state object missing`)
     for (const metric of ['day', 'coins', 'fuel', 'warmth', 'carry', 'shipsGuided']) {
-      const value = lhState?.[metric]
+      const value = lhState[metric]
       assert.ok(typeof value === 'number' && Number.isFinite(value), `Tidewatch ${backend} ${metric} finite`)
     }
     assert.deepEqual(client.errors, [], `Tidewatch (${backend}) console/JS errors`)
@@ -437,7 +474,7 @@ try {
     await client.navigate(`${server.origin}/starter/?renderer=${backend}`)
     await until(() => uiState(client, 'count'), '0 / 3', `Starter ${backend} initialized`)
     const starterReady = await until(
-      () => client.evaluate<boolean>(`(() => {
+      () => client.evaluate(`(() => {
         const world = document.querySelector('#world')
         return Boolean(world && !world.hidden && world.width > 0 && world.height > 0)
       })()`),
@@ -447,7 +484,7 @@ try {
     assert.equal(starterReady, true)
     await uiAct(client, 'hud-view-toggle', 'toggle')
     await until(
-      () => client.evaluate<boolean>(`(() => {
+      () => client.evaluate(`(() => {
         const layer = document.querySelector('#sprites')
         if (!layer || layer.hidden) return false
         const pixels = layer.getContext('2d').getImageData(0, 0, layer.width, layer.height).data
@@ -464,13 +501,13 @@ try {
   client.clearErrors()
   await client.navigate(`${server.origin}/starter/?testing=1&renderer=webgl2`)
   await until(
-    () => client.evaluate<string | null>("document.querySelector('#rt-pause-btn')?.textContent?.trim() ?? null"),
+    () => client.evaluate("document.querySelector('#rt-pause-btn')?.textContent?.trim() ?? null"),
     'Pause & Inspect (F9)',
     'Testing Mode studio mounted on /starter/?testing=1'
   )
   await client.evaluate("document.querySelector('#rt-pause-btn').click()")
   await until(
-    () => client.evaluate<boolean>("Boolean(document.querySelector('#ridgetop-testing-drawer'))"),
+    () => client.evaluate("Boolean(document.querySelector('#ridgetop-testing-drawer'))"),
     true,
     'Testing Mode drawer opened on pause'
   )
@@ -491,7 +528,7 @@ try {
   try {
     client.clearErrors()
     await client.navigate(`${server.origin}/benchmark`)
-    await until(() => client.evaluate<boolean>("document.readyState === 'complete'"), true, 'Benchmark page loaded')
+    await until(() => client.evaluate("document.readyState === 'complete'"), true, 'Benchmark page loaded')
     const workloads: Array<'static' | 'dynamic'> = ['static', 'dynamic']
     for (const backend of BACKENDS) {
       for (const workload of workloads) {
@@ -503,19 +540,20 @@ try {
           document.querySelector('#run').click()
         })()`)
         const line = await until(
-          () => client.evaluate<string | null>("document.querySelector('#result')?.textContent ?? null"),
+          () => client.evaluate("document.querySelector('#result')?.textContent ?? null"),
           s => typeof s === 'string' && s.length > 0 && s !== 'Running…',
           `Firefox benchmark ${backend} ${workload}`,
           300
         )
-        assert.ok(line !== null && line.startsWith(RENDERER_NAMES[backend] + ' ·'), `Unexpected benchmark result: ${line}`)
+        assert.ok(typeof line === 'string' && line.startsWith(RENDERER_NAMES[backend] + ' ·'), `Unexpected benchmark result: ${String(line)}`)
         const rawJson = await until(
-          () => client.evaluate<string | null>('window.__ridgetopLastBenchmarkJson'),
-          Boolean,
+          () => client.evaluate('window.__ridgetopLastBenchmarkJson'),
+          value => typeof value === 'string' && value.length > 0,
           `Firefox benchmark JSON capture ${backend} ${workload}`,
           50
         )
-        const parsed = JSON.parse(rawJson as string) as BenchmarkRecord
+        assert.ok(typeof rawJson === 'string', 'Benchmark JSON payload is a string')
+        const parsed = parseBenchmarkRecord(JSON.parse(rawJson))
         if (backend === 'webgl2' && workload === 'static') {
           assert.equal(parsed.drawCalls, 2, 'WebGL 2 static drawCalls === 2')
           assert.equal(parsed.uploadBytes, 0, 'WebGL 2 static uploadBytes === 0')

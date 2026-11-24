@@ -190,7 +190,7 @@ function transformBatch(
           if (polygon.length < 3) continue faces
         }
         const n = polygon.length
-        flat = new Array(n * 3)
+        flat = []
         depth = 0
         for (let j = 0; j < n; j++) {
           const pt = polygon[j]
@@ -198,9 +198,7 @@ function transformBatch(
           if (w <= 0) continue faces
           const inv = 1 / w
           const px = pt[0] * inv, py = pt[1] * inv, pz = pt[2] * inv
-          flat[j * 3] = px
-          flat[j * 3 + 1] = py
-          flat[j * 3 + 2] = pz
+          flat.push(px, py, pz)
           depth += pz
         }
         let area = 0

@@ -6,7 +6,17 @@ type Study = {
   title: string; category: string; description: string; batches: readonly InstanceBatch[]
   span: number; centerY: number; yaw: number; pitch: number; background: Color
 }
-const element = <T extends HTMLElement>(id: string) => document.getElementById(id) as T
+function element(id: string): HTMLElement
+function element<T extends HTMLElement>(id: string, type: new () => T): T
+function element<T extends HTMLElement>(id: string, type?: new () => T): HTMLElement {
+  const el = document.getElementById(id)
+  if (!el) throw new Error('Missing element #' + id)
+  if (type && !(el instanceof type)) throw new Error('Unexpected element type for #' + id)
+  return el
+}
+function parseBackend(value: string | null): Backend {
+  return value === 'webgpu' || value === 'webgl2' || value === 'canvas' || value === 'auto' ? value : 'auto'
+}
 const clamp = (n: number, min: number, max: number) => Math.max(min, Math.min(max, n))
 
 function recipeStudy(source: unknown, title: string, description: string, category = 'Model recipe', background = color('e6ece2')): Study {
@@ -18,12 +28,12 @@ function recipeStudy(source: unknown, title: string, description: string, catego
 }
 
 async function start() {
-  const orbit = element('orbit'), turn = element<HTMLButtonElement>('turn')
+  const orbit = element('orbit'), turn = element('turn', HTMLButtonElement)
   const choiceButtons = [...element('choices').querySelectorAll('button')]
-  const zoomIn = element<HTMLButtonElement>('zoom-in'), zoomOut = element<HTMLButtonElement>('zoom-out')
+  const zoomIn = element('zoom-in', HTMLButtonElement), zoomOut = element('zoom-out', HTMLButtonElement)
   const params = new URLSearchParams(location.search)
-  const renderer = await createLowPolyRenderer(element<HTMLCanvasElement>('model-canvas'), {
-    backend: (params.get('renderer') ?? 'auto') as Backend, canvasDepth: true,
+  const renderer = await createLowPolyRenderer(element('model-canvas', HTMLCanvasElement), {
+    backend: parseBackend(params.get('renderer')), canvasDepth: true,
     lighting: { direction: [-.55, .88, .62], ambient: .57 }
   })
   const studies = new Map<string, Study>([
@@ -100,7 +110,7 @@ async function start() {
     if (study) show(id, study)
   }
   for (const button of choiceButtons) button.onclick = () => select(button.id)
-  const fileInput = element<HTMLInputElement>('source-file')
+  const fileInput = element('source-file', HTMLInputElement)
   element('open').onclick = () => fileInput.click()
   fileInput.onchange = async () => {
     const file = fileInput.files?.[0]

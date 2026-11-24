@@ -1,3 +1,7 @@
+declare global {
+  var webkitAudioContext: typeof AudioContext | undefined
+}
+
 export function createSynthAudio<Name extends string>(motifs: Record<Name, readonly (readonly [number, number, number, number?])[]>,
   { volume = .22, waveform = {} }: { volume?: number; waveform?: Partial<Record<Name, OscillatorType>> } = {}) {
   let muted = false
@@ -5,7 +9,7 @@ export function createSynthAudio<Name extends string>(motifs: Record<Name, reado
   let output: GainNode | undefined
   return {
     unlock() {
-      const Audio = globalThis.AudioContext ?? (globalThis as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext
+      const Audio = globalThis.AudioContext ?? globalThis.webkitAudioContext
       if (!Audio) return
       try {
         if (!context) {
@@ -119,7 +123,7 @@ export function createSoundscape({
   return {
     get running() { return ctx?.state === 'running' },
     unlock() {
-      const AudioCtor = globalThis.AudioContext ?? (globalThis as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext
+      const AudioCtor = globalThis.AudioContext ?? globalThis.webkitAudioContext
       if (!AudioCtor) return
       try {
         if (!ctx) {

@@ -36,12 +36,16 @@ export function createRecords<T>(file?: string, saved: Iterable<readonly [string
   }
 }
 
+function isNotFoundError(error: unknown): boolean {
+  return typeof error === 'object' && error !== null && 'code' in error && error.code === 'ENOENT'
+}
+
 export async function openRecords<T>(file: string): Promise<Records<T>> {
   let saved
   try {
     saved = JSON.parse(await readFile(file, 'utf8'))
   } catch (error) {
-    if ((error as NodeJS.ErrnoException | undefined)?.code !== 'ENOENT') throw error
+    if (!isNotFoundError(error)) throw error
   }
   return createRecords<T>(file, saved)
 }

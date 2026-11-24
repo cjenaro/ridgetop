@@ -79,6 +79,13 @@ function prepareHtml(html: Buffer, testingEnabled: boolean, hosted: boolean): Bu
   return Buffer.from(text, 'utf8')
 }
 
+function errorCode(error: unknown): string | undefined {
+  if (typeof error === 'object' && error !== null && 'code' in error && typeof error.code === 'string') {
+    return error.code
+  }
+  return undefined
+}
+
 async function artFile(pathname: string, folders: Map<string, URL>) {
   const start = pathname.lastIndexOf('/') + 1
   const folder = folders.get(pathname.slice(0, start))
@@ -89,7 +96,7 @@ async function artFile(pathname: string, folders: Map<string, URL>) {
   const file = new URL(encodeURIComponent(name), folder)
   try { if ((await lstat(file)).isFile()) return file }
   catch (error) {
-    const code = (error as NodeJS.ErrnoException | undefined)?.code
+    const code = errorCode(error)
     if (code !== 'ENOENT' && code !== 'ENOTDIR') throw error
   }
 }
@@ -193,7 +200,7 @@ export function createGameHost({
         'Cache-Control': 'no-cache'
       }).end(body)
     } catch (error) {
-      const code = (error as NodeJS.ErrnoException | undefined)?.code
+      const code = errorCode(error)
       if (!res.headersSent && code === 'ENOENT') return sendText(res, 404, 'Not found')
       if (!res.headersSent) sendText(res, 500, 'Server error')
       else res.destroy()

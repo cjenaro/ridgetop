@@ -6,7 +6,7 @@ import { createPartEditor, createViewComparison } from './sprite-model-editor.ts
 type Manifest = SpriteAtlasSource & { clips: Record<string, SpriteClip> }
 type Asset = { image: HTMLCanvasElement; manifest: Manifest }
 type Template = {
-  palette: string[]; roles: string[]; palettes?: string[][]; variant: number; asset?: Asset; recipe?: ArtRecipe; dirty?: boolean
+  palette: string[]; roles: ArtTone[]; palettes?: string[][]; variant: number; asset?: Asset; recipe?: ArtRecipe; dirty?: boolean
   generate(palette: string[], variant: number): Asset
 }
 
@@ -18,8 +18,18 @@ const paletteThemes: Record<ArtTone, string>[] = [
 ]
 
 const templates: Record<string, Template> = {}
-const element = <T extends HTMLElement>(id: string) => document.getElementById(id) as T
-const art = element<HTMLSelectElement>('art')
+function element(id: string): HTMLElement
+function element<T extends HTMLElement>(id: string, type: new () => T): T
+function element<T extends HTMLElement>(id: string, type?: new () => T): HTMLElement {
+  const el = document.getElementById(id)
+  if (!el) throw new Error('Missing element #' + id)
+  if (type && !(el instanceof type)) throw new Error('Unexpected element type for #' + id)
+  return el
+}
+function isArtModelName(name: string): name is keyof typeof artModels {
+  return Object.hasOwn(artModels, name)
+}
+const art = element('art', HTMLSelectElement)
 const library = document.createElement('optgroup')
 library.label = 'Built-in 3D models'
 function bakeRecipe(recipe: ArtRecipe) {
@@ -28,15 +38,16 @@ function bakeRecipe(recipe: ArtRecipe) {
 }
 
 function recipeTemplate(recipe: ArtRecipe): Template {
-  const roles = [...new Set(recipe.parts.map(p => p.tone))]
+  const roles: ArtTone[] = [...new Set(recipe.parts.map(p => p.tone))]
   const basePalette = roles.map(role => (recipe.palette[role] ?? artPalette[role]).replace(/^#/, ''))
   const palettes = [
     basePalette,
-    ...paletteThemes.slice(1).map(theme => roles.map(role => theme[role as ArtTone].replace(/^#/, '')))
+    ...paletteThemes.slice(1).map(theme => roles.map(role => theme[role].replace(/^#/, '')))
   ]
   return { recipe, roles, palette: [...basePalette], palettes, variant: 0, generate: () => bakeRecipe(recipe) }
 }
-for (const name of Object.keys(artModels) as (keyof typeof artModels)[]) {
+for (const name of Object.keys(artModels)) {
+  if (!isArtModelName(name)) continue
   templates[name] = recipeTemplate(createArtRecipe(name))
   library.append(new Option(name[0].toUpperCase() + name.slice(1), name))
 }
@@ -52,15 +63,15 @@ for (const base of artBases) {
 art.append(forms)
 const opened = document.createElement('optgroup')
 opened.label = 'Opened models'
-const clipSelect = element<HTMLSelectElement>('clip')
-const frameMs = element<HTMLInputElement>('frame-ms')
-const preview = element<HTMLCanvasElement>('preview')
+const clipSelect = element('clip', HTMLSelectElement)
+const frameMs = element('frame-ms', HTMLInputElement)
+const preview = element('preview', HTMLCanvasElement)
 const frames = element('frames')
-const play = element<HTMLButtonElement>('play')
-const files = element<HTMLInputElement>('import-files')
-const recipeFile = element<HTMLInputElement>('recipe-file')
-const review = createViewComparison(element<HTMLDetailsElement>('model-review'))
-const partEditor = createPartEditor(element<HTMLDetailsElement>('part-editor'), next => {
+const play = element('play', HTMLButtonElement)
+const files = element('import-files', HTMLInputElement)
+const recipeFile = element('recipe-file', HTMLInputElement)
+const review = createViewComparison(element('model-review', HTMLDetailsElement))
+const partEditor = createPartEditor(element('part-editor', HTMLDetailsElement), next => {
   const baked = bakeRecipe(next)
   templates[art.value] = { ...recipeTemplate(next), asset: baked }
   showAsset(clipSelect.value, index)
@@ -242,7 +253,7 @@ function showPalette(template: Template | undefined) {
     input.value = '#' + template.palette[i]
     input.oninput = () => {
       template.palette[i] = input.value.slice(1)
-      if (template.recipe) template.recipe.palette[role as ArtTone] = input.value
+      if (template.recipe) template.recipe.palette[role] = input.value
       template.dirty = true
       scheduleRecolor(template)
     }
@@ -297,7 +308,7 @@ element('next-palette').onclick = () => {
   const recipe = template.recipe
   if (recipe) {
     template.roles.forEach((role, i) => {
-      recipe.palette[role as ArtTone] = '#' + template.palette[i]
+      recipe.palette[role] = '#' + template.palette[i]
     })
   }
   showPalette(template)

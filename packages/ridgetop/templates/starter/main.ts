@@ -10,9 +10,27 @@ import { game, modelFiles, models, sprites } from './game.ts'
 
 const moves = { left: [-1, 0], up: [0, -1], down: [0, 1], right: [1, 0] } as const
 type Direction = keyof typeof moves
+const directions: readonly Direction[] = ['left', 'up', 'down', 'right']
 const keys: Record<string, Direction> = { KeyA: 'left', ArrowLeft: 'left', KeyW: 'up', ArrowUp: 'up',
   KeyD: 'right', ArrowRight: 'right', KeyS: 'down', ArrowDown: 'down' }
-const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T
+function requireCanvas(id: string): HTMLCanvasElement {
+  const el = document.getElementById(id)
+  if (!(el instanceof HTMLCanvasElement)) throw new Error('Missing canvas #' + id)
+  return el
+}
+function parseBackend(value: string | null, forceCanvas: boolean): Backend {
+  if (value === 'webgpu' || value === 'webgl2' || value === 'canvas' || value === 'auto') return value
+  return forceCanvas ? 'canvas' : 'auto'
+}
+function isArtModelName(name: string): name is keyof typeof artModels {
+  return Object.hasOwn(artModels, name)
+}
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
+}
+function isNumberArray(value: unknown): value is number[] {
+  return Array.isArray(value) && value.every(item => typeof item === 'number')
+}
 
 async function start() {
   const platform = createPlatform()
@@ -58,10 +76,10 @@ async function start() {
   if (!(game.stepSeconds > 0 && Number.isFinite(game.stepSeconds))) throw new Error('stepSeconds must be positive.')
 
   const params = new URLSearchParams(location.search)
-  const backend = (params.get('renderer') ?? (params.has('canvas') ? 'canvas' : 'auto')) as Backend
-  const stage = $<HTMLCanvasElement>('world')
-  const layer = $<HTMLCanvasElement>('sprites')
-  const uiCanvas = $<HTMLCanvasElement>('ui')
+  const backend: Backend = parseBackend(params.get('renderer'), params.has('canvas'))
+  const stage = requireCanvas('world')
+  const layer = requireCanvas('sprites')
+  const uiCanvas = requireCanvas('ui')
   const board = layer.parentElement ?? document.documentElement
   let renderer: LowPolyRenderer
   let rendererPromise: Promise<LowPolyRenderer> | undefined
@@ -153,23 +171,27 @@ async function start() {
     ui.render(buildUiTree(w), { width: w, height: h, pixelRatio: ratio })
     uiDirty = false
   }
-  ;(globalThis as { __ridgetopUi?: unknown }).__ridgetopUi = {
-    snapshot: () => ui.snapshot(),
-    query: (filter?: { id?: string; kind?: string; state?: string; label?: string }) => ui.query(filter),
-    act: (id: string, action: string, payload?: unknown) => {
-      if (uiDirty) renderUiNow()
-      const ok = ui.act(id, action, payload)
-      renderUiNow()
-      return ok
-    },
-    rects: () => Object.fromEntries(ui.rects),
-    state: () => ({
-      count: `${pickups.length - remaining.size} / ${pickups.length}`,
-      view: spriteView ? '2d' : '3d',
-      won,
-      paused: menuDialog.api.isOpen()
-    })
-  }
+  Object.defineProperty(globalThis, '__ridgetopUi', {
+    configurable: true,
+    writable: true,
+    value: {
+      snapshot: () => ui.snapshot(),
+      query: (filter?: { id?: string; kind?: string; state?: string; label?: string }) => ui.query(filter),
+      act: (id: string, action: string, payload?: unknown) => {
+        if (uiDirty) renderUiNow()
+        const ok = ui.act(id, action, payload)
+        renderUiNow()
+        return ok
+      },
+      rects: () => Object.fromEntries(ui.rects),
+      state: () => ({
+        count: `${pickups.length - remaining.size} / ${pickups.length}`,
+        view: spriteView ? '2d' : '3d',
+        won,
+        paused: menuDialog.api.isOpen()
+      })
+    }
+  })
 
   const controls = bindActionControls({
     keys,
@@ -407,7 +429,7 @@ async function start() {
         return
       }
       if (won) return
-      const direction = queued ?? (Object.keys(moves) as Direction[]).find(key => controls.active(key))
+      const direction = queued ?? directions.find(key => controls.active(key))
       queued = undefined
       if (!direction) return
       const [dx, dz] = moves[direction]
@@ -440,7 +462,7 @@ async function start() {
       }
       if (Object.hasOwn(models, name)) return { path: 'game.js#models.' + name, file: null, base: null }
       const base = Object.hasOwn(overrides, name) ? overrides[name] : null
-      const stock = !base && Object.hasOwn(artModels, name) ? createArtRecipe(name as keyof typeof artModels) : undefined
+      const stock = !base && isArtModelName(name) ? createArtRecipe(name) : undefined
       if (stock) stock.palette = {}
       return { path: 'art/overrides.json#' + name, file: null, base, recipe: base ?? stock }
     },
@@ -449,22 +471,27 @@ async function start() {
       fromX, fromZ, travel, pickups: [...remaining.keys()], flash: flash ? [flash.x, flash.z] : null, flashTime, won
     }),
     async restore(raw) {
-      const s = raw as { view: string; time: number; player: number[]; fromX: number; fromZ: number;
-        travel: number; pickups: number[]; flash?: number[]; flashTime: number; won: boolean }
-      if (!s || !['2d', '3d'].includes(s.view) || s.player?.length !== 3 ||
-          ![...s.player, s.time, s.fromX, s.fromZ, s.travel, s.flashTime].every(Number.isFinite) || !Array.isArray(s.pickups)) return
-      await setViewMode(s.view as '2d' | '3d')
+      if (!isRecord(raw)) return
+      const viewMode = raw.view
+      if (viewMode !== '2d' && viewMode !== '3d') return
+      if (!isNumberArray(raw.player) || raw.player.length !== 3) return
+      const { time, fromX: nextFromX, fromZ: nextFromZ, travel: nextTravel, flashTime: nextFlashTime, pickups: nextPickups } = raw
+      if (typeof time !== 'number' || typeof nextFromX !== 'number' || typeof nextFromZ !== 'number' ||
+          typeof nextTravel !== 'number' || typeof nextFlashTime !== 'number') return
+      if (![...raw.player, time, nextFromX, nextFromZ, nextTravel, nextFlashTime].every(Number.isFinite) || !Array.isArray(nextPickups)) return
+      await setViewMode(viewMode)
       syncingView = true
       viewToggle.api.set(spriteView)
       syncingView = false
-      player = { ...spawn, x: s.player[0], z: s.player[1], yaw: s.player[2] }
-      fromX = s.fromX; fromZ = s.fromZ; travel = s.travel
-      lastPaintTime = s.time
-      flash = s.flash?.length === 2 ? { id: 'pickup-effect', name: game.effect, x: s.flash[0], z: s.flash[1] } : undefined
-      flashTime = s.flashTime
-      won = s.won
+      player = { ...spawn, x: raw.player[0], z: raw.player[1], yaw: raw.player[2] }
+      fromX = nextFromX; fromZ = nextFromZ; travel = nextTravel
+      lastPaintTime = time
+      const rawFlash = isNumberArray(raw.flash) && raw.flash.length === 2 ? raw.flash : undefined
+      flash = rawFlash ? { id: 'pickup-effect', name: game.effect, x: rawFlash[0], z: rawFlash[1] } : undefined
+      flashTime = nextFlashTime
+      won = Boolean(raw.won)
       remaining.clear()
-      for (const obj of pickups) if (s.pickups.includes(cell(obj.x, obj.z))) remaining.set(cell(obj.x, obj.z), obj)
+      for (const obj of pickups) if (nextPickups.includes(cell(obj.x, obj.z))) remaining.set(cell(obj.x, obj.z), obj)
       updateItems()
       renderScene(lastPaintTime, true)
     }

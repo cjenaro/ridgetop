@@ -9,10 +9,10 @@ const bundledLibraryDir = join(packageRoot, 'templates', 'starter', 'art', 'libr
 
 async function resolveLibraryDir(preferredDir?: string): Promise<string> {
   if (preferredDir) {
-    try { await access(join(preferredDir, 'catalog.json')); return preferredDir } catch {}
+    try { await access(join(preferredDir, 'catalog.json')); return preferredDir } catch { /* Preferred library catalog not present. */ }
   }
   const local = join(process.cwd(), 'art', 'library')
-  try { await access(join(local, 'catalog.json')); return local } catch {}
+  try { await access(join(local, 'catalog.json')); return local } catch { /* Local library catalog not present; fall back to bundled library. */ }
   return bundledLibraryDir
 }
 

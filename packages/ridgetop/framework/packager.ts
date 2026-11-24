@@ -877,11 +877,11 @@ async function loadProjectConfig(projectDir: string): Promise<{ config: Ridgetop
     const pkg = JSON.parse(await readFile(join(projectDir, 'package.json'), 'utf8'))
     if (pkg.version) version = String(pkg.version)
     if (pkg.ridgetop && typeof pkg.ridgetop === 'object') config = { ...pkg.ridgetop }
-  } catch {}
+  } catch { /* Ignore missing or unreadable package.json. */ }
   try {
     const fileConfig = JSON.parse(await readFile(join(projectDir, 'ridgetop.package.json'), 'utf8'))
     if (fileConfig && typeof fileConfig === 'object') config = { ...config, ...fileConfig }
-  } catch {}
+  } catch { /* Ignore missing or unreadable ridgetop.package.json. */ }
   return { config, version }
 }
 
@@ -947,15 +947,15 @@ async function resolveProjectAssets(projectDir: string, config: RidgetopProjectC
   }
 
   let overrides: Record<string, ArtRecipe> = {}
-  try { overrides = JSON.parse(await readFile(join(artBaseDir, 'art', 'overrides.json'), 'utf8')) } catch {}
+  try { overrides = JSON.parse(await readFile(join(artBaseDir, 'art', 'overrides.json'), 'utf8')) } catch { /* No art overrides file present. */ }
 
   const loadedModels: Record<string, ArtModel> = {}
   for (const [name, relPath] of Object.entries(modelFiles)) {
-    try { loadedModels[name] = modelFromArtRecipe(JSON.parse(await readFile(join(artBaseDir, relPath), 'utf8'))) } catch {}
+    try { loadedModels[name] = modelFromArtRecipe(JSON.parse(await readFile(join(artBaseDir, relPath), 'utf8'))) } catch { /* Skip unreadable or invalid art recipe file. */ }
   }
   const edited: Record<string, ArtModel> = {}
   for (const [name, recipe] of Object.entries(overrides)) {
-    try { edited[name] = modelFromArtRecipe(recipe) } catch {}
+    try { edited[name] = modelFromArtRecipe(recipe) } catch { /* Skip invalid override art recipe. */ }
   }
 
   const kit = createArtKit<string>({ palette, models: { ...edited, ...customModels, ...loadedModels } })
@@ -1134,7 +1134,7 @@ async function assembleWebBundle(
       try {
         const mod = await import(pathToFileURL(candidate).href + '?n=' + Date.now())
         if (mod.game?.title) { detectedName = String(mod.game.title); break }
-      } catch {}
+      } catch { /* Ignore unimportable candidate game module. */ }
     }
   }
   return { detectedName }
@@ -1714,7 +1714,7 @@ async function tryCompileGodotScripts(projectDir: string, config: RidgetopProjec
   ]
   let compilerPath: string | null = null
   for (const candidate of candidates) {
-    try { await access(candidate); compilerPath = candidate; break } catch {}
+    try { await access(candidate); compilerPath = candidate; break } catch { /* Candidate compiler path not present; try next. */ }
   }
   if (!compilerPath) return 0
 
@@ -2270,6 +2270,31 @@ export async function packageGame(options: PackageGameOptions): Promise<PackageR
   return { name: resolvedName, slug: resolvedSlug, appId: resolvedAppId, outputs }
 }
 
+function parsePackageTarget(value: string): PackageTarget | null {
+  switch (value) {
+    case 'web':
+    case 'steam':
+    case 'mobile':
+    case 'godot':
+    case 'player':
+    case 'all':
+      return value
+    default:
+      return null
+  }
+}
+
+function parsePackageOrientation(value: string): PackageOrientation | null {
+  switch (value) {
+    case 'landscape':
+    case 'portrait':
+    case 'any':
+      return value
+    default:
+      return null
+  }
+}
+
 /** Parse standard CLI arguments shared by `tools/package-game.ts` and generated project `game/package.js`. */
 export function parsePackageArgs(argv: readonly string[]) {
   const values: Record<string, string> = {}
@@ -2285,18 +2310,20 @@ export function parsePackageArgs(argv: readonly string[]) {
       values[token.slice(2)] = next
     }
   }
-  const target = (values.target ?? 'all') as PackageTarget
-  if (!['web', 'steam', 'mobile', 'godot', 'player', 'all'].includes(target)) {
-    throw new Error('Unknown --target "' + target + '". Choose web, steam, mobile, godot, player, or all.')
+  const rawTarget = values.target ?? 'all'
+  const target = parsePackageTarget(rawTarget)
+  if (!target) {
+    throw new Error('Unknown --target "' + rawTarget + '". Choose web, steam, mobile, godot, player, or all.')
   }
-  const orientation = (values.orientation ?? 'landscape') as PackageOrientation
-  if (!['landscape', 'portrait', 'any'].includes(orientation)) {
-    throw new Error('Unknown --orientation "' + orientation + '". Choose landscape, portrait, or any.')
+  const rawOrientation = values.orientation ?? 'landscape'
+  const orientation = parsePackageOrientation(rawOrientation)
+  if (!orientation) {
+    throw new Error('Unknown --orientation "' + rawOrientation + '". Choose landscape, portrait, or any.')
   }
   return {
     help: false as const,
     target,
-    game: values.game as PackageGameOptions['game'] | undefined,
+    game: values.game,
     projectDir: values.project,
     outDir: values.out,
     name: values.name,

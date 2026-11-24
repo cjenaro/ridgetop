@@ -36,8 +36,17 @@ function cs(ticks: number) { return Math.floor(ticks * STEP * 100) }
 function unlockSound() { if (progress.sound) audio.unlock() }
 audio.mute(!progress.sound)
 
+function parseBackend(value: string | null): Backend | undefined {
+  if (value === 'webgpu' || value === 'webgl2' || value === 'canvas') return value
+  return undefined
+}
+function isCourseId(value: string): value is CourseId {
+  return Object.hasOwn(courses, value)
+}
+
 async function start() {
-  const config = requestedBackend && ['webgpu', 'webgl2', 'canvas'].includes(requestedBackend) ? { backend: requestedBackend as Backend } : {}
+  const backend = parseBackend(requestedBackend)
+  const config = backend ? { backend } : {}
   const [renderer, sprites] = await Promise.all([
     createLowPolyRenderer($<HTMLCanvasElement>('stage'), config),
     createSprites($<HTMLCanvasElement>('sprites'), reducedMotion)
@@ -51,7 +60,7 @@ async function start() {
   let portraitReady = false
   portrait.onload = () => { portraitReady = true; uiDirty = true }
 
-  let courseId: CourseId = requestedCourse && (ROUTE as readonly string[]).includes(requestedCourse) ? requestedCourse as CourseId : ROUTE[0]
+  let courseId: CourseId = requestedCourse && isCourseId(requestedCourse) ? requestedCourse : ROUTE[0]
   let code = /^[a-z0-9-]{1,32}$/.test(roomCode ?? '') ? roomCode : null
   const requestedMode = url.searchParams.get('mode')
   let mode = requestedMode === 'expedition' ? 'expedition' :
@@ -149,8 +158,8 @@ async function start() {
     options: ROUTE.map(id => ({ value: id, label: courses[id].name })),
     value: courseId,
     onChange(value) {
-      if (syncingCourse || value === courseId || !Object.hasOwn(courses, value)) return
-      enter(mode, value as CourseId)
+      if (syncingCourse || value === courseId || !isCourseId(value)) return
+      enter(mode, value)
     }
   })
 
@@ -249,7 +258,7 @@ async function start() {
       const saved = Number(storage?.getItem(key))
       if (Number.isSafeInteger(saved) && saved > 0) best = saved
       if (ticks && (!best || ticks < best)) storage?.setItem(key, String(ticks))
-    } catch {}
+    } catch { /* Ignore unavailable storage when recording best time. */ }
     const candidate = Math.min(ticks ?? Infinity, best ?? Infinity, progress.levels[courseId]?.ticks ?? Infinity)
     bestText = 'Best ' + (candidate === Infinity ? '—' : time(candidate))
   }
@@ -638,50 +647,54 @@ async function start() {
     ])
   }
 
-  ;(globalThis as { __ridgetopUi?: unknown }).__ridgetopUi = {
-    snapshot: () => ui.snapshot(),
-    query: (filter?: { id?: string; kind?: string; state?: string; label?: string }) => ui.query(filter),
-    act: (id: string, action: string, payload?: unknown) => {
-      if (uiDirty) renderUiNow()
-      if (id === 'course' && action === 'select' && typeof payload === 'string') {
-        courseSelect.api.select(payload)
+  Object.defineProperty(globalThis, '__ridgetopUi', {
+    configurable: true,
+    writable: true,
+    value: {
+      snapshot: () => ui.snapshot(),
+      query: (filter?: { id?: string; kind?: string; state?: string; label?: string }) => ui.query(filter),
+      act: (id: string, action: string, payload?: unknown) => {
+        if (uiDirty) renderUiNow()
+        if (id === 'course' && action === 'select' && typeof payload === 'string') {
+          courseSelect.api.select(payload)
+          renderUiNow()
+          return true
+        }
+        const ok = ui.act(id, action, payload)
         renderUiNow()
-        return true
-      }
-      const ok = ui.act(id, action, payload)
-      renderUiNow()
-      return ok
-    },
-    rects: () => Object.fromEntries(ui.rects),
-    state: () => {
-      const summary = campaignSummary(progress)
-      return {
-        screen,
-        mode,
-        courseId,
-        courseName: courses[courseId].name,
-        backend: renderer.name,
-        connection: connectionLabel,
-        online: connectionOnline,
-        falls: (latest?.falls ?? 0) + ((latest?.falls ?? 0) === 1 ? ' fall' : ' falls'),
-        finished: Boolean(latest?.finished),
-        finishMedal: finishMedalText,
-        campaignProgress: `${summary.cleared} / ${ROUTE.length} relays online`,
-        endingStats: `${summary.signals} / ${ROUTE.length} signal chips · ${summary.gold} / ${ROUTE.length} gold · best combined ${time(summary.ticks)}`,
-        sound: progress.sound ? 'Sound on' : 'Sound off',
-        standings: [...standingsLines],
-        character: character ? { ...character } : null,
-        message: toastMessage,
-        courseDisabled: Object.fromEntries(ROUTE.map(id => {
-          const unlocked = summary.next ? ROUTE.indexOf(summary.next) : -1
-          const disabled = mode === 'expedition'
-            ? Boolean(character && !canEnterRegion(character.cleared, id))
-            : mode === 'campaign' && unlocked >= 0 && ROUTE.indexOf(id) > unlocked
-          return [id, disabled]
-        }))
+        return ok
+      },
+      rects: () => Object.fromEntries(ui.rects),
+      state: () => {
+        const summary = campaignSummary(progress)
+        return {
+          screen,
+          mode,
+          courseId,
+          courseName: courses[courseId].name,
+          backend: renderer.name,
+          connection: connectionLabel,
+          online: connectionOnline,
+          falls: (latest?.falls ?? 0) + ((latest?.falls ?? 0) === 1 ? ' fall' : ' falls'),
+          finished: Boolean(latest?.finished),
+          finishMedal: finishMedalText,
+          campaignProgress: `${summary.cleared} / ${ROUTE.length} relays online`,
+          endingStats: `${summary.signals} / ${ROUTE.length} signal chips · ${summary.gold} / ${ROUTE.length} gold · best combined ${time(summary.ticks)}`,
+          sound: progress.sound ? 'Sound on' : 'Sound off',
+          standings: [...standingsLines],
+          character: character ? { ...character } : null,
+          message: toastMessage,
+          courseDisabled: Object.fromEntries(ROUTE.map(id => {
+            const unlocked = summary.next ? ROUTE.indexOf(summary.next) : -1
+            const disabled = mode === 'expedition'
+              ? Boolean(character && !canEnterRegion(character.cleared, id))
+              : mode === 'campaign' && unlocked >= 0 && ROUTE.indexOf(id) > unlocked
+            return [id, disabled]
+          }))
+        }
       }
     }
-  }
+  })
 
   const stopPlatformLifecycle = page.platform.onLifecycle({
     pause() { audio.suspend() },

@@ -20,11 +20,15 @@ function failed<S, A>(checks: readonly VerificationCheck<S, A>[], frame: Verific
   return checks.find(check => check.test(frame) !== true)?.id
 }
 
+function isThenable(value: unknown): boolean {
+  return (typeof value === 'object' || typeof value === 'function') && value !== null && 'then' in value && typeof value.then === 'function'
+}
+
 function advance<S, A>(step: VerificationModel<S, A>['step'], before: S, action: A): S {
   const draft = copy(before)
   const result = step(draft, copy(action))
-  if (result && typeof (result as { then?: unknown }).then === 'function') throw new TypeError('Verification requires a synchronous step')
-  return result === undefined ? draft : result as S
+  if (isThenable(result)) throw new TypeError('Verification requires a synchronous step')
+  return result === undefined ? draft : result
 }
 
 function violation<S, A>(rule: string, frame: VerificationFrame<S, A>, actions: readonly A[]): Counterexample<S, A> {

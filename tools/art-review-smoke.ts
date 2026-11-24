@@ -19,6 +19,22 @@ function activeTab(): Tab {
   return tab
 }
 
+function isPoint(value: unknown): value is { x: number; y: number } {
+  return value !== null && typeof value === 'object' &&
+    'x' in value && typeof value.x === 'number' &&
+    'y' in value && typeof value.y === 'number'
+}
+
+function requireNumber(value: unknown, label: string): number {
+  if (typeof value !== 'number' || !Number.isFinite(value)) throw new Error(`Expected finite number for ${label}`)
+  return value
+}
+
+function requireString(value: unknown, label: string): string {
+  if (typeof value !== 'string') throw new Error(`Expected string for ${label}`)
+  return value
+}
+
 function change(selector: string, value: string) {
   return activeTab().evaluate(`{const f=document.querySelector(${JSON.stringify(selector)}); f.value=${JSON.stringify(value)}; f.dispatchEvent(new Event('change'))}`)
 }
@@ -30,9 +46,11 @@ const clickButtonByText = (text: string) => activeTab().evaluate(`(() => {
   if (!btn) throw new Error('Missing button: ' + ${JSON.stringify(text)})
   btn.click()
 })()`)
-async function point(selector: string, u: number, v: number) {
-  return activeTab().evaluate(`(() => { const el=document.querySelector(${JSON.stringify(selector)}); el.scrollIntoView({block:'center'});
+async function point(selector: string, u: number, v: number): Promise<{ x: number; y: number }> {
+  const res = await activeTab().evaluate(`(() => { const el=document.querySelector(${JSON.stringify(selector)}); el.scrollIntoView({block:'center'});
     const r=el.getBoundingClientRect(); return { x:r.x+r.width*${u}, y:r.y+r.height*${v} } })()`)
+  if (!isPoint(res)) throw new Error(`Invalid point for ${selector}`)
+  return res
 }
 async function press(selector: string, u: number, v: number, end?: [number, number]) {
   const t = activeTab()
@@ -42,13 +60,13 @@ async function press(selector: string, u: number, v: number, end?: [number, numb
   if (end) await t.call('Input.dispatchMouseEvent', { type: 'mouseMoved', ...at, buttons: 1 })
   await t.call('Input.dispatchMouseEvent', { type: 'mouseReleased', ...at, button: 'left', clickCount: 1 })
 }
-async function saveComment(text: string) {
+async function saveComment(text: string): Promise<string> {
   await clickButtonByText('Comments / Reviews')
   await until(() => activeTab().evaluate("Boolean(document.getElementById('rt-review-comment'))"), true, 'review form mounted')
   await activeTab().evaluate(`{const f=document.getElementById('rt-review-comment'); f.value=${JSON.stringify(text)}; f.dispatchEvent(new Event('input'))}`)
   await clickButtonByText('Save Comment')
   await until(footerText, s => typeof s === 'string' && s.startsWith('Saved reviews/'), 'saved project review')
-  return value('rt-review-select')
+  return requireString(await value('rt-review-select'), 'saved review id')
 }
 
 try {
@@ -75,7 +93,7 @@ try {
   await click(tab, 'rt-pause-btn')
   assert.equal(await viewMode(), '3d')
 
-  const aspect = await tab.evaluate("document.querySelector('#world').width / document.querySelector('#world').height")
+  const aspect = requireNumber(await tab.evaluate("document.querySelector('#world').width / document.querySelector('#world').height"), 'world aspect')
   const span = Math.max(6.9, 10.65 / aspect)
   const camera = multiply(orthographic(span * aspect, span, .1, 52), view([4, 13.5, 3 + 26 * Math.cos(Math.PI / 6)], [4, .5, 3]))
   const visor = projectPoint(camera, 1.07, 1.06, 1.32)
@@ -98,7 +116,7 @@ try {
 
   // Edit part scale in Editor tab and save recipe to disk
   await clickButtonByText('Editor')
-  const scaleX = await tab.evaluate(`(() => {
+  const scaleX = requireNumber(await tab.evaluate(`(() => {
     const label = [...document.querySelectorAll('#ridgetop-testing-drawer label')].find(l => l.textContent?.includes('Scale X'))
     const input = label?.querySelector('input')
     if (!input) throw new Error('Missing Scale X input')
@@ -106,7 +124,7 @@ try {
     input.value = String(next)
     input.dispatchEvent(new Event('change'))
     return next
-  })()`)
+  })()`), 'scaleX')
   await clickButtonByText('Save Recipe')
   await until(footerText, s => typeof s === 'string' && s.includes('Saved art/overrides.json'), 'saved recipe edit to overrides.json')
   const saved = JSON.parse(await readFile(join(game, 'art/overrides.json'), 'utf8')).ranger
@@ -120,9 +138,9 @@ try {
   await click(tab, 'rt-refresh-btn')
   await clickButtonByText('Comments / Reviews')
   await until(() => activeTab().evaluate("document.querySelector('#ridgetop-testing-drawer .rt-pane:not([hidden]) .rt-section-title')?.textContent"), 'Review · ready', 'read the agent reply from disk')
-  const savedLoad = await tab.evaluate<number>('performance.timeOrigin')
+  const savedLoad = requireNumber(await tab.evaluate('performance.timeOrigin'), 'timeOrigin')
   await clickButtonByText('Reload & Compare')
-  await until(() => activeTab().evaluate<number>('performance.timeOrigin'), time => time > savedLoad, 'reloaded latest project source')
+  await until(() => activeTab().evaluate('performance.timeOrigin'), time => typeof time === 'number' && time > savedLoad, 'reloaded latest project source')
   await until(() => activeTab().evaluate("document.querySelector('#ridgetop-testing-drawer .rt-pane:not([hidden]) .rt-section-title')?.textContent"), 'Review · ready', 'restored the reviewed scene')
   assert.deepEqual(await readFile(beforeFile), png)
   await tab.evaluate(`{const f=document.getElementById('rt-review-comment'); f.value='I can read it now.'; f.dispatchEvent(new Event('input'))}`)
@@ -145,13 +163,15 @@ try {
   assert.equal(sprite.target.view.clip, 'run')
 
   // Pick Canvas UI pickup-icon HUD region
-  const iconCenter = await tab.evaluate(`(() => {
+  const rawIconCenter = await tab.evaluate(`(() => {
     const board = document.querySelector('.board')
     board.scrollIntoView({ block: 'center' })
     const b = board.getBoundingClientRect()
     const r = window.__ridgetopUi.rects()['pickup-icon']
     return { x: b.x + r.x + r.width / 2, y: b.y + r.y + r.height / 2 }
   })()`)
+  if (!isPoint(rawIconCenter)) throw new Error('Invalid pickup-icon center')
+  const iconCenter = rawIconCenter
   await tab.call('Input.dispatchMouseEvent', { type: 'mousePressed', ...iconCenter, button: 'left', buttons: 1, clickCount: 1 })
   await tab.call('Input.dispatchMouseEvent', { type: 'mouseReleased', ...iconCenter, button: 'left', clickCount: 1 })
   await until(() => activeTab().evaluate("document.querySelector('#ridgetop-testing-drawer .rt-badge')?.textContent"), 'HUD', 'picked HUD icon')

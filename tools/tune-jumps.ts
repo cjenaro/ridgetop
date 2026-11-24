@@ -87,8 +87,13 @@ function measure(scenarios: readonly ProbeScenario[], timing: JumpTiming) {
   }
 }
 
+function isCourseId(id: string): id is CourseId {
+  return Object.hasOwn(courses, id)
+}
+
 function verifyCourses(routes: Record<CourseId, CourseRouteAction[]>, timing: JumpTiming) {
-  return (Object.entries(courses) as [CourseId, (typeof courses)[CourseId]][]).map(([id, course]) => {
+  return Object.keys(courses).filter(isCourseId).map(id => {
+    const course = courses[id]
     const actions: RoomInput[] = routes[id].flatMap(segment => Array(segment.frames).fill({
       left: segment.left, right: segment.right, jump: segment.jump
     }))

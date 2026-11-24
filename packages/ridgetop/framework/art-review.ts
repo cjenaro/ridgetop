@@ -260,7 +260,7 @@ export function modelReviewFrame(kit: ReviewKit, pose: ArtView, size: number, id
   let angle = 0
   if (sprite) {
     if (pose.clip === 'turntable') {
-      const frame = Number.isFinite(pose.frame) ? Math.floor(pose.frame!) : 0
+      const frame = typeof pose.frame === 'number' && Number.isFinite(pose.frame) ? Math.floor(pose.frame) : 0
       angle = (((frame % spriteDirections.length) + spriteDirections.length) % spriteDirections.length) * Math.PI / 4
     } else {
       const clipName = typeof pose.clip === 'string' ? pose.clip : ''

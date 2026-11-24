@@ -160,9 +160,53 @@ interface TestingRuntimeState {
 
 const GLOBAL_KEY = Symbol.for('ridgetop.testing.runtime')
 
+const ART_SHAPE_NAMES: Readonly<Record<ArtShape, true>> = {
+  box: true,
+  prism: true,
+  cylinder: true,
+  cone: true,
+  octahedron: true,
+  oval: true,
+  dome: true,
+  bowl: true,
+  ring: true,
+  taper: true,
+  arch: true
+}
+
+function isArtShape(name: string): name is ArtShape {
+  return Object.hasOwn(ART_SHAPE_NAMES, name)
+}
+
+function isTestingRuntimeState(value: unknown): value is TestingRuntimeState {
+  return (
+    typeof value === 'object' &&
+    value !== null &&
+    'active' in value &&
+    typeof value.active === 'boolean' &&
+    'paused' in value &&
+    typeof value.paused === 'boolean' &&
+    'pauseListeners' in value &&
+    value.pauseListeners instanceof Set &&
+    'spriteDrawsByCanvas' in value &&
+    value.spriteDrawsByCanvas instanceof Map &&
+    'hooks' in value &&
+    value.hooks instanceof Set &&
+    'artKits' in value &&
+    value.artKits instanceof Set &&
+    'meshMeta' in value &&
+    value.meshMeta instanceof WeakMap &&
+    'rigMeta' in value &&
+    value.rigMeta instanceof WeakMap &&
+    'shapeLookup' in value &&
+    value.shapeLookup instanceof WeakMap
+  )
+}
+
 function detectUrlTesting(): boolean {
   try {
-    const search = (globalThis as { location?: { search?: string } }).location?.search
+    const loc = globalThis.location
+    const search = typeof loc === 'object' && loc ? loc.search : undefined
     if (!search) return false
     const params = new URLSearchParams(search)
     const flag = params.get('testing')
@@ -173,28 +217,26 @@ function detectUrlTesting(): boolean {
 }
 
 function getState(): TestingRuntimeState {
-  const g = globalThis as Record<symbol, TestingRuntimeState | undefined>
-  let state = g[GLOBAL_KEY]
-  if (!state) {
-    state = {
-      active: detectUrlTesting(),
-      paused: false,
-      pauseListeners: new Set(),
-      lastFrame: undefined,
-      spriteDrawsByCanvas: new Map(),
-      lastSpriteDraws: [],
-      manualHudRegions: new Map(),
-      canvasUiRegions: new Map(),
-      hooks: new Set(),
-      artKits: new Set(),
-      meshMeta: new WeakMap(),
-      rigMeta: new WeakMap(),
-      shapeLookup: new WeakMap(),
-      nextGroupId: 1,
-      nextAtlasId: 1
-    }
-    g[GLOBAL_KEY] = state
+  const existing: unknown = Reflect.get(globalThis, GLOBAL_KEY)
+  if (isTestingRuntimeState(existing)) return existing
+  const state: TestingRuntimeState = {
+    active: detectUrlTesting(),
+    paused: false,
+    pauseListeners: new Set(),
+    lastFrame: undefined,
+    spriteDrawsByCanvas: new Map(),
+    lastSpriteDraws: [],
+    manualHudRegions: new Map(),
+    canvasUiRegions: new Map(),
+    hooks: new Set(),
+    artKits: new Set(),
+    meshMeta: new WeakMap(),
+    rigMeta: new WeakMap(),
+    shapeLookup: new WeakMap(),
+    nextGroupId: 1,
+    nextAtlasId: 1
   }
+  Reflect.set(globalThis, GLOBAL_KEY, state)
   return state
 }
 
@@ -305,7 +347,7 @@ export function captureSourceSite(stackOverride?: string): string | undefined {
 export function registerKnownShapes(shapes: Readonly<Record<string, Mesh>>): void {
   const state = getState()
   for (const [name, mesh] of Object.entries(shapes)) {
-    state.shapeLookup.set(mesh, name as ArtShape)
+    if (isArtShape(name)) state.shapeLookup.set(mesh, name)
   }
 }
 

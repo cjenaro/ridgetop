@@ -7,9 +7,21 @@ function debugUrl() {
 
 type DevToolsTarget = { id: string; webSocketDebuggerUrl: string }
 type PendingCall = {
-  resolve: (value: any) => void
+  resolve: (value: Record<string, unknown>) => void
   reject: (reason?: unknown) => void
   timeout: ReturnType<typeof setTimeout>
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
+}
+
+function isDevToolsTarget(value: unknown): value is DevToolsTarget {
+  return isRecord(value) && typeof value.id === 'string' && typeof value.webSocketDebuggerUrl === 'string'
+}
+
+function isPredicate<T>(expected: T | ((value: T) => unknown)): expected is (value: T) => unknown {
+  return typeof expected === 'function'
 }
 
 async function connect(url: string) {
@@ -22,21 +34,30 @@ async function connect(url: string) {
   const errors: string[] = []
   let message = 0
   socket.onmessage = ({ data }) => {
-    const packet = JSON.parse(data)
-    if (packet.id) {
+    const packet: unknown = JSON.parse(String(data))
+    if (!isRecord(packet)) return
+    if (typeof packet.id === 'number') {
       const action = pending.get(packet.id)
       if (!action) return
       clearTimeout(action.timeout)
       pending.delete(packet.id)
-      if (packet.error) action.reject(new Error(packet.error.message))
-      else action.resolve(packet.result)
+      if (isRecord(packet.error) && typeof packet.error.message === 'string') {
+        action.reject(new Error(packet.error.message))
+      } else {
+        action.resolve(isRecord(packet.result) ? packet.result : {})
+      }
     }
-    if (packet.method === 'Runtime.exceptionThrown') errors.push(packet.params.exceptionDetails.text)
-    if (packet.method === 'Log.entryAdded' && packet.params.entry.level === 'error') {
+    if (packet.method === 'Runtime.exceptionThrown' && isRecord(packet.params) &&
+        isRecord(packet.params.exceptionDetails) && typeof packet.params.exceptionDetails.text === 'string') {
+      errors.push(packet.params.exceptionDetails.text)
+    }
+    if (packet.method === 'Log.entryAdded' && isRecord(packet.params) &&
+        isRecord(packet.params.entry) && packet.params.entry.level === 'error' &&
+        typeof packet.params.entry.text === 'string') {
       errors.push(packet.params.entry.text)
     }
   }
-  const call = <T = any>(method: string, params?: object) => new Promise<T>((resolve, reject) => {
+  const call = (method: string, params?: object) => new Promise<Record<string, unknown>>((resolve, reject) => {
     const id = ++message
     const timeout = setTimeout(() => {
       pending.delete(id)
@@ -52,10 +73,10 @@ async function attach(target: DevToolsTarget, beforeLoad?: string) {
   const { call, errors, close } = await connect(target.webSocketDebuggerUrl)
   const tab = {
     call, errors,
-    async evaluate<T = any>(expression: string): Promise<T> {
+    async evaluate(expression: string): Promise<unknown> {
       const result = await call('Runtime.evaluate', { expression, returnByValue: true, awaitPromise: true })
       if (result.exceptionDetails) throw new Error(JSON.stringify(result.exceptionDetails))
-      return result.result?.value as T
+      return isRecord(result.result) ? result.result.value : undefined
     },
     async close() {
       close()
@@ -72,7 +93,8 @@ async function attach(target: DevToolsTarget, beforeLoad?: string) {
 export type BrowserTab = Awaited<ReturnType<typeof attach>>
 
 export async function openTab(url: string, beforeLoad?: string) {
-  const target = await fetch(debugUrl() + '/json/new?about:blank', { method: 'PUT' }).then(r => r.json()) as DevToolsTarget
+  const target: unknown = await fetch(debugUrl() + '/json/new?about:blank', { method: 'PUT' }).then(r => r.json())
+  if (!isDevToolsTarget(target)) throw new Error('Unexpected DevTools target response')
   const tab = await attach(target, beforeLoad)
   await tab.call('Page.navigate', { url })
   await tab.call('Page.bringToFront')
@@ -81,9 +103,16 @@ export async function openTab(url: string, beforeLoad?: string) {
 
 // Player release checks run in temporary profiles so downloads and saves stay isolated.
 export async function openPlayerTab(downloadPath: string) {
-  const info = await fetch(debugUrl() + '/json/version').then(r => r.json()) as { webSocketDebuggerUrl: string }
+  const info: unknown = await fetch(debugUrl() + '/json/version').then(r => r.json())
+  if (!isRecord(info) || typeof info.webSocketDebuggerUrl !== 'string') {
+    throw new Error('Unexpected DevTools version response')
+  }
   const browser = await connect(info.webSocketDebuggerUrl)
   const { browserContextId } = await browser.call('Target.createBrowserContext', { disposeOnDetach: true })
+  if (typeof browserContextId !== 'string') {
+    browser.close()
+    throw new Error('Missing browserContextId from DevTools')
+  }
   async function dispose() {
     try { await browser.call('Target.disposeBrowserContext', { browserContextId }) }
     finally { browser.close() }
@@ -91,8 +120,10 @@ export async function openPlayerTab(downloadPath: string) {
   try {
     await browser.call('Browser.setDownloadBehavior', { behavior: 'allow', downloadPath, browserContextId })
     const { targetId } = await browser.call('Target.createTarget', { url: 'about:blank', browserContextId })
-    const targets = await fetch(debugUrl() + '/json/list').then(r => r.json()) as DevToolsTarget[]
-    const target = targets.find(entry => entry.id === targetId)
+    if (typeof targetId !== 'string') throw new Error('Missing targetId from DevTools')
+    const targets: unknown = await fetch(debugUrl() + '/json/list').then(r => r.json())
+    if (!Array.isArray(targets)) throw new Error('Unexpected DevTools target list')
+    const target = targets.filter(isDevToolsTarget).find(entry => entry.id === targetId)
     if (!target) throw new Error('Browser target not found: ' + targetId)
     const tab = await attach(target)
     await tab.call('Network.enable')
@@ -111,11 +142,14 @@ export async function until<T>(
   let actual: T | undefined
   for (let i = 0; i < limit; i++) {
     actual = await read()
-    if (typeof expected === 'function' ? (expected as (value: T) => unknown)(actual) : expected === actual) return actual
+    if (isPredicate(expected) ? expected(actual) : expected === actual) return actual
     await wait(100)
   }
   assert.fail(description + '. Last value: ' + actual)
 }
-export const status = (tab: BrowserTab, id: string) => tab.evaluate<string | null | undefined>(`document.querySelector('#${id}')?.textContent`)
+export async function status(tab: BrowserTab, id: string): Promise<string | null | undefined> {
+  const value = await tab.evaluate(`document.querySelector('#${id}')?.textContent`)
+  return typeof value === 'string' ? value : value === null ? null : undefined
+}
 export const click = (tab: BrowserTab, id: string) => tab.evaluate(`document.querySelector('#${id}').click()`)
 export const key = (tab: BrowserTab, type: string, code: string, keyName: string) => tab.call('Input.dispatchKeyEvent', { type, key: keyName, code })

@@ -28,6 +28,24 @@ export interface StateMachine<S extends string, C, E extends { type: string }> {
   subscribe(listener: (state: S, context: Readonly<C>) => void): () => void
 }
 
+type AnyTransition<S extends string, C> = {
+  target?: S
+  guard?(context: Readonly<C>, event: never): boolean
+  action?(context: C, event: never): void
+}
+
+function isTransitionList<S extends string, C>(
+  spec: S | AnyTransition<S, C> | readonly AnyTransition<S, C>[]
+): spec is readonly AnyTransition<S, C>[] {
+  return Array.isArray(spec)
+}
+
+function toTransitionList<S extends string, C>(
+  spec: S | AnyTransition<S, C> | readonly AnyTransition<S, C>[]
+): readonly (S | AnyTransition<S, C>)[] {
+  return isTransitionList(spec) ? spec : [spec]
+}
+
 /** Tiny finite state machine for deterministic, zero-dependency UI widgets. */
 export function createMachine<S extends string, C extends Record<string, unknown>, E extends { type: string }>(
   config: MachineConfig<S, C, E>
@@ -42,30 +60,38 @@ export function createMachine<S extends string, C extends Record<string, unknown
     for (const listener of listeners) listener(current, context)
   }
 
-  function runExit(prev: S, event: E) {
+  function runEnter(next: S, event: E | { readonly type: E['type'] }) {
+    const state = config.states[next]
+    if (state?.enter) Reflect.apply(state.enter, state, [context, event])
+  }
+
+  function runExit(prev: S, event: E | { readonly type: E['type'] }) {
     if (exiting.has(prev)) return false
     exiting.add(prev)
-    try { config.states[prev]?.exit?.(context, event) }
+    try {
+      const state = config.states[prev]
+      if (state?.exit) Reflect.apply(state.exit, state, [context, event])
+    }
     finally { exiting.delete(prev) }
     return current !== prev
   }
 
-  function applyTransition(candidate: S | MachineTransition<S, C, E>, event: E) {
+  function applyTransition(candidate: S | AnyTransition<S, C>, event: E | { readonly type: E['type'] }) {
     if (typeof candidate === 'string') {
       const prev = current
       if (prev !== candidate && runExit(prev, event)) return true
       current = candidate
-      if (prev !== candidate) config.states[current]?.enter?.(context, event)
+      if (prev !== candidate) runEnter(current, event)
       return true
     }
-    if (candidate.guard && !candidate.guard(context, event)) return false
+    if (candidate.guard && !Reflect.apply(candidate.guard, candidate, [context, event])) return false
     const prev = current
     const next = candidate.target ?? prev
     const changed = next !== prev
     if (changed && runExit(prev, event)) return true
     current = next
-    candidate.action?.(context, event)
-    if (changed && current === next) config.states[next]?.enter?.(context, event)
+    if (candidate.action) Reflect.apply(candidate.action, candidate, [context, event])
+    if (changed && current === next) runEnter(next, event)
     return true
   }
 
@@ -74,11 +100,11 @@ export function createMachine<S extends string, C extends Record<string, unknown
     get context() { return context },
     matches(state) { return current === state },
     send(raw) {
-      const event = (typeof raw === 'string' ? { type: raw } : raw) as E
-      const spec = config.states[current]?.on?.[event.type as E['type']]
+      const eventType: E['type'] = typeof raw === 'string' ? raw : raw.type
+      const event: E | { readonly type: E['type'] } = typeof raw === 'string' ? { type: raw } : raw
+      const spec = config.states[current]?.on?.[eventType]
       if (!spec) return current
-      const list = Array.isArray(spec) ? spec : [spec]
-      for (const candidate of list) {
+      for (const candidate of toTransitionList(spec)) {
         if (applyTransition(candidate, event)) {
           notify()
           break
@@ -105,7 +131,7 @@ export interface UiSlotProps {
   readonly label?: string
 }
 
-export interface UiPrimitiveInstance<Api extends Record<string, (...args: any[]) => unknown> = Record<string, (...args: any[]) => unknown>> {
+export interface UiPrimitiveInstance<Api extends Record<string, (...args: never[]) => unknown> = Record<string, (...args: never[]) => unknown>> {
   readonly id: string
   readonly kind: string
   readonly state: string
@@ -126,13 +152,13 @@ export interface UiPrimitiveSnapshot {
   readonly slots: Record<string, UiSlotProps>
 }
 
-export interface PrimitiveDefinition<Props, Api extends Record<string, (...args: any[]) => unknown>> {
+export interface PrimitiveDefinition<Props, Api extends Record<string, (...args: never[]) => unknown>> {
   readonly kind: string
   create(props: Props): UiPrimitiveInstance<Api>
 }
 
 /** Define a standalone, composable headless UI primitive (`state` + `api` + `slots` + agent actions). */
-export function definePrimitive<Props, Api extends Record<string, (...args: any[]) => unknown>>(
+export function definePrimitive<Props, Api extends Record<string, (...args: never[]) => unknown>>(
   definition: PrimitiveDefinition<Props, Api>
 ): PrimitiveDefinition<Props, Api> {
   return definition

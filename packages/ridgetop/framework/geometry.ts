@@ -23,7 +23,7 @@ const cross = (a: Vec3, b: Vec3): Vec3 => [
   a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]
 ]
 function unit(v: Vec3): Vec3 {
-  const length = Math.hypot(...v)
+  const length = Math.hypot(v[0], v[1], v[2])
   if (!length || !Number.isFinite(length)) throw new RangeError('Expected a finite, nonzero vector')
   return [v[0] / length, v[1] / length, v[2] / length]
 }
@@ -484,6 +484,8 @@ function normalizeLight(direction?: Vec3): [number, number, number] {
   return [dir[0] / len, dir[1] / len, dir[2] / len]
 }
 
+const _shadowMeta = { yaw: 0, opacity: 0, visible: false }
+
 /**
  * Project a 3D caster position onto a horizontal ground plane (`y = groundY`) along the active light direction.
  * Computes ground offset, light-angle stretch, yaw alignment, altitude fade, and anti-Z-fighting Y bias.
@@ -493,14 +495,13 @@ export function projectShadow(
   options: ShadowProjectionOptions = {},
   out?: ShadowProjection
 ): ShadowProjection {
-  const target: { position: [number, number, number]; scale: [number, number, number]; yaw: number; opacity: number; visible: boolean } =
-    (out as { position: [number, number, number]; scale: [number, number, number]; yaw: number; opacity: number; visible: boolean } | undefined) ?? {
-      position: [0, 0, 0],
-      scale: [1, 1, 1],
-      yaw: 0,
-      opacity: 0,
-      visible: false
-    }
+  const target: ShadowProjection = out ?? {
+    position: [0, 0, 0],
+    scale: [1, 1, 1],
+    yaw: 0,
+    opacity: 0,
+    visible: false
+  }
   const groundY = options.groundY ?? 0
   const radius = options.radius ?? 0.5
   const radiusZ = options.radiusZ ?? radius
@@ -520,9 +521,10 @@ export function projectShadow(
     target.scale[0] = Math.max(1e-3, radius)
     target.scale[1] = 1
     target.scale[2] = Math.max(1e-3, radiusZ)
-    target.yaw = 0
-    target.opacity = 0
-    target.visible = false
+    _shadowMeta.yaw = 0
+    _shadowMeta.opacity = 0
+    _shadowMeta.visible = false
+    Object.assign(target, _shadowMeta)
     return target
   }
 
@@ -553,9 +555,10 @@ export function projectShadow(
   target.scale[0] = radius * heightScale
   target.scale[1] = 1
   target.scale[2] = radiusZ * heightScale * stretch
-  target.yaw = yaw
-  target.opacity = opacity
-  target.visible = opacity > 0.004
+  _shadowMeta.yaw = yaw
+  _shadowMeta.opacity = opacity
+  _shadowMeta.visible = opacity > 0.004
+  Object.assign(target, _shadowMeta)
   return target
 }
 

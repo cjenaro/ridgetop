@@ -2,11 +2,11 @@ import {
   box, color, createAnimator, createMeshPool, createParticles, multiply, octahedron, perspective,
   quaternionFromEuler, renderRig, view, worldToScreen
 } from 'ridgetop'
-import type { Color, JointPose, LowPolyRenderer, Matrix, RigPart, Vec3 } from 'ridgetop'
+import type { Color, JointPose, LowPolyRenderer, Matrix, PointLight, RigPart, Vec3 } from 'ridgetop'
 import {
   COASTAL_PINES, HARBOR_BUOYS, amberRig, beamMesh, buildStaticIslandBatches, buoyRig, coinMesh,
   driftwoodRig, drum, flatRing, gullRig, isSharedLighthouseMesh, keeperClips, keeperRig, merchantRig, ovalMesh, pineRig,
-  rockMesh, salvageRig, shipRig, softBox, winchRig
+  salvageRig, shipRig, softBox, winchRig
 } from './art.ts'
 import { COTTAGE_POS, LIGHTHOUSE_POS, PADS, PIER_POS, WINCH_POS, islandHeight } from './types.ts'
 import type { GameState, ResourceKind, WeatherKind } from './types.ts'
@@ -346,6 +346,28 @@ export function createLighthouseScene(renderer: LowPolyRenderer) {
     const spotY = Math.max(waterY, islandHeight(spotX, spotZ)) + 0.4
 
     const stormBoost = state.weather === 'storm' ? 1.55 : state.weather === 'rain' ? 1.25 : state.weather === 'fog' ? 1.10 : 0.45
+    const points: PointLight[] = [
+      // 1. Warmth Brazier campfire light
+      { position: [fireX, fireY + 0.5, fireZ], color: [1.0, 0.56, 0.22], radius: 6.5, intensity: (0.95 + flick * 0.25) * stormBoost },
+      // 2. Keeper's swinging handheld lantern light
+      {
+        position: [lanternWorldPos[0], lanternWorldPos[1] + 0.2, lanternWorldPos[2]],
+        color: state.weather === 'clear' ? [1.0, 0.86, 0.52] : [0.46, 0.96, 0.88],
+        radius: 5.2,
+        intensity: 0.72 * stormBoost
+      }
+    ]
+    // 3. Sweeping Lighthouse searchlight pool (when lit)
+    if (state.lampLit) {
+      points.push({
+        position: [spotX, spotY + 1.0, spotZ],
+        color: [1.0, 0.92, 0.62],
+        radius: 8.0 + state.upgrades.lens * 0.8,
+        intensity: 1.25 * Math.max(0.75, stormBoost)
+      })
+    }
+    // 4. Trading Pier market lantern
+    points.push({ position: [PIER_POS.x - 0.72, 2.26, PIER_POS.z + 0.53], color: [1.0, 0.84, 0.48], radius: 5.8, intensity: 0.78 * stormBoost })
     renderer.setLighting({
       direction: curLightDir,
       ambient: flashAmbient,
@@ -353,26 +375,7 @@ export function createLighthouseScene(renderer: LowPolyRenderer) {
       fogColor: sky,
       fogNear: curFogNear,
       fogFar: curFogFar,
-      points: [
-        // 1. Warmth Brazier campfire light
-        { position: [fireX, fireY + 0.5, fireZ], color: [1.0, 0.56, 0.22], radius: 6.5, intensity: (0.95 + flick * 0.25) * stormBoost },
-        // 2. Keeper's swinging handheld lantern light
-        {
-          position: [lanternWorldPos[0], lanternWorldPos[1] + 0.2, lanternWorldPos[2]],
-          color: state.weather === 'clear' ? [1.0, 0.86, 0.52] : [0.46, 0.96, 0.88],
-          radius: 5.2,
-          intensity: 0.72 * stormBoost
-        },
-        // 3. Sweeping Lighthouse searchlight pool (when lit)
-        ...(state.lampLit ? [{
-          position: [spotX, spotY + 1.0, spotZ] as Vec3,
-          color: [1.0, 0.92, 0.62] as Vec3,
-          radius: 8.0 + state.upgrades.lens * 0.8,
-          intensity: 1.25 * Math.max(0.75, stormBoost)
-        }] : []),
-        // 4. Trading Pier market lantern
-        { position: [PIER_POS.x - 0.72, 2.26, PIER_POS.z + 0.53], color: [1.0, 0.84, 0.48], radius: 5.8, intensity: 0.78 * stormBoost }
-      ]
+      points
     })
 
     pool.clear()

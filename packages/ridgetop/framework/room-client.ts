@@ -18,52 +18,86 @@ export interface ConnectRoomOptions<T extends RoomEntity = RoomPlayer, Input = R
 
 const maxPendingInputs = 256
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === 'object'
+}
+
 function isDefaultRoomInput(value: unknown): value is RoomInput {
-  if (!value || typeof value !== 'object') return false
-  const candidate = value as Record<string, unknown>
+  if (!isRecord(value)) return false
   return (
-    typeof candidate.left === 'boolean' &&
-    typeof candidate.right === 'boolean' &&
-    typeof candidate.jump === 'number' &&
-    Object.keys(candidate).length === 3
+    typeof value.left === 'boolean' &&
+    typeof value.right === 'boolean' &&
+    typeof value.jump === 'number' &&
+    Object.keys(value).length === 3
   )
+}
+
+function isRoomWelcome(value: unknown): value is RoomWelcome {
+  return isRecord(value) && typeof value.id === 'string' && typeof value.token === 'string'
+}
+
+function isRoomEntity<T extends RoomEntity>(value: unknown): value is T {
+  return isRecord(value) && typeof value.id === 'string'
+}
+
+function isRoomSnapshot<T extends RoomEntity>(value: unknown): value is { tick: number; players: T[] } {
+  return (
+    isRecord(value) &&
+    typeof value.tick === 'number' &&
+    Array.isArray(value.players) &&
+    value.players.every(isRoomEntity)
+  )
+}
+
+function eventDataString(event: unknown): string | undefined {
+  if (!isRecord(event) || event.data === undefined) return undefined
+  return typeof event.data === 'string' ? event.data : String(event.data)
+}
+
+function readNumberField(obj: object, key: string): number | undefined {
+  const val: unknown = Reflect.get(obj, key)
+  return typeof val === 'number' ? val : undefined
 }
 
 function defaultEqualInput<Input>(a: Input, b: Input): boolean {
   if (Object.is(a, b)) return true
-  if (!a || !b || typeof a !== 'object' || typeof b !== 'object') return false
-  const aObj = a as Record<string, unknown>
-  const bObj = b as Record<string, unknown>
-  const aKeys = Object.keys(aObj)
-  const bKeys = Object.keys(bObj)
+  if (!isRecord(a) || !isRecord(b)) return false
+  const aKeys = Object.keys(a)
+  const bKeys = Object.keys(b)
   if (aKeys.length !== bKeys.length) return false
   for (let i = 0; i < aKeys.length; i++) {
     const key = aKeys[i]
-    if (!Object.prototype.hasOwnProperty.call(bObj, key) || !Object.is(aObj[key], bObj[key])) return false
+    if (!Object.prototype.hasOwnProperty.call(b, key) || !Object.is(a[key], b[key])) return false
   }
   return true
 }
 
 function defaultInterpolate<T extends RoomEntity>(old: T, next: T, alpha: number): T {
-  const prevRec = old as unknown as Record<string, unknown>
-  const nextRec = next as unknown as Record<string, unknown>
-  if (old.revision !== next.revision || prevRec.falls !== nextRec.falls) return next
-  const hasX = typeof prevRec.x === 'number' && typeof nextRec.x === 'number'
-  const hasY = typeof prevRec.y === 'number' && typeof nextRec.y === 'number'
-  const hasZ = typeof prevRec.z === 'number' && typeof nextRec.z === 'number'
+  const prevFalls: unknown = Reflect.get(old, 'falls')
+  const nextFalls: unknown = Reflect.get(next, 'falls')
+  if (old.revision !== next.revision || prevFalls !== nextFalls) return next
+  const ox = readNumberField(old, 'x')
+  const nx = readNumberField(next, 'x')
+  const oy = readNumberField(old, 'y')
+  const ny = readNumberField(next, 'y')
+  const oz = readNumberField(old, 'z')
+  const nz = readNumberField(next, 'z')
+  const hasX = ox !== undefined && nx !== undefined
+  const hasY = oy !== undefined && ny !== undefined
+  const hasZ = oz !== undefined && nz !== undefined
   if (
-    (hasX && Math.abs((prevRec.x as number) - (nextRec.x as number)) > 100) ||
-    (hasY && Math.abs((prevRec.y as number) - (nextRec.y as number)) > 100) ||
-    (hasZ && Math.abs((prevRec.z as number) - (nextRec.z as number)) > 100)
+    (hasX && Math.abs(ox - nx) > 100) ||
+    (hasY && Math.abs(oy - ny) > 100) ||
+    (hasZ && Math.abs(oz - nz) > 100)
   ) {
     return next
   }
   if (!hasX && !hasY && !hasZ) return next
-  const blended = { ...next } as unknown as Record<string, unknown>
-  if (hasX) blended.x = (prevRec.x as number) + ((nextRec.x as number) - (prevRec.x as number)) * alpha
-  if (hasY) blended.y = (prevRec.y as number) + ((nextRec.y as number) - (prevRec.y as number)) * alpha
-  if (hasZ) blended.z = (prevRec.z as number) + ((nextRec.z as number) - (prevRec.z as number)) * alpha
-  return blended as unknown as T
+  const blended: T = { ...next }
+  if (hasX) Reflect.set(blended, 'x', ox + (nx - ox) * alpha)
+  if (hasY) Reflect.set(blended, 'y', oy + (ny - oy) * alpha)
+  if (hasZ) Reflect.set(blended, 'z', oz + (nz - oz) * alpha)
+  return blended
 }
 
 function resolveWsUrl(endpoint: string, wsEndpoint?: string, resumeToken?: string): string {
@@ -135,7 +169,7 @@ export function connectRoom<T extends RoomEntity = RoomPlayer, Input = RoomInput
 
   function normalizeInput(raw: Input): Input {
     if (!serializeInput && isDefaultRoomInput(raw)) {
-      return { left: raw.left, right: raw.right, jump: Math.max(0, raw.jump - jumpOffset) } as unknown as Input
+      return Object.assign({}, raw, { jump: Math.max(0, raw.jump - jumpOffset) })
     }
     return raw
   }
@@ -148,8 +182,9 @@ export function connectRoom<T extends RoomEntity = RoomPlayer, Input = RoomInput
     if (isDefaultRoomInput(input)) {
       return { left: input.left, right: input.right, jump: input.jump, restart, inputSeq: seq }
     }
-    if (input && typeof input === 'object') {
-      return { ...(input as Record<string, unknown>), restart, inputSeq: seq }
+    if (isRecord(input)) {
+      const rec: Record<string, unknown> = input
+      return { ...rec, restart, inputSeq: seq }
     }
     return { input, restart, inputSeq: seq }
   }
@@ -218,11 +253,17 @@ export function connectRoom<T extends RoomEntity = RoomPlayer, Input = RoomInput
     events = source
     source.addEventListener('welcome', event => {
       if (closed || events !== source) return
-      handleWelcome(JSON.parse((event as MessageEvent<string>).data) as RoomWelcome)
+      const raw = eventDataString(event)
+      if (raw === undefined) return
+      const parsed: unknown = JSON.parse(raw)
+      if (isRoomWelcome(parsed)) handleWelcome(parsed)
     })
     source.onmessage = event => {
       if (closed || events !== source) return
-      handleSnapshot(JSON.parse(event.data) as { tick: number; players: T[] })
+      const raw = eventDataString(event)
+      if (raw === undefined) return
+      const parsed: unknown = JSON.parse(raw)
+      if (isRoomSnapshot<T>(parsed)) handleSnapshot(parsed)
     }
     source.onerror = () => {
       if (closed || events !== source) return
@@ -268,13 +309,14 @@ export function connectRoom<T extends RoomEntity = RoomPlayer, Input = RoomInput
 
     socket.onmessage = event => {
       if (closed || ws !== socket) return
-      let msg: Record<string, unknown>
-      try { msg = JSON.parse(String(event.data)) as Record<string, unknown> } catch { return }
-      if (msg.type === 'welcome' && typeof msg.id === 'string' && typeof msg.token === 'string') {
+      let parsed: unknown
+      try { parsed = JSON.parse(String(event.data)) } catch { return }
+      if (!isRecord(parsed)) return
+      if (parsed.type === 'welcome' && isRoomWelcome(parsed)) {
         wsEverWelcomed = true
-        handleWelcome({ id: msg.id, token: msg.token })
-      } else if (msg.type === 'snapshot' || Array.isArray(msg.players)) {
-        handleSnapshot(msg as unknown as { tick: number; players: T[] })
+        handleWelcome({ id: parsed.id, token: parsed.token })
+      } else if ((parsed.type === 'snapshot' || Array.isArray(parsed.players)) && isRoomSnapshot<T>(parsed)) {
+        handleSnapshot(parsed)
       }
     }
     socket.onerror = () => {

@@ -17,11 +17,19 @@ interface ClassificationQuestion {
 }
 
 interface ProviderAnswer {
-  name?: string
-  type?: string
-  choice?: string
-  probability?: number
-  noul?: number
+  name?: unknown
+  type?: unknown
+  choice?: unknown
+  probability?: unknown
+  noul?: unknown
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null
+}
+
+function isDecisionProviderName(name: string): name is DecisionProviderName {
+  return Object.hasOwn(providers, name)
 }
 
 interface DecisionProviderAdapter {
@@ -50,7 +58,8 @@ function normalize<L extends string>(
 ): Decision<L> {
   const classification = getAnswer('label')
   const choice = classification?.choice
-  if (classification?.type !== 'choice' || typeof choice !== 'string' || !request.labels.includes(choice as L)) {
+  const matchedLabel = typeof choice === 'string' ? request.labels.find(label => label === choice) : undefined
+  if (classification?.type !== 'choice' || matchedLabel === undefined) {
     throw new Error('Decision provider did not return an allowed label')
   }
   const evidence = request.evidence.filter((_, index) => {
@@ -61,7 +70,7 @@ function normalize<L extends string>(
     }
     return probability > 0.5
   }).map(item => item.id)
-  return { label: choice as L, evidence }
+  return { label: matchedLabel, evidence }
 }
 
 const openai: DecisionProviderAdapter = {
@@ -74,11 +83,13 @@ const openai: DecisionProviderAdapter = {
     return { model, input: [{ role: 'user', content: [{ type: 'input_json', data }] }], questions }
   },
   decode(response, request) {
-    const body = response as { answers?: unknown } | null | undefined
-    if (!Array.isArray(body?.answers)) throw new Error('OpenAI Decisions returned no answers')
-    const answers = body.answers as (ProviderAnswer | null | undefined)[]
+    if (!isRecord(response) || !Array.isArray(response.answers)) {
+      throw new Error('OpenAI Decisions returned no answers')
+    }
+    const answers = response.answers
     return normalize(name => {
-      const answer = answers.find(item => item?.name === name) ?? undefined
+      const found = answers.find(item => isRecord(item) && item.name === name)
+      const answer = isRecord(found) ? found : undefined
       if (answer?.type === 'refusal') throw new Error('OpenAI Decisions refused question ' + name)
       return answer
     }, request, 'predicate', 'probability')
@@ -95,15 +106,36 @@ function encodeSystemOne(request: DecisionRequestContext, model?: string) {
 }
 
 function decodeSystemOne<L extends string>(response: unknown, request: DecisionRequestContext<L>): Decision<L> {
-  const answers = (response as { answers?: Record<string, ProviderAnswer | undefined> } | null | undefined)?.answers
-  return normalize(name => answers?.[name], request, 'noul', 'noul')
+  const answers = isRecord(response) && isRecord(response.answers) ? response.answers : undefined
+  return normalize(name => {
+    const raw = answers?.[name]
+    return isRecord(raw) ? raw : undefined
+  }, request, 'noul', 'noul')
 }
 
 const providers: Record<DecisionProviderName, DecisionProviderAdapter> = {
   http: {
     endpoint() { throw new Error('Set RIDGETOP_DECISION_URL to the decision endpoint') },
     encode: request => request,
-    decode: <L extends string>(response: unknown) => response as Decision<L>
+    decode<L extends string>(response: unknown, request: DecisionRequestContext<L>): Decision<L> {
+      if (!isRecord(response)) {
+        throw new Error('Decision provider did not return an allowed label')
+      }
+      const label = typeof response.label === 'string'
+        ? request.labels.find(item => item === response.label)
+        : undefined
+      if (label === undefined || !Array.isArray(response.evidence)) {
+        throw new Error('Decision provider did not return an allowed label')
+      }
+      const evidence: string[] = []
+      for (const item of response.evidence) {
+        if (typeof item !== 'string') {
+          throw new Error('Decision provider did not return a valid evidence judgment')
+        }
+        evidence.push(item)
+      }
+      return { label, evidence }
+    }
   },
   openai,
   jev: {
@@ -121,9 +153,10 @@ const providers: Record<DecisionProviderName, DecisionProviderAdapter> = {
     },
     encode: encodeSystemOne,
     decode(response, request) {
-      const body = response as { success?: unknown; result?: unknown } | null | undefined
-      if (body?.success !== true) throw new Error('Cloudflare Workers AI returned an unsuccessful result')
-      return decodeSystemOne(body.result, request)
+      if (!isRecord(response) || response.success !== true) {
+        throw new Error('Cloudflare Workers AI returned an unsuccessful result')
+      }
+      return decodeSystemOne(response.result, request)
     }
   }
 }
@@ -137,10 +170,10 @@ export function selectDecisionProvider<L extends string = string>(
     labels?: readonly L[]
   }
 ) {
-  if (!Object.hasOwn(providers, name)) {
+  if (!isDecisionProviderName(name)) {
     throw new TypeError('Unknown decision provider. Choose http, openai, clef, or jev')
   }
-  const adapter = providers[name as DecisionProviderName]
+  const adapter = providers[name]
   model ??= adapter.model
   if (name !== 'http' && (!Array.isArray(labels) || labels.length < 2 || labels.length > 255)) {
     throw new RangeError('Native decision providers require 2 to 255 labels')

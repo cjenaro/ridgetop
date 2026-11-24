@@ -3,7 +3,11 @@ import { createSpriteSheet } from 'ridgetop'
 import { encodePng } from 'ridgetop/server'
 import { chipClips, chipPalette, frameHeight, frameWidth, paintChip, paintScout, scoutClips, suits } from '../examples/beacon-run/game/sprite-art.ts'
 
-const columns = Math.max(...Object.values(scoutClips).map(clip => clip.column + clip.frames))
+let columns = 0
+for (const clip of Object.values(scoutClips)) {
+  const end = clip.column + clip.frames
+  if (end > columns) columns = end
+}
 const sheet = createSpriteSheet(frameWidth, frameHeight, columns, suits.length + 1)
 for (const [slot, palette] of suits.entries()) {
   for (let pose = 0; pose < columns; pose++) paintScout(sheet.frame(pose, slot), pose, palette)

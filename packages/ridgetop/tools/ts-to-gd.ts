@@ -915,10 +915,12 @@ function findBoxedVars(root: ts.Node): Set<string> {
   }
   function pass2(node: ts.Node) {
     if (isFuncBoundary(node)) {
-      const sc = scopeOf.get(node)!
-      stack.push(sc)
-      ts.forEachChild(node, pass2)
-      stack.pop()
+      const sc = scopeOf.get(node)
+      if (sc) {
+        stack.push(sc)
+        ts.forEachChild(node, pass2)
+        stack.pop()
+      }
       return
     }
     if (ts.isBinaryExpression(node) && isAssignmentOp(node.operatorToken.kind)) {
@@ -992,7 +994,8 @@ export function compileTsToGd(sourceText: string, fileName = 'module.ts', option
       }
     } else if (ts.isImportDeclaration(stmt)) {
       if (stmt.importClause?.isTypeOnly) continue
-      const specifier = (stmt.moduleSpecifier as ts.StringLiteral).text
+      if (!ts.isStringLiteral(stmt.moduleSpecifier)) continue
+      const specifier = stmt.moduleSpecifier.text
       const bindings = stmt.importClause?.namedBindings
       if (bindings && ts.isNamedImports(bindings)) {
         for (const el of bindings.elements) {
@@ -1020,7 +1023,11 @@ export function compileTsToGd(sourceText: string, fileName = 'module.ts', option
 
   const scopeStack: Map<string, string>[] = []
   const funcUsedStack: Set<string>[] = []
-  const hoistStack: { indent: string; lines: string[] }[] = []
+  interface HoistFrame { indent: string; lines: string[] }
+  const hoistStack: HoistFrame[] = []
+  function makeHoistFrame(indent: string): HoistFrame {
+    return { indent, lines: [] }
+  }
   const thisStack: string[] = ['self']
   const switchContStack: (string | null)[] = []
 
@@ -1066,7 +1073,7 @@ export function compileTsToGd(sourceText: string, fileName = 'module.ts', option
   }
 
   function withHoist(indent: string, fn: () => string[]): string[] {
-    const frame = { indent, lines: [] as string[] }
+    const frame = makeHoistFrame(indent)
     hoistStack.push(frame)
     try {
       const emitted = fn()
@@ -1179,11 +1186,12 @@ export function compileTsToGd(sourceText: string, fileName = 'module.ts', option
       }
       if (ts.isIdentifier(p.name) && !boxedVars.has(p.name.text)) {
         const id = declareLocal(p.name.text)
-        if (p.initializer) {
+        const initializer = p.initializer
+        if (initializer) {
           const tmp = nextTemp('_p')
           sigParts.push(`${tmp} = null`)
           prelude.push(...withHoist(bodyIndent, () => {
-            const defVal = emitExpr(p.initializer!, bodyIndent)
+            const defVal = emitExpr(initializer, bodyIndent)
             return [`${bodyIndent}var ${id} = ${defVal} if ${tmp} == null else ${tmp}`]
           }))
         } else {
@@ -1193,10 +1201,11 @@ export function compileTsToGd(sourceText: string, fileName = 'module.ts', option
         const tmp = nextTemp('_p')
         sigParts.push(`${tmp} = null`)
         let src = tmp
-        if (p.initializer) {
+        const initializer = p.initializer
+        if (initializer) {
           const norm = nextTemp('_pn')
           prelude.push(...withHoist(bodyIndent, () => {
-            const defVal = emitExpr(p.initializer!, bodyIndent)
+            const defVal = emitExpr(initializer, bodyIndent)
             return [`${bodyIndent}var ${norm} = ${defVal} if ${tmp} == null else ${tmp}`]
           }))
           src = norm
@@ -1378,11 +1387,11 @@ export function compileTsToGd(sourceText: string, fileName = 'module.ts', option
       if (hoist) {
         const cond = emitExpr(node.condition, hoist.indent)
         const res = nextTemp('_tern')
-        const trueFrame = { indent: hoist.indent + '\t', lines: [] as string[] }
+        const trueFrame = makeHoistFrame(hoist.indent + '\t')
         hoistStack.push(trueFrame)
         const tExpr = emitExpr(node.whenTrue, hoist.indent + '\t')
         hoistStack.pop()
-        const falseFrame = { indent: hoist.indent + '\t', lines: [] as string[] }
+        const falseFrame = makeHoistFrame(hoist.indent + '\t')
         hoistStack.push(falseFrame)
         const fExpr = emitExpr(node.whenFalse, hoist.indent + '\t')
         hoistStack.pop()
@@ -1506,7 +1515,7 @@ export function compileTsToGd(sourceText: string, fileName = 'module.ts', option
       if (hoist) {
         const L = emitExpr(node.left, hoist.indent)
         const sc = nextTemp('_sc')
-        const rhsFrame = { indent: hoist.indent + '\t', lines: [] as string[] }
+        const rhsFrame = makeHoistFrame(hoist.indent + '\t')
         hoistStack.push(rhsFrame)
         const R = emitExpr(node.right, hoist.indent + '\t')
         hoistStack.pop()
@@ -1588,7 +1597,7 @@ export function compileTsToGd(sourceText: string, fileName = 'module.ts', option
       if (hoist) {
         const resTmp = nextTemp('_cr')
         const innerIndent = hoist.indent + '\t'
-        const callFrame = { indent: innerIndent, lines: [] as string[] }
+        const callFrame = makeHoistFrame(innerIndent)
         hoistStack.push(callFrame)
         const callExpr = build(innerIndent)
         hoistStack.pop()
@@ -1700,6 +1709,14 @@ export function compileTsToGd(sourceText: string, fileName = 'module.ts', option
         const { args } = emitArgs(indent)
         if (method === 'isArray') return `(${args[0]} is Array)`
         if (method === 'from') return `RT.arr_from${formatList('(', [args[0], args[1] ?? 'null'], ')', indent)}`
+      }
+
+      // Reflect.*
+      if (ts.isIdentifier(objNode) && objNode.text === 'Reflect') {
+        const { args } = emitArgs(indent)
+        if (method === 'apply') return `RT.invoke(${args[0] ?? 'null'}, ${args[2] ?? '[]'})`
+        if (method === 'get') return `RT.get_prop(${args[0] ?? 'null'}, ${args[1] ?? 'null'})`
+        if (method === 'set') return `(RT.set_prop(${args[0] ?? 'null'}, ${args[1] ?? 'null'}, ${args[2] ?? 'null'}) != null or true)`
       }
 
       // Evaluate receiver BEFORE arguments (JS evaluation order & optional-chaining short-circuit).
@@ -1815,7 +1832,7 @@ export function compileTsToGd(sourceText: string, fileName = 'module.ts', option
       if (!body) {
         return `func(${sig}): return null`
       } else if (!ts.isBlock(body)) {
-        const exprFrame = { indent: innerIndent, lines: [] as string[] }
+        const exprFrame = makeHoistFrame(innerIndent)
         hoistStack.push(exprFrame)
         const exprText = emitExpr(body, innerIndent)
         hoistStack.pop()
@@ -1871,12 +1888,12 @@ export function compileTsToGd(sourceText: string, fileName = 'module.ts', option
           : op === ts.SyntaxKind.BarBarEqualsToken ? `not RT.truthy(${cur})`
             : `${cur} == null`
       const evalRhs = (bodyIndent: string) => {
-        const rhsFrame = { indent: bodyIndent, lines: [] as string[] }
+        const rhsFrame = makeHoistFrame(bodyIndent)
         hoistStack.push(rhsFrame)
         try {
-          const rhs = ts.isBinaryExpression(node.right) && isAssignmentOp(node.right.operatorToken.kind)
+          const rhs: { lines: string[]; value: string } = ts.isBinaryExpression(node.right) && isAssignmentOp(node.right.operatorToken.kind)
             ? emitAssignValue(node.right, bodyIndent)
-            : { lines: [] as string[], value: emitExpr(node.right, bodyIndent) }
+            : { lines: [], value: emitExpr(node.right, bodyIndent) }
           return { lines: [...rhsFrame.lines, ...rhs.lines], value: rhs.value }
         } finally {
           hoistStack.pop()
@@ -1928,7 +1945,7 @@ export function compileTsToGd(sourceText: string, fileName = 'module.ts', option
     }
 
     const capture = (fn: () => string): { lines: string[]; value: string } => {
-      const frame = { indent, lines: [] as string[] }
+      const frame = makeHoistFrame(indent)
       hoistStack.push(frame)
       try {
         const value = fn()
@@ -1941,7 +1958,7 @@ export function compileTsToGd(sourceText: string, fileName = 'module.ts', option
     const emitRhs = (): { lines: string[]; value: string } => {
       const unwrappedRight = unwrapTs(node.right)
       if (ts.isBinaryExpression(unwrappedRight) && isAssignmentOp(unwrappedRight.operatorToken.kind)) {
-        const frame = { indent, lines: [] as string[] }
+        const frame = makeHoistFrame(indent)
         hoistStack.push(frame)
         try {
           const res = emitAssignValue(unwrappedRight, indent)
@@ -2066,14 +2083,15 @@ export function compileTsToGd(sourceText: string, fileName = 'module.ts', option
     if (ts.isVariableStatement(stmt)) {
       const out: string[] = []
       for (const decl of stmt.declarationList.declarations) {
-        if (!isModuleTop && ts.isIdentifier(decl.name) && boxedVars.has(decl.name.text) && decl.initializer) {
-          let init = decl.initializer
+        const declInit = decl.initializer
+        if (!isModuleTop && ts.isIdentifier(decl.name) && boxedVars.has(decl.name.text) && declInit) {
+          let init = declInit
           while (ts.isAsExpression(init) || ts.isSatisfiesExpression(init) || ts.isParenthesizedExpression(init)) init = init.expression
           if (ts.isArrowFunction(init) || ts.isFunctionExpression(init)) {
             const fnName = declareLocal(decl.name.text)
             out.push(`${indent}var ${fnName} = [null]`)
             out.push(...withHoist(indent, () => {
-              const lam = emitExpr(decl.initializer!, indent)
+              const lam = emitExpr(declInit, indent)
               return [`${indent}${fnName}[0] = ${lam}`]
             }))
             continue
@@ -2245,30 +2263,33 @@ export function compileTsToGd(sourceText: string, fileName = 'module.ts', option
       switchContStack.push(null)
       try {
         const lines: string[] = []
-        if (stmt.initializer) {
-          if (ts.isVariableDeclarationList(stmt.initializer)) {
+        const initializer = stmt.initializer
+        if (initializer) {
+          if (ts.isVariableDeclarationList(initializer)) {
             lines.push(...withHoist(indent, () => {
               const initOut: string[] = []
-              for (const decl of (stmt.initializer as ts.VariableDeclarationList).declarations) {
+              for (const decl of initializer.declarations) {
                 initOut.push(...emitBindingDecls(decl.name, decl.initializer ? emitExpr(decl.initializer, indent) : 'null', indent, false))
               }
               return initOut
             }))
           } else {
-            lines.push(...withHoist(indent, () => emitExprStmt(stmt.initializer as ts.Expression, indent)))
+            lines.push(...withHoist(indent, () => emitExprStmt(initializer, indent)))
           }
         }
-        if (stmt.incrementor) {
+        const incrementor = stmt.incrementor
+        const condition = stmt.condition
+        if (incrementor) {
           const firstFlag = nextTemp('_f')
           lines.push(`${indent}var ${firstFlag} := true`)
           lines.push(`${indent}while true:`)
           lines.push(`${indent}\tif ${firstFlag}:`)
           lines.push(`${indent}\t\t${firstFlag} = false`)
           lines.push(`${indent}\telse:`)
-          lines.push(...withHoist(indent + '\t\t', () => emitExprStmt(stmt.incrementor!, indent + '\t\t')))
-          if (stmt.condition) {
+          lines.push(...withHoist(indent + '\t\t', () => emitExprStmt(incrementor, indent + '\t\t')))
+          if (condition) {
             lines.push(...withHoist(indent + '\t', () => [
-              `${indent}\tif not RT.truthy(${emitExpr(stmt.condition!, indent + '\t')}):`,
+              `${indent}\tif not RT.truthy(${emitExpr(condition, indent + '\t')}):`,
               `${indent}\t\tbreak`
             ]))
           }
@@ -2276,9 +2297,9 @@ export function compileTsToGd(sourceText: string, fileName = 'module.ts', option
           lines.push(...(body.length ? body : [`${indent}\tpass`]))
         } else {
           lines.push(`${indent}while true:`)
-          if (stmt.condition) {
+          if (condition) {
             lines.push(...withHoist(indent + '\t', () => [
-              `${indent}\tif not RT.truthy(${emitExpr(stmt.condition!, indent + '\t')}):`,
+              `${indent}\tif not RT.truthy(${emitExpr(condition, indent + '\t')}):`,
               `${indent}\t\tbreak`
             ]))
           }
@@ -2467,9 +2488,9 @@ async function resolveRidgetopSpecifier(specifier: string): Promise<string | nul
   if (!Object.hasOwn(RIDGETOP_GD_SPECIFIERS, specifier)) return null
   const stem = RIDGETOP_GD_SPECIFIERS[specifier]
   const tsCandidate = join(packageFrameworkSrcDir, stem + '.ts')
-  try { await access(tsCandidate); return tsCandidate } catch {}
+  try { await access(tsCandidate); return tsCandidate } catch { /* TypeScript source not present; try compiled JS next. */ }
   const jsCandidate = join(packageFrameworkDistDir, stem + '.js')
-  try { await access(jsCandidate); return jsCandidate } catch {}
+  try { await access(jsCandidate); return jsCandidate } catch { /* Compiled JS not present either. */ }
   return null
 }
 
@@ -2480,7 +2501,7 @@ async function resolveLocalModulePath(fromFile: string, specifier: string): Prom
   const raw = resolve(dirname(fromFile), specifier)
   if (raw.endsWith('.js')) {
     const asTs = raw.replace(/\.js$/, '.ts')
-    try { await access(asTs); return asTs } catch {}
+    try { await access(asTs); return asTs } catch { /* No sibling .ts source; keep .js path. */ }
   }
   return raw
 }
@@ -2534,8 +2555,8 @@ async function resolveThroughBarrel(
 
   const starTargets: string[] = []
   for (const stmt of sf.statements) {
-    if (!ts.isExportDeclaration(stmt) || stmt.isTypeOnly || !stmt.moduleSpecifier) continue
-    const spec = (stmt.moduleSpecifier as ts.StringLiteral).text
+    if (!ts.isExportDeclaration(stmt) || stmt.isTypeOnly || !stmt.moduleSpecifier || !ts.isStringLiteral(stmt.moduleSpecifier)) continue
+    const spec = stmt.moduleSpecifier.text
     const target = await resolveLocalModulePath(filePath, spec)
     if (!target) continue
     if (stmt.exportClause && ts.isNamedExports(stmt.exportClause)) {
@@ -2693,8 +2714,8 @@ export async function compileTsProjectToGodot(options: CompileProjectOptions): P
     // Pre-resolve every runtime import specifier + symbol through barrels so all dependencies are compiled too.
     const importMap = new Map<string, { resPath: string; exportName: string; absTarget: string }>()
     for (const stmt of sf.statements) {
-      if (!ts.isImportDeclaration(stmt) || stmt.importClause?.isTypeOnly) continue
-      const spec = (stmt.moduleSpecifier as ts.StringLiteral).text
+      if (!ts.isImportDeclaration(stmt) || stmt.importClause?.isTypeOnly || !ts.isStringLiteral(stmt.moduleSpecifier)) continue
+      const spec = stmt.moduleSpecifier.text
       const direct = await resolveLocalModulePath(normalized, spec)
       if (!direct) continue
       const bindings = stmt.importClause?.namedBindings

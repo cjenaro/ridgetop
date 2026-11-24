@@ -13,7 +13,7 @@ async function copyModule(source: string, target: string, rewrite?: (code: strin
 
 async function firstExisting(paths: readonly string[]): Promise<string | null> {
   for (const p of paths) {
-    try { await access(p); return p } catch {}
+    try { await access(p); return p } catch { /* Candidate path missing; try next. */ }
   }
   return null
 }

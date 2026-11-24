@@ -5,6 +5,14 @@ import { PLAYER_WIDTH, PLAYER_HEIGHT } from './simulation.ts'
 
 type PlayerTransition = { before: Player; after: Player }
 
+function samePlayer(before: Player, after: Player): boolean {
+  const afterValues = new Map<string, unknown>(Object.entries(after))
+  for (const [key, value] of Object.entries(before)) {
+    if (!Object.is(value, afterValues.get(key))) return false
+  }
+  return true
+}
+
 export function platformerRules(course: Course) {
   const { beacon } = course
   const allCrystals = (1 << course.crystals.length) - 1
@@ -25,7 +33,7 @@ export function platformerRules(course: Course) {
         p.x + PLAYER_WIDTH > beacon.x && p.y < beacon.y + beacon.h &&
         p.y + PLAYER_HEIGHT > beacon.y) },
     { id: 'finished-run-is-frozen', test: ({ before, after }: PlayerTransition) =>
-      !before.finished || (Object.keys(before) as (keyof Player)[]).every(key => Object.is(before[key], after[key])) },
+      !before.finished || samePlayer(before, after) },
     { id: 'respawn-preserves-collected-items', test: ({ before, after }: PlayerTransition) => {
       if (after.falls === before.falls) return true
       const spawn = before.checkpoint ? course.checkpoint : course.spawn

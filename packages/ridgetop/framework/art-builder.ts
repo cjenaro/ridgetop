@@ -215,7 +215,8 @@ export function createArtBuilder(name: string, { base = 'empty', reference, fram
     return vec(i => (b.min[i]+b.max[i]+normals[face][i]*extent(b,i))/2+offset[i])
   }
   function attach(id: string, parent: string, face: Surface, shape: ArtShape, size: Vec3, tone: ArtTone, offset: Vec3 = origin, unlit = 0) {
-    if ((face as string) === 'center') throw new Error('Attach requires a surface face, not center')
+    const faceName: string = face
+    if (faceName === 'center') throw new Error('Attach requires a surface face, not center')
     checkVector(size, id, true)
     const anchor = point(parent, face, offset)
     const created = solid(id, shape, size, tone, vec(i => anchor[i]+normals[face][i]*size[i]*.42), origin, unlit)
@@ -303,7 +304,7 @@ export function createArtBuilder(name: string, { base = 'empty', reference, fram
           const b = artPoseBounds(model, probe)
           const lift = Math.abs(b.min[1]) > 1e-7 ? -b.min[1] : 0
           if (lift !== 0 || existingRoot?.position) {
-            frame.poses.root = { ...(existingRoot ?? {}), position: [rx, lift, rz] }
+            frame.poses.root = { ...existingRoot, position: [rx, lift, rz] }
           }
         }
       }

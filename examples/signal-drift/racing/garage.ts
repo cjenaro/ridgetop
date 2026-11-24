@@ -1,7 +1,7 @@
 import { buyUpgrade, garage, garageParts, vehicleStats } from './progression.ts'
 import type { Championship, Upgrade } from './progression.ts'
 
-const pixels = {
+const pixels: Record<string, string> = {
   '#': '#0a1621', a: '#2c4454', b: '#59788a', c: '#a3c1c5', d: '#e4f4e7',
   g: '#64dbb5', h: '#30826e', y: '#ffc978', o: '#a96c40', v: '#a58df2', w: '#6552a7'
 }
@@ -39,7 +39,7 @@ export function renderPartIcon(part: Upgrade) {
   const ctx = canvas.getContext('2d')
   if (ctx) {
     icons[part].forEach((row, y) => Array.from(row).forEach((pixel, x) => {
-      const tint = pixels[pixel as keyof typeof pixels]
+      const tint = pixels[pixel]
       if (tint) {
         ctx.fillStyle = tint
         ctx.fillRect(x, y, 1, 1)
@@ -74,7 +74,12 @@ const creditsFormat = new Intl.NumberFormat('en')
 export function createGarageState(progress: Championship, onPurchase: () => void) {
   let selected: Upgrade = garageParts[0]
   let message = ''
-  const iconCanvases = Object.fromEntries(garageParts.map(part => [part, renderPartIcon(part)])) as Record<Upgrade, HTMLCanvasElement>
+  const iconCanvases: Record<Upgrade, HTMLCanvasElement> = {
+    motor: renderPartIcon('motor'),
+    tires: renderPartIcon('tires'),
+    armor: renderPartIcon('armor'),
+    capacitor: renderPartIcon('capacitor')
+  }
 
   return {
     get part() { return selected },

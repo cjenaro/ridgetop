@@ -15,14 +15,48 @@ async function open(path: string, beforeLoad?: string) {
   tabs.push(tab)
   return tab
 }
-const selected = (process.env.RIDGETOP_BACKENDS?.split(',') ?? ['webgpu', 'webgl2', 'canvas']) as SmokeBackend[]
 const rendererNames: Record<SmokeBackend, string> = { webgpu: 'WebGPU', webgl2: 'WebGL 2', canvas: 'Canvas 2D' }
+function isSmokeBackend(value: string): value is SmokeBackend {
+  return Object.hasOwn(rendererNames, value)
+}
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
+}
+const rawBackends = process.env.RIDGETOP_BACKENDS?.split(',')
+const selected: SmokeBackend[] = rawBackends
+  ? rawBackends.map(name => {
+    if (!isSmokeBackend(name)) throw new Error('Unknown backend: ' + name)
+    return name
+  })
+  : ['webgpu', 'webgl2', 'canvas']
 
-const uiState = <T = any>(tab: BrowserTab, field: string) => tab.evaluate<T>(`window.__ridgetopUi?.state?.()?.[${JSON.stringify(field)}]`)
+const uiState = (tab: BrowserTab, field: string) => tab.evaluate(`window.__ridgetopUi?.state?.()?.[${JSON.stringify(field)}]`)
+async function uiString(tab: BrowserTab, field: string): Promise<string> {
+  const value = await uiState(tab, field)
+  if (typeof value !== 'string') assert.fail(`Expected string for ui state ${field}, got ${typeof value}`)
+  return value
+}
+async function uiStringList(tab: BrowserTab, field: string): Promise<string[] | undefined> {
+  const value = await uiState(tab, field)
+  return Array.isArray(value) && value.every((item): item is string => typeof item === 'string') ? value : undefined
+}
 const uiAct = (tab: BrowserTab, id: string, action = 'press', payload?: unknown) =>
   tab.evaluate(`window.__ridgetopUi?.act(${JSON.stringify(id)}, ${JSON.stringify(action)}, ${JSON.stringify(payload)})`)
 type UiRect = { x: number; y: number; width: number; height: number }
-const uiRect = (tab: BrowserTab, id: string) => tab.evaluate<UiRect | undefined>(`window.__ridgetopUi?.rects?.()?.[${JSON.stringify(id)}]`)
+function isUiRect(value: unknown): value is UiRect {
+  return isRecord(value) &&
+    typeof value.x === 'number' && typeof value.y === 'number' &&
+    typeof value.width === 'number' && typeof value.height === 'number'
+}
+const uiRect = async (tab: BrowserTab, id: string): Promise<UiRect | undefined> => {
+  const value = await tab.evaluate(`window.__ridgetopUi?.rects?.()?.[${JSON.stringify(id)}]`)
+  return isUiRect(value) ? value : undefined
+}
+async function capturePngBase64(tab: BrowserTab, params: Record<string, unknown> = {}): Promise<string> {
+  const result = await tab.call('Page.captureScreenshot', { format: 'png', ...params })
+  if (typeof result.data !== 'string') assert.fail('Missing screenshot data')
+  return result.data
+}
 
 async function assertGameViewport(tab: BrowserTab, stage: string, hud: string, uiLayer: string) {
   const layout = await tab.evaluate(`(() => {
@@ -57,7 +91,7 @@ try {
     })()`)
     async function renderedView() {
       await models.evaluate('new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))')
-      return (await models.call('Page.captureScreenshot', { format: 'png', clip })).data
+      return await capturePngBase64(models, { clip })
     }
     const first = await renderedView()
     const rangerStats = await status(models, 'stats')
@@ -85,6 +119,7 @@ try {
     if (pixels[3] !== 0 || !pixels.some((value, i) => i % 4 === 3 && value === 255)) return null
     return frame.toDataURL()
   })`)
+  assert.ok(Array.isArray(views))
   assert.ok(views.every(Boolean))
   assert.equal(new Set(views).size, 8, 'eight distinct model views on transparent backgrounds')
   await workshop.evaluate(`(() => {
@@ -183,8 +218,7 @@ try {
     await uiAct(tab, 'resume')
     await until(() => uiState(tab, 'screen'), 'play', 'resume closes pause')
     if (process.env.RIDGETOP_SCREENSHOT && backend === selected[0]) {
-      const screenshot = await tab.call('Page.captureScreenshot', { format: 'png' })
-      await writeFile(process.env.RIDGETOP_SCREENSHOT, Buffer.from(screenshot.data, 'base64'))
+      await writeFile(process.env.RIDGETOP_SCREENSHOT, Buffer.from(await capturePngBase64(tab), 'base64'))
     }
     await key(tab, 'keyDown', 'KeyD', 'd')
     await until(() => uiState(tab, 'falls'), '1 fall', backend + ' solo movement and respawn')
@@ -239,11 +273,11 @@ try {
     await uiAct(racer, 'upgrade-armor')
     assert.equal(await uiState(racer, 'garagePart'), 'Shield')
     assert.equal(await uiState(racer, 'garageCredits'), '100', 'choosing a part leaves the balance alone')
-    assert.match(await uiState(racer, 'garageStats'), /100→120/)
+    assert.match(await uiString(racer, 'garageStats'), /100→120/)
     await uiAct(racer, 'garage-install')
     assert.equal(await uiState(racer, 'garageCredits'), '20')
     assert.equal(await uiState(racer, 'garageTier'), 'Tier 1 of 3 fitted')
-    assert.match(await uiState(racer, 'garageStats'), /120→140/)
+    assert.match(await uiString(racer, 'garageStats'), /120→140/)
     await uiAct(racer, 'garage-install')
     assert.equal(await uiState(racer, 'garageCredits'), '20', 'an unaffordable tier does not deduct credits')
     await uiAct(racer, 'garage-back')
@@ -255,7 +289,7 @@ try {
     })()`), true, 'garage purchase saved and starting grid ready after reload')
     await uiAct(racer, 'race-start')
     await key(racer, 'keyDown', 'KeyW', 'w')
-    await until(() => uiState(racer, 'speed'), label => Number.parseInt(label) >= 12, 'race accelerated')
+    await until(() => uiState(racer, 'speed'), label => typeof label === 'string' && Number.parseInt(label) >= 12, 'race accelerated')
     await assertGameViewport(racer, 'race-stage', 'race-hud', 'race-ui')
     await key(racer, 'keyUp', 'KeyW', 'w')
     assert.equal(await uiState(racer, 'shield'), 'Shield 120 / 120')
@@ -278,13 +312,12 @@ try {
       const point = { x: rect.x + rect.width / 2, y: rect.y + rect.height / 2 }
       assert.ok(point.y > 0 && point.y < 844)
       await racer.call('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [point] })
-      await until(() => uiState(racer, 'speed'), label => Number.parseInt(label) >= 12, 'portrait racing touch throttle')
+      await until(() => uiState(racer, 'speed'), label => typeof label === 'string' && Number.parseInt(label) >= 12, 'portrait racing touch throttle')
       await racer.call('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] })
       await assertGameViewport(racer, 'race-stage', 'race-hud', 'race-ui')
     }
     if (process.env.RIDGETOP_RACING_SCREENSHOT && backend === selected[0]) {
-      const shot = await racer.call('Page.captureScreenshot', { format: 'png' })
-      await writeFile(process.env.RIDGETOP_RACING_SCREENSHOT, Buffer.from(shot.data, 'base64'))
+      await writeFile(process.env.RIDGETOP_RACING_SCREENSHOT, Buffer.from(await capturePngBase64(racer), 'base64'))
     }
     assert.deepEqual(racer.errors, [])
     await racer.close()
@@ -337,7 +370,7 @@ try {
     })()`)
     async function captureStage() {
       await lh.evaluate('new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))')
-      return (await lh.call('Page.captureScreenshot', { format: 'png', clip: stageClip })).data
+      return await capturePngBase64(lh, { clip: stageClip })
     }
     const beforeMove = await captureStage()
     await key(lh, 'keyDown', 'KeyD', 'd')
@@ -347,8 +380,10 @@ try {
     await key(lh, 'keyUp', 'KeyS', 's')
 
     const playState = await lh.evaluate('window.__ridgetopUi?.state?.()')
+    assert.ok(isRecord(playState), `${backend} Tidewatch state object missing`)
     for (const metric of ['day', 'coins', 'fuel', 'warmth', 'carry', 'shipsGuided']) {
-      assert.ok(typeof playState[metric] === 'number' && Number.isFinite(playState[metric]), `${backend} Tidewatch ${metric} must be finite`)
+      const value = playState[metric]
+      assert.ok(typeof value === 'number' && Number.isFinite(value), `${backend} Tidewatch ${metric} must be finite`)
     }
 
     // Open and close the upgrade shop modal
@@ -441,19 +476,19 @@ try {
         probeCanvas.remove()
       }
     })()`)
+    assert.ok(isRecord(renderProbe) && isRecord(renderProbe.stats), backend + ' Tidewatch render probe returned object')
     assert.equal(renderProbe.backend, rendererNames[backend], backend + ' Tidewatch backend matched')
-    assert.ok(renderProbe.stats.instances > 0 && Number.isFinite(renderProbe.stats.instances), backend + ' Tidewatch instances > 0')
-    assert.ok(renderProbe.stats.triangles > 0 && Number.isFinite(renderProbe.stats.triangles), backend + ' Tidewatch triangles > 0')
-    assert.ok(renderProbe.stats.drawCalls > 0 && Number.isFinite(renderProbe.stats.drawCalls), backend + ' Tidewatch drawCalls > 0')
+    assert.ok(typeof renderProbe.stats.instances === 'number' && renderProbe.stats.instances > 0 && Number.isFinite(renderProbe.stats.instances), backend + ' Tidewatch instances > 0')
+    assert.ok(typeof renderProbe.stats.triangles === 'number' && renderProbe.stats.triangles > 0 && Number.isFinite(renderProbe.stats.triangles), backend + ' Tidewatch triangles > 0')
+    assert.ok(typeof renderProbe.stats.drawCalls === 'number' && renderProbe.stats.drawCalls > 0 && Number.isFinite(renderProbe.stats.drawCalls), backend + ' Tidewatch drawCalls > 0')
     assert.equal(renderProbe.hasNonFiniteInstance, false, backend + ' Tidewatch instance transforms have no NaN/Infinity')
-    assert.ok(renderProbe.alphaInstances > 0, backend + ' Tidewatch alpha blending active')
-    assert.ok(renderProbe.additiveInstances > 0, backend + ' Tidewatch additive blending active')
-    assert.ok(renderProbe.pointLights >= 3, backend + ' Tidewatch dynamic point lighting active')
+    assert.ok(typeof renderProbe.alphaInstances === 'number' && renderProbe.alphaInstances > 0, backend + ' Tidewatch alpha blending active')
+    assert.ok(typeof renderProbe.additiveInstances === 'number' && renderProbe.additiveInstances > 0, backend + ' Tidewatch additive blending active')
+    assert.ok(typeof renderProbe.pointLights === 'number' && renderProbe.pointLights >= 3, backend + ' Tidewatch dynamic point lighting active')
     assert.equal(renderProbe.fogActive, true, backend + ' Tidewatch distance fog active')
 
     if (process.env.RIDGETOP_LIGHTHOUSE_SCREENSHOT && backend === selected[0]) {
-      const shot = await lh.call('Page.captureScreenshot', { format: 'png' })
-      await writeFile(process.env.RIDGETOP_LIGHTHOUSE_SCREENSHOT, Buffer.from(shot.data, 'base64'))
+      await writeFile(process.env.RIDGETOP_LIGHTHOUSE_SCREENSHOT, Buffer.from(await capturePngBase64(lh), 'base64'))
     }
     assert.deepEqual(lh.errors, [])
     await lh.close()
@@ -491,8 +526,7 @@ try {
   await until(() => uiState(campaign, 'screen'), 'title', 'campaign title loaded')
   if (process.env.RIDGETOP_TITLE_SCREENSHOT) {
     await campaign.evaluate('advanceGame(6)')
-    const shot = await campaign.call('Page.captureScreenshot', { format: 'png' })
-    await writeFile(process.env.RIDGETOP_TITLE_SCREENSHOT, Buffer.from(shot.data, 'base64'))
+    await writeFile(process.env.RIDGETOP_TITLE_SCREENSHOT, Buffer.from(await capturePngBase64(campaign), 'base64'))
   }
   await campaign.call('Emulation.setDeviceMetricsOverride', { width: 640, height: 680, deviceScaleFactor: 1, mobile: false })
   await uiAct(campaign, 'sound', 'toggle')
@@ -523,8 +557,9 @@ try {
   }
 
   assert.equal(await uiState(campaign, 'screen'), 'ending')
-  assert.match(await uiState(campaign, 'endingStats'), /6 \/ 6 signal chips · 6 \/ 6 gold/)
+  assert.match(await uiString(campaign, 'endingStats'), /6 \/ 6 signal chips · 6 \/ 6 gold/)
   const save = await campaign.evaluate(`JSON.parse(localStorage.getItem(${JSON.stringify(SAVE_KEY)}))`)
+  assert.ok(isRecord(save) && isRecord(save.levels))
   assert.deepEqual(Object.keys(save.levels), ROUTE)
   await campaign.call('Page.reload')
   await until(() => uiState(campaign, 'screen'), 'title', 'campaign reloaded')
@@ -543,9 +578,9 @@ try {
   const a = await open(roomPath)
   await until(() => uiState(a, 'connection'), 'Room online', 'first player connected')
   const b = await open(roomPath)
-  await until(() => uiState<string[] | undefined>(b, 'standings'), lines => lines?.some(l => l.includes('You')) && lines?.some(l => l.includes('Scout 1')), 'second player sees first')
+  await until(() => uiStringList(b, 'standings'), lines => lines?.some(l => l.includes('You')) && lines?.some(l => l.includes('Scout 1')), 'second player sees first')
   await a.call('Page.bringToFront')
-  await until(() => uiState<string[] | undefined>(a, 'standings'), lines => lines?.some(l => l.includes('You')) && lines?.some(l => l.includes('Scout 2')), 'first player sees second')
+  await until(() => uiStringList(a, 'standings'), lines => lines?.some(l => l.includes('You')) && lines?.some(l => l.includes('Scout 2')), 'first player sees second')
   await b.call('Page.bringToFront')
   await uiAct(b, 'journal-open')
   await until(() => uiState(b, 'screen'), 'journal', 'in-game roster opens')
@@ -554,7 +589,7 @@ try {
   await uiAct(b, 'mode')
   await until(() => uiState(b, 'connection'), 'Solo practice', 'second player left for practice')
   await a.call('Page.bringToFront')
-  await until(() => uiState<string[] | undefined>(a, 'standings'), lines => lines?.some(l => l.includes('You')) && !lines?.some(l => l.includes('Scout 2')), 'first player sees departure')
+  await until(() => uiStringList(a, 'standings'), lines => lines?.some(l => l.includes('You')) && !lines?.some(l => l.includes('Scout 2')), 'first player sees departure')
   assert.deepEqual([...a.errors, ...b.errors], [])
   await a.close()
   await b.close()
@@ -566,7 +601,7 @@ try {
   await uiAct(guild, 'expedition')
   await until(() => uiState(guild, 'connection'), 'Expedition online', 'expedition connected from the title')
   const character = await until(() => guild.evaluate("window.__ridgetopUi?.state?.()?.character?.name"),
-    name => /^Scout [A-F0-9]{6}$/.test(name), 'character journal loaded')
+    name => typeof name === 'string' && /^Scout [A-F0-9]{6}$/.test(name), 'character journal loaded')
   await uiAct(guild, 'journal-open')
   await until(() => uiState(guild, 'screen'), 'journal', 'expedition journal is visible over the course')
   await uiAct(guild, 'journal-close')

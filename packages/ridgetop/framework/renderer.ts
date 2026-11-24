@@ -158,7 +158,8 @@ export async function createRenderer(canvas: HTMLCanvasElement, { width, height,
     try {
       return canvasBackend(canvas)
     } catch {
-      const replacement = canvas.cloneNode() as HTMLCanvasElement
+      const replacement = canvas.cloneNode()
+      if (!(replacement instanceof HTMLCanvasElement)) throw new Error('Could not clone canvas element')
       canvas.replaceWith(replacement)
       canvas = replacement
       return canvasBackend(canvas)

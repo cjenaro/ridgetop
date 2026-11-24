@@ -14,7 +14,13 @@ export type Championship = {
   build: Build
   records: Record<string, { place: number; seconds: number }>
 }
-export const garageParts = Object.keys(garage) as Upgrade[]
+function isUpgrade(key: string): key is Upgrade {
+  return Object.hasOwn(garage, key)
+}
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
+}
+export const garageParts: Upgrade[] = Object.keys(garage).filter(isUpgrade)
 export const stock: Readonly<Build> = Object.freeze({ motor: 0, tires: 0, armor: 0, capacitor: 0 })
 export const raceSaveKey = 'ridgetop.signal-drift.v1'
 
@@ -37,23 +43,24 @@ function validTier(part: Upgrade, value: unknown): value is number {
   return typeof value === 'number' && Number.isInteger(value) && value >= 0 && value <= garage[part].costs.length
 }
 function validRecord(value: unknown): value is { place: number; seconds: number } {
-  if (!value || typeof value !== 'object') return false
-  const record = value as { place?: unknown; seconds?: unknown }
-  return typeof record.place === 'number' && Number.isInteger(record.place) && record.place >= 1 && record.place <= 4 &&
-    typeof record.seconds === 'number' && Number.isFinite(record.seconds) && record.seconds > 0
+  if (!isRecord(value)) return false
+  const { place, seconds } = value
+  return typeof place === 'number' && Number.isInteger(place) && place >= 1 && place <= 4 &&
+    typeof seconds === 'number' && Number.isFinite(seconds) && seconds > 0
 }
 
 function readProgress(saved: unknown): Championship {
   const progress: Championship = { credits: 100, build: { ...stock }, records: {} }
-  if (!saved || typeof saved !== 'object') return progress
-  const data = saved as { credits?: unknown; build?: Record<string, unknown>; records?: Record<string, unknown> }
-  if (validCredits(data.credits)) progress.credits = data.credits
+  if (!isRecord(saved)) return progress
+  if (validCredits(saved.credits)) progress.credits = saved.credits
+  const build = isRecord(saved.build) ? saved.build : undefined
   for (const part of garageParts) {
-    const level = data.build?.[part]
+    const level = build?.[part]
     if (validTier(part, level)) progress.build[part] = level
   }
+  const records = isRecord(saved.records) ? saved.records : undefined
   for (const { id } of circuits) {
-    const record = data.records?.[id]
+    const record = records?.[id]
     if (validRecord(record)) progress.records[id] = record
   }
   return progress

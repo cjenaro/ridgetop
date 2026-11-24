@@ -72,7 +72,7 @@ async function main(argv: readonly string[]) {
       const mod = await import('./ts-to-gd.ts')
       compileTsProjectToGodot = mod.compileTsProjectToGodot
     } catch (error) {
-      const code = (error as NodeJS.ErrnoException | undefined)?.code
+      const code = typeof error === 'object' && error !== null && 'code' in error ? error.code : undefined
       if (code === 'ERR_MODULE_NOT_FOUND') {
         throw new Error('compile-godot requires the optional peer dependency "typescript". Install it with: npm install -D typescript')
       }

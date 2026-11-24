@@ -13,6 +13,14 @@ function require2d(canvas: HTMLCanvasElement): CanvasRenderingContext2D {
   return ctx
 }
 
+function isArtShape(value: string): value is ArtShape {
+  return Object.hasOwn(artShapes, value)
+}
+
+function isArtTone(value: string): value is ArtTone {
+  return Object.hasOwn(artPalette, value)
+}
+
 export function createPartEditor(root: HTMLDetailsElement, onApply: (source: ArtRecipe) => void) {
   const select = query<HTMLSelectElement>(root, '#part-name')
   const shape = query<HTMLSelectElement>(root, '#part-shape')
@@ -60,8 +68,10 @@ export function createPartEditor(root: HTMLDetailsElement, onApply: (source: Art
     try {
       const next = structuredClone(source)
       const part = next.parts[select.selectedIndex]
-      part.shape = shape.value as ArtShape
-      part.tone = tone.value as ArtTone
+      if (!isArtShape(shape.value)) throw new Error('Unknown shape: ' + shape.value)
+      if (!isArtTone(tone.value)) throw new Error('Unknown tone: ' + tone.value)
+      part.shape = shape.value
+      part.tone = tone.value
       part.position = values(position)
       part.scale = values(scale)
       angles.forEach((axis, i) => {
@@ -69,7 +79,7 @@ export function createPartEditor(root: HTMLDetailsElement, onApply: (source: Art
         if (degrees !== (part[axis] ?? 0) * 180 / Math.PI) part[axis] = degrees * Math.PI / 180
       })
       next.frameSize = frameSize.valueAsNumber
-      const fit = (event.submitter as HTMLElement)?.id === 'fit-model'
+      const fit = event.submitter?.id === 'fit-model'
       onApply(fit ? fitArtRecipe(next) : next)
       status.textContent = fit ? 'Grounded the model and fitted all eight views.' : 'Updated ' + part.name + '.'
     } catch (error) { status.textContent = error.message }

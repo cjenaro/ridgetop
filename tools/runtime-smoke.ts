@@ -11,10 +11,13 @@ const runtimes = {
   deno: [process.env.RIDGETOP_DENO ?? 'deno', 'run', '--allow-read', '--allow-write', '--allow-net', '--allow-env']
 }
 type RuntimeName = keyof typeof runtimes
+function isRuntimeName(name: string): name is RuntimeName {
+  return Object.hasOwn(runtimes, name)
+}
 const names = process.argv.slice(2)
 for (const name of names.length ? names : Object.keys(runtimes)) {
-  if (!Object.hasOwn(runtimes, name)) throw new Error('Unknown runtime: ' + name)
-  const [command, ...args] = runtimes[name as RuntimeName]
+  if (!isRuntimeName(name)) throw new Error('Unknown runtime: ' + name)
+  const [command, ...args] = runtimes[name]
   const temporary = await mkdtemp(join(tmpdir(), 'ridgetop-runtime-'))
   const save = join(temporary, 'characters.json')
   const server = spawn(command, [...args, 'dist/server.js'], {
