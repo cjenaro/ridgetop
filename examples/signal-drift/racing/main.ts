@@ -253,18 +253,18 @@ async function start() {
       // Multi-touch driving controls (only on touch devices during racing)
       column({ id: 'touch-left-deck', hidden: !showTouch, style: { anchor: 'bottom-left', inset: 12, gap: 8, respectSafeArea: true } }, [
         row({ id: 'touch-weapons', style: { gap: 8 } }, [
-          boxNode({ id: 'touch-pulse', style: { width: 66, height: 46 }, widget: { type: 'button', label: 'Pulse', onHold: on => { touchHeld.pulse = on; if (on) { audio.unlock(); if (!countdown) queuedPulse = true } } } }),
-          boxNode({ id: 'touch-snare', style: { width: 66, height: 46 }, widget: { type: 'button', label: 'Snare', onHold: on => { touchHeld.snare = on; if (on) { audio.unlock(); if (!countdown) queuedSnare = true } } } })
+          boxNode({ id: 'touch-pulse', style: { width: 66, height: 46 }, widget: { type: 'button', label: 'Pulse', onHold: (on: boolean) => { touchHeld.pulse = on; if (on) { audio.unlock(); if (!countdown) queuedPulse = true } } } }),
+          boxNode({ id: 'touch-snare', style: { width: 66, height: 46 }, widget: { type: 'button', label: 'Snare', onHold: (on: boolean) => { touchHeld.snare = on; if (on) { audio.unlock(); if (!countdown) queuedSnare = true } } } })
         ]),
         row({ id: 'touch-steer', style: { gap: 8 } }, [
-          boxNode({ id: 'touch-left', style: { width: 66, height: 54 }, widget: { type: 'button', label: '←', onHold: on => { touchHeld.left = on; if (on) audio.unlock() } } }),
-          boxNode({ id: 'touch-right', style: { width: 66, height: 54 }, widget: { type: 'button', label: '→', onHold: on => { touchHeld.right = on; if (on) audio.unlock() } } })
+          boxNode({ id: 'touch-left', style: { width: 66, height: 54 }, widget: { type: 'button', label: '←', onHold: (on: boolean) => { touchHeld.left = on; if (on) audio.unlock() } } }),
+          boxNode({ id: 'touch-right', style: { width: 66, height: 54 }, widget: { type: 'button', label: '→', onHold: (on: boolean) => { touchHeld.right = on; if (on) audio.unlock() } } })
         ])
       ]),
       row({ id: 'touch-right-deck', hidden: !showTouch, style: { anchor: 'bottom-right', inset: 12, gap: 8, respectSafeArea: true } }, [
-        boxNode({ id: 'touch-drift', style: { width: 62, height: 54 }, widget: { type: 'button', label: 'Drift', onHold: on => { touchHeld.drift = on; if (on) audio.unlock() } } }),
-        boxNode({ id: 'touch-brake', style: { width: 62, height: 54 }, widget: { type: 'button', label: 'Brake', onHold: on => { touchHeld.brake = on; if (on) audio.unlock() } } }),
-        boxNode({ id: 'touch-throttle', style: { width: 66, height: 54 }, widget: { type: 'button', label: 'Go', primary: true, onHold: on => { touchHeld.throttle = on; if (on) audio.unlock() } } })
+        boxNode({ id: 'touch-drift', style: { width: 62, height: 54 }, widget: { type: 'button', label: 'Drift', onHold: (on: boolean) => { touchHeld.drift = on; if (on) audio.unlock() } } }),
+        boxNode({ id: 'touch-brake', style: { width: 62, height: 54 }, widget: { type: 'button', label: 'Brake', onHold: (on: boolean) => { touchHeld.brake = on; if (on) audio.unlock() } } }),
+        boxNode({ id: 'touch-throttle', style: { width: 66, height: 54 }, widget: { type: 'button', label: 'Go', primary: true, onHold: (on: boolean) => { touchHeld.throttle = on; if (on) audio.unlock() } } })
       ]),
 
       // Home / Events / Paused / Results overlay

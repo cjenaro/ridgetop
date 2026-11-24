@@ -1,12 +1,14 @@
 export const WIDTH = 960
 export const HEIGHT = 540
 
-function course(name: string, description: string, theme: string, surfaces: readonly (readonly [number, number, number, number?])[], crystalOffsets: readonly number[], {
+export type CourseTheme = 'jade' | 'amber' | 'ice' | 'storm' | 'ember' | 'dawn'
+
+function course(name: string, description: string, theme: CourseTheme, surfaces: readonly (readonly [number, number, number, number?])[], crystalOffsets: readonly number[], {
   pads = [], spikes = [], signal = [4, 44, 100], par = 18
 }: { pads?: readonly (readonly [number, number, number])[]; spikes?: readonly (readonly [number, number, number, number?])[]; signal?: readonly [number, number, number]; par?: number } = {}) {
   const platforms = surfaces.map(([x, y, w, h = 24]) => ({ x, y, w, h }))
   const crystals = platforms.slice(1).map((p, i) => ({ x: p.x + crystalOffsets[i], y: p.y - 37 }))
-  const goal = platforms.at(-1)
+  const goal = platforms[platforms.length - 1]
   const [signalPlatform, signalX, signalY] = signal
   return {
     name, description, theme, platforms, crystals, par,
@@ -55,4 +57,5 @@ export const courses = {
 
 export const { spawn: SPAWN, platforms, crystals, beacon } = courses.ridge
 
-export type Course = (typeof courses)[keyof typeof courses]
+export type CourseId = keyof typeof courses
+export type Course = (typeof courses)[CourseId]

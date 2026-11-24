@@ -32,25 +32,28 @@ export function vehicleStats(build: Readonly<Build>) {
   }
 }
 
-function validCredits(value: number) { return Number.isSafeInteger(value) && value >= 0 }
-function validTier(part: Upgrade, value: number) {
-  return Number.isInteger(value) && value >= 0 && value <= garage[part].costs.length
+function validCredits(value: unknown): value is number { return typeof value === 'number' && Number.isSafeInteger(value) && value >= 0 }
+function validTier(part: Upgrade, value: unknown): value is number {
+  return typeof value === 'number' && Number.isInteger(value) && value >= 0 && value <= garage[part].costs.length
 }
-function validRecord(value) {
-  return Number.isInteger(value?.place) && value.place >= 1 && value.place <= 4 &&
-    Number.isFinite(value.seconds) && value.seconds > 0
+function validRecord(value: unknown): value is { place: number; seconds: number } {
+  if (!value || typeof value !== 'object') return false
+  const record = value as { place?: unknown; seconds?: unknown }
+  return typeof record.place === 'number' && Number.isInteger(record.place) && record.place >= 1 && record.place <= 4 &&
+    typeof record.seconds === 'number' && Number.isFinite(record.seconds) && record.seconds > 0
 }
 
-function readProgress(saved): Championship {
+function readProgress(saved: unknown): Championship {
   const progress: Championship = { credits: 100, build: { ...stock }, records: {} }
-  if (!saved) return progress
-  if (validCredits(saved.credits)) progress.credits = saved.credits
+  if (!saved || typeof saved !== 'object') return progress
+  const data = saved as { credits?: unknown; build?: Record<string, unknown>; records?: Record<string, unknown> }
+  if (validCredits(data.credits)) progress.credits = data.credits
   for (const part of garageParts) {
-    const level = saved.build?.[part]
+    const level = data.build?.[part]
     if (validTier(part, level)) progress.build[part] = level
   }
   for (const { id } of circuits) {
-    const record = saved.records?.[id]
+    const record = data.records?.[id]
     if (validRecord(record)) progress.records[id] = record
   }
   return progress

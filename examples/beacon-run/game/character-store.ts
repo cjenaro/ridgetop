@@ -4,7 +4,7 @@ import { createIdentity, createRecords, openRecords } from 'ridgetop/server'
 import { canEnterRegion, createCharacter, rewardExpedition } from './expedition.ts'
 
 function characterStore(records: Records<Character>) {
-  function award(id, zone, outcome) {
+  function award(id: string, zone: string, outcome: { finished: boolean; signal?: boolean; guild?: boolean }) {
     const before = records.get(id)
     if (!before || !canEnterRegion(before.cleared, zone)) return false
     const after = rewardExpedition(before, zone, outcome)
