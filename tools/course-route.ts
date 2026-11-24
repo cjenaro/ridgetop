@@ -1,12 +1,16 @@
 import assert from 'node:assert/strict'
+import type { RoomInput } from 'ridgetop'
 import { STEP } from 'ridgetop'
+import type { Course } from '../examples/beacon-run/game/level.ts'
 import { createPlayer, EMPTY_INPUT, stepPlayer } from '../examples/beacon-run/game/simulation.ts'
 
-export function courseRoute(course, { collectSignal = false } = {}) {
+export type CourseRouteAction = RoomInput & { frames: number }
+
+export function courseRoute(course: Course, { collectSignal = false } = {}) {
   const player = createPlayer('one', 0, course)
   const input = { ...EMPTY_INPUT }
-  const actions = []
-  function until(condition) {
+  const actions: CourseRouteAction[] = []
+  function until(condition: () => boolean) {
     let frames = 0
     while (frames < 180 && !condition()) {
       stepPlayer(player, input, STEP, course)

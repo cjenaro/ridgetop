@@ -3,25 +3,28 @@ import { writeFile } from 'node:fs/promises'
 import { courses } from '../examples/beacon-run/game/level.ts'
 import { ROUTE, SAVE_KEY } from '../examples/beacon-run/game/campaign.ts'
 import { courseRoute } from './course-route.ts'
+import type { BrowserTab } from './browser-driver.ts'
 import { openTab, until, status, click, key } from './browser-driver.ts'
 
+type SmokeBackend = 'webgpu' | 'webgl2' | 'canvas'
 const base = process.env.RIDGETOP_URL ?? 'http://localhost:3000'
-const tabs = []
+const tabs: BrowserTab[] = []
 const room = 'test-' + Date.now().toString(36)
 async function open(path: string, beforeLoad?: string) {
   const tab = await openTab(base + path, beforeLoad)
   tabs.push(tab)
   return tab
 }
-const selected = process.env.RIDGETOP_BACKENDS?.split(',') ?? ['webgpu', 'webgl2', 'canvas']
-const rendererNames = { webgpu: 'WebGPU', webgl2: 'WebGL 2', canvas: 'Canvas 2D' }
+const selected = (process.env.RIDGETOP_BACKENDS?.split(',') ?? ['webgpu', 'webgl2', 'canvas']) as SmokeBackend[]
+const rendererNames: Record<SmokeBackend, string> = { webgpu: 'WebGPU', webgl2: 'WebGL 2', canvas: 'Canvas 2D' }
 
-const uiState = (tab, field: string) => tab.evaluate(`window.__ridgetopUi?.state?.()?.[${JSON.stringify(field)}]`)
-const uiAct = (tab, id: string, action = 'press', payload?: unknown) =>
+const uiState = <T = any>(tab: BrowserTab, field: string) => tab.evaluate<T>(`window.__ridgetopUi?.state?.()?.[${JSON.stringify(field)}]`)
+const uiAct = (tab: BrowserTab, id: string, action = 'press', payload?: unknown) =>
   tab.evaluate(`window.__ridgetopUi?.act(${JSON.stringify(id)}, ${JSON.stringify(action)}, ${JSON.stringify(payload)})`)
-const uiRect = (tab, id: string) => tab.evaluate(`window.__ridgetopUi?.rects?.()?.[${JSON.stringify(id)}]`)
+type UiRect = { x: number; y: number; width: number; height: number }
+const uiRect = (tab: BrowserTab, id: string) => tab.evaluate<UiRect | undefined>(`window.__ridgetopUi?.rects?.()?.[${JSON.stringify(id)}]`)
 
-async function assertGameViewport(tab, stage: string, hud: string, uiLayer: string) {
+async function assertGameViewport(tab: BrowserTab, stage: string, hud: string, uiLayer: string) {
   const layout = await tab.evaluate(`(() => {
     const world = document.getElementById('${stage}')
     const layer = document.getElementById('${hud}')
@@ -98,7 +101,7 @@ try {
     document.querySelector('#part-scale input').value = '.92'
     document.querySelector('#part-form').requestSubmit()
   })()`)
-  assert.match(await status(workshop, 'part-status'), /Updated backpack/)
+  assert.match((await status(workshop, 'part-status')) ?? '', /Updated backpack/)
   const editedBack = await backView()
   assert.notEqual(editedBack, firstBack, 'a named part edit reaches the rendered back view')
   await click(workshop, 'silhouette')
@@ -114,7 +117,7 @@ try {
     document.querySelector('#part-rotation input').value = '28'
     document.querySelector('#fit-model').click()
   })()`)
-  assert.match(await status(workshop, 'part-status'), /fitted all eight views/)
+  assert.match((await status(workshop, 'part-status')) ?? '', /fitted all eight views/)
   assert.equal(await workshop.evaluate("document.querySelector('#part-name').value"), 'rim')
   assert.ok(await workshop.evaluate(`[...document.querySelectorAll('#frames canvas')].length === 8 &&
     [...document.querySelectorAll('#frames canvas')].every(frame => {
@@ -203,7 +206,8 @@ try {
     if (backend === 'canvas') {
       await tab.call('Emulation.setDeviceMetricsOverride', { width: 390, height: 844, deviceScaleFactor: 1, mobile: true })
       await tab.call('Emulation.setTouchEmulationEnabled', { enabled: true, maxTouchPoints: 2 })
-      const rect = await until(() => uiRect(tab, 'touch-right'), Boolean, 'touch right button laid out')
+      const rect = await until(() => uiRect(tab, 'touch-right'), r => Boolean(r), 'touch right button laid out')
+      assert.ok(rect)
       const point = { x: rect.x + rect.width / 2, y: rect.y + rect.height / 2 }
       assert.ok(point.y > 0 && point.y < 844)
       await tab.call('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [point] })
@@ -269,7 +273,8 @@ try {
     if (backend === 'canvas') {
       await racer.call('Emulation.setDeviceMetricsOverride', { width: 390, height: 844, deviceScaleFactor: 1, mobile: true })
       await racer.call('Emulation.setTouchEmulationEnabled', { enabled: true, maxTouchPoints: 2 })
-      const rect = await until(() => uiRect(racer, 'touch-throttle'), Boolean, 'touch throttle laid out')
+      const rect = await until(() => uiRect(racer, 'touch-throttle'), r => Boolean(r), 'touch throttle laid out')
+      assert.ok(rect)
       const point = { x: rect.x + rect.width / 2, y: rect.y + rect.height / 2 }
       assert.ok(point.y > 0 && point.y < 844)
       await racer.call('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [point] })
@@ -538,9 +543,9 @@ try {
   const a = await open(roomPath)
   await until(() => uiState(a, 'connection'), 'Room online', 'first player connected')
   const b = await open(roomPath)
-  await until(() => uiState(b, 'standings'), lines => lines?.some(l => l.includes('You')) && lines?.some(l => l.includes('Scout 1')), 'second player sees first')
+  await until(() => uiState<string[] | undefined>(b, 'standings'), lines => lines?.some(l => l.includes('You')) && lines?.some(l => l.includes('Scout 1')), 'second player sees first')
   await a.call('Page.bringToFront')
-  await until(() => uiState(a, 'standings'), lines => lines?.some(l => l.includes('You')) && lines?.some(l => l.includes('Scout 2')), 'first player sees second')
+  await until(() => uiState<string[] | undefined>(a, 'standings'), lines => lines?.some(l => l.includes('You')) && lines?.some(l => l.includes('Scout 2')), 'first player sees second')
   await b.call('Page.bringToFront')
   await uiAct(b, 'journal-open')
   await until(() => uiState(b, 'screen'), 'journal', 'in-game roster opens')
@@ -549,7 +554,7 @@ try {
   await uiAct(b, 'mode')
   await until(() => uiState(b, 'connection'), 'Solo practice', 'second player left for practice')
   await a.call('Page.bringToFront')
-  await until(() => uiState(a, 'standings'), lines => lines?.some(l => l.includes('You')) && !lines?.some(l => l.includes('Scout 2')), 'first player sees departure')
+  await until(() => uiState<string[] | undefined>(a, 'standings'), lines => lines?.some(l => l.includes('You')) && !lines?.some(l => l.includes('Scout 2')), 'first player sees departure')
   assert.deepEqual([...a.errors, ...b.errors], [])
   await a.close()
   await b.close()
@@ -585,15 +590,16 @@ try {
   await until(() => benchmark.evaluate("document.readyState === 'complete'"), true, 'benchmark loaded')
   for (const backend of selected) {
     await benchmark.evaluate(`document.querySelector('[name=backend]').value='${backend}';document.querySelector('[name=count]').value='144';document.querySelector('#run').click()`)
-    const line = await until(() => status(benchmark, 'result'), result => result && result !== 'Running…', 'benchmark ' + backend, 200)
-    assert.ok(line.startsWith(rendererNames[backend] + ' ·'), line)
+    const line = await until(() => status(benchmark, 'result'), result => Boolean(result && result !== 'Running…'), 'benchmark ' + backend, 200)
+    assert.ok(line && line.startsWith(rendererNames[backend] + ' ·'), line ?? '')
     if (backend !== 'canvas') assert.match(line, /· 2 draws · 0 bytes uploaded per frame/)
     console.log(line)
   }
   const gpu = selected.find(backend => backend !== 'canvas')
   if (gpu) {
     await benchmark.evaluate(`document.querySelector('[name=backend]').value='${gpu}';document.querySelector('[name=workload]').value='dynamic';document.querySelector('#run').click()`)
-    const line = await until(() => status(benchmark, 'result'), result => result && result !== 'Running…', 'dynamic benchmark', 200)
+    const line = await until(() => status(benchmark, 'result'), result => Boolean(result && result !== 'Running…'), 'dynamic benchmark', 200)
+    assert.ok(line)
     assert.match(line, /2 draws · 9,216 bytes uploaded per frame/)
     assert.equal(await benchmark.evaluate("document.querySelector('#download').href.startsWith('blob:')"), true)
     console.log(line)

@@ -10,14 +10,14 @@ import { createDecisionApi } from '../packages/ridgetop/framework/server.ts'
 const execute = promisify(execFile)
 
 test('verification CLI sends three compact decision requests for eight fixtures', async t => {
-  const requests = []
+  const requests: { body: { evidence: { id: string; value: unknown }[]; [key: string]: unknown }; authorization: string | undefined }[] = []
   const server = createServer(async (req, res) => {
     let raw = ''
     for await (const chunk of req) raw += chunk
-    const body = JSON.parse(raw)
+    const body = JSON.parse(raw) as { evidence: { id: string; value: unknown }[]; [key: string]: unknown }
     requests.push({ body, authorization: req.headers.authorization })
-    const finish = body.evidence.find(item => item.id === 'finish').value
-    const falls = body.evidence.find(item => item.id === 'falls').value
+    const finish = body.evidence.find(item => item.id === 'finish')?.value
+    const falls = body.evidence.find(item => item.id === 'falls')?.value
     const label = finish ? 'completed' : falls ? 'respawned' : 'in-progress'
     res.writeHead(200, { 'Content-Type': 'application/json' })
     res.end(JSON.stringify({ label, evidence: finish ? ['finish'] : ['finish', 'falls'] }))
@@ -71,17 +71,19 @@ test('OpenAI, Clef and Jev expose the same decision contract', async t => {
         jev: 'https://api.typesafe.ai/v1/systemone'
       }
       const models = { openai: 'gpt-6-luna', clef: 'clef-flash', jev: 'jev-latest' }
-      const mocked = t.mock.method(globalThis, 'fetch', async (url, request) => {
-        assert.equal(url.href, urls[provider])
-        assert.equal(request.headers.Authorization, 'Bearer fixture-token')
-        const body = JSON.parse(request.body)
+      const mocked = t.mock.method(globalThis, 'fetch', async (url: string | URL | Request, request?: RequestInit) => {
+        assert.equal(url instanceof URL ? url.href : String(url), urls[provider])
+        const headers = request?.headers as Record<string, string> | undefined
+        assert.equal(headers?.Authorization, 'Bearer fixture-token')
+        const rawBody = String(request?.body ?? '')
+        const body = JSON.parse(rawBody)
         assert.equal(body.model, models[provider])
-        assert.equal(request.body.includes(observation.id), false)
+        assert.equal(rawBody.includes(observation.id), false)
         const label = { type: 'choice', choice: 'completed' }
         if (provider === 'openai') {
           assert.deepEqual(body.input[0].content[0], { type: 'input_json', data: { input: null, evidence } })
           assert.deepEqual(body.questions[0].choices, labels.map(value => ({ value })))
-          assert.deepEqual(body.questions.map(question => question.type), ['choice', 'predicate', 'predicate'])
+          assert.deepEqual(body.questions.map((question: { type: string }) => question.type), ['choice', 'predicate', 'predicate'])
           return Response.json({ answers: [
             { ...label, name: 'label' },
             { type: 'predicate', name: 'evidence_1', probability: 0.5 },

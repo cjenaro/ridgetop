@@ -39,7 +39,7 @@ test('depth-tested Canvas keeps the closest pixel where two sprite parts cross',
   let frame: Uint8ClampedArray
   const canvas = { width, height, getContext: () => ({
     createImageData: (w: number, h: number) => ({ data: new Uint8ClampedArray(w * h * 4) }),
-    putImageData: image => { frame = image.data }
+    putImageData: (image: { data: Uint8ClampedArray }) => { frame = image.data }
   }) } as unknown as HTMLCanvasElement
   const renderer = canvasMeshes(canvas, new Float32Array([0, 0, 1, 1]), { transparent: true, depthTest: true })
   const camera = new Float32Array([1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1])

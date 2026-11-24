@@ -3,6 +3,7 @@ import test from 'node:test'
 import { instances, box, quaternionFromEuler, rotateVec3, STEP } from '../packages/ridgetop/framework/index.ts'
 import { createRace, recover, rivalInput, standings, stepRace } from '../examples/signal-drift/racing/race.ts'
 import { circuits, route, roadMesh, trackWidth } from '../examples/signal-drift/racing/track.ts'
+import type { Championship } from '../examples/signal-drift/racing/progression.ts'
 import { buyUpgrade, championshipBackup, leadingEvent, loadChampionship, readChampionshipBackup,
   recordResult, saveChampionship, unlocked } from '../examples/signal-drift/racing/progression.ts'
 
@@ -14,8 +15,13 @@ test('portable backups round-trip existing garage saves and reject damaged or in
   assert.deepEqual(readChampionshipBackup(text), legacy)
   assert.throws(() => readChampionshipBackup(text.replace('"version": 1', '"version": 2')), /version/)
   assert.throws(() => readChampionshipBackup(text.replace('signal-drift', 'another-game')), /Signal Drift/)
-  for (const patch of [{ credits: -10 }, { build: { ...legacy.build, motor: 8 } },
-    { records: { copper: { place: 0, seconds: 12 } } }, { records: { unknown: legacy.records.copper } }]) {
+  const invalidPatches: Partial<Championship>[] = [
+    { credits: -10 },
+    { build: { ...legacy.build, motor: 8 } },
+    { records: { copper: { place: 0, seconds: 12 } } },
+    { records: { unknown: legacy.records.copper } }
+  ]
+  for (const patch of invalidPatches) {
     assert.throws(() => readChampionshipBackup(championshipBackup({ ...progress, ...patch })), /invalid/)
   }
   assert.throws(() => readChampionshipBackup('{'), /JSON/)
@@ -57,7 +63,7 @@ test('all four championship circuits can be qualified for in order and have upwa
       }, STEP)
     }
     assert.equal(player.lap, circuit.laps, circuit.name)
-    assert.ok(player.finish > 0, circuit.name)
+    assert.ok(player.finish !== null && player.finish > 0, circuit.name)
     const place = standings(race).indexOf(player) + 1
     assert.ok(place <= circuit.qualify, circuit.name)
     const before = progress.credits

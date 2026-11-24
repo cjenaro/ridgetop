@@ -3,6 +3,7 @@ import assert from 'node:assert/strict'
 import { evaluateDecisions, STEP, verifyBounded, verifyTrace } from '../packages/ridgetop/framework/index.ts'
 import { courses } from '../examples/beacon-run/game/level.ts'
 import { platformerRules } from '../examples/beacon-run/game/rules.ts'
+import type { Player } from '../examples/beacon-run/game/simulation.ts'
 import { createPlayer, stepPlayer } from '../examples/beacon-run/game/simulation.ts'
 
 test('a forbidden finish produces the shortest replay with the failing rule and state', () => {
@@ -10,7 +11,7 @@ test('a forbidden finish produces the shortest replay with the failing rule and 
   const initial = createPlayer('agent-test', 0, course)
   const model = {
     initial,
-    step(player, right) {
+    step(player: Player, right: boolean) {
       stepPlayer(player, { left: false, right, jump: 0 }, STEP, course)
       if (right && player.grounded) player.finished = true
     },
@@ -33,8 +34,8 @@ test('a forbidden finish produces the shortest replay with the failing rule and 
 test('bounded passes account for every input branch and budgets return inconclusive', () => {
   const model = {
     initial: { score: 0 },
-    step(state, action) { state.score += action },
-    checks: [{ id: 'nonnegative', test: ({ after }) => after.score >= 0 }],
+    step(state: { score: number }, action: number) { state.score += action },
+    checks: [{ id: 'nonnegative', test: ({ after }: { after: { score: number } }) => after.score >= 0 }],
     alphabet: [0, 1, 2], depth: 3
   }
   assert.deepEqual(verifyBounded(model), { status: 'pass', depth: 3, transitions: 39 })

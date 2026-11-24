@@ -1,4 +1,6 @@
+import type { Course, CourseId } from '../examples/beacon-run/game/level.ts'
 import type { Player } from '../examples/beacon-run/game/simulation.ts'
+import type { CourseRouteAction } from './course-route.ts'
 import { createHash } from 'node:crypto'
 import { readFile } from 'node:fs/promises'
 import { evaluateDecisions, STEP, verifyBounded, verifyTrace } from 'ridgetop'
@@ -7,23 +9,26 @@ import { platformerRules } from '../examples/beacon-run/game/rules.ts'
 import { createPlayer, stepPlayer } from '../examples/beacon-run/game/simulation.ts'
 import { createDecisionApi } from 'ridgetop/server'
 
-const alphabet = [false, true].flatMap(jump => [
+type StepAction = { left: boolean; right: boolean; jump: boolean }
+
+const alphabet: StepAction[] = [false, true].flatMap(jump => [
   { left: false, right: false, jump },
   { left: true, right: false, jump },
   { left: false, right: true, jump },
   { left: true, right: true, jump }
 ])
 const depth = 4
-const checkpointMoves = { ridge: 19, ruins: 25, summit: 23, storm: 18, foundry: 15, lastlight: 22 }
+const checkpointMoves: Record<CourseId, number> = { ridge: 19, ruins: 25, summit: 23, storm: 18, foundry: 15, lastlight: 22 }
 const goals = {
   'course-witness-finishes-with-chip-and-no-falls': {
     id: 'course-witness-finishes-with-chip-and-no-falls',
-    test: ({ after }) => after.finished && after.signal && after.falls === 0
+    test: ({ after }: { after: Player }) => after.finished && after.signal && after.falls === 0
   },
   'checkpoint-run-reaches-respawn': {
-    id: 'checkpoint-run-reaches-respawn', test: ({ after }) => after.falls > 0 && after.checkpoint
+    id: 'checkpoint-run-reaches-respawn', test: ({ after }: { after: Player }) => after.falls > 0 && after.checkpoint
   }
 }
+type GoalId = keyof typeof goals
 const files = [
   'packages/ridgetop/framework/index.ts', 'packages/ridgetop/framework/server.ts', 'packages/ridgetop/framework/loop.ts',
   'packages/ridgetop/framework/platformer.ts', 'packages/ridgetop/framework/verification.ts',
@@ -32,15 +37,15 @@ const files = [
   'packages/ridgetop/framework/decision-api.ts', 'packages/ridgetop/framework/decision-providers.ts'
 ]
 
-function stepFor(course) {
-  return (player, action) => stepPlayer(player, {
+function stepFor(course: Course) {
+  return (player: Player, action: StepAction) => stepPlayer(player, {
     left: action.left, right: action.right, jump: player.jump + Number(action.jump)
   }, STEP, course)
 }
 
-function unpack(segments) {
+function unpack(segments: readonly CourseRouteAction[]): StepAction[] {
   let jump = 0
-  const actions = []
+  const actions: StepAction[] = []
   for (const segment of segments) {
     for (let frame = 0; frame < segment.frames; frame++) {
       actions.push({ left: segment.left, right: segment.right, jump: frame === 0 && jump !== segment.jump })
@@ -50,9 +55,15 @@ function unpack(segments) {
   return actions
 }
 
-function encodeFailure(course, seed, initial, result) {
+function encodeFailure<R extends { status: string; rule?: string; actions?: readonly StepAction[] }>(
+  course: CourseId,
+  seed: string,
+  initial: Player,
+  result: R
+) {
   if (result.status !== 'fail') return result
-  const goal = Object.hasOwn(goals, result.rule) ? result.rule : undefined
+  const rule = result.rule ?? ''
+  const goal = Object.hasOwn(goals, rule) ? rule : undefined
   return { ...result, replay: { course, seed, initial, actions: result.actions, goal } }
 }
 
@@ -65,18 +76,18 @@ function observe(initial: Player, step: ReturnType<typeof stepFor>, actions: typ
   return result.final
 }
 
-async function certify(api) {
+async function certify(api?: ReturnType<typeof createDecisionApi>) {
   const [routeBytes, provenance] = await Promise.all([
     readFile(new URL('../examples/beacon-run/game/verification-routes.json', import.meta.url)),
     Promise.all(files.map(async path => {
       const bytes = await readFile(new URL('../' + path, import.meta.url))
-      return [path, createHash('sha256').update(bytes).digest('hex')]
+      return [path, createHash('sha256').update(bytes).digest('hex')] as const
     }))
   ])
-  const routes = JSON.parse(routeBytes.toString('utf8'))
+  const routes = JSON.parse(routeBytes.toString('utf8')) as Record<CourseId, CourseRouteAction[]>
   const reports = []
-  const finishedStates = []
-  for (const [id, course] of Object.entries(courses)) {
+  const finishedStates: { id: CourseId; state: Player }[] = []
+  for (const [id, course] of Object.entries(courses) as [CourseId, Course][]) {
     const spawn = createPlayer('verification', 0, course)
     const checks = platformerRules(course)
     const step = stepFor(course)
@@ -135,9 +146,9 @@ async function certify(api) {
     evidence: [{ id: 'finish', value: state.finished }, { id: 'falls', value: state.falls }],
     expected: { label: expected, evidence: expected === 'completed' ? ['finish'] : ['finish', 'falls'] }
   }))
-  function decideLocally({ evidence }) {
-    const finish = evidence.find(item => item.id === 'finish').value
-    const falls = evidence.find(item => item.id === 'falls').value
+  function decideLocally({ evidence }: { evidence: readonly { id: string; value: unknown }[] }) {
+    const finish = Boolean(evidence.find(item => item.id === 'finish')?.value)
+    const falls = Number(evidence.find(item => item.id === 'falls')?.value ?? 0)
     if (finish) return { label: 'completed', evidence: ['finish'] }
     if (falls > 0) return { label: 'respawned', evidence: ['finish', 'falls'] }
     return { label: 'in-progress', evidence: ['finish', 'falls'] }
@@ -158,21 +169,30 @@ async function certify(api) {
   }
 }
 
-async function replay(path) {
-  const fixture = JSON.parse(await readFile(path, 'utf8'))
-  if (!Object.hasOwn(courses, fixture.course) || !Array.isArray(fixture.actions) ||
-      fixture.actions.some(action => !action || typeof action.left !== 'boolean' ||
-        typeof action.right !== 'boolean' || typeof action.jump !== 'boolean')) {
+async function replay(path: string) {
+  const fixture = JSON.parse(await readFile(path, 'utf8')) as {
+    course?: unknown
+    actions?: unknown
+    initial?: Player
+    goal?: unknown
+  }
+  if (typeof fixture.course !== 'string' || !Object.hasOwn(courses, fixture.course) || !Array.isArray(fixture.actions) ||
+      fixture.actions.some((action: unknown) => {
+        if (!action || typeof action !== 'object') return true
+        const a = action as Record<string, unknown>
+        return typeof a.left !== 'boolean' || typeof a.right !== 'boolean' || typeof a.jump !== 'boolean'
+      })) {
     throw new TypeError('Expected a course ID and replay actions with Boolean left, right and jump')
   }
-  const course = courses[fixture.course]
+  const courseId = fixture.course as CourseId
+  const course = courses[courseId]
   const initial = fixture.initial ?? createPlayer('verification', 0, course)
   const checks = platformerRules(course)
-  if (fixture.goal !== undefined && !Object.hasOwn(goals, fixture.goal)) {
+  if (fixture.goal !== undefined && (typeof fixture.goal !== 'string' || !Object.hasOwn(goals, fixture.goal))) {
     throw new TypeError('Unknown replay goal')
   }
-  const goal = fixture.goal === undefined ? undefined : goals[fixture.goal]
-  return { course: fixture.course, ...verifyTrace({ initial, step: stepFor(course), actions: fixture.actions, checks, goal }) }
+  const goal = fixture.goal === undefined ? undefined : goals[fixture.goal as GoalId]
+  return { course: courseId, ...verifyTrace({ initial, step: stepFor(course), actions: fixture.actions as StepAction[], checks, goal }) }
 }
 
 try {

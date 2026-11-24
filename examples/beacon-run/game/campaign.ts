@@ -44,7 +44,11 @@ export function medal(course: Pick<Course, 'par'>, player: Pick<PlayerSnapshot, 
   return player.falls <= 2 ? 2 : 1
 }
 
-export function recordRelay(progress: CampaignProgress, id: string, player: Pick<PlayerSnapshot, 'finished' | 'ticks' | 'signal' | 'falls'>) {
+export function recordRelay(
+  progress: CampaignProgress,
+  id: string,
+  player: { finished: false } | Pick<PlayerSnapshot, 'finished' | 'ticks' | 'signal' | 'falls'>
+) {
   if (!player.finished || !Object.hasOwn(courses, id)) return
   const courseId = id as CourseId
   const previous = progress.levels[courseId]

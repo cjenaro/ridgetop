@@ -65,7 +65,7 @@ test('a model palette changes one asset while preserving shared mesh batching', 
   const model = modelFromArtRecipe(source)
   source.palette.accent = '#000000'
   source.timings.turntable = 400
-  assert.equal(model.timings.turntable, 120)
+  assert.equal(model.timings?.turntable, 120)
   const group = createArtKit({ palette: { accent: '#0000ff' }, models: {
     red: model, blue: { ...model, palette: {} }
   } }).group()

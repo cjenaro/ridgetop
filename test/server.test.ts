@@ -35,16 +35,19 @@ test('game art folders serve PNG and JSON exports with encoded names', async t =
   assert.equal((await fetch(base + 'Coin.json')).status, 404)
 })
 
-async function events(url, options = {}) {
+type RoomEvent = { id?: string; token?: string; players: { id: string; x: number; y: number; revision: number }[] }
+
+async function events(url: string, options: RequestInit = {}) {
   const abort = new AbortController()
   const res = await fetch(url, { ...options, signal: abort.signal })
   assert.equal(res.status, 200)
+  assert.ok(res.body)
   const reader = res.body.getReader()
   const decoder = new TextDecoder()
   let pending = ''
   return {
     abort() { abort.abort() },
-    async next() {
+    async next(): Promise<RoomEvent> {
       while (!pending.includes('\n\n')) {
         const { value, done } = await reader.read()
         assert.equal(done, false, 'SSE stream ended early')
@@ -54,9 +57,10 @@ async function events(url, options = {}) {
       const packet = pending.slice(0, split)
       pending = pending.slice(split + 2)
       const data = packet.split('\n').find(line => line.startsWith('data: '))
-      return JSON.parse(data.slice(6))
+      assert.ok(data, 'Expected data line in SSE packet')
+      return JSON.parse(data.slice(6)) as RoomEvent
     },
-    async until(condition) {
+    async until(condition: (snapshot: RoomEvent) => boolean) {
       for (let i = 0; i < 80; i++) {
         const snapshot = await this.next()
         if (condition(snapshot)) return snapshot
@@ -93,8 +97,8 @@ test('room protocol isolates courses, applies inputs once, and resumes disconnec
   assert.deepEqual(isolated.players.map(p => p.id), [third.id])
   assert.ok(shared.players[0].y > courses.summit.spawn.y)
 
-  const post = (action, token, body?) => fetch(route + '/' + action, {
-    method: 'POST', headers: { Authorization: 'Bearer ' + token }, body: body && JSON.stringify(body)
+  const post = (action: string, token: string | undefined, body?: unknown) => fetch(route + '/' + action, {
+    method: 'POST', headers: { Authorization: 'Bearer ' + token }, body: body ? JSON.stringify(body) : undefined
   })
   const input = { left: false, right: true, jump: 0, restart: 0 }
   assert.equal((await post('input', third.token, input)).status, 401)
@@ -109,11 +113,11 @@ test('room protocol isolates courses, applies inputs once, and resumes disconnec
 
   a.abort()
   await b.until(data => data.players.length === 1)
-  const resumed = await events(route + '/events', { headers: { 'Last-Event-ID': first.token } })
+  const resumed = await events(route + '/events', { headers: { 'Last-Event-ID': first.token ?? '' } })
   t.after(() => resumed.abort())
   assert.deepEqual(await resumed.next(), first)
   const restored = await resumed.until(data => data.players.length === 2)
-  assert.equal(restored.players.find(p => p.id === first.id).revision, 1)
+  assert.equal(restored.players.find(p => p.id === first.id)?.revision, 1)
   assert.equal((await post('leave', first.token)).status, 204)
   await b.until(data => data.players.length === 1)
   assert.equal((await post('input', first.token, reset)).status, 401)

@@ -276,7 +276,7 @@ test('createCanvasUi handles non-Array GamepadList, hidden hold release, scrim b
     const buildTree = (hideHold: boolean, withScrim: boolean) => overlay({ id: 'root', style: { anchor: 'fill' } }, [
       boxNode({
         id: 'hold-btn', hidden: hideHold, style: { anchor: 'top-left', width: 200, height: 100 },
-        widget: { type: 'button', label: 'Gas', onHold: active => holdStates.push(active) }
+        widget: { type: 'button', label: 'Gas', onHold: (active: boolean) => holdStates.push(active) }
       }),
       boxNode({
         id: 'vol', style: { anchor: 'bottom-left', width: 400, height: 60 },

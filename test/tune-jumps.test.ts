@@ -9,6 +9,8 @@ test('jump tuning improves held-out intent while preserving stale-input and cour
   const result = await tuneJumps(earlierTiming)
   assert.equal(result.status, 'candidate-passes')
   assert.deepEqual(result.baseline.timing, earlierTiming)
+  assert.ok(result.proposal)
+  assert.ok(result.baseline.holdout)
   assert.ok(result.proposal.holdout.intentional > result.baseline.holdout.intentional)
   assert.equal(result.proposal.holdout.accidental, 0)
   assert.equal(result.proposal.courses.length, 6)
