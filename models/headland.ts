@@ -19,8 +19,12 @@ const shore = [
 function coast() {
   const faces = new Map<string, number[]>()
   function face(tint: string, a: Vec3, b: Vec3, c: Vec3) {
-    if (!faces.has(tint)) faces.set(tint, [])
-    faces.get(tint).push(...a, ...b, ...c)
+    let list = faces.get(tint)
+    if (!list) {
+      list = []
+      faces.set(tint, list)
+    }
+    list.push(...a, ...b, ...c)
   }
   const top: Vec3[] = shore.map(([x, z], i) => [x, .055 + .05 * Math.sin(i * 3), z])
   const ledge: Vec3[] = shore.map(([x, z], i) => [x * (1.02 + .07 * Math.sin(i * 4)), -.19 + .09 * Math.cos(i * 2), z * 1.07])
@@ -49,8 +53,12 @@ function coast() {
 export function createHeadland(): readonly InstanceBatch[] {
   const byMesh = new Map<Mesh, InstanceBatch>()
   function put(shape: Mesh, position: Vec3, scale: Vec3, tint: string, yaw = 0, unlit = 0) {
-    if (!byMesh.has(shape)) byMesh.set(shape, instances(shape))
-    byMesh.get(shape).add(position, scale, yaw, color(tint), unlit)
+    let batch = byMesh.get(shape)
+    if (!batch) {
+      batch = instances(shape)
+      byMesh.set(shape, batch)
+    }
+    batch.add(position, scale, yaw, color(tint), unlit)
   }
   put(drum, [0, -.62, 0], [2.94, .16, 2.12], '63b5b9', .13)
   for (const [x, z, width] of [[1.24, 1.54, .40], [1.44, 1.43, .16], [-1.65, 1.34, .32], [-1.47, 1.44, .15], [2.48, -.12, .26], [-.35, -1.80, .5]]) {

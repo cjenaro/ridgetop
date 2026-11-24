@@ -1,18 +1,30 @@
 import { artPalette, artShapes, fitArtRecipe } from 'ridgetop'
 import type { ArtRecipe, ArtShape, ArtTone, SpriteSheetImage, Vec3 } from 'ridgetop'
 
+function query<T extends Element>(parent: ParentNode, selector: string): T {
+  const el = parent.querySelector<T>(selector)
+  if (!el) throw new Error('Missing element ' + selector)
+  return el
+}
+
+function require2d(canvas: HTMLCanvasElement): CanvasRenderingContext2D {
+  const ctx = canvas.getContext('2d')
+  if (!ctx) throw new Error('2D canvas context unavailable')
+  return ctx
+}
+
 export function createPartEditor(root: HTMLDetailsElement, onApply: (source: ArtRecipe) => void) {
-  const select = root.querySelector<HTMLSelectElement>('#part-name')
-  const shape = root.querySelector<HTMLSelectElement>('#part-shape')
-  const tone = root.querySelector<HTMLSelectElement>('#part-tone')
-  const frameSize = root.querySelector<HTMLInputElement>('#model-frame-size')
-  const status = root.querySelector<HTMLOutputElement>('#part-status')
+  const select = query<HTMLSelectElement>(root, '#part-name')
+  const shape = query<HTMLSelectElement>(root, '#part-shape')
+  const tone = query<HTMLSelectElement>(root, '#part-tone')
+  const frameSize = query<HTMLInputElement>(root, '#model-frame-size')
+  const status = query<HTMLOutputElement>(root, '#part-status')
   shape.replaceChildren(...Object.keys(artShapes).map(key => new Option(key, key)))
   tone.replaceChildren(...Object.keys(artPalette).map(key => new Option(key, key)))
   let source: ArtRecipe | undefined
 
   function vectorControls(id: string) {
-    const area = root.querySelector('#part-' + id)
+    const area = query(root, '#part-' + id)
     return ['X', 'Y', 'Z'].map(axis => {
       const label = document.createElement('label')
       const input = document.createElement('input')
@@ -42,7 +54,7 @@ export function createPartEditor(root: HTMLDetailsElement, onApply: (source: Art
     status.textContent = ''
   }
   select.onchange = showPart
-  root.querySelector('form').onsubmit = event => {
+  query<HTMLFormElement>(root, 'form').onsubmit = event => {
     event.preventDefault()
     if (!source) return
     try {
@@ -76,8 +88,8 @@ export function createPartEditor(root: HTMLDetailsElement, onApply: (source: Art
 }
 
 export function createViewComparison(root: HTMLDetailsElement) {
-  const grid = root.querySelector('#view-comparison')
-  const outline = root.querySelector<HTMLInputElement>('#silhouette')
+  const grid = query(root, '#view-comparison')
+  const outline = query<HTMLInputElement>(root, '#silhouette')
   outline.onchange = () => grid.classList.toggle('silhouettes', outline.checked)
   let active = ''
   const cells = ['front', 'right', 'back'].map(angle => {
@@ -114,7 +126,7 @@ export function createViewComparison(root: HTMLDetailsElement) {
       const current = guides.get(active)
       guide.hidden = remove.hidden = !current
       if (current) {
-        const context = guide.getContext('2d')
+        const context = require2d(guide)
         context.clearRect(0, 0, guide.width, guide.height)
         context.drawImage(current, 0, 0)
       }
@@ -127,7 +139,7 @@ export function createViewComparison(root: HTMLDetailsElement) {
       file.value = ''
       const ticket = ++request
       const target = active
-      let bitmap: ImageBitmap
+      let bitmap: ImageBitmap | undefined
       try {
         bitmap = await createImageBitmap(image)
         if (active !== target || ticket !== request) return
@@ -135,7 +147,7 @@ export function createViewComparison(root: HTMLDetailsElement) {
         const size = thumbnail.width = thumbnail.height = guide.width
         const scale = size / Math.max(bitmap.width, bitmap.height)
         const w = bitmap.width * scale, h = bitmap.height * scale
-        thumbnail.getContext('2d').drawImage(bitmap, (size - w) / 2, (size - h) / 2, w, h)
+        require2d(thumbnail).drawImage(bitmap, (size - w) / 2, (size - h) / 2, w, h)
         guides.set(target, thumbnail)
         refreshGuide()
       } catch {
@@ -154,16 +166,16 @@ export function createViewComparison(root: HTMLDetailsElement) {
   return {
     show(key: string, asset: SpriteSheetImage) {
       const { frameWidth: w, frameHeight: h, clips } = asset.manifest
-      root.hidden = !cells.every(({ angle }) => Object.hasOwn(clips, angle))
+      root.hidden = !clips || !cells.every(({ angle }) => Object.hasOwn(clips, angle))
       const changed = active !== key
       active = key
       for (const cell of cells) {
         if (changed) { cell.invalidate(); cell.refreshGuide() }
-        if (root.hidden) continue
+        if (root.hidden || !clips) continue
         const clip = clips[cell.angle]
         cell.model.width = w
         cell.model.height = h
-        cell.model.getContext('2d').drawImage(asset.image, clip.column * w, (clip.row ?? 0) * h, w, h, 0, 0, w, h)
+        require2d(cell.model).drawImage(asset.image, clip.column * w, (clip.row ?? 0) * h, w, h, 0, 0, w, h)
       }
     }
   }
