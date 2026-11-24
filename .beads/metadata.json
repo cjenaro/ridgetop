@@ -1,0 +1,7 @@
+{
+  "database": "dolt",
+  "backend": "dolt",
+  "dolt_mode": "embedded",
+  "dolt_database": "ridgetop",
+  "project_id": "3008763e-f16e-4956-a576-1e2a119bd6b1"
+}
