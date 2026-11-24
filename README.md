@@ -20,7 +20,7 @@ For new low-poly game assets, `createArtBuilder` supplies starter bodies, face a
 
 Use `npm run art-library -- list "<description>"` to search 13 editable references, including creatures, equipment and scenery. For example, `npm run art-library -- start field-radio weather-receiver` creates a local copy with named parts ready for a game-specific design.
 
-For live low-poly art, open the [3D model viewer](http://localhost:3000/models), or open `dist/low-poly-models.html` directly after a build. Orbit the raincoat ranger, the Signal Drift rally car, or the headland lighthouse. **Open model file** previews your workshop’s `.art.json` at the canvas resolution. The lighthouse source in `models/headland.ts` shows how to assemble a scene with a custom cliff mesh and instanced props.
+For live low-poly art, open the [3D model viewer](http://localhost:3000/models), or open `dist/low-poly-models.html` directly after a build. Orbit the headland lighthouse, field ranger, or signal lantern. **Open model file** previews your workshop’s `.art.json` at the canvas resolution. The lighthouse source in `models/headland.ts` shows how to assemble a scene with a custom cliff mesh and instanced props.
 
 Compare how GPT-5.6 Sol, Terra and Luna handled 20 identical low-poly game-art briefs. A follow-up tested the builder, reference library and rendered feedback on the smaller models. [Original blind gallery and trial](benchmarks/asset-authoring/README.md) · [Guided art results](benchmarks/asset-authoring/guided/README.md)
 
@@ -40,7 +40,7 @@ Open **game/game.js** first. Edit the map, palette, art names, objective text, o
 
 Run `npm run playtest` in the generated game to review art with Codex. In a framework checkout, run `npm run build` first and use the same playtest command to open Lantern Grove. **Pause & inspect** lets you click a visible model part, a 2D sprite or the inventory icon. Move and resize recipe parts directly, or pin a comment to a particular object, shared asset, frame or HUD use. Each thread saves its original image and scene under the game's `reviews/` directory. Codex can edit the referenced source and mark the thread ready. **Reload latest art** restores the saved view for comparison and sign-off. [Starter workflow](starter/README.md#review-the-art-while-playing)
 
-For an existing game, `ridgetop/art-review` exposes the pin and thread types and `pickArtScene`, which accepts your drawn objects and camera matrix. The local testing host uses `createArtReviewHandler` from `ridgetop/art-review/server`. The starter's `testing-scene.ts` and `main.ts` show how to connect sprite layers, pause and restore to the editor.
+For any game hosted with `createGameHost({ ..., testing: true })` (or `--testing`, such as `npm run start:testing`), Ridgetop automatically injects the game-agnostic Testing Mode bar and In-Game Asset Studio drawer, handles pause/picking across 3D models, rigs, meshes, 2D sprites, and Canvas UI HUD regions, and mounts loopback-only `/__testing/*` endpoints via `createArtReviewHandler` from `ridgetop/art-review/server`. Games may optionally call `registerTestingHooks({ snapshot, restore, getArtSource })` from `ridgetop` to support state rewind on review reload.
 
 | Where the art appears | How to use it |
 | --- | --- |

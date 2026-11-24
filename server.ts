@@ -23,7 +23,10 @@ const roomRoute = /^\/rooms(?:\/([a-z0-9-]+))?\/([a-z0-9-]{1,32})\/(events|input
 const expeditionRoute = /^\/expeditions\/([a-z0-9-]+)\/([a-z0-9-]{1,32})\/(events|input|leave)$/
 const session = createCookieSession({ name: 'ridgetop_character', path: '/expeditions', maxAge: 31536000 })
 
-export function createGameServer({ characters = createCharacterStore() } = {}) {
+export function createGameServer({ characters = createCharacterStore(), testing }: {
+  characters?: ReturnType<typeof createCharacterStore>
+  testing?: boolean
+} = {}) {
   function saveRewards() {
     characters.save().catch(error => console.error('Character save failed', error.message))
   }
@@ -57,6 +60,7 @@ export function createGameServer({ characters = createCharacterStore() } = {}) {
     moduleRoot: new URL(source ? 'dist/' : '.', import.meta.url),
     files, artDirectories: ['starter/art'],
     aliases: { '/': 'index.html', '/benchmark': 'benchmark.html', '/racing': 'racing.html', '/lighthouse': 'lighthouse.html', '/sprites': 'sprite-workshop.html', '/models': 'models/index.html', '/starter/': 'starter/index.html' },
+    testing,
     stop: rooms.close,
     save: characters.save,
     async handle(req, res, pathname) {
@@ -98,6 +102,15 @@ export function createGameServer({ characters = createCharacterStore() } = {}) {
 }
 
 if (isMain(import.meta.url)) {
+  const testing = process.argv.includes('--testing')
   const characters = await openCharacterStore(process.env.RIDGETOP_CHARACTER_SAVE ?? 'data/characters.json')
-  startGameHost(createGameServer({ characters }))
+  const app = createGameServer({ characters, testing })
+  startGameHost(app, testing ? { host: '127.0.0.1', name: 'Ridgetop testing' } : {})
+  if (testing) app.server.once('listening', () => {
+    const address = app.server.address()
+    if (typeof address === 'object' && address) {
+      const origin = 'http://127.0.0.1:' + address.port
+      console.log(`Testing Mode enabled on ${origin}/ (Beacon Run), ${origin}/racing (Signal Drift), ${origin}/lighthouse (Tidewatch), ${origin}/starter/ (Starter)`)
+    }
+  })
 }

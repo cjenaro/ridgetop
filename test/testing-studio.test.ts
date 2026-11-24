@@ -1,10 +1,15 @@
 import assert from 'node:assert/strict'
+import { spawn } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
+import { once } from 'node:events'
 import { mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { createInterface } from 'node:readline'
 import test from 'node:test'
 import { pathToFileURL } from 'node:url'
+import { createGameServer } from '../server.ts'
+import { createGame } from '../tools/create-game.ts'
 import {
   bindActionControls, box, createArtKit, createMeshPool, createRig, createSpriteAtlas,
   fixedLoop, instances, isTestingPaused, multiply, octahedron, orthographic, perspective,
@@ -605,4 +610,68 @@ test('createGameHost({ testing: true }) injects boot script, serves studio asset
   assert.equal(normalHtml, html)
   assert.equal((await fetch(normalOrigin + '/__testing/reviews')).status, 404)
   assert.equal((await fetch(normalOrigin + '/__testing/reviews', { method: 'POST', body: '{}' })).status, 405)
+})
+
+test('createGameServer({ testing: true }) enables Testing Mode on all 4 games and generated starter playtest serves overlay CSS', async t => {
+  const testingServer = createGameServer({ testing: true })
+  t.after(() => testingServer.close())
+  await new Promise<void>(resolve => testingServer.server.listen(0, '127.0.0.1', resolve))
+  const addr = testingServer.server.address()
+  assert.ok(addr && typeof addr === 'object')
+  const origin = `http://127.0.0.1:${addr.port}`
+
+  for (const route of ['/', '/racing', '/lighthouse', '/starter/']) {
+    const res = await fetch(origin + route)
+    assert.equal(res.status, 200, `${route} should return 200`)
+    const html = await res.text()
+    assert.ok(html.includes('<script type="module" src="/framework/testing-boot.js"></script>'),
+      `${route} should inject testing-boot.js when testing is enabled`)
+  }
+  const overlayRes = await fetch(origin + '/framework/testing-overlay.css')
+  assert.equal(overlayRes.status, 200)
+  assert.ok(overlayRes.headers.get('content-type')?.startsWith('text/css'))
+  assert.equal((await fetch(origin + '/__testing/reviews')).status, 200)
+
+  const normalServer = createGameServer({ testing: false })
+  t.after(() => normalServer.close())
+  await new Promise<void>(resolve => normalServer.server.listen(0, '127.0.0.1', resolve))
+  const normalAddr = normalServer.server.address()
+  assert.ok(normalAddr && typeof normalAddr === 'object')
+  const normalOrigin = `http://127.0.0.1:${normalAddr.port}`
+
+  for (const route of ['/', '/racing', '/lighthouse', '/starter/']) {
+    const html = await (await fetch(normalOrigin + route)).text()
+    assert.ok(!html.includes('/framework/testing-boot.js'), `${route} must not inject testing-boot.js in normal mode`)
+  }
+  assert.equal((await fetch(normalOrigin + '/__testing/reviews')).status, 404)
+
+  // Verify a generated create-game project inherits framework Testing Mode via `node game/serve.js --testing`
+  const work = await mkdtemp(join(tmpdir(), 'ridgetop-starter-testing-'))
+  t.after(() => rm(work, { recursive: true, force: true }))
+  const project = await createGame(join(work, 'demo'))
+  const child = spawn(process.execPath, ['game/serve.js', '--testing'], {
+    cwd: project,
+    env: { ...process.env, PORT: '0' },
+    stdio: ['ignore', 'pipe', 'pipe']
+  })
+  t.after(async () => {
+    if (child.exitCode === null && child.signalCode === null) {
+      const exited = once(child, 'exit')
+      child.kill()
+      await exited
+    }
+  })
+  let childOrigin = ''
+  for await (const line of createInterface({ input: child.stdout })) {
+    const m = /listening on port (\d+)/.exec(line)
+    if (m) { childOrigin = `http://127.0.0.1:${m[1]}`; break }
+  }
+  assert.ok(childOrigin, 'generated game playtest server should start')
+  const starterHtml = await (await fetch(childOrigin + '/')).text()
+  assert.ok(starterHtml.includes('<script type="module" src="/framework/testing-boot.js"></script>'))
+  const cssRes = await fetch(childOrigin + '/framework/testing-overlay.css')
+  assert.equal(cssRes.status, 200)
+  assert.ok(cssRes.headers.get('content-type')?.startsWith('text/css'))
+  assert.equal((await fetch(childOrigin + '/framework/testing-studio.js')).status, 200)
+  assert.equal((await fetch(childOrigin + '/__testing/reviews')).status, 200)
 })

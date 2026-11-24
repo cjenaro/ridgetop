@@ -4,7 +4,6 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Sprite workshop · Ridgetop</title>
-  <link rel="icon" href="/game/assets/scout.png" type="image/png">
   <link rel="stylesheet" href="/style.css">
   <link rel="stylesheet" href="/sprite-workshop.css">
   <script type="module" src="/sprite-workshop.js"></script>
@@ -45,10 +44,7 @@
       </section>
       <section class="settings" aria-label="Sprite settings">
         <label for="art">Artwork</label>
-        <select id="art">
-          <optgroup label="2D pixel art"><option value="scout">Beacon Run scout</option><option value="chip">Signal chip</option></optgroup>
-          <optgroup label="Signal Drift model"><option value="car">Rally car</option></optgroup>
-        </select>
+        <select id="art"></select>
         <label for="import-files">Import PNG artwork</label>
         <input id="import-files" type="file" accept="image/png,.png" multiple aria-describedby="import-help">
         <p id="import-help">One image generates a hover animation. A set of equal-size images plays in numbered filename order.</p>

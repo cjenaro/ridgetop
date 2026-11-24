@@ -1,7 +1,6 @@
 import { artModels, bindActionControls, color, createArtKit, createArtRecipe, createLowPolyRenderer, createPlatform,
-  createSpriteAtlas, fixedLoop, modelFromArtRecipe, multiply, orthographic, projectPoint, view } from '../framework/index.ts'
+  createSpriteAtlas, fixedLoop, modelFromArtRecipe, multiply, orthographic, projectPoint, registerTestingHooks, view } from '../framework/index.ts'
 import type { ArtRecipe, Backend, LowPolyRenderer, Matrix, Vec3 } from '../framework/index.ts'
-import type { ReviewObject } from '../framework/art-review.ts'
 import { boxNode, column, overlay, row, spacerNode } from '../framework/ui-layout.ts'
 import { buttonPrimitive } from '../framework/ui-button.ts'
 import { togglePrimitive } from '../framework/ui-toggle.ts'
@@ -31,7 +30,7 @@ async function start() {
   const edited = Object.fromEntries(Object.entries(overrides).map(([name, source]) => [name, modelFromArtRecipe(source)]))
   const art = createArtKit<string>({ palette: game.palette, models: { ...edited, ...models, ...Object.fromEntries(loadedModels) } })
   type Name = Parameters<typeof art.sprite>[0]
-  type ObjectInGame = ReviewObject
+  type ObjectInGame = { id: string; name: Name; x: number; z: number; y?: number; yaw?: number }
   const scenery: ObjectInGame[] = [], ground: ObjectInGame[] = [], pickups: ObjectInGame[] = []
   const solid = new Set<number>()
   const width = game.map[0]?.length, depth = game.map.length
@@ -102,7 +101,7 @@ async function start() {
   const remaining = new Map<number, ObjectInGame>()
   let player: ObjectInGame, fromX = 0, fromZ = 0, travel = 0
   let flash: ObjectInGame | undefined, flashTime = 0, won = false, queued: Direction | undefined
-  let testingPaused = false, lastPaintTime = 0, clockOffset = 0, spriteView = false, dirty = true, uiDirty = true
+  let lastPaintTime = 0, spriteView = false, dirty = true, uiDirty = true
   let errorBanner = ''
   document.title = game.title
 
@@ -144,7 +143,7 @@ async function start() {
   const ui = createCanvasUi(uiCanvas, {
     theme: createUiTheme(game.palette),
     safeArea: { top: 12, right: 12, bottom: 12, left: 12 },
-    keyboardEnabled: () => isMenuOpen() && !testingPaused,
+    keyboardEnabled: () => isMenuOpen(),
     onBack: () => { if (menuDialog.api.isOpen()) menuDialog.api.close() }
   })
   function renderUiNow() {
@@ -174,8 +173,8 @@ async function start() {
   const controls = bindActionControls({
     keys,
     buttons: [],
-    enabled: () => !won && !testingPaused && !menuDialog.api.isOpen(),
-    onPause: () => { if (!testingPaused && !won) { menuDialog.api.toggle(); uiDirty = true } },
+    enabled: () => !won && !menuDialog.api.isOpen(),
+    onPause: () => { if (!won) { menuDialog.api.toggle(); uiDirty = true } },
     onPress: key => { queued = key }
   })
 
@@ -247,9 +246,8 @@ async function start() {
   let camera: Matrix, spanY = 0, previousAspect = 0
   let lastSurface: HTMLCanvasElement, lastWidth = 0, lastHeight = 0, lastRatio = 0
   const usesClips = Object.keys(sprites).length > 0
-  let drawnHero: ReviewObject, drawnEffect: ReviewObject
 
-  function foreground(hero: ReviewObject, effect?: ReviewObject) {
+  function foreground(hero: ObjectInGame, effect?: ObjectInGame) {
     const objects = [...scenery, ...remaining.values(), hero]
     if (effect) objects.push(effect)
     return objects.sort((a, b) => a.z - b.z)
@@ -271,7 +269,7 @@ async function start() {
     const compact = w < 620
     const statusText = errorBanner || (won ? game.victory : remaining.size ? game.objective : game.returnToGoal)
     const collected = `${pickups.length - remaining.size} / ${pickups.length}`
-    const modalOpen = isMenuOpen() && !testingPaused
+    const modalOpen = isMenuOpen()
 
     return overlay({ id: 'root', style: { anchor: 'fill' } }, [
       // Top HUD bar (title, objective, score badge, view toggle, menu)
@@ -296,7 +294,7 @@ async function start() {
       ]),
 
       // Touch / pointer D-pad (hidden when menu modal is open)
-      column({ id: 'dpad', hidden: modalOpen || testingPaused, style: { anchor: 'bottom-right', inset: 14, gap: 6, align: 'center', respectSafeArea: true } }, [
+      column({ id: 'dpad', hidden: modalOpen, style: { anchor: 'bottom-right', inset: 14, gap: 6, align: 'center', respectSafeArea: true } }, [
         boxNode({ id: 'pad-up', style: { width: 48, height: 48 }, widget: { type: 'button', label: '↑', onPress: () => { queued = 'up' } } }),
         row({ id: 'dpad-mid', style: { gap: 6 } }, [
           boxNode({ id: 'pad-left', style: { width: 48, height: 48 }, widget: { type: 'button', label: '←', onPress: () => { queued = 'left' } } }),
@@ -355,9 +353,49 @@ async function start() {
     ])
   }
 
+  function renderScene(now: number, force = false) {
+    const w = Math.max(1, board.clientWidth), h = Math.max(1, board.clientHeight)
+    const surface = spriteView ? layer : renderer.canvas
+    const ratio = Math.min(devicePixelRatio || 1, 2)
+    const resized = surface !== lastSurface || w !== lastWidth || h !== lastHeight || ratio !== lastRatio
+    if (uiDirty || ui.dirty || resized || force) {
+      ui.render(buildUiTree(w), { width: w, height: h, pixelRatio: ratio })
+      uiDirty = false
+    }
+    if (!force && !dirty && !(spriteView && usesClips && !reduced.matches) && !resized) return
+    dirty = false
+    lastPaintTime = now
+    lastSurface = surface
+    lastWidth = w
+    lastHeight = h
+    lastRatio = ratio
+    const aspect = w / h
+    if (aspect !== previousAspect) {
+      spanY = Math.max(depth * .5 + 3.4, (width + 1.65) / aspect)
+      camera = multiply(orthographic(spanY * aspect, spanY, .1, distance * 2), eye)
+      previousAspect = aspect
+    }
+    const t = travel / game.stepSeconds
+    const hero = { ...player, x: player.x + (fromX - player.x) * t, z: player.z + (fromZ - player.z) * t,
+      y: reduced.matches ? 0 : .08 * Math.sin(Math.PI * t) }
+    const effect = flashTime > 0 && flash ? { ...flash, y: 1.15 + (reduced.matches ? 0 : (.38 - flashTime) * 1.6) } : undefined
+    if (spriteView) {
+      if (layer.width !== Math.round(w * ratio)) layer.width = Math.round(w * ratio)
+      if (layer.height !== Math.round(h * ratio)) layer.height = Math.round(h * ratio)
+      atlases.get(game.ground).begin(layer)
+      for (const obj of ground) paint(obj, now)
+      for (const obj of foreground(hero, effect)) paint(obj, now)
+    } else {
+      moving.clear()
+      moving.add(hero.name, [hero.x, hero.y, hero.z], { yaw: hero.yaw })
+      if (effect) moving.add(effect.name, [effect.x, effect.y, effect.z])
+      renderer.render(camera, [...fixed.batches, ...items.batches, ...moving.batches], sky)
+    }
+  }
+
   const stop = fixedLoop({
     update(dt) {
-      if (testingPaused || menuDialog.api.isOpen()) return
+      if (menuDialog.api.isOpen()) return
       if (travel > 0 || flashTime > 0) dirty = true
       flashTime = Math.max(0, flashTime - dt)
       if (travel > 0) {
@@ -383,112 +421,56 @@ async function start() {
       travel = game.stepSeconds
     },
     render(_alpha, now) {
-      const w = Math.max(1, board.clientWidth), h = Math.max(1, board.clientHeight)
-      const surface = spriteView ? layer : renderer.canvas
-      const ratio = Math.min(devicePixelRatio || 1, 2)
-      const resized = surface !== lastSurface || w !== lastWidth || h !== lastHeight || ratio !== lastRatio
-      if (uiDirty || ui.dirty || resized) {
-        ui.render(buildUiTree(w), { width: w, height: h, pixelRatio: ratio })
-        uiDirty = false
-      }
-      if (!dirty && !(spriteView && usesClips && !reduced.matches && !testingPaused) && !resized) return
-      dirty = false
-      now = testingPaused ? lastPaintTime : now - clockOffset
-      lastPaintTime = now
-      lastSurface = surface
-      lastWidth = w
-      lastHeight = h
-      lastRatio = ratio
-      const aspect = w / h
-      if (aspect !== previousAspect) {
-        spanY = Math.max(depth * .5 + 3.4, (width + 1.65) / aspect)
-        camera = multiply(orthographic(spanY * aspect, spanY, .1, distance * 2), eye)
-        previousAspect = aspect
-      }
-      const t = travel / game.stepSeconds
-      const hero = { ...player, x: player.x + (fromX - player.x) * t, z: player.z + (fromZ - player.z) * t,
-        y: reduced.matches ? 0 : .08 * Math.sin(Math.PI * t) }
-      const effect = flashTime > 0 && flash ? { ...flash, y: 1.15 + (reduced.matches ? 0 : (.38 - flashTime) * 1.6) } : undefined
-      drawnHero = hero
-      drawnEffect = effect
-      if (spriteView) {
-        if (layer.width !== Math.round(w * ratio)) layer.width = Math.round(w * ratio)
-        if (layer.height !== Math.round(h * ratio)) layer.height = Math.round(h * ratio)
-        atlases.get(game.ground).begin(layer)
-        for (const obj of ground) paint(obj, now)
-        for (const obj of foreground(hero, effect)) paint(obj, now)
-      } else {
-        moving.clear()
-        moving.add(hero.name, [hero.x, hero.y, hero.z], { yaw: hero.yaw })
-        if (effect) moving.add(effect.name, [effect.x, effect.y, effect.z])
-        renderer.render(camera, [...fixed.batches, ...items.batches, ...moving.batches], sky)
-      }
+      renderScene(now)
     }
   })
 
-  if (params.has('testing')) {
-    try {
-      const { attachTesting } = await import('./testing.ts')
-      await new Promise<void>(resolve => requestAnimationFrame(() => resolve()))
-      await attachTesting({
-        kit: art, hud: icon, pickup: game.pickup,
-        hudRect: () => ui.rects.get('pickup-icon'),
-        frame: () => ({ objects: [...ground, ...foreground(drawnHero, drawnEffect)], matrix: camera, spanY,
-          now: reduced.matches ? 0 : lastPaintTime, sprite: spriteView, surface: spriteView ? layer : renderer.canvas }),
-        source(name) {
-          const file = Object.hasOwn(modelFiles, name) ? modelFiles[name] : null
-          if (file) {
-            const url = new URL(file, location.href), folder = new URL('art/', location.href)
-            const filename = url.origin === folder.origin && url.pathname.startsWith(folder.pathname)
-              ? decodeURIComponent(url.pathname.slice(folder.pathname.length)) : ''
-            const local = /^[^/\\\0]+\.art\.json$/i.test(filename) ? 'art/' + filename : null
-            return { path: local ?? file, file: local, base: recipes.get(name), recipe: local ? recipes.get(name) : undefined }
-          }
-          if (Object.hasOwn(models, name)) return { path: 'game.js#models.' + name, file, base: null }
-          const base = Object.hasOwn(overrides, name) ? overrides[name] : null
-          const stock = !base && Object.hasOwn(artModels, name) ? createArtRecipe(name as keyof typeof artModels) : undefined
-          if (stock) stock.palette = {}
-          return { path: 'art/overrides.json#' + name, file, base, recipe: base ?? stock }
-        },
-        sprite: name => sprites[name],
-        atlas: name => ensureAtlas(name),
-        pause(on) {
-          controls.clear()
-          queued = undefined
-          if (!on) clockOffset = performance.now() - lastPaintTime
-          testingPaused = on
-          uiCanvas.style.pointerEvents = on ? 'none' : ''
-          uiDirty = true
-        },
-        snapshot: () => ({ view: spriteView ? '2d' : '3d', time: lastPaintTime, player: [player.x, player.z, player.yaw],
-          fromX, fromZ, travel, pickups: [...remaining.keys()], flash: flash ? [flash.x, flash.z] : null, flashTime, won }),
-        async restore(raw) {
-          const s = raw as { view: string; time: number; player: number[]; fromX: number; fromZ: number;
-            travel: number; pickups: number[]; flash?: number[]; flashTime: number; won: boolean }
-          if (!s || !['2d', '3d'].includes(s.view) || s.player?.length !== 3 ||
-              ![...s.player, s.time, s.fromX, s.fromZ, s.travel, s.flashTime].every(Number.isFinite) || !Array.isArray(s.pickups)) throw new Error('This saved scene cannot be restored.')
-          await setViewMode(s.view as '2d' | '3d')
-          syncingView = true
-          viewToggle.api.set(spriteView)
-          syncingView = false
-          player = { ...spawn, x: s.player[0], z: s.player[1], yaw: s.player[2] }
-          fromX = s.fromX; fromZ = s.fromZ; travel = s.travel
-          lastPaintTime = s.time
-          flash = s.flash?.length === 2 ? { id: 'pickup-effect', name: game.effect, x: s.flash[0], z: s.flash[1] } : undefined
-          flashTime = s.flashTime
-          won = s.won
-          remaining.clear()
-          for (const obj of pickups) if (s.pickups.includes(cell(obj.x, obj.z))) remaining.set(cell(obj.x, obj.z), obj)
-          updateItems()
-          await new Promise<void>(resolve => requestAnimationFrame(() => resolve()))
-        }
-      })
-    } catch (error) { errorBanner = 'Art testing needs npm run playtest. ' + error.message; uiDirty = true }
-  }
+  const unregisterTestingHooks = registerTestingHooks({
+    getArtSource(name) {
+      const file = Object.hasOwn(modelFiles, name) ? modelFiles[name] : null
+      if (file) {
+        const url = new URL(file, location.href), folder = new URL('art/', location.href)
+        const filename = url.origin === folder.origin && url.pathname.startsWith(folder.pathname)
+          ? decodeURIComponent(url.pathname.slice(folder.pathname.length)) : ''
+        const local = /^[^/\\\0]+\.art\.json$/i.test(filename) ? 'art/' + filename : null
+        return { path: local ?? file, file: local, base: recipes.get(name), recipe: local ? recipes.get(name) : undefined }
+      }
+      if (Object.hasOwn(models, name)) return { path: 'game.js#models.' + name, file: null, base: null }
+      const base = Object.hasOwn(overrides, name) ? overrides[name] : null
+      const stock = !base && Object.hasOwn(artModels, name) ? createArtRecipe(name as keyof typeof artModels) : undefined
+      if (stock) stock.palette = {}
+      return { path: 'art/overrides.json#' + name, file: null, base, recipe: base ?? stock }
+    },
+    snapshot: () => ({
+      view: spriteView ? '2d' : '3d', time: lastPaintTime, player: [player.x, player.z, player.yaw],
+      fromX, fromZ, travel, pickups: [...remaining.keys()], flash: flash ? [flash.x, flash.z] : null, flashTime, won
+    }),
+    async restore(raw) {
+      const s = raw as { view: string; time: number; player: number[]; fromX: number; fromZ: number;
+        travel: number; pickups: number[]; flash?: number[]; flashTime: number; won: boolean }
+      if (!s || !['2d', '3d'].includes(s.view) || s.player?.length !== 3 ||
+          ![...s.player, s.time, s.fromX, s.fromZ, s.travel, s.flashTime].every(Number.isFinite) || !Array.isArray(s.pickups)) return
+      await setViewMode(s.view as '2d' | '3d')
+      syncingView = true
+      viewToggle.api.set(spriteView)
+      syncingView = false
+      player = { ...spawn, x: s.player[0], z: s.player[1], yaw: s.player[2] }
+      fromX = s.fromX; fromZ = s.fromZ; travel = s.travel
+      lastPaintTime = s.time
+      flash = s.flash?.length === 2 ? { id: 'pickup-effect', name: game.effect, x: s.flash[0], z: s.flash[1] } : undefined
+      flashTime = s.flashTime
+      won = s.won
+      remaining.clear()
+      for (const obj of pickups) if (s.pickups.includes(cell(obj.x, obj.z))) remaining.set(cell(obj.x, obj.z), obj)
+      updateItems()
+      renderScene(lastPaintTime, true)
+    }
+  })
 
   void pauseMenu
   window.addEventListener('pagehide', event => {
     if (event.persisted) return
+    unregisterTestingHooks()
     stop()
     ui.dispose()
     controls.dispose()

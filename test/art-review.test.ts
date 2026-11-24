@@ -147,3 +147,60 @@ test('pickArtScene, spritePartVisibility, and art-recipe validation handle bound
   assert.equal(pickArtScene(kit, [{ id: 'd1', name: 'dup', x: 5, z: 0 }], cam, 100, 100, 1.5, .5), undefined)
   assert.equal(pickArtScene(kit, [{ id: 'd1', name: 'dup', x: 0, z: 0 }], cam, 100, 100, 1, 1), undefined)
 })
+
+test('createArtReviewHandler supports custom artDir/reviewsDir and saving sprite sheets & manifests', async t => {
+  const folder = await mkdtemp(join(tmpdir(), 'ridgetop-custom-review-'))
+  t.after(() => rm(folder, { recursive: true, force: true }))
+  const root = pathToFileURL(folder + '/')
+  const app = createGameHost({
+    root,
+    files: [],
+    testing: false,
+    handle: createArtReviewHandler(root, { artDir: 'assets/art', reviewsDir: 'qa/reviews' })
+  })
+  t.after(app.close)
+  await new Promise<void>(resolve => app.server.listen(0, '127.0.0.1', resolve))
+  const addr = app.server.address()
+  assert.ok(addr && typeof addr === 'object')
+  const origin = 'http://127.0.0.1:' + addr.port
+  const req = (path: string, method = 'GET', data?: unknown) => fetch(origin + '/__testing/' + path, {
+    method,
+    headers: { Origin: origin, 'Content-Type': 'application/json' },
+    body: data !== undefined ? JSON.stringify(data) : undefined
+  })
+
+  // Recipe saves into custom artDir (both overrides.json and nested .art.json)
+  const ranger = createArtRecipe('ranger')
+  assert.equal((await req('recipe', 'POST', { asset: 'ranger', file: null, base: null, recipe: ranger })).status, 200)
+  assert.deepEqual(JSON.parse(await readFile(join(folder, 'assets', 'art', 'overrides.json'), 'utf8')), { ranger })
+
+  const customRes = await req('recipe', 'POST', { asset: 'ranger', file: 'assets/art/heroes/ranger.art.json', base: null, recipe: ranger })
+  assert.equal(customRes.status, 200)
+  assert.deepEqual(JSON.parse(await readFile(join(folder, 'assets', 'art', 'heroes', 'ranger.art.json'), 'utf8')), ranger)
+
+  // Path traversal rejected
+  assert.equal((await req('recipe', 'POST', { asset: 'ranger', file: '../escape.art.json', base: null, recipe: ranger })).status, 400)
+  assert.equal((await req('recipe', 'POST', { asset: 'ranger', file: '/abs.art.json', base: null, recipe: ranger })).status, 400)
+
+  // Sprite PNG + manifest save into custom artDir
+  const spriteManifest = { src: 'hero.png', frameWidth: 1, frameHeight: 1, clips: { idle: { column: 0, frames: 1, frameMs: 120 } } }
+  const spriteRes = await req('sprite', 'POST', { name: 'hero', png, manifest: spriteManifest })
+  assert.equal(spriteRes.status, 200)
+  const spriteBody = await spriteRes.json() as { saved: boolean; files: string[] }
+  assert.equal(spriteBody.saved, true)
+  assert.deepEqual(spriteBody.files, ['assets/art/hero.png', 'assets/art/hero.json'])
+  assert.deepEqual(await readFile(join(folder, 'assets', 'art', 'hero.png')), Buffer.from(png, 'base64'))
+  assert.deepEqual(JSON.parse(await readFile(join(folder, 'assets', 'art', 'hero.json'), 'utf8')), spriteManifest)
+
+  // Sprite validation rejects empty payloads, bad manifests, and path traversal
+  assert.equal((await req('sprite', 'POST', { name: 'hero' })).status, 400)
+  assert.equal((await req('sprite', 'POST', { file: '../escape.png', png })).status, 400)
+  assert.equal((await req('sprite', 'POST', { name: 'bad', manifest: { src: '../bad.png', frameWidth: 16, frameHeight: 16 } })).status, 400)
+  assert.equal((await req('sprite', 'POST', { name: 'bad', png: 'not-a-png' })).status, 400)
+
+  // Reviews save into custom reviewsDir
+  const id = randomUUID()
+  assert.equal((await req('reviews', 'POST', { id, comment: 'Stored in qa/reviews.', png, target, scene: {} })).status, 200)
+  const savedReview = JSON.parse(await readFile(join(folder, 'qa', 'reviews', id + '.json'), 'utf8'))
+  assert.equal(savedReview.id, id)
+})

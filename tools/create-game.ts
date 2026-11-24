@@ -24,8 +24,8 @@ export async function createGame(destination: string) {
     await cp(new URL('starter/art/rain-ranger.art.json', root), join(game, 'art', 'rain-ranger.art.json'))
     await cp(new URL('starter/art/library/', root), join(game, 'art', 'library'), { recursive: true })
     await writeFile(join(game, 'art', 'overrides.json'), '{}\n')
-    for (const file of ['index.html', 'style.css', 'testing.html', 'testing.css']) await cp(new URL('starter/' + file, root), join(game, file))
-    for (const name of ['game', 'main', 'serve', 'testing', 'testing-scene', 'preview-art', 'art-library', 'package']) {
+    for (const file of ['index.html', 'style.css']) await cp(new URL('starter/' + file, root), join(game, file))
+    for (const name of ['game', 'main', 'serve', 'preview-art', 'art-library', 'package']) {
       await copyModule(new URL('starter/' + name + '.js', dist), join(game, name + '.js'))
     }
     for (const file of ['README.md', 'AGENTS.md', 'ART.md']) await cp(new URL('starter/' + file, root), join(temporary, file))
@@ -36,6 +36,7 @@ export async function createGame(destination: string) {
       if (file.endsWith('.js')) await copyModule(new URL(file, framework), to)
       else if (file.endsWith('.d.ts')) await cp(new URL(file, framework), to)
     }
+    await cp(new URL('framework/testing-overlay.css', root), join(temporary, 'framework', 'testing-overlay.css'))
     await cp(new URL('sprite-workshop-offline.html', dist), join(temporary, 'sprite-workshop.html'))
     await cp(new URL('low-poly-models.html', dist), join(temporary, 'low-poly-models.html'))
     await writeFile(join(temporary, 'package.json'), JSON.stringify({

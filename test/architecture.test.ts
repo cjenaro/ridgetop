@@ -36,6 +36,35 @@ test('Beacon Run depends only on its own modules and Ridgetop public entry point
     }
   }
 
+  // Ensure studio/viewer tools and framework modules have zero imports from example games.
+  const exampleDirs = ['game/', 'racing/', 'lighthouse/', 'starter/']
+  const studioToolFiles = [
+    'sprite-workshop.ts', 'sprite-model-editor.ts',
+    'models/main.ts', 'models/headland.ts',
+    'tools/build-workshop.ts', 'tools/build-models.ts'
+  ]
+  for (const file of studioToolFiles) {
+    const url = new URL(file, root)
+    for (const specifier of imports(await readFile(url, 'utf8'))) {
+      if (!specifier.startsWith('.')) continue
+      const imported = new URL(specifier, url).href.slice(root.href.length)
+      assert.ok(!exampleDirs.some(dir => imported.startsWith(dir)),
+        `${file} must not import example game module ${imported}`)
+    }
+  }
+
+  // Ensure starter runtime modules stay strictly on starter/ + public Ridgetop entry points (no starter-only testing glue).
+  for (const file of ['starter/main.ts', 'starter/serve.ts', 'starter/game.ts']) {
+    const url = new URL(file, root)
+    for (const specifier of imports(await readFile(url, 'utf8'))) {
+      if (specifier.startsWith('node:')) continue
+      assert.ok(specifier.startsWith('.'), file + ' imported an external module: ' + specifier)
+      const imported = new URL(specifier, url).href.slice(root.href.length)
+      assert.ok(entryPoints.has(imported) || isPublicUiModule(imported) || imported.startsWith('starter/'),
+        `${file} imported a module outside starter or public framework API: ${imported}`)
+    }
+  }
+
   // Ensure every browser framework module reachable from framework/index.ts or framework/ui.ts
   // is registered in framework/host.ts browserModules so it never 404s in hosted builds.
   const hostSource = await readFile(new URL('framework/host.ts', root), 'utf8')
