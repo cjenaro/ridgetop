@@ -1,5 +1,6 @@
-import { artPalette, artShapes, checkFrameSize, modelFromArtRecipe } from './art-recipe.ts'
-import type { ArtPart, ArtRecipe, ArtRecipePart, ArtShape, ArtTone } from './art-recipe.ts'
+import { artPalette, artPoseBounds, artShapes, checkArtClip, checkFrameSize, isSafeArtKey, modelFromArtRecipe } from './art-recipe.ts'
+export { artPoseBounds } from './art-recipe.ts'
+import type { ArtPart, ArtRecipe, ArtRecipeClip, ArtRecipeJoint, ArtRecipeJointPose, ArtRecipePart, ArtShape, ArtTone } from './art-recipe.ts'
 import { quaternionFromEuler, rotateVec3, rotationMatrix } from './geometry.ts'
 import type { Vec3 } from './types.ts'
 
@@ -54,7 +55,7 @@ const elevation = Math.PI / 6
 const cosElevation = Math.cos(elevation)
 const sinElevation = Math.sin(elevation)
 
-/** Center the footprint, ground the lowest vertex, and frame all eight sprite directions. */
+/** Center the footprint, ground the lowest vertex, adjust joint pivots, and frame all eight sprite directions. */
 export function fitArtRecipe(input: ArtRecipe): ArtRecipe {
   const source = structuredClone(input)
   const model = modelFromArtRecipe(source)
@@ -66,7 +67,15 @@ export function fitArtRecipe(input: ArtRecipe): ArtRecipe {
       if (b.max[axis] > bounds.max[axis]) bounds.max[axis] = b.max[axis]
     }
   }
-  const cx = (bounds.min[0] + bounds.max[0]) / 2, floor = bounds.min[1], cz = (bounds.min[2] + bounds.max[2]) / 2
+  const snapZero = (n: number) => (Math.abs(n) < 1e-12 ? 0 : n)
+  const cx = snapZero((bounds.min[0] + bounds.max[0]) / 2)
+  const floor = snapZero(bounds.min[1])
+  const cz = snapZero((bounds.min[2] + bounds.max[2]) / 2)
+  if (source.joints) {
+    for (const j of source.joints) {
+      if (j.pivot) j.pivot = [j.pivot[0] - cx, j.pivot[1] - floor, j.pivot[2] - cz]
+    }
+  }
   let halfWidth = 0, low = Infinity, high = -Infinity
   for (let i = 0; i < model.parts.length; i++) {
     const part = model.parts[i]
@@ -121,12 +130,31 @@ export function createArtBuilder(name: string, { base = 'empty', reference, fram
   if (!Object.hasOwn(artPalette, primary) || !Object.hasOwn(artPalette, trim)) throw new Error('Unknown base palette role')
   const parts: ArtRecipePart[] = []
   const placed = new Map<string, Bounds>()
+  const joints: ArtRecipeJoint[] = []
+  const jointIds = new Set<string>()
+  const clips: Record<string, ArtRecipeClip> = {}
+  const autoGroundClips = new Set<string>()
   const timings = reference?.timings && { ...reference.timings }
   if (reference) {
     if (base !== 'empty' || proportions.some(n => n !== 1)) throw new Error('Choose either a reference or a scaled starter body')
     const model = modelFromArtRecipe(reference)
     parts.push(...structuredClone(reference.parts))
     model.parts.forEach(part => placed.set(part.name, artPartBounds(part)))
+    if (reference.joints) {
+      for (const j of structuredClone(reference.joints)) {
+        joints.push(j)
+        jointIds.add(j.id)
+      }
+    }
+    if (reference.clips) Object.assign(clips, structuredClone(reference.clips))
+  }
+
+  function inheritJoint(childName: string, parentName: string) {
+    const parentPart = parts.find(part => part.name === parentName)
+    if (parentPart?.joint !== undefined) {
+      const child = parts.find(part => part.name === childName)
+      if (child) child.joint = parentPart.joint
+    }
   }
 
   function adjust(id: string, { tone, scaleBy, moveBy, unlit }: { tone?: ArtTone; scaleBy?: Vec3; moveBy?: Vec3; unlit?: number }) {
@@ -188,7 +216,9 @@ export function createArtBuilder(name: string, { base = 'empty', reference, fram
     if ((face as string) === 'center') throw new Error('Attach requires a surface face, not center')
     checkVector(size, id, true)
     const anchor = point(parent, face, offset)
-    return solid(id, shape, size, tone, vec(i => anchor[i]+normals[face][i]*size[i]*.42), origin, unlit)
+    const created = solid(id, shape, size, tone, vec(i => anchor[i]+normals[face][i]*size[i]*.42), origin, unlit)
+    inheritJoint(created, parent)
+    return created
   }
   function between(id: string, from: Vec3, to: Vec3, width: number | readonly [number,number], tone: ArtTone, shape: ArtShape = 'cylinder') {
     checkVector(from, id); checkVector(to, id)
@@ -204,16 +234,78 @@ export function createArtBuilder(name: string, { base = 'empty', reference, fram
     if (!(reach > 0 && Number.isFinite(reach))) throw new RangeError('Invalid handle reach for ' + id)
     const anchor = point(parent, face), n = normals[face], b = placed.get(parent)
     const inset = n.reduce<number>((sum,v,i) => sum + Math.abs(v)*extent(b,i)*.12, 0)
-    return between(id, vec(i => anchor[i]-n[i]*inset), vec(i => anchor[i]+n[i]*reach), [span,depth], tone, 'arch')
+    const created = between(id, vec(i => anchor[i]-n[i]*inset), vec(i => anchor[i]+n[i]*reach), [span,depth], tone, 'arch')
+    inheritJoint(created, parent)
+    return created
   }
   function disc(id: string, parent: string, face: Surface, diameter: number, depth: number, tone: ArtTone, offset: Vec3 = origin, shape: 'cylinder' | 'ring' = 'cylinder') {
     if (!(depth > 0 && Number.isFinite(depth))) throw new RangeError('Invalid disc depth for ' + id)
     const anchor = point(parent,face,offset), n = normals[face]
-    return between(id, vec(i => anchor[i]-n[i]*depth*.12), vec(i => anchor[i]+n[i]*depth*.88), diameter, tone, shape)
+    const created = between(id, vec(i => anchor[i]-n[i]*depth*.12), vec(i => anchor[i]+n[i]*depth*.88), diameter, tone, shape)
+    inheritJoint(created, parent)
+    return created
   }
+
+  /** Define a rig joint in model space (optionally parented to an earlier joint). */
+  function joint(id: string, parent?: string, pivot?: Vec3) {
+    if (!isSafeArtKey(id) || jointIds.has(id)) throw new Error('Each joint needs a unique valid id: ' + id)
+    if (parent !== undefined && (!isSafeArtKey(parent) || !jointIds.has(parent))) {
+      throw new Error('Unknown parent joint ' + parent)
+    }
+    if (pivot !== undefined) checkVector(pivot, id)
+    const entry: ArtRecipeJoint = { id }
+    if (parent !== undefined) entry.parent = parent
+    if (pivot !== undefined) entry.pivot = [pivot[0], pivot[1], pivot[2]]
+    joints.push(entry)
+    jointIds.add(id)
+    return id
+  }
+  /** Bind a named part to a defined rig joint. */
+  function bind(partName: string, jointId: string) {
+    const index = parts.findIndex(part => part.name === partName)
+    if (index < 0) throw new Error('Unknown part ' + partName)
+    if (!isSafeArtKey(jointId) || !jointIds.has(jointId)) throw new Error('Unknown joint ' + jointId)
+    parts[index] = { ...parts[index], joint: jointId }
+    return partName
+  }
+  /** Define or replace a named animation clip on the rig. */
+  function clip(clipName: string, clipDef: ArtRecipeClip) {
+    checkArtClip(clipDef, clipName, jointIds, name)
+    clips[clipName] = structuredClone(clipDef)
+    autoGroundClips.delete(clipName)
+    return clipName
+  }
+
   function finish(): ArtRecipe {
-    return fitArtRecipe({ format: 'ridgetop-art', version: 1, name, palette: {}, parts, frameSize, centerY: 0, span: 1,
-      ...(timings && { timings }) })
+    const raw: ArtRecipe = {
+      format: 'ridgetop-art', version: 1, name, palette: {}, parts, frameSize, centerY: 0, span: 1,
+      ...(timings && { timings }),
+      ...(joints.length && { joints }),
+      ...(Object.keys(clips).length && { clips })
+    }
+    const fitted = fitArtRecipe(raw)
+    if (autoGroundClips.size && fitted.clips && fitted.joints?.some(j => j.id === 'root')) {
+      const model = modelFromArtRecipe(fitted)
+      for (const clipName of autoGroundClips) {
+        const target = fitted.clips[clipName]
+        if (!target) continue
+        for (const frame of target.frames) {
+          const existingRoot = frame.poses.root
+          const rx = existingRoot?.position?.[0] ?? 0
+          const rz = existingRoot?.position?.[2] ?? 0
+          const probe: Record<string, ArtRecipeJointPose | undefined> = { ...frame.poses }
+          if (existingRoot) {
+            probe.root = { ...existingRoot, position: [rx, 0, rz] }
+          }
+          const b = artPoseBounds(model, probe)
+          const lift = Math.abs(b.min[1]) > 1e-7 ? -b.min[1] : 0
+          if (lift !== 0 || existingRoot?.position) {
+            frame.poses.root = { ...(existingRoot ?? {}), position: [rx, lift, rz] }
+          }
+        }
+      }
+    }
+    return fitted
   }
 
   // Dimensions here describe a one-unit starter. Author additions use world units.
@@ -226,6 +318,12 @@ export function createArtBuilder(name: string, { base = 'empty', reference, fram
     const depthScale = dz > dy ? proportions[1] : proportions[2]
     between(id, scaled(a), scaled(b), [width * proportions[0], width * depthScale], tone, shape)
   }
+  function registerStarterClip(clipName: string, clipDef: ArtRecipeClip) {
+    clip(clipName, clipDef)
+    autoGroundClips.add(clipName)
+  }
+  const sy = proportions[1], sz = proportions[2]
+
   if (base === 'case') {
     mass('body','prism',[1,.75,.58],primary,[0,.40,0])
     mass('base','prism',[.96,.12,.55],trim,[0,.065,0])
@@ -244,6 +342,100 @@ export function createArtBuilder(name: string, { base = 'empty', reference, fram
       mass(side+'-hand','oval',[.14,.15,.14],'light',[s*.35,.47,.045])
       mass(side+'-eye','oval',[.064,.064,.046],'ink',[s*.096,1.16,.218])
     }
+    joint('root', undefined, [0, 0, 0])
+    joint('body', 'root', scaled([0, .43, 0]))
+    joint('head', 'body', scaled([0, .90, .01]))
+    joint('left-arm', 'body', scaled([-.265, .80, 0]))
+    joint('right-arm', 'body', scaled([.265, .80, 0]))
+    joint('left-leg', 'root', scaled([-.14, .43, 0]))
+    joint('right-leg', 'root', scaled([.14, .43, 0]))
+    bind('body', 'body'); bind('collar', 'body')
+    bind('head', 'head'); bind('left-eye', 'head'); bind('right-eye', 'head')
+    bind('left-arm', 'left-arm'); bind('left-hand', 'left-arm')
+    bind('right-arm', 'right-arm'); bind('right-hand', 'right-arm')
+    bind('left-leg', 'left-leg'); bind('left-boot', 'left-leg')
+    bind('right-leg', 'right-leg'); bind('right-boot', 'right-leg')
+
+    const idleStart: Record<string, ArtRecipeJointPose> = {
+      root: { position: [0, 0, 0] },
+      body: { position: [0, 0, 0], rotation: [0, 0, 0] },
+      head: { rotation: [0, 0, 0] },
+      'left-arm': { rotation: [0, 0, 0] },
+      'right-arm': { rotation: [0, 0, 0] },
+      'left-leg': { rotation: [0, 0, 0] },
+      'right-leg': { rotation: [0, 0, 0] }
+    }
+    registerStarterClip('idle', {
+      duration: 1.6, loop: true, easing: 'smooth',
+      frames: [
+        { time: 0, poses: structuredClone(idleStart) },
+        {
+          time: 0.8,
+          poses: {
+            root: { position: [0, 0, 0] },
+            body: { position: [0, 0.018 * sy, 0], rotation: [0.025, 0, 0] },
+            head: { rotation: [-0.035, 0.05, 0] },
+            'left-arm': { rotation: [0.04, 0, 0.04] },
+            'right-arm': { rotation: [-0.04, 0, -0.04] },
+            'left-leg': { rotation: [0, 0, 0] },
+            'right-leg': { rotation: [0, 0, 0] }
+          }
+        },
+        { time: 1.6, poses: structuredClone(idleStart) }
+      ]
+    })
+    const walkStrideLeft: Record<string, ArtRecipeJointPose> = {
+      root: { position: [0, 0, 0] },
+      body: { position: [0, 0, 0], rotation: [0.05, 0.06, -0.03] },
+      head: { rotation: [-0.04, -0.05, 0.02] },
+      'left-leg': { position: [0, 0, 0], rotation: [-0.32, 0, 0] },
+      'right-leg': { position: [0, 0, 0], rotation: [0.32, 0, 0] },
+      'left-arm': { rotation: [0.30, 0, 0.04] },
+      'right-arm': { rotation: [-0.30, 0, -0.04] }
+    }
+    registerStarterClip('walk', {
+      duration: 0.8, loop: true, easing: 'smooth',
+      frames: [
+        { time: 0, poses: structuredClone(walkStrideLeft) },
+        {
+          time: 0.2,
+          poses: {
+            root: { position: [0, 0, 0] },
+            body: { position: [0, 0.025 * sy, 0], rotation: [0.02, 0, 0] },
+            head: { rotation: [-0.02, 0, 0] },
+            'left-leg': { position: [0, 0, 0], rotation: [0, 0, 0] },
+            'right-leg': { position: [0, 0.04 * sy, 0], rotation: [0, 0, 0] },
+            'left-arm': { rotation: [0, 0, 0] },
+            'right-arm': { rotation: [0, 0, 0] }
+          }
+        },
+        {
+          time: 0.4,
+          poses: {
+            root: { position: [0, 0, 0] },
+            body: { position: [0, 0, 0], rotation: [0.05, -0.06, 0.03] },
+            head: { rotation: [-0.04, 0.05, -0.02] },
+            'left-leg': { position: [0, 0, 0], rotation: [0.32, 0, 0] },
+            'right-leg': { position: [0, 0, 0], rotation: [-0.32, 0, 0] },
+            'left-arm': { rotation: [-0.30, 0, 0.04] },
+            'right-arm': { rotation: [0.30, 0, -0.04] }
+          }
+        },
+        {
+          time: 0.6,
+          poses: {
+            root: { position: [0, 0, 0] },
+            body: { position: [0, 0.025 * sy, 0], rotation: [0.02, 0, 0] },
+            head: { rotation: [-0.02, 0, 0] },
+            'left-leg': { position: [0, 0.04 * sy, 0], rotation: [0, 0, 0] },
+            'right-leg': { position: [0, 0, 0], rotation: [0, 0, 0] },
+            'left-arm': { rotation: [0, 0, 0] },
+            'right-arm': { rotation: [0, 0, 0] }
+          }
+        },
+        { time: 0.8, poses: structuredClone(walkStrideLeft) }
+      ]
+    })
   } else if (base === 'quadruped') {
     mass('body','oval',[.70,.64,1.05],primary,[0,.52,-.045])
     mass('head','oval',[.46,.43,.45],primary,[0,.60,.51])
@@ -255,6 +447,102 @@ export function createArtBuilder(name: string, { base = 'empty', reference, fram
       }
       mass(side+'-eye','oval',[.075,.075,.06],'ink',[s*.15,.65,.656])
     }
+    joint('root', undefined, [0, 0, 0])
+    joint('body', 'root', scaled([0, .47, -.045]))
+    joint('head', 'body', scaled([0, .56, .36]))
+    joint('left-fore-leg', 'root', scaled([-.23, .47, .26]))
+    joint('right-fore-leg', 'root', scaled([.23, .47, .26]))
+    joint('left-hind-leg', 'root', scaled([-.23, .47, -.35]))
+    joint('right-hind-leg', 'root', scaled([.23, .47, -.35]))
+    bind('body', 'body')
+    bind('head', 'head'); bind('muzzle', 'head'); bind('left-eye', 'head'); bind('right-eye', 'head')
+    for (const side of ['left', 'right'] as const) {
+      for (const end of ['fore', 'hind'] as const) {
+        const j = side + '-' + end + '-leg'
+        bind(j, j); bind(side + '-' + end + '-foot', j)
+      }
+    }
+
+    const qIdleStart: Record<string, ArtRecipeJointPose> = {
+      root: { position: [0, 0, 0] },
+      body: { position: [0, 0, 0], rotation: [0, 0, 0] },
+      head: { rotation: [0, 0, 0] },
+      'left-fore-leg': { rotation: [0, 0, 0] },
+      'right-fore-leg': { rotation: [0, 0, 0] },
+      'left-hind-leg': { rotation: [0, 0, 0] },
+      'right-hind-leg': { rotation: [0, 0, 0] }
+    }
+    registerStarterClip('idle', {
+      duration: 1.6, loop: true, easing: 'smooth',
+      frames: [
+        { time: 0, poses: structuredClone(qIdleStart) },
+        {
+          time: 0.8,
+          poses: {
+            root: { position: [0, 0, 0] },
+            body: { position: [0, 0.016 * sy, 0], rotation: [0.02, 0, 0] },
+            head: { rotation: [-0.05, 0.05, 0] },
+            'left-fore-leg': { rotation: [0, 0, 0] },
+            'right-fore-leg': { rotation: [0, 0, 0] },
+            'left-hind-leg': { rotation: [0, 0, 0] },
+            'right-hind-leg': { rotation: [0, 0, 0] }
+          }
+        },
+        { time: 1.6, poses: structuredClone(qIdleStart) }
+      ]
+    })
+    const qWalkA: Record<string, ArtRecipeJointPose> = {
+      root: { position: [0, 0, 0] },
+      body: { position: [0, 0, 0], rotation: [0.03, 0, -0.025] },
+      head: { rotation: [-0.04, 0.03, 0] },
+      'left-fore-leg': { position: [0, 0, 0], rotation: [-0.28, 0, 0] },
+      'right-hind-leg': { position: [0, 0, 0], rotation: [-0.28, 0, 0] },
+      'right-fore-leg': { position: [0, 0, 0], rotation: [0.28, 0, 0] },
+      'left-hind-leg': { position: [0, 0, 0], rotation: [0.28, 0, 0] }
+    }
+    registerStarterClip('walk', {
+      duration: 0.8, loop: true, easing: 'smooth',
+      frames: [
+        { time: 0, poses: structuredClone(qWalkA) },
+        {
+          time: 0.2,
+          poses: {
+            root: { position: [0, 0, 0] },
+            body: { position: [0, 0.02 * sy, 0], rotation: [0, 0, 0] },
+            head: { rotation: [0.02, 0, 0] },
+            'left-fore-leg': { position: [0, 0, 0], rotation: [0, 0, 0] },
+            'right-hind-leg': { position: [0, 0, 0], rotation: [0, 0, 0] },
+            'right-fore-leg': { position: [0, 0.035 * sy, 0], rotation: [0, 0, 0] },
+            'left-hind-leg': { position: [0, 0.035 * sy, 0], rotation: [0, 0, 0] }
+          }
+        },
+        {
+          time: 0.4,
+          poses: {
+            root: { position: [0, 0, 0] },
+            body: { position: [0, 0, 0], rotation: [0.03, 0, 0.025] },
+            head: { rotation: [-0.04, -0.03, 0] },
+            'left-fore-leg': { position: [0, 0, 0], rotation: [0.28, 0, 0] },
+            'right-hind-leg': { position: [0, 0, 0], rotation: [0.28, 0, 0] },
+            'right-fore-leg': { position: [0, 0, 0], rotation: [-0.28, 0, 0] },
+            'left-hind-leg': { position: [0, 0, 0], rotation: [-0.28, 0, 0] }
+          }
+        },
+        {
+          time: 0.6,
+          poses: {
+            root: { position: [0, 0, 0] },
+            body: { position: [0, 0.02 * sy, 0], rotation: [0, 0, 0] },
+            head: { rotation: [0.02, 0, 0] },
+            'left-fore-leg': { position: [0, 0.035 * sy, 0], rotation: [0, 0, 0] },
+            'right-hind-leg': { position: [0, 0.035 * sy, 0], rotation: [0, 0, 0] },
+            'right-fore-leg': { position: [0, 0, 0], rotation: [0, 0, 0] },
+            'left-hind-leg': { position: [0, 0, 0], rotation: [0, 0, 0] }
+          }
+        },
+        { time: 0.8, poses: structuredClone(qWalkA) }
+      ]
+    })
   } else if (base === 'bird') {
     mass('body','oval',[.53,.50,.87],primary,[0,.61,-.04])
     limb('neck',[0,.72,.18],[0,1.02,.29],.24,primary)
@@ -267,6 +555,107 @@ export function createArtBuilder(name: string, { base = 'empty', reference, fram
       mass(side+'-foot','prism',[.10,.065,.24],'ink',[s*.12,.035,.065])
       mass(side+'-eye','oval',[.055,.060,.054],'ink',[s*.126,1.065,.392])
     }
+    joint('root', undefined, [0, 0, 0])
+    joint('body', 'root', scaled([0, .50, -.04]))
+    joint('head', 'body', scaled([0, .94, .27]))
+    joint('tail', 'body', scaled([0, .61, -.31]))
+    joint('left-wing', 'body', scaled([-.20, .63, .02]))
+    joint('right-wing', 'body', scaled([.20, .63, .02]))
+    joint('left-leg', 'root', scaled([-.115, .45, -.02]))
+    joint('right-leg', 'root', scaled([.115, .45, -.02]))
+    bind('body', 'body'); bind('neck', 'body')
+    bind('head', 'head'); bind('beak', 'head'); bind('left-eye', 'head'); bind('right-eye', 'head')
+    bind('tail', 'tail')
+    bind('left-wing', 'left-wing'); bind('right-wing', 'right-wing')
+    bind('left-leg', 'left-leg'); bind('left-foot', 'left-leg')
+    bind('right-leg', 'right-leg'); bind('right-foot', 'right-leg')
+
+    const bIdleStart: Record<string, ArtRecipeJointPose> = {
+      root: { position: [0, 0, 0] },
+      body: { position: [0, 0, 0], rotation: [0, 0, 0] },
+      head: { position: [0, 0, 0], rotation: [0, 0, 0] },
+      tail: { rotation: [0, 0, 0] },
+      'left-wing': { rotation: [0, 0, 0] },
+      'right-wing': { rotation: [0, 0, 0] },
+      'left-leg': { rotation: [0, 0, 0] },
+      'right-leg': { rotation: [0, 0, 0] }
+    }
+    registerStarterClip('idle', {
+      duration: 1.6, loop: true, easing: 'smooth',
+      frames: [
+        { time: 0, poses: structuredClone(bIdleStart) },
+        {
+          time: 0.8,
+          poses: {
+            root: { position: [0, 0, 0] },
+            body: { position: [0, 0.015 * sy, 0], rotation: [0.025, 0, 0] },
+            head: { position: [0, 0, 0.015 * sz], rotation: [-0.04, 0.07, 0] },
+            tail: { rotation: [0.06, 0, 0] },
+            'left-wing': { rotation: [0, 0, 0.05] },
+            'right-wing': { rotation: [0, 0, -0.05] },
+            'left-leg': { rotation: [0, 0, 0] },
+            'right-leg': { rotation: [0, 0, 0] }
+          }
+        },
+        { time: 1.6, poses: structuredClone(bIdleStart) }
+      ]
+    })
+    const bWalkA: Record<string, ArtRecipeJointPose> = {
+      root: { position: [0, 0, 0] },
+      body: { position: [0, 0, 0], rotation: [0.04, 0.04, -0.03] },
+      head: { position: [0, 0, 0.03 * sz], rotation: [0.06, -0.04, 0] },
+      tail: { rotation: [-0.06, 0, 0] },
+      'left-wing': { rotation: [0, 0, 0.06] },
+      'right-wing': { rotation: [0, 0, -0.04] },
+      'left-leg': { position: [0, 0, 0], rotation: [-0.34, 0, 0] },
+      'right-leg': { position: [0, 0, 0], rotation: [0.34, 0, 0] }
+    }
+    registerStarterClip('walk', {
+      duration: 0.72, loop: true, easing: 'smooth',
+      frames: [
+        { time: 0, poses: structuredClone(bWalkA) },
+        {
+          time: 0.18,
+          poses: {
+            root: { position: [0, 0, 0] },
+            body: { position: [0, 0.02 * sy, 0], rotation: [-0.01, 0, 0] },
+            head: { position: [0, 0, -0.015 * sz], rotation: [-0.05, 0, 0] },
+            tail: { rotation: [0.05, 0, 0] },
+            'left-wing': { rotation: [0, 0, 0.02] },
+            'right-wing': { rotation: [0, 0, -0.02] },
+            'left-leg': { position: [0, 0, 0], rotation: [0, 0, 0] },
+            'right-leg': { position: [0, 0.04 * sy, 0], rotation: [0, 0, 0] }
+          }
+        },
+        {
+          time: 0.36,
+          poses: {
+            root: { position: [0, 0, 0] },
+            body: { position: [0, 0, 0], rotation: [0.04, -0.04, 0.03] },
+            head: { position: [0, 0, 0.03 * sz], rotation: [0.06, 0.04, 0] },
+            tail: { rotation: [-0.06, 0, 0] },
+            'left-wing': { rotation: [0, 0, 0.04] },
+            'right-wing': { rotation: [0, 0, -0.06] },
+            'left-leg': { position: [0, 0, 0], rotation: [0.34, 0, 0] },
+            'right-leg': { position: [0, 0, 0], rotation: [-0.34, 0, 0] }
+          }
+        },
+        {
+          time: 0.54,
+          poses: {
+            root: { position: [0, 0, 0] },
+            body: { position: [0, 0.02 * sy, 0], rotation: [-0.01, 0, 0] },
+            head: { position: [0, 0, -0.015 * sz], rotation: [-0.05, 0, 0] },
+            tail: { rotation: [0.05, 0, 0] },
+            'left-wing': { rotation: [0, 0, 0.02] },
+            'right-wing': { rotation: [0, 0, -0.02] },
+            'left-leg': { position: [0, 0.04 * sy, 0], rotation: [0, 0, 0] },
+            'right-leg': { position: [0, 0, 0], rotation: [0, 0, 0] }
+          }
+        },
+        { time: 0.72, poses: structuredClone(bWalkA) }
+      ]
+    })
   }
-  return { solid, point, attach, between, handle, disc, adjust, remove, finish }
+  return { solid, point, attach, between, handle, disc, adjust, remove, joint, bind, clip, finish }
 }

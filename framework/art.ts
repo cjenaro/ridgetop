@@ -1,12 +1,64 @@
+import { createAnimator, createMeshPool, createRig, renderRig, sampleClip } from './animation.ts'
+import type { AnimationClip, Keyframe, Rig, RigJoint, RigPart } from './animation.ts'
 import { instances } from './instances.ts'
-import { quaternionFromEuler } from './geometry.ts'
-import { bakeSpriteDirections } from './low-poly.ts'
+import { multiply, orthographic, quaternionFromEuler, view } from './geometry.ts'
+import { bakeSpriteDirections, bakeSpritePixels, renderMeshPixels, spriteDirections } from './low-poly.ts'
 import { color } from './renderer.ts'
-import { artPalette, artShapes, checkArtModel, checkArtPalette, checkFrameSize } from './art-recipe.ts'
-import type { ArtModel, ArtPart, ArtRecipe, ArtShape, ArtTone } from './art-recipe.ts'
-import type { Color, InstanceBatch, Mesh, Vec3 } from './types.ts'
+import type { SpriteAtlasSource, SpriteClip, SpriteSheetImage } from './sprites.ts'
+import { artPalette, artPoseBounds, artShapes, checkArtModel, checkArtPalette, checkFrameSize, compileArtJoints, modelFromArtRecipe } from './art-recipe.ts'
+import type { ArtModel, ArtPart, ArtRecipe, ArtRecipeClip, ArtRecipeClipFrame, ArtRecipeJoint, ArtRecipeJointPose, ArtShape, ArtTone } from './art-recipe.ts'
+import type { Color, InstanceBatch, LightingOptions, Mesh, Vec3 } from './types.ts'
 export { artPalette, artShapes, modelFromArtRecipe } from './art-recipe.ts'
-export type { ArtModel, ArtPart, ArtRecipe, ArtRecipePart, ArtShape, ArtTone } from './art-recipe.ts'
+export type { ArtModel, ArtPart, ArtRecipe, ArtRecipeClip, ArtRecipeClipFrame, ArtRecipeJoint, ArtRecipeJointPose, ArtRecipePart, ArtShape, ArtTone } from './art-recipe.ts'
+
+export type SpriteDirection = typeof spriteDirections[number]
+
+export interface ArtRig {
+  readonly rig: Rig
+  readonly clips: Readonly<Record<string, AnimationClip>>
+  createAnimator(initial?: string): ReturnType<typeof createAnimator<string>>
+}
+
+export interface AnimatedSpriteOptions {
+  /** Single clip name to bake. Mutually exclusive with `clips`. */
+  clip?: string
+  /** Ordered list of clip names to bake into one sheet. Defaults to all clips on the model. */
+  clips?: readonly string[]
+  /** Frames to sample per clip (single count or per-clip map). */
+  frames?: number | Readonly<Record<string, number>>
+  /** Playback frame rate used to compute `frameMs` (and default frame count when `frames` is omitted). */
+  fps?: number
+  /** Square pixel size of each cell. Defaults to `model.frameSize ?? 64`. */
+  frameSize?: number
+  /** Directions to render (one row per direction). Defaults to all 8 `spriteDirections`. */
+  directions?: readonly SpriteDirection[]
+  /** Keep the lowest vertex grounded at y = 0 on every sampled frame. Defaults to `true`. */
+  alignFeet?: boolean
+  /** Optional palette overrides for tone resolution. */
+  palette?: Partial<Record<ArtTone, string>>
+  /** Optional camera framing overrides. */
+  span?: number
+  centerY?: number
+  elevation?: number
+  lighting?: LightingOptions
+  /** Manifest `src` filename. */
+  src?: string
+}
+
+export interface BakedSpriteManifest extends SpriteAtlasSource {
+  clips: Record<string, SpriteClip>
+}
+
+export interface BakedSpriteSheet extends SpriteSheetImage {
+  manifest: BakedSpriteManifest
+}
+
+export interface BakedSpritePixels {
+  width: number
+  height: number
+  pixels: Uint8ClampedArray<ArrayBuffer>
+  manifest: BakedSpriteManifest
+}
 
 const { box, prism, cylinder: trunk, cone: canopy, octahedron } = artShapes
 function part(name: string, mesh: Mesh, position: Vec3, scale: Vec3, tone: ArtTone, yaw = 0, unlit = 0): ArtPart {
@@ -75,15 +127,328 @@ const shapeNames = new Map(Object.entries(artShapes).map(([key, mesh]) => [mesh,
 /** Make an independent, editable source file for a built-in model. */
 export function createArtRecipe(name: keyof typeof artModels): ArtRecipe {
   if (!Object.hasOwn(artModels, name)) throw new Error('Unknown built-in art model: ' + name)
-  const { span, centerY, parts } = artModels[name]
+  const entry: ArtModel = artModels[name]
+  const { span, centerY, parts } = entry
   const palette = Object.fromEntries(parts.map(p => [p.tone, artPalette[p.tone]]))
-  return { format: 'ridgetop-art', version: 1, name, span, centerY, frameSize: 64, palette,
-    parts: parts.map(p => ({ name: p.name, shape: shapeNames.get(p.mesh), position: [...p.position], scale: [...p.scale],
+  return {
+    format: 'ridgetop-art', version: 1, name, span, centerY, frameSize: 64, palette,
+    parts: parts.map(p => ({
+      name: p.name, shape: shapeNames.get(p.mesh), position: [...p.position], scale: [...p.scale],
       tone: p.tone, ...(p.pitch ? { pitch: p.pitch } : {}), ...(p.yaw ? { yaw: p.yaw } : {}),
-      ...(p.roll ? { roll: p.roll } : {}), ...(p.unlit ? { unlit: p.unlit } : {}) })) }
+      ...(p.roll ? { roll: p.roll } : {}), ...(p.unlit ? { unlit: p.unlit } : {}),
+      ...(p.joint ? { joint: p.joint } : {})
+    })),
+    ...(entry.joints ? { joints: structuredClone(entry.joints) as ArtRecipeJoint[] } : {}),
+    ...(entry.clips ? { clips: structuredClone(entry.clips) as Record<string, ArtRecipeClip> } : {})
+  }
 }
 
-/** A palette and named model recipes shared by mesh batches and cached, in-memory sprite sheets. */
+/** Convert an ArtModel (rigged or static) and palette into a runtime animation Rig + AnimationClips. */
+export function rigFromArtModel(model: ArtModel, palette: Partial<Record<ArtTone, string>> = {}): ArtRig {
+  checkArtPalette(palette)
+  const basePalette = { ...artPalette, ...palette }
+  checkArtModel(model, 'model', basePalette)
+  const resolved = { ...basePalette, ...model.palette }
+  const toneColors = new Map(Object.entries(resolved).map(([role, hex]) => [role, color(hex)]))
+
+  const srcJoints = model.joints ?? []
+  const { parentIndex, restPos, indexById } = compileArtJoints(srcJoints)
+  const partsByJoint: RigPart[][] = srcJoints.map(() => [])
+  const unboundParts: RigPart[] = []
+
+  for (const p of model.parts) {
+    const jIdx = p.joint !== undefined ? indexById.get(p.joint) : undefined
+    const rp = jIdx !== undefined ? restPos[jIdx] : [0, 0, 0]
+    const rigPart: RigPart = {
+      ...(p.name !== undefined ? { name: p.name } : {}),
+      mesh: p.mesh,
+      position: [p.position[0] - rp[0], p.position[1] - rp[1], p.position[2] - rp[2]],
+      scale: [p.scale[0], p.scale[1], p.scale[2]],
+      ...(p.pitch || p.yaw || p.roll ? { rotation: [p.pitch ?? 0, p.yaw ?? 0, p.roll ?? 0] as const } : {}),
+      color: toneColors.get(p.tone)!,
+      ...(p.unlit ? { unlit: p.unlit } : {})
+    }
+    if (jIdx !== undefined) partsByJoint[jIdx].push(rigPart)
+    else unboundParts.push(rigPart)
+  }
+
+  const rigJoints: RigJoint[] = srcJoints.map((j, idx) => {
+    const pIdx = parentIndex[idx]
+    const rp = restPos[idx]
+    const prp = pIdx >= 0 ? restPos[pIdx] : [0, 0, 0]
+    return {
+      id: j.id,
+      ...(j.parent !== undefined ? { parent: j.parent } : {}),
+      pivot: [rp[0] - prp[0], rp[1] - prp[1], rp[2] - prp[2]],
+      ...(partsByJoint[idx].length ? { parts: partsByJoint[idx] } : {})
+    }
+  })
+
+  if (unboundParts.length || !rigJoints.length) {
+    const staticId = indexById.has('root') ? '__static__' : 'root'
+    rigJoints.unshift({ id: staticId, pivot: [0, 0, 0], parts: unboundParts })
+  }
+
+  const rig = createRig(rigJoints)
+  const clips: Record<string, AnimationClip> = {}
+  for (const [clipName, recipeClip] of Object.entries(model.clips ?? {})) {
+    const tracks: Record<string, Keyframe[]> = {}
+    for (const frame of recipeClip.frames) {
+      for (const [jointId, pose] of Object.entries(frame.poses)) {
+        const list = tracks[jointId] ?? (tracks[jointId] = [])
+        list.push({
+          t: frame.time,
+          ...(pose.position ? { position: [pose.position[0], pose.position[1], pose.position[2]] as Vec3 } : {}),
+          ...(pose.rotation ? { rotation: [pose.rotation[0], pose.rotation[1], pose.rotation[2]] as const } : {}),
+          ...(pose.scale ? { scale: [pose.scale[0], pose.scale[1], pose.scale[2]] as Vec3 } : {}),
+          ...(recipeClip.easing ? { ease: recipeClip.easing } : {})
+        })
+      }
+    }
+    clips[clipName] = {
+      duration: recipeClip.duration,
+      ...(recipeClip.loop !== undefined ? { loop: recipeClip.loop } : {}),
+      tracks
+    }
+  }
+
+  const clipNames = Object.keys(clips)
+  const restClips: Record<string, AnimationClip> = { rest: { duration: 1, loop: true, tracks: {} } }
+  return {
+    rig,
+    clips,
+    createAnimator(initial?: string) {
+      if (initial !== undefined) {
+        if (!Object.hasOwn(clips, initial)) throw new RangeError('Unknown animation clip: ' + initial)
+        return createAnimator(clips, initial)
+      }
+      if (!clipNames.length) return createAnimator(restClips, 'rest')
+      const start = Object.hasOwn(clips, 'idle') ? 'idle' : clipNames[0]
+      return createAnimator(clips, start)
+    }
+  }
+}
+
+/** Parse a `.art.json` recipe and convert it directly into a runtime Rig + AnimationClips. */
+export function rigFromArtRecipe(recipe: unknown, palette?: Partial<Record<ArtTone, string>>): ArtRig {
+  return rigFromArtModel(modelFromArtRecipe(recipe), palette)
+}
+
+function resolveArtModel(source: ArtModel | ArtRecipe): ArtModel {
+  if (source && typeof source === 'object' && 'format' in source && source.format === 'ridgetop-art') {
+    return modelFromArtRecipe(source)
+  }
+  return source as ArtModel
+}
+
+const directionIndex = new Map<string, number>(spriteDirections.map((d, i) => [d, i]))
+
+/**
+ * Sample a rigged model's animation clip(s) across frames and directions into a single RGBA sprite sheet
+ * without needing a DOM canvas. Rows correspond to directions and columns correspond to sequential clip frames.
+ */
+export function bakeAnimatedSpritePixels(source: ArtModel | ArtRecipe, options: AnimatedSpriteOptions = {}): BakedSpritePixels {
+  const model = resolveArtModel(source)
+  if (options.clip !== undefined && options.clips !== undefined) {
+    throw new RangeError('Specify either clip or clips, not both')
+  }
+  const frameSize = options.frameSize ?? model.frameSize ?? 64
+  checkFrameSize(frameSize)
+  const elevation = options.elevation ?? Math.PI / 6
+  if (!Number.isFinite(elevation) || Math.abs(elevation) >= Math.PI / 2) {
+    throw new RangeError('Invalid sprite camera elevation')
+  }
+  if (options.fps !== undefined && !(typeof options.fps === 'number' && Number.isFinite(options.fps) && options.fps > 0)) {
+    throw new RangeError('Animated sprite fps must be a positive finite number')
+  }
+  if (options.span !== undefined && !(typeof options.span === 'number' && Number.isFinite(options.span) && options.span > 0)) {
+    throw new RangeError('Invalid sprite camera span')
+  }
+  if (options.centerY !== undefined && !(typeof options.centerY === 'number' && Number.isFinite(options.centerY))) {
+    throw new RangeError('Invalid sprite camera centerY')
+  }
+
+  const directions = options.directions ?? spriteDirections
+  if (!Array.isArray(directions) || !directions.length) {
+    throw new RangeError('Expected at least one sprite direction')
+  }
+  const seenDirs = new Set<string>()
+  const dirAngles: number[] = []
+  for (const dir of directions) {
+    const idx = directionIndex.get(dir)
+    if (idx === undefined || seenDirs.has(dir)) throw new RangeError('Invalid or duplicate sprite direction: ' + String(dir))
+    seenDirs.add(dir)
+    dirAngles.push(idx * 2 * Math.PI / spriteDirections.length)
+  }
+
+  const { rig, clips: animClips } = rigFromArtModel(model, options.palette)
+  let targetNames: string[]
+  if (options.clip !== undefined) {
+    if (!Object.hasOwn(animClips, options.clip)) throw new RangeError('Unknown animation clip: ' + options.clip)
+    targetNames = [options.clip]
+  } else if (options.clips !== undefined) {
+    if (!Array.isArray(options.clips) || !options.clips.length) throw new RangeError('Expected at least one animation clip')
+    const seenClips = new Set<string>()
+    targetNames = []
+    for (const cName of options.clips) {
+      if (!Object.hasOwn(animClips, cName) || seenClips.has(cName)) {
+        throw new RangeError('Unknown or duplicate animation clip: ' + String(cName))
+      }
+      seenClips.add(cName)
+      targetNames.push(cName)
+    }
+  } else {
+    const existing = Object.keys(animClips)
+    targetNames = existing.length ? existing : ['rest']
+  }
+
+  const alignFeet = options.alignFeet ?? true
+  const centerY = options.centerY ?? model.centerY
+  const cosEl = Math.cos(elevation)
+  const sinEl = Math.sin(elevation)
+  const padding = Math.min(2, frameSize * .1)
+  const innerFraction = Math.max(0.2, 1 - 2 * padding / frameSize)
+
+  type SampledFrame = { poses: ReturnType<typeof sampleClip>; liftY: number }
+  const plan: { name: string; startColumn: number; frameCount: number; frameMs: number; samples: SampledFrame[] }[] = []
+  let totalColumns = 0
+  let maxHalfSpan = 0
+
+  for (const clipName of targetNames) {
+    const hasClip = Object.hasOwn(animClips, clipName)
+    const animClip: AnimationClip = hasClip ? animClips[clipName] : { duration: 1, loop: true, tracks: {} }
+    let frameCount: number
+    if (typeof options.frames === 'number') {
+      frameCount = options.frames
+    } else if (options.frames && typeof options.frames === 'object' && Object.hasOwn(options.frames, clipName)) {
+      frameCount = options.frames[clipName]
+    } else if (options.fps !== undefined) {
+      frameCount = Math.max(1, Math.round(animClip.duration * options.fps))
+    } else {
+      frameCount = hasClip ? 4 : 1
+    }
+    if (!Number.isInteger(frameCount) || frameCount < 1 || frameCount > 256) {
+      throw new RangeError('Animated sprite frame count must be an integer in 1–256 for ' + clipName)
+    }
+    const frameMs = options.fps !== undefined
+      ? Math.max(1, Math.round(1000 / options.fps))
+      : Math.max(1, Math.round((animClip.duration * 1000) / frameCount))
+
+    const samples: SampledFrame[] = []
+    for (let f = 0; f < frameCount; f++) {
+      const t = animClip.loop === false
+        ? (frameCount > 1 ? (f / (frameCount - 1)) * animClip.duration : 0)
+        : (f / frameCount) * animClip.duration
+      const poses = sampleClip(animClip, t)
+      const b = artPoseBounds(model, poses)
+      const liftY = alignFeet ? -b.min[1] : 0
+      if (options.span === undefined) {
+        const xs = [b.min[0], b.max[0]]
+        const ys = [b.min[1] + liftY, b.max[1] + liftY]
+        const zs = [b.min[2], b.max[2]]
+        for (const px of xs) for (const py of ys) for (const pz of zs) {
+          const cyTerm = cosEl * (py - centerY)
+          for (let d = 0; d < dirAngles.length; d++) {
+            const sin = Math.sin(dirAngles[d]), cos = Math.cos(dirAngles[d])
+            const u = Math.abs(cos * px - sin * pz)
+            const v = Math.abs(cyTerm - sinEl * (sin * px + cos * pz))
+            if (u > maxHalfSpan) maxHalfSpan = u
+            if (v > maxHalfSpan) maxHalfSpan = v
+          }
+        }
+      }
+      samples.push({ poses, liftY })
+    }
+    plan.push({ name: clipName, startColumn: totalColumns, frameCount, frameMs, samples })
+    totalColumns += frameCount
+  }
+
+  const span = options.span ?? Math.max(model.span, (2 * maxHalfSpan) / innerFraction)
+  const width = totalColumns * frameSize
+  const height = directions.length * frameSize
+  const pixels = new Uint8ClampedArray(width * height * 4)
+  const allEightCanonical = directions.length === spriteDirections.length &&
+    directions.every((d, i) => d === spriteDirections[i])
+
+  let cameras: ReturnType<typeof multiply>[] | null = null
+  if (!allEightCanonical) {
+    const projection = orthographic(span, span, span / 100, span * 8)
+    const radius = span * 4
+    const horizontal = radius * cosEl
+    cameras = dirAngles.map(angle =>
+      multiply(projection, view([horizontal * Math.sin(angle), centerY + radius * sinEl, horizontal * Math.cos(angle)], [0, centerY, 0]))
+    )
+  }
+
+  const pool = createMeshPool(Math.max(16, model.parts.length))
+  const rowBytes = frameSize * 4
+  const manifestClips: Record<string, SpriteClip> = {}
+
+  for (const entry of plan) {
+    for (let row = 0; row < directions.length; row++) {
+      manifestClips[entry.name + '-' + directions[row]] = {
+        column: entry.startColumn,
+        row,
+        frames: entry.frameCount,
+        frameMs: entry.frameMs
+      }
+    }
+    for (let f = 0; f < entry.samples.length; f++) {
+      const col = entry.startColumn + f
+      const { poses, liftY } = entry.samples[f]
+      pool.clear()
+      renderRig(rig, { position: [0, liftY, 0] }, poses, pool)
+      if (allEightCanonical) {
+        const strip = bakeSpritePixels(pool.batches, {
+          span, center: [0, centerY, 0], frameSize, elevation, lighting: options.lighting
+        })
+        const stripWidth = strip.width
+        for (let row = 0; row < directions.length; row++) {
+          for (let y = 0; y < frameSize; y++) {
+            const srcStart = (y * stripWidth + row * frameSize) * 4
+            const dstStart = ((row * frameSize + y) * width + col * frameSize) * 4
+            pixels.set(strip.pixels.subarray(srcStart, srcStart + rowBytes), dstStart)
+          }
+        }
+      } else {
+        for (let row = 0; row < directions.length; row++) {
+          const tile = renderMeshPixels(cameras![row], pool.batches, frameSize, options.lighting)
+          for (let y = 0; y < frameSize; y++) {
+            const srcStart = y * rowBytes
+            const dstStart = ((row * frameSize + y) * width + col * frameSize) * 4
+            pixels.set(tile.pixels.subarray(srcStart, srcStart + rowBytes), dstStart)
+          }
+        }
+      }
+    }
+  }
+
+  return {
+    width,
+    height,
+    pixels,
+    manifest: {
+      src: options.src ?? 'animated-sprite.png',
+      frameWidth: frameSize,
+      frameHeight: frameSize,
+      clips: manifestClips
+    }
+  }
+}
+
+/** Bake a rigged model's animation clip(s) across directions into a browser HTMLCanvasElement sprite sheet. */
+export function bakeAnimatedSpriteDirections(source: ArtModel | ArtRecipe, options: AnimatedSpriteOptions = {}): BakedSpriteSheet {
+  const { width, height, pixels, manifest } = bakeAnimatedSpritePixels(source, options)
+  const image = document.createElement('canvas')
+  image.width = width
+  image.height = height
+  const context = image.getContext('2d')
+  if (!context) throw new Error('Could not create the animated sprite sheet')
+  context.putImageData(new ImageData(pixels, width, height), 0, 0)
+  return { image, manifest }
+}
+
+/** A palette and named model recipes shared by mesh batches, rigs and cached, in-memory sprite sheets. */
 export function createArtKit<Extra extends string = never>({
   palette = {}, models, frameSize = 64
 }: { palette?: Partial<Record<ArtTone, string>>; models?: Record<Extra, ArtModel>; frameSize?: number } = {}) {
@@ -102,10 +467,20 @@ export function createArtKit<Extra extends string = never>({
     if (recipe.palette) overrides.set(name as Name, colorsFor({ ...rgb, ...recipe.palette }))
   }
   const sprites = new Map<Name, ReturnType<typeof bakeSpriteDirections>>()
+  const rigs = new Map<Name, ArtRig>()
 
   function model(name: Name): ArtModel {
     if (!Object.hasOwn(catalog, name)) throw new RangeError('Unknown art model: ' + name)
     return catalog[name]
+  }
+
+  function rig(name: Name): ArtRig {
+    let cached = rigs.get(name)
+    if (!cached) {
+      cached = rigFromArtModel(model(name), rgb)
+      rigs.set(name, cached)
+    }
+    return cached
   }
 
   function group() {
@@ -139,7 +514,28 @@ export function createArtKit<Extra extends string = never>({
     }
   }
 
-  function sprite(name: Name) {
+  function animatedSpritePixels(name: Name, options: AnimatedSpriteOptions = {}): BakedSpritePixels {
+    const entry = model(name)
+    return bakeAnimatedSpritePixels(entry, {
+      frameSize: entry.frameSize ?? frameSize,
+      palette: rgb,
+      src: encodeURIComponent(name) + '-animated-sheet.png',
+      ...options
+    })
+  }
+
+  function animatedSprite(name: Name, options: AnimatedSpriteOptions = {}): BakedSpriteSheet {
+    const entry = model(name)
+    return bakeAnimatedSpriteDirections(entry, {
+      frameSize: entry.frameSize ?? frameSize,
+      palette: rgb,
+      src: encodeURIComponent(name) + '-animated-sheet.png',
+      ...options
+    })
+  }
+
+  function sprite(name: Name, options?: AnimatedSpriteOptions): BakedSpriteSheet {
+    if (options !== undefined) return animatedSprite(name, options)
     let sheet = sprites.get(name)
     if (!sheet) {
       const { span, centerY, frameSize: size = frameSize, timings } = model(name)
@@ -153,5 +549,5 @@ export function createArtKit<Extra extends string = never>({
     return sheet
   }
 
-  return { model, group, sprite, palette: { ...rgb } }
+  return { model, group, rig, sprite, animatedSprite, animatedSpritePixels, palette: { ...rgb } }
 }

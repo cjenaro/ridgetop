@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { artBases, artPartBounds, bakeSpritePixels, createArtBuilder, createArtKit, fitArtRecipe, modelFromArtRecipe,
-  quaternionFromEuler, rotateVec3 } from '../framework/index.ts'
+import { artBases, artPartBounds, artPoseBounds, bakeAnimatedSpritePixels, bakeSpritePixels, createArtBuilder, createArtKit,
+  createMeshPool, fitArtRecipe, modelFromArtRecipe, quaternionFromEuler, renderRig, rigFromArtRecipe, rotateVec3, sampleClip } from '../framework/index.ts'
 import type { ArtRecipe, Vec3 } from '../framework/index.ts'
 import { spritePartVisibility } from '../framework/art-review.ts'
 
@@ -138,4 +138,171 @@ test('part visibility distinguishes an occluded mark from a front-facing badge',
   assert.deepEqual(counts.parts.inside,Array(8).fill(0))
   assert.ok(counts.parts.badge[0] > 10)
   assert.equal(counts.parts.badge[4],0)
+})
+
+test('biped, quadruped and bird starters generate default joint rigs and grounded idle/walk clips', () => {
+  const expectedJoints = {
+    biped: ['root', 'body', 'head', 'left-arm', 'right-arm', 'left-leg', 'right-leg'],
+    quadruped: ['root', 'body', 'head', 'left-fore-leg', 'right-fore-leg', 'left-hind-leg', 'right-hind-leg'],
+    bird: ['root', 'body', 'head', 'tail', 'left-wing', 'right-wing', 'left-leg', 'right-leg']
+  } as const
+  for (const base of ['biped', 'quadruped', 'bird'] as const) {
+    for (const proportions of [[1, 1, 1], [1.35, 0.85, 1.15]] as Vec3[]) {
+      const art = createArtBuilder(base + '-hero', { base, proportions, primary: 'accent', trim: 'wood' })
+      art.attach('crest', 'head', 'top', 'cone', [0.16, 0.22, 0.16], 'glow')
+      const recipe = art.finish()
+      assert.ok(recipe.joints && recipe.clips, base + ' should include joints and clips')
+      assert.deepEqual(recipe.joints.map(j => j.id), expectedJoints[base])
+      assert.equal(recipe.parts.find(p => p.name === 'crest')?.joint, 'head', 'attached parts inherit parent joint')
+      assert.ok(recipe.clips.idle && recipe.clips.walk, base + ' should include idle and walk clips')
+
+      const model = modelFromArtRecipe(JSON.parse(JSON.stringify(recipe)))
+      const { rig, clips } = rigFromArtRecipe(recipe)
+      assert.equal(rig.joints.length, expectedJoints[base].length)
+      assert.ok(clips.idle && clips.walk)
+
+      // Every keyframe in idle and walk is grounded to y = 0.
+      for (const clipName of ['idle', 'walk'] as const) {
+        const recipeClip = recipe.clips[clipName]
+        for (const frame of recipeClip.frames) {
+          const b = artPoseBounds(model, frame.poses)
+          near(b.min[1], 0)
+        }
+        // Continuous sampling across the full cycle keeps feet tightly grounded (no floating or sinking).
+        const animClip = clips[clipName]
+        for (let step = 0; step <= 24; step++) {
+          const t = (step / 24) * animClip.duration
+          const b = artPoseBounds(model, sampleClip(animClip, t))
+          assert.ok(b.min[1] >= -0.025 && b.min[1] <= 0.025,
+            `${base} ${clipName} at t=${t.toFixed(3)} drifted to minY=${b.min[1]}`)
+        }
+      }
+    }
+  }
+  // Static bases remain clean with no default rig overhead.
+  for (const base of ['case', 'vessel'] as const) {
+    const recipe = createArtBuilder(base + '-prop', { base }).finish()
+    assert.equal(recipe.joints, undefined)
+    assert.equal(recipe.clips, undefined)
+  }
+})
+
+test('builder joint/bind/clip helpers and fitArtRecipe shift joint pivots alongside parts', () => {
+  const art = createArtBuilder('turret')
+  art.solid('pedestal', 'cylinder', [0.8, 0.6, 0.8], 'stone', [3, 2.3, -1])
+  art.solid('barrel', 'box', [0.24, 0.24, 0.9], 'accent', [3, 2.75, -0.6])
+  art.joint('root', undefined, [3, 2, -1])
+  art.joint('head', 'root', [3, 2.6, -1])
+  art.bind('pedestal', 'root')
+  art.bind('barrel', 'head')
+  art.clip('sweep', {
+    duration: 1,
+    loop: true,
+    easing: 'linear',
+    frames: [
+      { time: 0, poses: { head: { rotation: [0, -0.5, 0] } } },
+      { time: 0.5, poses: { head: { rotation: [0, 0.5, 0] } } },
+      { time: 1, poses: { head: { rotation: [0, -0.5, 0] } } }
+    ]
+  })
+  assert.throws(() => art.joint('head', 'root', [0, 0, 0]), /unique/)
+  assert.throws(() => art.joint('bad', 'missing'), /Unknown parent/)
+  assert.throws(() => art.bind('missing', 'root'), /Unknown part/)
+  assert.throws(() => art.bind('barrel', 'missing'), /Unknown joint/)
+  assert.throws(() => art.clip('bad', { duration: 0, frames: [{ time: 0, poses: {} }] }), /duration/)
+
+  const recipe = art.finish()
+  const model = modelFromArtRecipe(recipe)
+  // Rest pose is grounded and centered at X/Z = 0.
+  const restBounds = artPoseBounds(model)
+  near(restBounds.min[1], 0)
+  near(restBounds.min[0] + restBounds.max[0], 0)
+  near(restBounds.min[2] + restBounds.max[2], 0)
+  // Joint pivots shifted by exact same delta as parts (floor=2, cx=3).
+  const rootJoint = recipe.joints!.find(j => j.id === 'root')!
+  const headJoint = recipe.joints!.find(j => j.id === 'head')!
+  near(rootJoint.pivot![1], 0)
+  near(headJoint.pivot![1], 0.6)
+  near(headJoint.pivot![0] - rootJoint.pivot![0], 0)
+  near(headJoint.pivot![2] - rootJoint.pivot![2], 0)
+
+  // References preserve joints and clips independently.
+  const variant = createArtBuilder('turret-v2', { reference: recipe })
+  variant.adjust('barrel', { tone: 'glow' })
+  const copy = variant.finish()
+  assert.deepEqual(copy.joints, recipe.joints)
+  assert.deepEqual(copy.clips, recipe.clips)
+  assert.equal(copy.parts.find(p => p.name === 'barrel')?.joint, 'head')
+
+  // Runtime renderRig matches the shifted joint pivots cleanly.
+  const { rig, createAnimator } = rigFromArtRecipe(recipe)
+  const anim = createAnimator('sweep')
+  anim.step(0.5)
+  const pool = createMeshPool()
+  const joints = renderRig(rig, { position: [0, 0, 0] }, anim.evaluate(), pool)
+  assert.equal(pool.batches.reduce((n, b) => n + b.count, 0), 2)
+  near(joints.head.position[1], 0.6)
+})
+
+test('headless multi-frame animated directional sprite baking produces distinct aligned frames across clips and directions', () => {
+  const recipe = createArtBuilder('walker', { base: 'biped', primary: 'accent', trim: 'wood' }).finish()
+  const baked = bakeAnimatedSpritePixels(recipe, {
+    clips: ['idle', 'walk'],
+    frames: { idle: 2, walk: 4 },
+    frameSize: 32
+  })
+  const cols = 6, rows = 8
+  assert.equal(baked.width, cols * 32)
+  assert.equal(baked.height, rows * 32)
+  assert.equal(baked.pixels.length, baked.width * baked.height * 4)
+  assert.equal(baked.manifest.frameWidth, 32)
+  assert.equal(baked.manifest.frameHeight, 32)
+  assert.equal(Object.keys(baked.manifest.clips).length, 16)
+
+  // Verify every manifest clip stays within sheet bounds and has positive frameMs.
+  for (const [name, clip] of Object.entries(baked.manifest.clips)) {
+    assert.ok(clip.column >= 0 && clip.column + clip.frames <= cols, name + ' column bounds')
+    assert.ok((clip.row ?? 0) >= 0 && (clip.row ?? 0) < rows, name + ' row bounds')
+    assert.ok(clip.frameMs > 0 && Number.isFinite(clip.frameMs), name + ' frameMs')
+  }
+  assert.deepEqual(baked.manifest.clips['idle-front'], { column: 0, row: 0, frames: 2, frameMs: 800 })
+  assert.deepEqual(baked.manifest.clips['walk-right'], { column: 2, row: 2, frames: 4, frameMs: 200 })
+
+  const cellMetrics = (col: number, row: number) => {
+    let count = 0, maxY = -1
+    const bytes: number[] = []
+    for (let y = 0; y < 32; y++) {
+      for (let x = 0; x < 32; x++) {
+        const i = ((row * 32 + y) * baked.width + col * 32 + x) * 4
+        const a = baked.pixels[i + 3]
+        bytes.push(baked.pixels[i], baked.pixels[i + 1], baked.pixels[i + 2], a)
+        if (a > 0) {
+          count++
+          if (y > maxY) maxY = y
+        }
+      }
+    }
+    return { count, maxY, hash: bytes.join(',') }
+  }
+
+  // Side view ('right', row 2) walk frames are non-empty, visibly distinct across phases, and keep feet aligned.
+  const walkRight = [2, 3, 4, 5].map(col => cellMetrics(col, 2))
+  for (const m of walkRight) assert.ok(m.count > 20, 'walk frame should render visible pixels')
+  assert.ok(new Set(walkRight.map(m => m.hash)).size >= 3, 'walk phases should produce distinct frames')
+  const footRows = walkRight.map(m => m.maxY)
+  assert.ok(Math.max(...footRows) - Math.min(...footRows) <= 1,
+    'feet baseline should stay aligned across walk frames: ' + footRows.join(', '))
+
+  // Custom direction subset + fps option works cleanly.
+  const subset = bakeAnimatedSpritePixels(recipe, {
+    clip: 'walk',
+    fps: 10,
+    frameSize: 24,
+    directions: ['front', 'right', 'back', 'left']
+  })
+  assert.equal(subset.width, 8 * 24)
+  assert.equal(subset.height, 4 * 24)
+  assert.equal(subset.manifest.clips['walk-front'].frameMs, 100)
+  assert.equal(subset.manifest.clips['walk-front'].frames, 8)
+  assert.deepEqual(Object.keys(subset.manifest.clips), ['walk-front', 'walk-right', 'walk-back', 'walk-left'])
 })
