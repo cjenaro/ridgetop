@@ -19,10 +19,14 @@ function words(value: unknown) {
 function isRecord(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === 'object' && !Array.isArray(value)
 }
+const validSurfaces = new Set(['model', 'rig', 'mesh', 'sprite', 'hud'])
+const validScopes = new Set(['asset', 'instance', 'sprite', 'hud'])
+const threeDSurfaces = new Set(['model', 'rig', 'mesh'])
+
 function checkPin(pin: ArtPin) {
   const v = pin?.view
-  if (!isRecord(pin) || !isRecord(v) || !['model', 'sprite', 'hud'].includes(v.surface as string) || !['asset', 'instance', 'sprite', 'hud'].includes(pin.scope as string) ||
-      (pin.scope === 'hud' && v.surface !== 'hud') || (pin.scope === 'sprite' && v.surface === 'model') ||
+  if (!isRecord(pin) || !isRecord(v) || !validSurfaces.has(v.surface as string) || !validScopes.has(pin.scope as string) ||
+      (pin.scope === 'hud' && v.surface !== 'hud') || (pin.scope === 'sprite' && threeDSurfaces.has(v.surface as string)) ||
       ![v.asset, v.instance, v.source].every(s => typeof s === 'string' && s.length && s.length <= 1024) ||
       ![v.span, v.width, v.height].every(n => typeof n === 'number' && Number.isFinite(n) && n > 0) ||
       ![v.centerY, v.yaw, v.elevation].every(n => typeof n === 'number' && Number.isFinite(n)) ||
@@ -34,7 +38,7 @@ function checkPin(pin: ArtPin) {
       !Array.isArray(v.position) || v.position.length !== 3 || !v.position.every(n => typeof n === 'number' && Number.isFinite(n)) ||
       !Array.isArray(pin.region) || pin.region.length !== 4 || !pin.region.every(n => typeof n === 'number' && Number.isFinite(n) && n >= 0 && n <= 1) ||
       pin.region[0] > pin.region[2] || pin.region[1] > pin.region[3] ||
-      (v.surface !== 'model' && (typeof v.clip !== 'string' || !v.clip || v.clip.length > 256 ||
+      (!threeDSurfaces.has(v.surface as string) && (typeof v.clip !== 'string' || !v.clip || v.clip.length > 256 ||
         ![v.frame, v.column, v.row].every(n => Number.isSafeInteger(n) && (n as number) >= 0)))) bad('Invalid art review target.')
 }
 async function payload(req: IncomingMessage): Promise<Record<string, any>> {

@@ -2,6 +2,8 @@ import type { LayoutNode, LayoutRect, SafeInsets } from './ui-layout.ts'
 import type { UiPrimitiveInstance } from './ui-machine.ts'
 import { resolveLayout } from './ui-layout.ts'
 import { createUiAgent } from './ui-machine.ts'
+import { isTestingActive, isTestingPaused, onTestingPause, recordCanvasUiRegions } from './testing-runtime.ts'
+import type { HudRegion } from './testing-runtime.ts'
 
 export interface UiTheme {
   readonly surface: string
@@ -299,6 +301,14 @@ export function createCanvasUi(canvas: HTMLCanvasElement, options: {
     for (const [pid] of Array.from(activePointers)) releasePointer(pid)
   }
 
+  const unsubPause = onTestingPause(paused => {
+    if (paused) {
+      clearHolds()
+      hoveredId = null
+      canvas.style.cursor = ''
+    }
+  })
+
   function canvasPoint(event: PointerEvent) {
     const box = canvas.getBoundingClientRect()
     const rawX = event.clientX - box.left
@@ -310,6 +320,7 @@ export function createCanvasUi(canvas: HTMLCanvasElement, options: {
   }
 
   canvas.addEventListener('pointermove', event => {
+    if (isTestingPaused()) return
     const { x, y } = canvasPoint(event)
     const active = activePointers.get(event.pointerId)
     if (active?.isSlider) {
@@ -331,6 +342,7 @@ export function createCanvasUi(canvas: HTMLCanvasElement, options: {
   }, signal)
 
   canvas.addEventListener('pointerdown', event => {
+    if (isTestingPaused()) return
     if (event.button !== 0 && event.pointerType === 'mouse') return
     const { x, y } = canvasPoint(event)
     const hit = findHit(x, y)
@@ -362,6 +374,7 @@ export function createCanvasUi(canvas: HTMLCanvasElement, options: {
   }, signal)
 
   canvas.addEventListener('pointerup', event => {
+    if (isTestingPaused()) { releasePointer(event.pointerId); return }
     const { x, y } = canvasPoint(event)
     releasePointer(event.pointerId, x, y)
   }, signal)
@@ -376,6 +389,7 @@ export function createCanvasUi(canvas: HTMLCanvasElement, options: {
   }, signal)
 
   globalThis.window?.addEventListener('keydown', event => {
+    if (isTestingPaused()) return
     if (options.keyboardEnabled && !options.keyboardEnabled()) return
     if (event.altKey || event.ctrlKey || event.metaKey) return
     const target = event.target as { closest?: (sel: string) => unknown; isContentEditable?: boolean } | null
@@ -408,7 +422,7 @@ export function createCanvasUi(canvas: HTMLCanvasElement, options: {
   }, signal)
 
   function pollGamepad(now = performance.now()) {
-    if (disposed) return
+    if (disposed || isTestingPaused()) return
     const pads = connectedPads()
     if (!pads.length) {
       padDir = 0; padConfirm = false; padBack = false
@@ -667,6 +681,30 @@ export function createCanvasUi(canvas: HTMLCanvasElement, options: {
       ctx.setTransform(pw / w, 0, 0, ph / h, 0, 0)
       ctx.clearRect(0, 0, w, h)
       paintNode(tree)
+      if (isTestingActive()) {
+        const hudRegions: HudRegion[] = []
+        for (const node of nodes) {
+          if (!node.id) continue
+          const widget = node.widget as CanvasWidget | undefined
+          if (!widget || (widget.type === 'panel' && widget.scrim)) continue
+          const rect = rects.get(node.id)
+          if (!rect || rect.width <= 0 || rect.height <= 0) continue
+          const label = 'label' in widget && widget.label
+            ? widget.label
+            : widget.type === 'text' ? widget.text.slice(0, 32) : node.id
+          hudRegions.push({
+            id: node.id,
+            label,
+            asset: node.id,
+            source: 'canvas-ui#' + node.id,
+            canvas,
+            rect: { x: rect.x, y: rect.y, width: rect.width, height: rect.height },
+            viewportWidth: w,
+            viewportHeight: h
+          })
+        }
+        recordCanvasUiRegions(canvas, hudRegions)
+      }
       dirty = false
       return rects
     },
@@ -688,6 +726,7 @@ export function createCanvasUi(canvas: HTMLCanvasElement, options: {
     },
     dispose() {
       disposed = true
+      unsubPause()
       hoveredId = null
       canvas.style.cursor = ''
       clearHolds()

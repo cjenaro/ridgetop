@@ -7,6 +7,7 @@ import { color } from './renderer.ts'
 import type { SpriteAtlasSource, SpriteClip, SpriteSheetImage } from './sprites.ts'
 import { artPalette, artPoseBounds, artShapes, checkArtModel, checkArtPalette, checkFrameSize, compileArtJoints, modelFromArtRecipe } from './art-recipe.ts'
 import type { ArtModel, ArtPart, ArtRecipe, ArtRecipeClip, ArtRecipeClipFrame, ArtRecipeJoint, ArtRecipeJointPose, ArtShape, ArtTone } from './art-recipe.ts'
+import { captureSourceSite, isTestingActive, nextTestingGroupId, registerArtKitRuntime } from './testing-runtime.ts'
 import type { Color, InstanceBatch, LightingOptions, Mesh, Vec3 } from './types.ts'
 export { artPalette, artShapes, modelFromArtRecipe } from './art-recipe.ts'
 export type { ArtModel, ArtPart, ArtRecipe, ArtRecipeClip, ArtRecipeClipFrame, ArtRecipeJoint, ArtRecipeJointPose, ArtRecipePart, ArtShape, ArtTone } from './art-recipe.ts'
@@ -468,6 +469,51 @@ export function createArtKit<Extra extends string = never>({
   }
   const sprites = new Map<Name, ReturnType<typeof bakeSpriteDirections>>()
   const rigs = new Map<Name, ArtRig>()
+  const kitSourceSite = isTestingActive() ? captureSourceSite() : undefined
+
+  function recipeFromModel(name: string): ArtRecipe | undefined {
+    if (!Object.hasOwn(catalog, name)) return undefined
+    const m = catalog[name]
+    const recipeParts = []
+    for (let i = 0; i < m.parts.length; i++) {
+      const p = m.parts[i]
+      const shape = shapeNames.get(p.mesh)
+      if (!shape) return undefined
+      recipeParts.push({
+        name: p.name ?? ('part-' + (i + 1)),
+        shape,
+        position: [...p.position] as Vec3,
+        scale: [...p.scale] as Vec3,
+        tone: p.tone,
+        ...(p.pitch ? { pitch: p.pitch } : {}),
+        ...(p.yaw ? { yaw: p.yaw } : {}),
+        ...(p.roll ? { roll: p.roll } : {}),
+        ...(p.unlit ? { unlit: p.unlit } : {})
+      })
+    }
+    const mergedPalette = { ...rgb, ...(m.palette ?? {}) }
+    const usedPalette = Object.fromEntries(recipeParts.map(p => [p.tone, mergedPalette[p.tone]]))
+    return {
+      format: 'ridgetop-art',
+      version: 1,
+      name,
+      span: m.span,
+      centerY: m.centerY,
+      frameSize: m.frameSize ?? frameSize,
+      palette: usedPalette,
+      parts: recipeParts,
+      ...(m.timings ? { timings: { ...m.timings } } : {})
+    }
+  }
+
+  if (isTestingActive()) {
+    registerArtKitRuntime({
+      palette: { ...rgb },
+      models: catalog,
+      recipeFor: recipeFromModel,
+      sourceSite: kitSourceSite
+    })
+  }
 
   function model(name: Name): ArtModel {
     if (!Object.hasOwn(catalog, name)) throw new RangeError('Unknown art model: ' + name)
@@ -489,16 +535,19 @@ export function createArtKit<Extra extends string = never>({
     return {
       batches: batches as readonly InstanceBatch[],
       clear() { for (const batch of batches) batch.clear() },
-      add(name: Name, [x, y, z]: Vec3, { yaw = 0, scale = 1, partTint }:
-        { yaw?: number; scale?: number; partTint?: (part: ArtPart, index: number) => Color } = {}) {
+      add(name: Name, [x, y, z]: Vec3, { yaw = 0, scale = 1, partTint, id }:
+        { yaw?: number; scale?: number; partTint?: (part: ArtPart, index: number) => Color; id?: string } = {}) {
         if (!(scale > 0 && [x, y, z, scale, yaw].every(Number.isFinite))) throw new RangeError('Invalid art transform')
         const cos = Math.cos(yaw), sin = Math.sin(yaw)
         const tones = overrides.get(name) ?? colors
+        const testing = isTestingActive()
+        const groupId = testing ? nextTestingGroupId(String(name)) : undefined
+        const instanceId = id ?? groupId
         let index = 0
         for (const piece of model(name).parts) {
           let batch = byMesh.get(piece.mesh)
           if (!batch) {
-            batch = instances(piece.mesh)
+            batch = instances(piece.mesh, testing ? { meta: { kind: 'model', asset: String(name), sourceSite: kitSourceSite } } : undefined)
             byMesh.set(piece.mesh, batch)
             batches.push(batch)
           }
@@ -506,8 +555,21 @@ export function createArtKit<Extra extends string = never>({
           const [sx, sy, sz] = piece.scale
           const facing = yaw + (piece.yaw ?? 0)
           const rotation = piece.pitch || piece.roll ? quaternionFromEuler(piece.pitch, facing, piece.roll) : facing
-          batch.add([x + (px * cos + pz * sin) * scale, y + py * scale, z + (pz * cos - px * sin) * scale],
-            [sx * scale, sy * scale, sz * scale], rotation, partTint?.(piece, index) ?? tones.get(piece.tone), piece.unlit)
+          batch.add(
+            [x + (px * cos + pz * sin) * scale, y + py * scale, z + (pz * cos - px * sin) * scale],
+            [sx * scale, sy * scale, sz * scale],
+            rotation,
+            partTint?.(piece, index) ?? tones.get(piece.tone),
+            piece.unlit,
+            testing ? {
+              kind: 'model',
+              asset: String(name),
+              part: piece.name ?? ('part-' + (index + 1)),
+              instanceId,
+              groupId,
+              sourceFile: kitSourceSite
+            } : undefined
+          )
           index++
         }
       }

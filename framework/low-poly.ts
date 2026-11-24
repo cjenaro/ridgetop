@@ -9,6 +9,7 @@ import { canvasMeshes, meshViewPixels } from './mesh-canvas.ts'
 import { glMeshes } from './mesh-gl.ts'
 import { gpuMeshes } from './mesh-gpu.ts'
 import { frustum, instances, visible } from './instances.ts'
+import { isTestingActive, recordFrame } from './testing-runtime.ts'
 
 export {
   mesh, box, cylinder, octahedron, shadowDisc, view, perspective, orthographic, multiply,
@@ -171,6 +172,19 @@ export async function createLowPolyRenderer(canvas: HTMLCanvasElement,
       for (let i = 0; i < additiveBatches.length; i++) selected.push(additiveBatches[i])
       stats.drawCalls = selected.length
       active.draw(matrix, clear, selected, stats)
+      if (isTestingActive()) {
+        recordFrame({
+          canvas,
+          viewProjection: new Float32Array(matrix),
+          batches: selected.slice(),
+          clear,
+          width,
+          height,
+          clientWidth: w,
+          clientHeight: h,
+          timestamp: performance.now()
+        })
+      }
       return stats
     },
     setLighting(next: LightingOptions) {

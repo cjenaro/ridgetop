@@ -1,6 +1,7 @@
 import { quaternionFromEuler, rotateVec3 } from './geometry.ts'
 import { instances } from './instances.ts'
-import type { BlendMode, Color, InstanceBatch, LowPolyRenderer, Mesh, Quaternion, Vec3 } from './types.ts'
+import { getRigMeta, isTestingActive, nextTestingGroupId, recordRigMeta } from './testing-runtime.ts'
+import type { BlendMode, Color, InstanceBatch, InstanceTag, LowPolyRenderer, Mesh, Quaternion, Vec3 } from './types.ts'
 
 export type Easing = 'linear' | 'smooth' | 'easeOut' | 'easeInOut'
 
@@ -50,7 +51,7 @@ export interface AnimationClip {
 export interface MeshPool {
   readonly batches: readonly InstanceBatch[]
   clear(): void
-  add(mesh: Mesh, position: Vec3, scale: Vec3, rotation: number | Quaternion, color: Color, unlit?: number, blend?: BlendMode): void
+  add(mesh: Mesh, position: Vec3, scale: Vec3, rotation: number | Quaternion, color: Color, unlit?: number, blend?: BlendMode, tag?: InstanceTag): void
   release(renderer: LowPolyRenderer): void
 }
 
@@ -95,7 +96,7 @@ export function createMeshPool(initialCapacity = 32): MeshPool {
     clear() {
       for (const batch of batches) batch.clear()
     },
-    add(mesh, position, scale, rotation, color, unlit = 0, blend: BlendMode = 'opaque') {
+    add(mesh, position, scale, rotation, color, unlit = 0, blend: BlendMode = 'opaque', tag?: InstanceTag) {
       const bucket = byMesh[blend]
       let batch = bucket.get(mesh)
       if (!batch) {
@@ -103,7 +104,7 @@ export function createMeshPool(initialCapacity = 32): MeshPool {
         bucket.set(mesh, batch)
         batches.push(batch)
       }
-      batch.add(position, scale, rotation, color, unlit)
+      batch.add(position, scale, rotation, color, unlit, tag)
     },
     release(renderer) {
       for (const batch of batches) renderer.release(batch)
@@ -112,7 +113,7 @@ export function createMeshPool(initialCapacity = 32): MeshPool {
 }
 
 /** Compile a hierarchical skeleton of named joints in topological parent-first order. */
-export function createRig(joints: readonly RigJoint[]): Rig {
+export function createRig(joints: readonly RigJoint[], label?: string): Rig {
   const indexById = new Map<string, number>()
   for (let i = 0; i < joints.length; i++) {
     const id = joints[i].id
@@ -136,7 +137,9 @@ export function createRig(joints: readonly RigJoint[]): Rig {
     order.push(i)
   }
   for (let i = 0; i < joints.length; i++) visit(i)
-  return { joints, order, parentIndex }
+  const rig: Rig = { joints, order, parentIndex }
+  if (isTestingActive()) recordRigMeta(rig, label)
+  return rig
 }
 
 export interface WorldJoint {
@@ -165,6 +168,10 @@ export function renderRig(
   const worldRot: Quaternion[] = new Array(rig.joints.length)
   const worldScale: Vec3[] = new Array(rig.joints.length)
   const out: Record<string, WorldJoint> = {}
+  const testing = isTestingActive()
+  const rigMeta = testing ? getRigMeta(rig) : undefined
+  const rigGroupId = testing ? nextTestingGroupId('rig') : undefined
+  const rigLabel = rigMeta?.label ?? (rig.joints[0]?.id ? `rig:${rig.joints[0].id}` : 'rig')
 
   for (const idx of rig.order) {
     const joint = rig.joints[idx]
@@ -212,7 +219,24 @@ export function renderRig(
           ? multiplyQuat(jRot, quaternionFromEuler(part.rotation[0], part.rotation[1], part.rotation[2]))
           : jRot
         const tint = partColor ? partColor(joint.id, part) : part.color
-        pool.add(part.mesh, finalPos, finalScale, finalRot, tint, part.unlit ?? 0)
+        pool.add(
+          part.mesh,
+          finalPos,
+          finalScale,
+          finalRot,
+          tint,
+          part.unlit ?? 0,
+          'opaque',
+          testing ? {
+            kind: 'rig',
+            asset: rigLabel,
+            joint: joint.id,
+            part: part.name ?? joint.id,
+            instanceId: rigGroupId,
+            groupId: rigGroupId,
+            sourceFile: rigMeta?.sourceSite
+          } : undefined
+        )
       }
     }
   }

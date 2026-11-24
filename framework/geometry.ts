@@ -2,6 +2,7 @@ import type {
   InstanceBatch, Matrix, Mesh, ProjectShadowMeshOptions, Quaternion,
   ShadowProjection, ShadowProjectionOptions, Vec3
 } from './types.ts'
+import { isTestingActive, recordMeshMeta } from './testing-runtime.ts'
 
 // Matrices are column-major and use a right-handed view with clip depth in [0, 1].
 export function multiply(a: Matrix, b: Matrix): Matrix {
@@ -85,7 +86,9 @@ export function mesh(positions: ArrayLike<number>, indices?: ArrayLike<number>):
       data.set(normal, offset + 3)
     }
   }
-  return { data, vertexCount: count, radius }
+  const created: Mesh = { data, vertexCount: count, radius }
+  if (isTestingActive()) recordMeshMeta(created)
+  return created
 }
 
 export const box = mesh([

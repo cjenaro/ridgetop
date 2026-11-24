@@ -2,6 +2,7 @@ import { multiplyQuat } from './animation.ts'
 import type { Easing } from './animation.ts'
 import { archMesh, box, chamferedPrism, cylinder, octahedron, quaternionFromEuler, revolvedMesh, rotateVec3, rotationMatrix } from './geometry.ts'
 import { spriteDirections } from './low-poly.ts'
+import { registerKnownShapes } from './testing-runtime.ts'
 import type { Mesh, Quaternion, Vec3 } from './types.ts'
 
 export const artPalette = {
@@ -17,6 +18,7 @@ export const artShapes = {
   taper: revolvedMesh([[0,-.5],[.5,-.5],[.23,.5],[0,.5]], 8),
   arch: archMesh()
 }
+registerKnownShapes(artShapes)
 export type ArtTone = keyof typeof artPalette
 export type ArtShape = keyof typeof artShapes
 type Palette = Partial<Record<ArtTone, string>>

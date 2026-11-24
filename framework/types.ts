@@ -35,6 +35,26 @@ export interface Mesh {
   readonly radius: number
 }
 
+export interface InstanceTag {
+  readonly kind?: 'model' | 'rig' | 'mesh'
+  readonly asset?: string
+  readonly part?: string
+  readonly instanceId?: string
+  readonly joint?: string
+  readonly groupId?: string
+  readonly sourceFile?: string
+}
+
+export interface BatchMeta {
+  label?: string
+  kind?: 'model' | 'rig' | 'mesh'
+  asset?: string
+  sourceSite?: string
+  sourceFile?: string
+  /** Optional per-instance tags aligned with batch slots; reset on batch.clear(). */
+  tags?: (InstanceTag | undefined)[]
+}
+
 export interface InstanceBatch {
   readonly mesh: Mesh
   readonly blend: BlendMode
@@ -43,10 +63,11 @@ export interface InstanceBatch {
   readonly max: readonly number[]
   readonly count: number
   readonly revision: number
+  readonly meta?: BatchMeta
   /** Reset the batch while retaining allocated capacity. */
   clear(): void
   /** Scale components must be positive. Yaw is in radians around the Y axis. Fourth color component sets opacity for alpha/additive batches. */
-  add(position?: Vec3, scale?: Vec3, rotation?: number | Quaternion, color?: Vec3 | Color, unlit?: number): void
+  add(position?: Vec3, scale?: Vec3, rotation?: number | Quaternion, color?: Vec3 | Color, unlit?: number, tag?: InstanceTag): void
 }
 
 export interface RenderStats {
