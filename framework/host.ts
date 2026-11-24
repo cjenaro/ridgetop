@@ -1,14 +1,15 @@
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import type { GameHost } from './server-types.ts'
 import { createServer } from 'node:http'
+import { existsSync } from 'node:fs'
 import { lstat, readFile, stat } from 'node:fs/promises'
 import process from 'node:process'
-import { pathToFileURL } from 'node:url'
+import { fileURLToPath, pathToFileURL } from 'node:url'
 
 const browserModules = [
   'index.js', 'verification.js', 'loop.js', 'renderer.js', 'room-client.js',
   'geometry.js', 'instances.js', 'low-poly.js', 'mesh-gpu.js', 'mesh-gl.js', 'mesh-canvas.js',
-  'input.js', 'vehicle.js', 'page.js', 'platform.js', 'audio.js', 'audio-assets.js', 'import-mesh.js',
+  'input.js', 'vehicle.js', 'page.js', 'platform.js', 'backup.js', 'audio.js', 'audio-assets.js', 'import-mesh.js',
   'hud.js', 'sprites.js', 'sprite-sheet.js',
   'art.js', 'art-recipe.js', 'art-review.js', 'art-builder.js', 'platformer.js', 'animation.js', 'physics3d.js',
   'testing-runtime.js', 'testing-boot.js', 'testing-studio.js',
@@ -65,7 +66,11 @@ export function createGameHost({ root, moduleRoot = root, files, artDirectories 
   const frameworkRoot = new URL(import.meta.url.endsWith('.ts') ? '../dist/framework/' : '.', import.meta.url)
   const frameworkSourceRoot = new URL(import.meta.url.endsWith('.ts') ? '.' : '../../framework/', import.meta.url)
   const assets = new Map(browserModules.map(file => ['/framework/' + file, new URL(file, frameworkRoot)]))
-  assets.set('/framework/testing-overlay.css', new URL('testing-overlay.css', frameworkSourceRoot))
+  const testingCssFromRoot = new URL('testing-overlay.css', frameworkRoot)
+  const testingCssAsset = existsSync(fileURLToPath(testingCssFromRoot))
+    ? testingCssFromRoot
+    : new URL('testing-overlay.css', frameworkSourceRoot)
+  assets.set('/framework/testing-overlay.css', testingCssAsset)
   for (const file of files) assets.set('/' + file, new URL(file, file.endsWith('.js') ? moduleRoot : root))
   const artFolders = new Map<string, URL>()
   for (const directory of artDirectories) {

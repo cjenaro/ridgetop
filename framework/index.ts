@@ -8,6 +8,11 @@ export type { GamepadBinding, VirtualStickState } from './input.ts'
 export { createGamePage } from './page.ts'
 export { createPlatform, resolveStorage } from './platform.ts'
 export type { PlatformKind, RidgetopNativeBridge, RidgetopPlatform } from './platform.ts'
+export { BACKUP_FORMAT, BACKUP_SCHEMA_VERSION, createSaveBackup } from './backup.ts'
+export type {
+  SaveBackupEnvelope, SaveBackupInspectResult, SaveBackupManager, SaveBackupOptions,
+  SaveBackupRestoreResult, SaveBackupStorage
+} from './backup.ts'
 export { createSoundscape, createSynthAudio } from './audio.ts'
 export type { AudioBus, NoiseBedSpec } from './audio.ts'
 export { createAudioBank, parseWav } from './audio-assets.ts'

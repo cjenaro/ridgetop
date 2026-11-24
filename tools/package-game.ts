@@ -65,7 +65,7 @@ function usage() {
     'Usage: npm run package -- [options]',
     '',
     'Options:',
-    '  --target <web|steam|mobile|godot|all>  Target platform(s) (default: all)',
+    '  --target <web|steam|mobile|godot|player|all>  Target platform(s) (default: all)',
     '  --game <signal-drift|beacon-run|starter|lighthouse>  Built-in Ridgetop game (default: signal-drift)',
     '  --project <directory>              Package a generated Ridgetop game project instead of a built-in game',
     '  --out <directory>                  Output directory (default: dist/packages/<game>)',
