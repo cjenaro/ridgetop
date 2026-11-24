@@ -83,7 +83,10 @@ export function createLighthouseAudio() {
   }
 
   function update(state: GameState, dt: number, playing: boolean) {
-    for (const ev of state.sounds) playSfx(ev)
+    if (state.sounds.length) {
+      for (const ev of state.sounds) playSfx(ev)
+      state.sounds.length = 0
+    }
     if (!sound.running) return
 
     const weather: WeatherKind = state.weather

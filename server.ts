@@ -110,6 +110,7 @@ export function createGameServer({ characters = createCharacterStore(), testing 
     artMounts: { '/starter/art/': new URL('examples/starter/art/', root) },
     aliases: { '/benchmark': 'benchmark.html', '/sprites': 'sprite-workshop.html', '/models': 'models/index.html' },
     testing,
+    testingOptions: { artDir: 'examples/starter/art' },
     stop: rooms.close,
     save: characters.save,
     async handle(req, res, pathname) {

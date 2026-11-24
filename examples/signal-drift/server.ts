@@ -13,6 +13,7 @@ export function createSignalDriftServer({ testing }: { testing?: boolean } = {})
     moduleRoot: new URL(source ? 'dist/' : '.', import.meta.url),
     files,
     aliases: { '/': 'index.html' },
+    hosted: false,
     testing
   })
 }

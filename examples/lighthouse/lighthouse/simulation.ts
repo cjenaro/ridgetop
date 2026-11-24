@@ -460,6 +460,10 @@ export function stepGame(state: GameState, input: MoveInput, dt: number): void {
   const cap = carryCapFor(state.upgrades.pack)
   const radius = pickupRadiusFor(state.upgrades.pack)
   p.fullNoticeTimer = Math.max(0, p.fullNoticeTimer - dt)
+  let pullingCount = 0
+  for (let i = 0; i < state.items.length; i++) {
+    if (state.items[i].pulling) pullingCount++
+  }
 
   for (let i = state.items.length - 1; i >= 0; i--) {
     const item = state.items[i]
@@ -475,6 +479,7 @@ export function stepGame(state: GameState, input: MoveInput, dt: number): void {
       item.z += (p.z - item.z) * blend
       item.y += (p.y + 0.9 - item.y) * blend
       if (dist < 0.55 || item.pullT >= 1) {
+        pullingCount = Math.max(0, pullingCount - 1)
         if (p.carry.length < cap) {
           p.carry.push(item.kind)
           const pitch = 0.9 + Math.min(0.65, p.carry.length * 0.06)
@@ -483,17 +488,22 @@ export function stepGame(state: GameState, input: MoveInput, dt: number): void {
           const label = item.kind === 'amber' ? '+AMBER' : item.kind === 'salvage' ? '+SALVAGE' : '+WOOD'
           const col = item.kind === 'amber' ? '#8fffe6' : item.kind === 'salvage' ? '#ffc478' : '#e6d3a7'
           addPopup(state, p.x, p.y + 1.5, p.z, label, col, 0.9)
+          state.items.splice(i, 1)
+        } else {
+          item.pulling = false
+          item.pullT = 0
+          item.y = Math.max(state.tideLevel, islandHeight(item.x, item.z)) + 0.14
         }
-        state.items.splice(i, 1)
       }
       continue
     }
 
     if (dist <= radius) {
-      if (p.carry.length < cap) {
+      if (p.carry.length + pullingCount < cap) {
         item.pulling = true
         item.pullT = 0
-      } else if (p.fullNoticeTimer <= 0 && dist < 1.15) {
+        pullingCount++
+      } else if (p.carry.length >= cap && p.fullNoticeTimer <= 0 && dist < 1.15) {
         p.fullNoticeTimer = 2.0
         pushSound(state, 'full')
         addPopup(state, p.x, p.y + 1.65, p.z, 'PACK FULL!', '#ff8b7b', 1.1)
@@ -556,6 +566,7 @@ export function stepGame(state: GameState, input: MoveInput, dt: number): void {
       to: [LIGHTHOUSE_POS.x + 1.35, islandHeight(LIGHTHOUSE_POS.x, LIGHTHOUSE_POS.z) + 0.9, LIGHTHOUSE_POS.z + 1.1]
     })
     addPopup(state, LIGHTHOUSE_POS.x, 2.5, LIGHTHOUSE_POS.z + 1.4, `+${gain}% FUEL (+${stipend}g)`, '#9af5d8', 1.15)
+    checkVictory(state)
   }
 
   // 8. Unlockable Pier Winch (passive auto-salvage)

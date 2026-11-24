@@ -704,6 +704,15 @@ export function buildTerrainBatches(): InstanceBatch[] {
   return batches
 }
 
+const SHARED_LIGHTHOUSE_MESHES = new Set<Mesh>([
+  box, octahedron, drum, drum12, cone, pineCone, rockMesh, softBox, taperedCoat, arch,
+  domeMesh, ovalMesh, barrelMesh, buoyFloatMesh, ringTorus, coinMesh, roofMesh, beamMesh, sailMesh, hullMesh
+])
+
+export function isSharedLighthouseMesh(candidate: Mesh): boolean {
+  return SHARED_LIGHTHOUSE_MESHES.has(candidate)
+}
+
 /** Assemble all static island landmarks & detailed architecture once (zero per-frame uploads!). */
 export function buildStaticIslandBatches(): InstanceBatch[] {
   const byMesh = new Map<Mesh, InstanceBatch>()

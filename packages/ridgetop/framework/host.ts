@@ -61,8 +61,11 @@ function injectImportMap(text: string): string {
   return importMapTag + text
 }
 
-function prepareHtml(html: Buffer, testingEnabled: boolean): Buffer {
+function prepareHtml(html: Buffer, testingEnabled: boolean, hosted: boolean): Buffer {
   let text = html.toString('utf8')
+  if (!hosted) {
+    text = text.replace(/\s+data-hosted="1"/g, '')
+  }
   const hasModuleScript = /<script\b[^>]*\btype\s*=\s*["']module["']/i.test(text)
   if (hasModuleScript || testingEnabled) {
     text = injectImportMap(text)
@@ -101,7 +104,7 @@ export function sendJson(res: ServerResponse, value: unknown) {
 }
 
 export function createGameHost({
-  root, moduleRoot = root, files, routes = {}, artDirectories = [], artMounts = {}, aliases = {}, testing, handle, stop, save
+  root, moduleRoot = root, files, routes = {}, artDirectories = [], artMounts = {}, aliases = {}, testing, testingOptions, hosted = true, handle, stop, save
 }: {
   root: URL; moduleRoot?: URL; files: readonly string[]
   routes?: Readonly<Record<string, URL>>
@@ -109,6 +112,8 @@ export function createGameHost({
   artMounts?: Readonly<Record<string, URL>>
   aliases?: Record<string, string>
   testing?: boolean
+  testingOptions?: { artDir?: string; reviewsDir?: string }
+  hosted?: boolean
   handle?(request: IncomingMessage, response: ServerResponse, pathname: string): boolean | Promise<boolean>
   stop?(): void; save?(): void | Promise<void>
 }): GameHost {
@@ -137,7 +142,7 @@ export function createGameHost({
   let reviewHandlerPromise: Promise<(req: IncomingMessage, res: ServerResponse, path: string) => Promise<boolean>> | undefined
   async function handleTesting(req: IncomingMessage, res: ServerResponse, pathname: string): Promise<boolean> {
     if (!testingEnabled || !pathname.startsWith('/__testing/')) return false
-    reviewHandlerPromise ??= import('./review-store.ts').then(mod => mod.createArtReviewHandler(root))
+    reviewHandlerPromise ??= import('./review-store.ts').then(mod => mod.createArtReviewHandler(root, testingOptions))
     const reviewHandler = await reviewHandlerPromise
     return reviewHandler(req, res, pathname)
   }
@@ -164,7 +169,7 @@ export function createGameHost({
       const type = Object.hasOwn(mime, extension) ? mime[extension] : undefined
       const contentType = binaryExtensions.has(extension) ? type : type ? type + '; charset=utf-8' : 'application/octet-stream'
       if (extension === 'html') {
-        const body = prepareHtml(await readFile(asset), testingEnabled)
+        const body = prepareHtml(await readFile(asset), testingEnabled, hosted)
         res.writeHead(200, {
           'Content-Type': contentType,
           'Content-Length': String(body.byteLength),

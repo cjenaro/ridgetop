@@ -255,11 +255,11 @@ async function start() {
   }
 
   function paint(obj: ObjectInGame, now: number) {
+    const atlas = atlases.get(obj.name)
+    if (!atlas) return
     const model = art.model(obj.name)
     const point = projectPoint(camera, obj.x, (obj.y ?? 0) + model.centerY, obj.z)
     const options = { height: model.span / spanY, anchor: .5 }
-    const atlas = atlases.get(obj.name)
-    if (!atlas) return
     if (sprites[obj.name]) {
       atlas.drawClip(sprites[obj.name].clip, reduced.matches ? 0 : now, point, options)
       return

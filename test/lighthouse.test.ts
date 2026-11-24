@@ -121,3 +121,33 @@ test('Tidewatch simulation passes Ridgetop verifyTrace invariants', () => {
   })
   assert.equal(report.status, 'pass')
 })
+
+test('Tidewatch preserves excess nearby items when pack fills and checks victory on fuel stipend', () => {
+  const state = createInitialState(77)
+  const cap = carryCapFor(state.upgrades.pack)
+  // Fill pack to cap - 1
+  while (state.player.carry.length < cap - 1) state.player.carry.push('driftwood')
+  state.items.length = 0
+  // Place two items within pickup radius right next to the player
+  state.items.push(
+    { id: 1, kind: 'amber', x: state.player.x + 0.3, z: state.player.z, y: state.player.y, yaw: 0, age: 0, pulling: false, pullT: 0 },
+    { id: 2, kind: 'amber', x: state.player.x - 0.3, z: state.player.z, y: state.player.y, yaw: 0, age: 0, pulling: false, pullT: 0 }
+  )
+  for (let i = 0; i < 40; i++) stepGame(state, { x: 0, z: 0 }, STEP)
+  assert.equal(state.player.carry.length, cap, 'Pack should fill cleanly to cap')
+  assert.equal(state.items.length, 1, 'Second amber must NOT be destroyed when pack fills')
+  assert.equal(state.items[0].pulling, false, 'Uncollected amber must remain safely on the island')
+
+  // Fuel stipend crossing totalEarned >= 800 with shipsGuided >= 8 must trigger victory immediately
+  state.shipsGuided = 8
+  state.totalEarned = 790
+  state.fuel = 40
+  state.victory = false
+  state.player.carry = ['amber']
+  const fuelPad = PADS.find(p => p.id === 'fuel')!
+  state.player.x = fuelPad.x
+  state.player.z = fuelPad.z
+  state.player.transferTimer = 0
+  stepGame(state, { x: 0, z: 0 }, STEP)
+  assert.equal(state.victory, true, 'Fueling stipend crossing totalEarned threshold should trigger victory')
+})

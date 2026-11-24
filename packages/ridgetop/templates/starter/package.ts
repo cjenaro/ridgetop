@@ -9,7 +9,7 @@ function usage() {
     'Usage: npm run package -- [options]',
     '',
     'Options:',
-    '  --target <web|steam|mobile|godot|all>  Target platform(s) (default: all)',
+    '  --target <web|steam|mobile|godot|player|all>  Target platform(s) (default: all)',
     '  --out <directory>                  Output directory (default: dist/<target>)',
     '  --name <title>                     Override app display name',
     '  --app-id <com.example.game>        Reverse-DNS bundle / application ID',

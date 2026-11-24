@@ -2,7 +2,8 @@ import { readFile, writeFile } from 'node:fs/promises'
 import { fileURLToPath } from 'node:url'
 import { createArtBuilder } from 'ridgetop'
 
-const assets = new URL('art/', import.meta.url)
+const source = import.meta.url.endsWith('.ts')
+const assets = new URL(source ? 'art/' : '../art/', import.meta.url)
 const catalog: { id: string; title: string; tags: string[] }[] = JSON.parse(await readFile(new URL('library/catalog.json', assets), 'utf8'))
 const [action = 'list', ...args] = process.argv.slice(2)
 if (action === 'list') {

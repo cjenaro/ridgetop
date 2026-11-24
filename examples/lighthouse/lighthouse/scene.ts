@@ -5,7 +5,7 @@ import {
 import type { Color, JointPose, LowPolyRenderer, Matrix, RigPart, Vec3 } from 'ridgetop'
 import {
   COASTAL_PINES, HARBOR_BUOYS, amberRig, beamMesh, buildStaticIslandBatches, buoyRig, coinMesh,
-  driftwoodRig, drum, flatRing, gullRig, keeperClips, keeperRig, merchantRig, ovalMesh, pineRig,
+  driftwoodRig, drum, flatRing, gullRig, isSharedLighthouseMesh, keeperClips, keeperRig, merchantRig, ovalMesh, pineRig,
   rockMesh, salvageRig, shipRig, softBox, winchRig
 } from './art.ts'
 import { COTTAGE_POS, LIGHTHOUSE_POS, PADS, PIER_POS, WINCH_POS, islandHeight } from './types.ts'
@@ -242,6 +242,7 @@ export function createLighthouseScene(renderer: LowPolyRenderer) {
         }
       }
     }
+    state.vfx.length = 0
   }
 
   function updateAmbientParticles(state: GameState, dt: number) {
@@ -696,9 +697,12 @@ export function createLighthouseScene(renderer: LowPolyRenderer) {
   }
 
   function dispose() {
-    for (const batch of staticBatches) renderer.release(batch)
+    for (const batch of staticBatches) {
+      renderer.release(batch)
+      if (!isSharedLighthouseMesh(batch.mesh)) renderer.releaseMesh(batch.mesh)
+    }
     pool.release(renderer)
   }
 
-  return { render, projectScreen, dispose }
+  return { render, consumeVfx: spawnVfx, projectScreen, dispose }
 }

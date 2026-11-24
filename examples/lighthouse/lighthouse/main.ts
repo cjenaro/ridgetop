@@ -5,6 +5,7 @@ import type { Backend, HudPainter } from 'ridgetop'
 import { boxNode, column, overlay, row, spacerNode } from 'ridgetop/ui-layout'
 import { buttonPrimitive } from 'ridgetop/ui-button'
 import { createCanvasUi, createUiTheme } from 'ridgetop/ui-canvas'
+import { isTestingPaused } from 'ridgetop/testing'
 import { createLighthouseAudio } from './audio.ts'
 import { createLighthouseScene } from './scene.ts'
 import {
@@ -55,6 +56,7 @@ async function start() {
   let state: GameState = createInitialState(1337, existingSave)
   let screen: Screen = 'title'
   let uiDirty = true
+  let hudRev = 0
   let saveTimer = 0
   let victoryShown = state.victoryClaimed
 
@@ -67,6 +69,7 @@ async function start() {
     controls.clear()
     stick.clear()
     uiDirty = true
+    hudRev++
   }
 
   function startWatch(fresh = false) {
@@ -78,14 +81,14 @@ async function start() {
       persistSave(page.storage, state)
     }
     setScreen('playing')
-    stage.focus()
+    renderer.canvas.focus()
   }
 
   function togglePause() {
     if (screen === 'playing') setScreen('paused')
     else if (screen === 'paused' || screen === 'shop' || screen === 'victory') {
       setScreen('playing')
-      stage.focus()
+      renderer.canvas.focus()
     }
   }
 
@@ -95,7 +98,7 @@ async function start() {
       ArrowRight: 'right', KeyD: 'right',
       ArrowUp: 'up', KeyW: 'up',
       ArrowDown: 'down', KeyS: 'down',
-      KeyE: 'shop', Tab: 'shop',
+      KeyE: 'shop',
       KeyM: 'music'
     },
     gamepad: {
@@ -106,19 +109,28 @@ async function start() {
       shop: [{ button: 2 }, { button: 3 }]
     },
     buttons: [],
-    enabled: () => screen === 'playing' || screen === 'shop',
+    enabled: () => screen === 'playing',
     onPause: togglePause,
     onGesture: audio.unlock,
     onPress(action) {
       if (action === 'shop') {
         if (screen === 'playing') setScreen('shop')
-        else if (screen === 'shop') { setScreen('playing'); stage.focus() }
       } else if (action === 'music') {
         audio.setMusic(!audio.isMusicEnabled())
         uiDirty = true
       }
     }
   })
+
+  const shopKeyController = new AbortController()
+  window.addEventListener('keydown', event => {
+    if (isTestingPaused() || event.repeat || screen !== 'shop') return
+    if (event.code === 'KeyE' && !event.altKey && !event.ctrlKey && !event.metaKey) {
+      event.preventDefault()
+      setScreen('playing')
+      renderer.canvas.focus()
+    }
+  }, { signal: shopKeyController.signal })
 
   // UI Primitives (opt-in Ridgetop Canvas UI SDK)
   const playBtn = buttonPrimitive.create({ id: 'lh-play', label: 'Start Watch', onPress: () => startWatch(false) })
@@ -168,7 +180,12 @@ async function start() {
         audio.unlock()
         if (buyUpgrade(state, spec.id)) {
           persistSave(page.storage, state)
+          hudRev++
           uiDirty = true
+          if (state.victory && !victoryShown) {
+            victoryShown = true
+            setScreen('victory')
+          }
         }
       }
     })
@@ -490,13 +507,28 @@ async function start() {
   let lastUiPad: string | null = null
   let lastW = 0, lastH = 0
   let hudTick = 0
+  let lastRenderAt: number | undefined
+
+  function renderUiNow() {
+    const canvas = renderer.canvas
+    const w = Math.max(1, canvas.clientWidth || canvas.width || 960)
+    const h = Math.max(1, canvas.clientHeight || canvas.height || 540)
+    lastW = w
+    lastH = h
+    ui.render(buildUiTree(w, h), { width: w, height: h, pixelRatio: Math.min(devicePixelRatio || 1, 2) })
+    uiDirty = false
+  }
+
+  renderUiNow()
 
   ;(globalThis as { __ridgetopUi?: unknown }).__ridgetopUi = {
     snapshot: () => ui.snapshot(),
     query: (filter?: { id?: string; kind?: string; state?: string; label?: string }) => ui.query(filter),
     act: (id: string, action: string, payload?: unknown) => {
+      renderUiNow()
       const ok = ui.act(id, action, payload)
       uiDirty = true
+      renderUiNow()
       return ok
     },
     rects: () => Object.fromEntries(ui.rects),
@@ -520,11 +552,16 @@ async function start() {
         // Animate gentle world preview behind title card
         state.time += dt
         state.beamYaw = (state.beamYaw + dt * 1.1) % (Math.PI * 2)
+        audio.update(state, dt, false)
         return
       }
-      if (screen !== 'playing') return
+      if (screen !== 'playing') {
+        audio.update(state, dt, false)
+        return
+      }
 
       stepGame(state, readMoveInput(), dt)
+      scene.consumeVfx(state)
       audio.update(state, dt, true)
 
       if (state.victory && !victoryShown) {
@@ -546,21 +583,25 @@ async function start() {
         uiDirty = true
       }
     },
-    render(_alpha, _now) {
+    render(_alpha, now) {
       const canvas = renderer.canvas
       const w = Math.max(1, canvas.clientWidth)
       const h = Math.max(1, canvas.clientHeight)
-      scene.render(state, 1 / 60, screen === 'title')
+      const rawDt = lastRenderAt === undefined ? 1 / 60 : Math.min(0.05, Math.max(0, (now - lastRenderAt) / 1000))
+      lastRenderAt = now
+      const renderDt = screen === 'paused' ? 0 : rawDt
+      scene.render(state, renderDt, screen === 'title')
 
-      hudTick++
-      const hudKey = screen === 'title' ? 'title' : `${screen}:${hudTick >> 1}`
+      if (screen === 'playing') hudTick++
+      const hudKey = screen === 'title'
+        ? 'title'
+        : screen === 'playing'
+          ? `playing:${hudRev}:${hudTick >> 1}`
+          : `${screen}:${hudRev}`
       hud.render(canvas, hudKey, paintHud)
 
       if (uiDirty || ui.dirty || w !== lastW || h !== lastH) {
-        lastW = w
-        lastH = h
-        ui.render(buildUiTree(w, h), { width: w, height: h, pixelRatio: Math.min(devicePixelRatio || 1, 2) })
-        uiDirty = false
+        renderUiNow()
       }
     }
   })
@@ -570,6 +611,7 @@ async function start() {
       persistSave(page.storage, state)
       audio.suspend()
       if (persisted) return
+      shopKeyController.abort()
       stop()
       ui.dispose()
       stick.dispose()

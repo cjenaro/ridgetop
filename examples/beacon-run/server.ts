@@ -59,6 +59,7 @@ export function createBeaconRunServer({ characters = createCharacterStore(), tes
     moduleRoot: new URL(source ? 'dist/' : '.', import.meta.url),
     files,
     aliases: { '/': 'index.html' },
+    hosted: false,
     testing,
     stop: rooms.close,
     save: characters.save,

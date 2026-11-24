@@ -201,3 +201,23 @@ test('host HEAD sets Content-Length, records avoid temp-file races, and connectR
     if (prevFetch) Object.defineProperty(globalThis, 'fetch', prevFetch)
   }
 })
+
+test('createGameHost hosted=false strips data-hosted="1" and testingOptions routes /__testing/recipe artDir', async t => {
+  const folder = await mkdtemp(join(tmpdir(), 'ridgetop-host-opts-'))
+  t.after(() => rm(folder, { recursive: true, force: true }))
+  await writeFile(join(folder, 'index.html'), '<!doctype html><html><body data-hosted="1"><script type="module" src="/app.js"></script></body></html>')
+  const app = createGameHost({
+    root: pathToFileURL(folder + '/'),
+    files: ['index.html'],
+    aliases: { '/': 'index.html' },
+    hosted: false,
+    testing: true,
+    testingOptions: { artDir: 'nested/art' }
+  })
+  t.after(() => app.close())
+  app.server.listen(0, '127.0.0.1')
+  await once(app.server, 'listening')
+  const base = 'http://127.0.0.1:' + (app.server.address() as AddressInfo).port
+  const html = await fetch(base + '/').then(r => r.text())
+  assert.ok(!html.includes('data-hosted="1"'), 'Standalone host with hosted: false must strip data-hosted="1"')
+})
