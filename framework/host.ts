@@ -10,9 +10,21 @@ const browserModules = [
   'geometry.js', 'instances.js', 'low-poly.js', 'mesh-gpu.js', 'mesh-gl.js', 'mesh-canvas.js',
   'input.js', 'vehicle.js', 'page.js', 'platform.js', 'audio.js', 'hud.js', 'sprites.js', 'sprite-sheet.js',
   'art.js', 'art-recipe.js', 'art-review.js', 'art-builder.js', 'platformer.js', 'animation.js',
+  'testing-runtime.js', 'testing-boot.js', 'testing-studio.js',
   'ui.js', 'ui-machine.js', 'ui-layout.js', 'ui-button.js', 'ui-toggle.js', 'ui-select.js', 'ui-slider.js', 'ui-menu.js', 'ui-canvas.js'
 ]
+const testingBootTag = '\n<script type="module" src="/framework/testing-boot.js"></script>\n'
 const mime = { html: 'text/html', css: 'text/css', js: 'text/javascript', png: 'image/png', json: 'application/json' }
+
+function injectTestingBoot(html: Buffer): Buffer {
+  const text = html.toString('utf8')
+  if (text.includes('/framework/testing-boot.js')) return html
+  const closeBody = text.lastIndexOf('</body>')
+  const next = closeBody >= 0
+    ? text.slice(0, closeBody) + testingBootTag + text.slice(closeBody)
+    : text + testingBootTag
+  return Buffer.from(next, 'utf8')
+}
 
 async function artFile(pathname: string, folders: Map<string, URL>) {
   const start = pathname.lastIndexOf('/') + 1
@@ -38,13 +50,17 @@ export function sendJson(res: ServerResponse, value: unknown) {
     .end(JSON.stringify(value))
 }
 
-export function createGameHost({ root, moduleRoot = root, files, artDirectories = [], aliases = {}, handle, stop, save }: {
+export function createGameHost({ root, moduleRoot = root, files, artDirectories = [], aliases = {}, testing, handle, stop, save }: {
   root: URL; moduleRoot?: URL; files: readonly string[]; artDirectories?: readonly string[]; aliases?: Record<string, string>
+  testing?: boolean
   handle?(request: IncomingMessage, response: ServerResponse, pathname: string): boolean | Promise<boolean>
   stop?(): void; save?(): void | Promise<void>
 }): GameHost {
+  const testingEnabled = testing ?? process.argv.includes('--testing')
   const frameworkRoot = new URL(import.meta.url.endsWith('.ts') ? '../dist/framework/' : '.', import.meta.url)
+  const frameworkSourceRoot = new URL(import.meta.url.endsWith('.ts') ? '.' : '../../framework/', import.meta.url)
   const assets = new Map(browserModules.map(file => ['/framework/' + file, new URL(file, frameworkRoot)]))
+  assets.set('/framework/testing-overlay.css', new URL('testing-overlay.css', frameworkSourceRoot))
   for (const file of files) assets.set('/' + file, new URL(file, file.endsWith('.js') ? moduleRoot : root))
   const artFolders = new Map<string, URL>()
   for (const directory of artDirectories) {
@@ -52,6 +68,14 @@ export function createGameHost({ root, moduleRoot = root, files, artDirectories 
     artFolders.set('/' + prefix, new URL(prefix, root))
   }
   for (const [path, file] of Object.entries(aliases)) assets.set(path, new URL(file, root))
+
+  let reviewHandlerPromise: Promise<(req: IncomingMessage, res: ServerResponse, path: string) => Promise<boolean>> | undefined
+  async function handleTesting(req: IncomingMessage, res: ServerResponse, pathname: string): Promise<boolean> {
+    if (!testingEnabled || !pathname.startsWith('/__testing/')) return false
+    reviewHandlerPromise ??= import('./review-store.ts').then(mod => mod.createArtReviewHandler(root))
+    const reviewHandler = await reviewHandlerPromise
+    return reviewHandler(req, res, pathname)
+  }
 
   const server = createServer({ requestTimeout: 10_000, headersTimeout: 8_000 }, async (req, res) => {
     res.setHeader('X-Content-Type-Options', 'nosniff')
@@ -65,6 +89,7 @@ export function createGameHost({ root, moduleRoot = root, files, artDirectories 
         return sendText(res, 400, 'Bad request')
       }
       if (await handle?.(req, res, pathname)) return
+      if (await handleTesting(req, res, pathname)) return
       if (req.method !== 'GET' && req.method !== 'HEAD') return sendText(res, 405)
       if (pathname === '/healthz') return sendText(res, 200, 'ok')
       const asset = assets.get(pathname) ?? await artFile(pathname, artFolders)
@@ -73,6 +98,15 @@ export function createGameHost({ root, moduleRoot = root, files, artDirectories 
       const extension = asset.pathname.split('.').at(-1).toLowerCase()
       const type = mime[extension]
       const contentType = extension === 'png' ? type : type ? type + '; charset=utf-8' : 'application/octet-stream'
+      if (testingEnabled && extension === 'html') {
+        const body = injectTestingBoot(await readFile(asset))
+        res.writeHead(200, {
+          'Content-Type': contentType,
+          'Content-Length': String(body.byteLength),
+          'Cache-Control': 'no-cache'
+        }).end(req.method === 'HEAD' ? undefined : body)
+        return
+      }
       if (req.method === 'HEAD') {
         const info = await stat(asset)
         res.writeHead(200, {
