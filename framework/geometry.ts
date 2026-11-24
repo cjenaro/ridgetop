@@ -1,4 +1,7 @@
-import type { Matrix, Mesh, Quaternion, Vec3 } from './types.ts'
+import type {
+  InstanceBatch, Matrix, Mesh, ProjectShadowMeshOptions, Quaternion,
+  ShadowProjection, ShadowProjectionOptions, Vec3
+} from './types.ts'
 
 // Matrices are column-major and use a right-handed view with clip depth in [0, 1].
 export function multiply(a: Matrix, b: Matrix): Matrix {
@@ -228,4 +231,392 @@ export function rotationMatrix(q: ArrayLike<number>, offset = 0) {
 export function rotateVec3(rotation: Quaternion, [x, y, z]: Vec3): Vec3 {
   const [a, b, c, d, e, f, g, h, i] = rotationMatrix(rotation)
   return [a*x + b*y + c*z, d*x + e*y + f*z, g*x + h*y + i*z]
+}
+
+/**
+ * Camera-space depth along the viewing axis (larger values are farther from the camera).
+ * Uses linear clip-W distance for perspective projections and clip-Z for orthographic/affine matrices.
+ */
+export function cameraDepth(matrix: Matrix, x: number, y: number, z: number): number {
+  if (matrix[3] !== 0 || matrix[7] !== 0 || matrix[11] !== 0) {
+    return x * matrix[3] + y * matrix[7] + z * matrix[11] + matrix[15]
+  }
+  const w = matrix[15]
+  const cz = x * matrix[2] + y * matrix[6] + z * matrix[10] + matrix[14]
+  return w && w !== 1 ? cz / w : cz
+}
+
+const INSERTION_RUN = 16
+const INSTANCE_STRIDE = 16
+const DEFAULT_SHADOW_LIGHT: Vec3 = [-0.48, 0.8, 0.36]
+
+function insertionSortDesc(depths: Float32Array, indices: Int32Array, start: number, end: number) {
+  for (let i = start + 1; i < end; i++) {
+    const idx = indices[i]
+    const d = depths[idx]
+    let j = i - 1
+    while (j >= start && depths[indices[j]] < d) {
+      indices[j + 1] = indices[j]
+      j--
+    }
+    indices[j + 1] = idx
+  }
+}
+
+/** Stable, allocation-free descending index sort by `depths[index]` (farthest first). */
+export function sortIndicesDesc(depths: Float32Array, indices: Int32Array, aux: Int32Array, count: number) {
+  if (count <= 1) return
+  if (count <= INSERTION_RUN) {
+    insertionSortDesc(depths, indices, 0, count)
+    return
+  }
+  for (let start = 0; start < count; start += INSERTION_RUN) {
+    const end = start + INSERTION_RUN < count ? start + INSERTION_RUN : count
+    insertionSortDesc(depths, indices, start, end)
+  }
+  let src = indices
+  let dst = aux
+  for (let width = INSERTION_RUN; width < count; width <<= 1) {
+    for (let left = 0; left < count; left += width << 1) {
+      const mid = left + width < count ? left + width : count
+      const right = left + (width << 1) < count ? left + (width << 1) : count
+      let i = left
+      let j = mid
+      let k = left
+      while (i < mid && j < right) {
+        if (depths[src[i]] >= depths[src[j]]) dst[k++] = src[i++]
+        else dst[k++] = src[j++]
+      }
+      while (i < mid) dst[k++] = src[i++]
+      while (j < right) dst[k++] = src[j++]
+    }
+    const tmp = src
+    src = dst
+    dst = tmp
+  }
+  if (src !== indices) {
+    for (let i = 0; i < count; i++) indices[i] = src[i]
+  }
+}
+
+export interface AlphaSorter {
+  /** Sort `batches[start..start+count)` back-to-front into `out` (or compute index order). */
+  sortBatchIndices(matrix: Matrix, batches: readonly InstanceBatch[], start: number, count: number): { inOrder: boolean; indices: Int32Array }
+  /** Append `batches` sorted back-to-front into `out` without allocating. */
+  sortBatches(matrix: Matrix, batches: readonly InstanceBatch[], out: InstanceBatch[]): void
+  /** Compute back-to-front index order for `count` packed instances in `data`. */
+  sortInstanceIndices(matrix: Matrix, data: Float32Array, count: number): { inOrder: boolean; indices: Int32Array }
+  /** Pack `count` instances from `data` according to the last `sortInstanceIndices` result into a reusable buffer. */
+  packInstances(data: Float32Array, count: number): Float32Array<ArrayBuffer>
+}
+
+/** Reusable scratch buffers for zero-allocation back-to-front alpha sorting. */
+export function createAlphaSorter(initialCapacity = 32): AlphaSorter {
+  let depths = new Float32Array(initialCapacity)
+  let indices = new Int32Array(initialCapacity)
+  let aux = new Int32Array(initialCapacity)
+  let packed = new Float32Array(initialCapacity * INSTANCE_STRIDE)
+  const result = { inOrder: true, indices }
+
+  function ensure(count: number) {
+    if (depths.length < count) {
+      let next = Math.max(initialCapacity, depths.length)
+      while (next < count) next <<= 1
+      depths = new Float32Array(next)
+      indices = new Int32Array(next)
+      aux = new Int32Array(next)
+      result.indices = indices
+    }
+  }
+
+  function ensurePacked(count: number) {
+    const needed = count * INSTANCE_STRIDE
+    if (packed.length < needed) {
+      let next = Math.max(initialCapacity * INSTANCE_STRIDE, packed.length)
+      while (next < needed) next <<= 1
+      packed = new Float32Array(next)
+    }
+  }
+
+  function sortBatchIndices(matrix: Matrix, batches: readonly InstanceBatch[], start: number, count: number) {
+    ensure(count)
+    const isPerspective = matrix[3] !== 0 || matrix[7] !== 0 || matrix[11] !== 0
+    const m2 = matrix[2], m6 = matrix[6], m10 = matrix[10], m14 = matrix[14]
+    const m3 = matrix[3], m7 = matrix[7], m11 = matrix[11], m15 = matrix[15]
+    const invW = !isPerspective && m15 && m15 !== 1 ? 1 / m15 : 1
+    let inOrder = true
+    let prev = Infinity
+    for (let i = 0; i < count; i++) {
+      const b = batches[start + i]
+      const cx = (b.min[0] + b.max[0]) * 0.5
+      const cy = (b.min[1] + b.max[1]) * 0.5
+      const cz = (b.min[2] + b.max[2]) * 0.5
+      const d = isPerspective
+        ? cx * m3 + cy * m7 + cz * m11 + m15
+        : (cx * m2 + cy * m6 + cz * m10 + m14) * invW
+      depths[i] = d
+      indices[i] = i
+      if (d > prev) inOrder = false
+      prev = d
+    }
+    if (!inOrder) sortIndicesDesc(depths, indices, aux, count)
+    result.inOrder = inOrder
+    result.indices = indices
+    return result
+  }
+
+  function sortBatches(matrix: Matrix, batches: readonly InstanceBatch[], out: InstanceBatch[]) {
+    const count = batches.length
+    if (count === 0) return
+    if (count === 1) {
+      out.push(batches[0])
+      return
+    }
+    const { inOrder, indices: order } = sortBatchIndices(matrix, batches, 0, count)
+    if (inOrder) {
+      for (let i = 0; i < count; i++) out.push(batches[i])
+    } else {
+      for (let i = 0; i < count; i++) out.push(batches[order[i]])
+    }
+  }
+
+  function sortInstanceIndices(matrix: Matrix, data: Float32Array, count: number) {
+    ensure(count)
+    const isPerspective = matrix[3] !== 0 || matrix[7] !== 0 || matrix[11] !== 0
+    const m2 = matrix[2], m6 = matrix[6], m10 = matrix[10], m14 = matrix[14]
+    const m3 = matrix[3], m7 = matrix[7], m11 = matrix[11], m15 = matrix[15]
+    const invW = !isPerspective && m15 && m15 !== 1 ? 1 / m15 : 1
+    let inOrder = true
+    let prev = Infinity
+    for (let i = 0; i < count; i++) {
+      const at = i * INSTANCE_STRIDE
+      const x = data[at], y = data[at + 1], z = data[at + 2]
+      const d = isPerspective
+        ? x * m3 + y * m7 + z * m11 + m15
+        : (x * m2 + y * m6 + z * m10 + m14) * invW
+      depths[i] = d
+      indices[i] = i
+      if (d > prev) inOrder = false
+      prev = d
+    }
+    if (!inOrder) sortIndicesDesc(depths, indices, aux, count)
+    result.inOrder = inOrder
+    result.indices = indices
+    return result
+  }
+
+  function packInstances(data: Float32Array, count: number): Float32Array<ArrayBuffer> {
+    ensurePacked(count)
+    for (let k = 0; k < count; k++) {
+      const src = indices[k] * INSTANCE_STRIDE
+      const dst = k * INSTANCE_STRIDE
+      for (let f = 0; f < INSTANCE_STRIDE; f++) {
+        packed[dst + f] = data[src + f]
+      }
+    }
+    return packed
+  }
+
+  return { sortBatchIndices, sortBatches, sortInstanceIndices, packInstances }
+}
+
+/** A flat unit-radius shadow disc in the XZ plane (`y = 0`) facing `+Y`. */
+export function shadowDisc(sides = 12): Mesh {
+  if (!Number.isInteger(sides) || sides < 3 || sides > 256) {
+    throw new RangeError('Invalid shadow disc side count')
+  }
+  const vertexCount = sides * 3
+  const data = new Float32Array(vertexCount * 6)
+  for (let i = 0; i < sides; i++) {
+    const a0 = i * Math.PI * 2 / sides
+    const a1 = ((i + 1) % sides) * Math.PI * 2 / sides
+    const off = i * 18
+    // Center (0, 0, 0)
+    data[off + 4] = 1
+    // Next perimeter point (b)
+    data[off + 6] = Math.cos(a1)
+    data[off + 8] = Math.sin(a1)
+    data[off + 10] = 1
+    // Current perimeter point (a)
+    data[off + 12] = Math.cos(a0)
+    data[off + 14] = Math.sin(a0)
+    data[off + 16] = 1
+  }
+  return { data, vertexCount, radius: 1 }
+}
+
+function normalizeLight(direction?: Vec3): [number, number, number] {
+  const dir = direction ?? DEFAULT_SHADOW_LIGHT
+  const len = Math.hypot(dir[0], dir[1], dir[2])
+  if (!len || !Number.isFinite(len)) return [0, 1, 0]
+  return [dir[0] / len, dir[1] / len, dir[2] / len]
+}
+
+/**
+ * Project a 3D caster position onto a horizontal ground plane (`y = groundY`) along the active light direction.
+ * Computes ground offset, light-angle stretch, yaw alignment, altitude fade, and anti-Z-fighting Y bias.
+ */
+export function projectShadow(
+  position: Vec3,
+  options: ShadowProjectionOptions = {},
+  out?: ShadowProjection
+): ShadowProjection {
+  const target: { position: [number, number, number]; scale: [number, number, number]; yaw: number; opacity: number; visible: boolean } =
+    (out as { position: [number, number, number]; scale: [number, number, number]; yaw: number; opacity: number; visible: boolean } | undefined) ?? {
+      position: [0, 0, 0],
+      scale: [1, 1, 1],
+      yaw: 0,
+      opacity: 0,
+      visible: false
+    }
+  const groundY = options.groundY ?? 0
+  const radius = options.radius ?? 0.5
+  const radiusZ = options.radiusZ ?? radius
+  const baseOpacity = options.opacity ?? 0.38
+  const maxHeight = options.maxHeight ?? 12
+  const minScale = options.minScale ?? 0.55
+  const maxStretch = options.maxStretch ?? 2.5
+  const minLightY = Math.max(1e-3, options.minLightY ?? 0.25)
+  const offsetScale = options.offsetScale ?? 1
+  const bias = options.bias ?? 0.015
+
+  const rawAlt = position[1] - groundY
+  if (!Number.isFinite(rawAlt) || rawAlt < -1e-3 || !(maxHeight > 0) || !(radius > 0) || !(radiusZ > 0)) {
+    target.position[0] = position[0]
+    target.position[1] = groundY + bias
+    target.position[2] = position[2]
+    target.scale[0] = Math.max(1e-3, radius)
+    target.scale[1] = 1
+    target.scale[2] = Math.max(1e-3, radiusZ)
+    target.yaw = 0
+    target.opacity = 0
+    target.visible = false
+    return target
+  }
+
+  const altitude = rawAlt > 0 ? rawAlt : 0
+  const heightT = Math.min(1, altitude / maxHeight)
+  const fade = 1 - heightT
+  const opacity = Math.max(0, Math.min(1, baseOpacity * fade))
+
+  const [lx, ly, lz] = normalizeLight(options.direction)
+  const horiz = Math.hypot(lx, lz)
+  const effLy = Math.max(ly, minLightY)
+  const lateralFactor = (altitude * offsetScale) / effLy
+  const ox = horiz > 1e-6 ? -lx * lateralFactor : 0
+  const oz = horiz > 1e-6 ? -lz * lateralFactor : 0
+
+  const heightScale = 1 - heightT * (1 - Math.max(0.05, Math.min(2, minScale)))
+  const rawStretch = horiz > 1e-6 ? 1 + (horiz / effLy) * 0.45 : 1
+  const stretch = Math.min(Math.max(1, maxStretch), rawStretch)
+  const yaw = horiz > 1e-6 ? Math.atan2(-lx, -lz) : 0
+
+  target.position[0] = position[0] + ox
+  target.position[1] = groundY + bias
+  target.position[2] = position[2] + oz
+  target.scale[0] = radius * heightScale
+  target.scale[1] = 1
+  target.scale[2] = radiusZ * heightScale * stretch
+  target.yaw = yaw
+  target.opacity = opacity
+  target.visible = opacity > 0.004
+  return target
+}
+
+/**
+ * Project any 3D mesh along a directional light onto the local `y = 0` plane to form a flat planar shadow mesh.
+ * Keeps light-facing triangles (normal `+Y`) so closed convex meshes project without double-blended seams.
+ */
+export function projectShadowMesh(source: Mesh, options: ProjectShadowMeshOptions = {}): Mesh {
+  const [lx, ly, lz] = normalizeLight(options.direction)
+  const minLightY = Math.max(1e-3, options.minLightY ?? 0.25)
+  const effLy = Math.max(ly, minLightY)
+  const invLy = 1 / effLy
+  const sx = options.scale ? options.scale[0] : 1
+  const sy = options.scale ? options.scale[1] : 1
+  const sz = options.scale ? options.scale[2] : 1
+  if (!(sx > 0 && sy > 0 && sz > 0 && Number.isFinite(sx + sy + sz))) {
+    throw new RangeError('Shadow mesh scale must contain three finite, positive values')
+  }
+
+  let r0 = 1, r1 = 0, r2 = 0, r3 = 0, r4 = 1, r5 = 0, r6 = 0, r7 = 0, r8 = 1
+  if (options.rotation !== undefined && options.rotation !== 0) {
+    let q: Quaternion
+    if (typeof options.rotation === 'number') {
+      const half = options.rotation * 0.5
+      q = [0, Math.sin(half), 0, Math.cos(half)]
+    } else {
+      const norm = Math.hypot(options.rotation[0], options.rotation[1], options.rotation[2], options.rotation[3])
+      if (!norm || !Number.isFinite(norm)) throw new RangeError('Rotation requires a finite, nonzero quaternion')
+      q = [options.rotation[0] / norm, options.rotation[1] / norm, options.rotation[2] / norm, options.rotation[3] / norm]
+    }
+    ;[r0, r1, r2, r3, r4, r5, r6, r7, r8] = rotationMatrix(q)
+  }
+
+  const src = source.data
+  const vertCount = source.vertexCount
+  const transformed = new Float32Array(vertCount * 3)
+  let minY = Infinity
+  for (let i = 0; i < vertCount; i++) {
+    const s = i * 6
+    const vx = src[s] * sx
+    const vy = src[s + 1] * sy
+    const vz = src[s + 2] * sz
+    const tx = r0 * vx + r1 * vy + r2 * vz
+    const ty = r3 * vx + r4 * vy + r5 * vz
+    const tz = r6 * vx + r7 * vy + r8 * vz
+    const d = i * 3
+    transformed[d] = tx
+    transformed[d + 1] = ty
+    transformed[d + 2] = tz
+    if (ty < minY) minY = ty
+  }
+
+  const baseY = options.baseY ?? minY
+  const build = (doubleSided: boolean) => {
+    const out: number[] = []
+    let radius = 0
+    for (let i = 0; i < vertCount; i += 3) {
+      const i0 = i * 3, i1 = i0 + 3, i2 = i0 + 6
+      const h0 = Math.max(0, transformed[i0 + 1] - baseY)
+      const h1 = Math.max(0, transformed[i1 + 1] - baseY)
+      const h2 = Math.max(0, transformed[i2 + 1] - baseY)
+      const p0x = transformed[i0] - lx * h0 * invLy
+      const p0z = transformed[i0 + 2] - lz * h0 * invLy
+      const p1x = transformed[i1] - lx * h1 * invLy
+      const p1z = transformed[i1 + 2] - lz * h1 * invLy
+      const p2x = transformed[i2] - lx * h2 * invLy
+      const p2z = transformed[i2 + 2] - lz * h2 * invLy
+      const area = (p1z - p0z) * (p2x - p0x) - (p1x - p0x) * (p2z - p0z)
+      if (area > 1e-8) {
+        out.push(
+          p0x, 0, p0z, 0, 1, 0,
+          p1x, 0, p1z, 0, 1, 0,
+          p2x, 0, p2z, 0, 1, 0
+        )
+        radius = Math.max(radius, Math.hypot(p0x, p0z), Math.hypot(p1x, p1z), Math.hypot(p2x, p2z))
+      } else if (doubleSided && area < -1e-8) {
+        out.push(
+          p0x, 0, p0z, 0, 1, 0,
+          p2x, 0, p2z, 0, 1, 0,
+          p1x, 0, p1z, 0, 1, 0
+        )
+        radius = Math.max(radius, Math.hypot(p0x, p0z), Math.hypot(p1x, p1z), Math.hypot(p2x, p2z))
+      }
+    }
+    return { out, radius }
+  }
+
+  let { out, radius } = build(Boolean(options.doubleSided))
+  if (!out.length && !options.doubleSided) {
+    ;({ out, radius } = build(true))
+  }
+  if (!out.length) {
+    throw new RangeError('Mesh produced no visible shadow triangles on the ground plane')
+  }
+  return {
+    data: new Float32Array(out),
+    vertexCount: out.length / 6,
+    radius
+  }
 }

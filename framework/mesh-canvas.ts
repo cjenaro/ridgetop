@@ -339,7 +339,7 @@ function depthTarget(width: number, height: number, pixels: Uint32Array, bytes: 
       for (let x = x0; x <= x1; x++, wa += dax, wb += dbx, z += dzx) {
         if (wa < -1e-9 || wb < -1e-9 || wa + wb > 1 + 1e-9) continue
         const index = row + x
-        if (z < depth[index]) {
+        if (z <= depth[index] + 1e-5) {
           const off = index << 2
           if (additive) {
             const nr = bytes[off] + sr
@@ -348,32 +348,69 @@ function depthTarget(width: number, height: number, pixels: Uint32Array, bytes: 
             bytes[off] = nr > 255 ? 255 : nr
             bytes[off + 1] = ng > 255 ? 255 : ng
             bytes[off + 2] = nb > 255 ? 255 : nb
+            if (bytes[off + 3] < 255) {
+              const na = bytes[off + 3] + Math.round(alpha * 255)
+              bytes[off + 3] = na > 255 ? 255 : na
+            }
           } else {
-            bytes[off] = sr + bytes[off] * invA
-            bytes[off + 1] = sg + bytes[off + 1] * invA
-            bytes[off + 2] = sb + bytes[off + 2] * invA
+            const dstA255 = bytes[off + 3]
+            if (dstA255 >= 255) {
+              bytes[off] = sr + bytes[off] * invA
+              bytes[off + 1] = sg + bytes[off + 1] * invA
+              bytes[off + 2] = sb + bytes[off + 2] * invA
+              bytes[off + 3] = 255
+            } else {
+              const dstA = dstA255 / 255
+              const outA = alpha + dstA * invA
+              if (outA > 0) {
+                const invOut = 1 / outA
+                const dstFactor = dstA * invA
+                bytes[off] = (sr + bytes[off] * dstFactor) * invOut
+                bytes[off + 1] = (sg + bytes[off + 1] * dstFactor) * invOut
+                bytes[off + 2] = (sb + bytes[off + 2] * dstFactor) * invOut
+                bytes[off + 3] = Math.round(outA * 255)
+              }
+            }
           }
-          bytes[off + 3] = 255
         }
       }
     }
   }
+
+  const alphaFaces: Face[] = []
+  const additiveFaces: Face[] = []
 
   return {
     width, height,
     draw(polygons: Face[], background: number) {
       depth.fill(1)
       pixels.fill(background)
+      alphaFaces.length = 0
+      additiveFaces.length = 0
       for (let p = 0; p < polygons.length; p++) {
         const face = polygons[p]
-        const { points } = face
         if (face.blend === 'opaque') {
+          const { points } = face
           for (let i = 3; i + 3 < points.length; i += 3) triangleOpaque(points, 0, i, i + 3, face.pixel)
+        } else if (face.blend === 'alpha') {
+          alphaFaces.push(face)
         } else {
-          const add = face.blend === 'additive'
-          for (let i = 3; i + 3 < points.length; i += 3) {
-            triangleBlend(points, 0, i, i + 3, face.r, face.g, face.b, face.alpha, add)
-          }
+          additiveFaces.push(face)
+        }
+      }
+      if (alphaFaces.length > 1) alphaFaces.sort((a, b) => b.depth - a.depth)
+      for (let p = 0; p < alphaFaces.length; p++) {
+        const face = alphaFaces[p]
+        const { points } = face
+        for (let i = 3; i + 3 < points.length; i += 3) {
+          triangleBlend(points, 0, i, i + 3, face.r, face.g, face.b, face.alpha, false)
+        }
+      }
+      for (let p = 0; p < additiveFaces.length; p++) {
+        const face = additiveFaces[p]
+        const { points } = face
+        for (let i = 3; i + 3 < points.length; i += 3) {
+          triangleBlend(points, 0, i, i + 3, face.r, face.g, face.b, face.alpha, true)
         }
       }
     }
@@ -448,7 +485,13 @@ export function canvasMeshes(canvas: HTMLCanvasElement, light: Float32Array<Arra
         return
       }
       stats.drawCalls = polygons.length
-      polygons.sort((a, b) => b.depth - a.depth)
+      polygons.sort((a, b) => {
+        const diff = b.depth - a.depth
+        if (diff !== 0) return diff
+        const ra = a.blend === 'opaque' ? 0 : a.blend === 'alpha' ? 1 : 2
+        const rb = b.blend === 'opaque' ? 0 : b.blend === 'alpha' ? 1 : 2
+        return ra - rb
+      })
       const w = canvas.width / 2
       const h = canvas.height / 2
       let lastFill = ''

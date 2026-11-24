@@ -1,12 +1,19 @@
-import type { Backend, Color, InstanceBatch, LightingOptions, LowPolyRenderer, Matrix, MeshBackend, Vec3 } from './types.ts'
+import type {
+  Backend, Color, InstanceBatch, LightingOptions, LowPolyRenderer, Matrix, MeshBackend,
+  ProjectedShadowOptions, ShadowBatch, ShadowBatchOptions, ShadowCasterOptions,
+  ShadowProjection, ShadowProjectionOptions, Vec3
+} from './types.ts'
 import type { SpriteClip } from './sprites.ts'
-import { multiply, orthographic, view } from './geometry.ts'
+import { createAlphaSorter, multiply, orthographic, projectShadow, shadowDisc, view } from './geometry.ts'
 import { canvasMeshes, meshViewPixels } from './mesh-canvas.ts'
 import { glMeshes } from './mesh-gl.ts'
 import { gpuMeshes } from './mesh-gpu.ts'
-import { frustum, visible } from './instances.ts'
+import { frustum, instances, visible } from './instances.ts'
 
-export { mesh, box, cylinder, octahedron, view, perspective, orthographic, multiply } from './geometry.ts'
+export {
+  mesh, box, cylinder, octahedron, shadowDisc, view, perspective, orthographic, multiply,
+  cameraDepth, projectShadow, projectShadowMesh
+} from './geometry.ts'
 export { instances } from './instances.ts'
 export { color } from './renderer.ts'
 
@@ -84,7 +91,9 @@ export async function createLowPolyRenderer(canvas: HTMLCanvasElement,
   let active: MeshBackend
   let disposed = false
   const selected: InstanceBatch[] = []
-  const translucent: InstanceBatch[] = []
+  const alphaBatches: InstanceBatch[] = []
+  const additiveBatches: InstanceBatch[] = []
+  const alphaSorter = createAlphaSorter(16)
   const planes = new Float32Array(24)
   const stats = { drawCalls: 0, triangles: 0, instances: 0, uploadBytes: 0, culledBatches: 0 }
 
@@ -142,17 +151,24 @@ export async function createLowPolyRenderer(canvas: HTMLCanvasElement,
       if (canvas.height !== height) canvas.height = height
       frustum(matrix, planes)
       selected.length = 0
-      translucent.length = 0
+      alphaBatches.length = 0
+      additiveBatches.length = 0
       stats.triangles = stats.instances = stats.uploadBytes = stats.culledBatches = 0
       for (const batch of batches) {
         if (visible(batch, planes)) {
           if (batch.blend === 'opaque') selected.push(batch)
-          else translucent.push(batch)
+          else if (batch.blend === 'alpha') alphaBatches.push(batch)
+          else additiveBatches.push(batch)
           stats.triangles += batch.mesh.vertexCount / 3 * batch.count
           stats.instances += batch.count
         } else if (batch.count) stats.culledBatches++
       }
-      for (let i = 0; i < translucent.length; i++) selected.push(translucent[i])
+      if (alphaBatches.length > 1) {
+        alphaSorter.sortBatches(matrix, alphaBatches, selected)
+      } else if (alphaBatches.length === 1) {
+        selected.push(alphaBatches[0])
+      }
+      for (let i = 0; i < additiveBatches.length; i++) selected.push(additiveBatches[i])
       stats.drawCalls = selected.length
       active.draw(matrix, clear, selected, stats)
       return stats
@@ -174,6 +190,171 @@ export async function createLowPolyRenderer(canvas: HTMLCanvasElement,
 }
 
 export const spriteDirections = ['front', 'front-right', 'right', 'back-right', 'back', 'back-left', 'left', 'front-left'] as const
+
+const defaultShadowColor: Vec3 = [0.04, 0.06, 0.1]
+const defaultShadowDirection: Vec3 = [-0.48, 0.8, 0.36]
+
+/**
+ * Create a reusable alpha-blended shadow batch that projects contact/blob shadows or pre-projected
+ * mesh shadows onto horizontal ground planes across WebGPU, WebGL 2, and Canvas 2D without Z-fighting.
+ */
+export function createShadowBatch(options: ShadowBatchOptions = {}): ShadowBatch {
+  const shadowMesh = options.mesh ?? shadowDisc(options.sides ?? 12)
+  const batch = instances(shadowMesh, { capacity: options.capacity ?? 32, blend: 'alpha' })
+  const lightDir: [number, number, number] = [defaultShadowDirection[0], defaultShadowDirection[1], defaultShadowDirection[2]]
+  const baseColor: [number, number, number] = options.color
+    ? [options.color[0], options.color[1], options.color[2]]
+    : [defaultShadowColor[0], defaultShadowColor[1], defaultShadowColor[2]]
+
+  const defaultGroundY = options.groundY ?? 0
+  const defaultRadius = options.radius ?? 0.5
+  const defaultOpacity = options.opacity ?? 0.38
+  const defaultMaxHeight = options.maxHeight ?? 12
+  const defaultMinScale = options.minScale ?? 0.55
+  const defaultMaxStretch = options.maxStretch ?? 2.5
+  const defaultMinLightY = Math.max(1e-3, options.minLightY ?? 0.25)
+  const defaultOffsetScale = options.offsetScale ?? 1
+  const defaultBias = options.bias ?? 0.015
+  const defaultPenumbra = Math.max(0, options.penumbra ?? 0)
+
+  function setDirection(dir?: Vec3) {
+    if (!dir) return
+    const len = Math.hypot(dir[0], dir[1], dir[2])
+    if (!len || !Number.isFinite(len)) {
+      lightDir[0] = 0; lightDir[1] = 1; lightDir[2] = 0
+      return
+    }
+    lightDir[0] = dir[0] / len
+    lightDir[1] = dir[1] / len
+    lightDir[2] = dir[2] / len
+  }
+  if (options.direction) setDirection(options.direction)
+
+  // Reusable scratch buffers so per-frame shadow submission allocates nothing.
+  const projOut: ShadowProjection = {
+    position: [0, 0, 0],
+    scale: [1, 1, 1],
+    yaw: 0,
+    opacity: 0,
+    visible: false
+  }
+  const projOpts: {
+    groundY: number
+    radius: number
+    radiusZ: number
+    direction: Vec3
+    opacity: number
+    maxHeight: number
+    minScale: number
+    maxStretch: number
+    minLightY: number
+    offsetScale: number
+    bias: number
+  } = {
+    groundY: defaultGroundY,
+    radius: defaultRadius,
+    radiusZ: defaultRadius,
+    direction: lightDir,
+    opacity: defaultOpacity,
+    maxHeight: defaultMaxHeight,
+    minScale: defaultMinScale,
+    maxStretch: defaultMaxStretch,
+    minLightY: defaultMinLightY,
+    offsetScale: defaultOffsetScale,
+    bias: defaultBias
+  }
+  const posScratch: [number, number, number] = [0, 0, 0]
+  const scaleScratch: [number, number, number] = [1, 1, 1]
+  const colorScratch: [number, number, number, number] = [0, 0, 0, 1]
+
+  return {
+    batch,
+    clear() {
+      batch.clear()
+    },
+    setLighting(lighting) {
+      if (Array.isArray(lighting)) setDirection(lighting as Vec3)
+      else if (lighting && 'direction' in lighting && lighting.direction) setDirection(lighting.direction)
+    },
+    add(position: Vec3, caster?: ShadowCasterOptions) {
+      const radius = caster?.radius ?? defaultRadius
+      projOpts.groundY = caster?.groundY ?? defaultGroundY
+      projOpts.radius = radius
+      projOpts.radiusZ = caster?.radiusZ ?? radius
+      projOpts.opacity = caster?.opacity ?? defaultOpacity
+      projOpts.maxHeight = caster?.maxHeight ?? defaultMaxHeight
+      projOpts.minScale = caster?.minScale ?? defaultMinScale
+      projOpts.maxStretch = caster?.maxStretch ?? defaultMaxStretch
+      projOpts.offsetScale = caster?.offsetScale ?? defaultOffsetScale
+      projOpts.bias = caster?.bias ?? defaultBias
+
+      projectShadow(position, projOpts as ShadowProjectionOptions, projOut)
+      if (!projOut.visible) return
+
+      const rgb = caster?.color ?? baseColor
+      const penumbra = caster?.penumbra ?? defaultPenumbra
+      colorScratch[0] = rgb[0]
+      colorScratch[1] = rgb[1]
+      colorScratch[2] = rgb[2]
+
+      if (penumbra > 0) {
+        const outerExpand = 1 + penumbra
+        scaleScratch[0] = projOut.scale[0] * outerExpand
+        scaleScratch[1] = projOut.scale[1]
+        scaleScratch[2] = projOut.scale[2] * outerExpand
+        colorScratch[3] = projOut.opacity * 0.42
+        batch.add(projOut.position, scaleScratch, projOut.yaw, colorScratch, 1)
+
+        posScratch[0] = projOut.position[0]
+        posScratch[1] = projOut.position[1] + 0.0005
+        posScratch[2] = projOut.position[2]
+        colorScratch[3] = projOut.opacity * 0.68
+        batch.add(posScratch, projOut.scale, projOut.yaw, colorScratch, 1)
+      } else {
+        colorScratch[3] = projOut.opacity
+        batch.add(projOut.position, projOut.scale, projOut.yaw, colorScratch, 1)
+      }
+    },
+    addProjected(position: Vec3, caster?: ProjectedShadowOptions) {
+      const groundY = caster?.groundY ?? defaultGroundY
+      const maxHeight = caster?.maxHeight ?? defaultMaxHeight
+      const rawAlt = position[1] - groundY
+      if (!Number.isFinite(rawAlt) || rawAlt < -1e-3 || !(maxHeight > 0)) return
+      const altitude = rawAlt > 0 ? rawAlt : 0
+      const fade = 1 - Math.min(1, altitude / maxHeight)
+      const baseOpacity = caster?.opacity ?? defaultOpacity
+      const opacity = Math.max(0, Math.min(1, baseOpacity * fade))
+      if (opacity <= 0.004) return
+
+      const horiz = Math.hypot(lightDir[0], lightDir[2])
+      const effLy = Math.max(lightDir[1], defaultMinLightY)
+      const offsetScale = caster?.offsetScale ?? defaultOffsetScale
+      const lateralFactor = (altitude * offsetScale) / effLy
+      const bias = caster?.bias ?? defaultBias
+
+      posScratch[0] = position[0] + (horiz > 1e-6 ? -lightDir[0] * lateralFactor : 0)
+      posScratch[1] = groundY + bias
+      posScratch[2] = position[2] + (horiz > 1e-6 ? -lightDir[2] * lateralFactor : 0)
+
+      const s = caster?.scale
+      if (s) {
+        scaleScratch[0] = s[0]
+        scaleScratch[1] = s[1]
+        scaleScratch[2] = s[2]
+      } else {
+        scaleScratch[0] = 1
+        scaleScratch[1] = 1
+        scaleScratch[2] = 1
+      }
+      const rgb = caster?.color ?? baseColor
+      colorScratch[0] = rgb[0]
+      colorScratch[1] = rgb[1]
+      colorScratch[2] = rgb[2]
+      colorScratch[3] = opacity
+      batch.add(posScratch, scaleScratch, caster?.rotation ?? 0, colorScratch, 1)
+    }
+  }
+}
 
 /** Draw a transparent, depth-tested still at the supplied camera, including offscreen authoring passes. */
 export function renderMeshFrame(canvas: HTMLCanvasElement, camera: Matrix, batches: readonly InstanceBatch[], lighting?: LightingOptions) {

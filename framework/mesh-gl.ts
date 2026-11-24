@@ -1,5 +1,6 @@
+import { createAlphaSorter } from './geometry.ts'
 import { INSTANCE_SIZE } from './instances.ts'
-import type { BlendMode, MeshBackend } from './types.ts'
+import type { BlendMode, InstanceBatch, MeshBackend } from './types.ts'
 
 const vertexSource = `#version 300 es
 layout(location=0) in vec3 position;
@@ -117,9 +118,22 @@ export function glMeshes(canvas: HTMLCanvasElement, light: Float32Array<ArrayBuf
   uploadLighting(light)
 
   const meshes = new Map()
-  const batches = new Map()
+  const batches = new Map<InstanceBatch, {
+    vao: WebGLVertexArrayObject
+    buffer: WebGLBuffer
+    revision: number
+    capacity: number
+    cameraRevision?: number
+    lastOrder?: Int32Array
+    lastCount?: number
+    sorted?: boolean
+  }>()
+  const batchSorter = createAlphaSorter(16)
+  const instanceSorter = createAlphaSorter(32)
+  const hasPolygonOffset = typeof gl.polygonOffset === 'function' && gl.POLYGON_OFFSET_FILL !== undefined
   const lastCamera = new Float32Array(16)
   let hasCamera = false
+  let cameraRevision = 0
   let lastWidth = -1
   let lastHeight = -1
   let lostHandler
@@ -152,6 +166,7 @@ export function glMeshes(canvas: HTMLCanvasElement, light: Float32Array<ArrayBuf
       }
       gl.depthMask(true)
       gl.disable(gl.BLEND)
+      if (hasPolygonOffset) gl.disable(gl.POLYGON_OFFSET_FILL)
       gl.clearColor(clear[0], clear[1], clear[2], clear[3])
       gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT)
       let cameraChanged = !hasCamera
@@ -164,24 +179,31 @@ export function glMeshes(canvas: HTMLCanvasElement, light: Float32Array<ArrayBuf
         gl.uniformMatrix4fv(camera, false, matrix)
         lastCamera.set(matrix)
         hasCamera = true
+        cameraRevision++
       }
       let activeBlend: BlendMode = 'opaque'
       gl.uniform1i(blendModeLoc, 0)
-      for (const batch of visible) {
+      const drawBatch = (batch: InstanceBatch) => {
         const blend: BlendMode = batch.blend ?? 'opaque'
         if (blend !== activeBlend) {
           activeBlend = blend
           if (blend === 'opaque') {
             gl.disable(gl.BLEND)
+            if (hasPolygonOffset) gl.disable(gl.POLYGON_OFFSET_FILL)
             gl.depthMask(true)
             gl.uniform1i(blendModeLoc, 0)
           } else if (blend === 'alpha') {
             gl.enable(gl.BLEND)
+            if (hasPolygonOffset) {
+              gl.enable(gl.POLYGON_OFFSET_FILL)
+              gl.polygonOffset(-1, -1)
+            }
             gl.depthMask(false)
             gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA)
             gl.uniform1i(blendModeLoc, 1)
           } else {
             gl.enable(gl.BLEND)
+            if (hasPolygonOffset) gl.disable(gl.POLYGON_OFFSET_FILL)
             gl.depthMask(false)
             gl.blendFunc(gl.SRC_ALPHA, gl.ONE)
             gl.uniform1i(blendModeLoc, 2)
@@ -210,7 +232,37 @@ export function glMeshes(canvas: HTMLCanvasElement, light: Float32Array<ArrayBuf
           }
           batches.set(batch, entry)
         } else gl.bindVertexArray(entry.vao)
-        if (entry.revision !== batch.revision) {
+        if (blend === 'alpha' && batch.count > 1) {
+          const revisionChanged = entry.revision !== batch.revision
+          if (revisionChanged || entry.cameraRevision !== cameraRevision || !entry.sorted) {
+            const count = batch.count
+            const { inOrder, indices } = instanceSorter.sortInstanceIndices(matrix, batch.data, count)
+            let orderChanged = revisionChanged || !entry.sorted || entry.lastCount !== count
+            if (!orderChanged && entry.lastOrder) {
+              for (let k = 0; k < count; k++) {
+                if (entry.lastOrder[k] !== indices[k]) { orderChanged = true; break }
+              }
+            }
+            if (orderChanged) {
+              const uploadData = inOrder ? batch.data : instanceSorter.packInstances(batch.data, count)
+              gl.bindBuffer(gl.ARRAY_BUFFER, entry.buffer)
+              if (entry.capacity < batch.data.byteLength) {
+                gl.bufferData(gl.ARRAY_BUFFER, batch.data.byteLength, gl.DYNAMIC_DRAW)
+                entry.capacity = batch.data.byteLength
+              }
+              gl.bufferSubData(gl.ARRAY_BUFFER, 0, uploadData, 0, count * INSTANCE_SIZE)
+              if (!entry.lastOrder || entry.lastOrder.length < count) {
+                entry.lastOrder = new Int32Array(Math.max(count, entry.lastOrder ? entry.lastOrder.length * 2 : 16))
+              }
+              for (let k = 0; k < count; k++) entry.lastOrder[k] = indices[k]
+              entry.lastCount = count
+              entry.revision = batch.revision
+              entry.sorted = true
+              stats.uploadBytes += count * INSTANCE_SIZE * 4
+            }
+            entry.cameraRevision = cameraRevision
+          }
+        } else if (entry.revision !== batch.revision) {
           gl.bindBuffer(gl.ARRAY_BUFFER, entry.buffer)
           if (entry.capacity < batch.data.byteLength) {
             gl.bufferData(gl.ARRAY_BUFFER, batch.data.byteLength, gl.DYNAMIC_DRAW)
@@ -218,12 +270,33 @@ export function glMeshes(canvas: HTMLCanvasElement, light: Float32Array<ArrayBuf
           }
           gl.bufferSubData(gl.ARRAY_BUFFER, 0, batch.data, 0, batch.count * INSTANCE_SIZE)
           entry.revision = batch.revision
+          entry.sorted = false
           stats.uploadBytes += batch.count * INSTANCE_SIZE * 4
         }
         gl.drawArraysInstanced(gl.TRIANGLES, 0, batch.mesh.vertexCount, batch.count)
       }
+      for (let i = 0; i < visible.length; i++) {
+        const batch = visible[i]
+        if ((batch.blend ?? 'opaque') === 'alpha') {
+          let j = i + 1
+          while (j < visible.length && (visible[j].blend ?? 'opaque') === 'alpha') j++
+          const runLen = j - i
+          if (runLen > 1) {
+            const { inOrder, indices } = batchSorter.sortBatchIndices(matrix, visible, i, runLen)
+            if (inOrder) {
+              for (let k = i; k < j; k++) drawBatch(visible[k])
+            } else {
+              for (let k = 0; k < runLen; k++) drawBatch(visible[i + indices[k]])
+            }
+            i = j - 1
+            continue
+          }
+        }
+        drawBatch(batch)
+      }
       if (activeBlend !== 'opaque') {
         gl.disable(gl.BLEND)
+        if (hasPolygonOffset) gl.disable(gl.POLYGON_OFFSET_FILL)
         gl.depthMask(true)
       }
       gl.bindVertexArray(null)
