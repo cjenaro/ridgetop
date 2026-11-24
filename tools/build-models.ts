@@ -4,10 +4,4 @@ import { standalonePage } from './standalone-page.ts'
 const root = new URL('../', import.meta.url)
 const dist = new URL('dist/', root)
 const template = await readFile(new URL('models/index.html', root), 'utf8')
-const page = await standalonePage(template, root, dist)
-const recipe = await readFile(new URL('starter/art/rain-ranger.art.json', root), 'utf8')
-const marker = 'data-src="/starter/art/rain-ranger.art.json">'
-if (!page.includes(marker)) throw new Error('Expected rain-ranger data-src marker in models/index.html')
-// The hosted viewer reads the starter's recipe on demand. Embed those same bytes for offline use.
-await writeFile(new URL('low-poly-models.html', dist), page.replace(marker,
-  () => '>' + recipe.replaceAll('<', '\\u003c')))
+await writeFile(new URL('low-poly-models.html', dist), await standalonePage(template, root, dist))

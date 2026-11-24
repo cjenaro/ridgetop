@@ -4,6 +4,7 @@
   "type": "module",
   "scripts": {
     "start": "node dist/server.js",
+    "start:testing": "node dist/server.js --testing",
     "playtest": "node starter/serve.ts --testing",
     "preview-art": "node starter/preview-art.ts",
     "art-library": "node starter/art-library.ts",

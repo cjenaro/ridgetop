@@ -1,6 +1,5 @@
-import { color, createArtKit, createLowPolyRenderer, modelFromArtRecipe, multiply, orthographic, view } from '../framework/index.ts'
+import { color, createArtKit, createArtRecipe, createLowPolyRenderer, modelFromArtRecipe, multiply, orthographic, view } from '../framework/index.ts'
 import type { Backend, Color, InstanceBatch } from '../framework/index.ts'
-import { createCarModels } from '../racing/car-art.ts'
 import { createHeadland } from './headland.ts'
 
 type Study = {
@@ -10,23 +9,12 @@ type Study = {
 const element = <T extends HTMLElement>(id: string) => document.getElementById(id) as T
 const clamp = (n: number, min: number, max: number) => Math.max(min, Math.min(max, n))
 
-function recipeStudy(source: unknown, title: string, description: string): Study {
+function recipeStudy(source: unknown, title: string, description: string, category = 'Model recipe', background = color('e6ece2')): Study {
   const model = modelFromArtRecipe(source)
   const group = createArtKit({ models: { subject: model } }).group()
   group.add('subject', [0, 0, 0])
-  return { title, category: 'Model recipe', description, batches: group.batches, span: model.span,
-    centerY: model.centerY, yaw: .58, pitch: .18, background: color('e6ece2') }
-}
-
-async function rangerStudy() {
-  const source = element('rain-source')
-  let json = source.textContent.trim()
-  if (!json) {
-    const response = await fetch(source.dataset.src)
-    if (!response.ok) throw new Error('Could not load the ranger recipe.')
-    json = await response.text()
-  }
-  return { ...recipeStudy(JSON.parse(json), 'Raincoat ranger', 'Orbit the ranger to see the brim, the lip of the storm collar, and the roll-top pack on its back.'), category: 'Character' }
+  return { title, category, description, batches: group.batches, span: model.span,
+    centerY: model.centerY, yaw: .58, pitch: .18, background }
 }
 
 async function start() {
@@ -38,15 +26,24 @@ async function start() {
     backend: (params.get('renderer') ?? 'auto') as Backend, canvasDepth: true,
     lighting: { direction: [-.55, .88, .62], ambient: .57 }
   })
-  const car = createCarModels([color('dd674b'), color('ffe3aa'), color('843e42')])
-  car.add({ x: 0, z: 0, yaw: 0, slot: 1 }, 0, 0, false)
   const studies = new Map<string, Study>([
     ['headland', { title: 'Headland lighthouse', category: 'Environment',
       description: 'A striped watchtower above a cut-rock shoreline, with a keeper’s cottage and timber landing.',
       batches: createHeadland(), span: 5.40, centerY: .67, yaw: .53, pitch: .43, background: color('e4ece5') }],
-    ['rally', { title: 'Signal Drift rally car', category: 'Vehicle',
-      description: 'The car from Signal Drift. Circle it to see the spoiler, wheel hubs, and two-tone bodywork.',
-      batches: car.full, span: 3.75, centerY: .56, yaw: .83, pitch: .34, background: color('f0e8df') }]
+    ['ranger', recipeStudy(
+      createArtRecipe('ranger'),
+      'Field ranger',
+      'Built-in character recipe from the framework art kit. Orbit to inspect the visor, collar, and backpack.',
+      'Character',
+      color('e6ece2')
+    )],
+    ['lantern', recipeStudy(
+      createArtRecipe('lantern'),
+      'Signal lantern',
+      'Built-in prop recipe with unlit glow core and faceted cap. Open any .art.json file to preview custom models.',
+      'Prop',
+      color('f0e8df')
+    )]
   ])
 
   let active: Study, yaw = 0, pitch = 0, zoom = 1
@@ -97,17 +94,9 @@ async function start() {
     for (const button of choiceButtons) button.setAttribute('aria-pressed', String(button.id === id))
     reset()
   }
-  let rangerPending: Promise<Study> | undefined
-  async function select(id: string) {
-    const current = ++request
-    try {
-      if (id === 'ranger' && !studies.has(id)) {
-        rangerPending ??= rangerStudy().then(study => { studies.set(id, study); return study })
-          .finally(() => { rangerPending = undefined })
-        await rangerPending
-      }
-      if (current === request && studies.has(id)) show(id, studies.get(id))
-    } catch (error) { if (current === request) element('notice').textContent = error.message }
+  function select(id: string) {
+    request++
+    if (studies.has(id)) show(id, studies.get(id))
   }
   for (const button of choiceButtons) button.onclick = () => select(button.id)
   const fileInput = element<HTMLInputElement>('source-file')
@@ -184,7 +173,7 @@ async function start() {
     replacement.disconnect()
     renderer.dispose()
   })
-  await select(['ranger', 'rally'].includes(location.hash.slice(1)) ? location.hash.slice(1) : 'headland')
+  select(['ranger', 'lantern'].includes(location.hash.slice(1)) ? location.hash.slice(1) : 'headland')
 }
 
 start().catch(error => {

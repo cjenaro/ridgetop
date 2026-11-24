@@ -46,7 +46,7 @@ try {
     const models = await open('/models?renderer=' + backend)
     await until(() => status(models, 'stats'), s => s?.includes('triangles · ' + rendererNames[backend]), backend + ' live geometry')
     await click(models, 'ranger')
-    await until(() => status(models, 'model-title'), 'Raincoat ranger', 'loaded the starter model')
+    await until(() => status(models, 'model-title'), 'Field ranger', 'loaded the built-in ranger model')
     await models.evaluate("document.querySelector('#orbit').focus()")
     const clip = await models.evaluate(`(() => {
       const {x,y,width,height} = document.querySelector('#orbit').getBoundingClientRect()
@@ -61,9 +61,9 @@ try {
     await key(models, 'keyDown', 'ArrowRight', 'ArrowRight')
     await key(models, 'keyUp', 'ArrowRight', 'ArrowRight')
     await until(async () => await renderedView() !== first, true, 'orbit redraws the mesh from a new angle', 16)
-    await click(models, 'rally')
-    await until(() => status(models, 'model-title'), 'Signal Drift rally car', 'selected the live game car')
-    await until(() => status(models, 'stats'), s => s?.includes('triangles') && s !== rangerStats, 'submitted the car geometry')
+    await click(models, 'lantern')
+    await until(() => status(models, 'model-title'), 'Signal lantern', 'selected the built-in lantern model')
+    await until(() => status(models, 'stats'), s => s?.includes('triangles') && s !== rangerStats, 'submitted the lantern geometry')
     assert.deepEqual(models.errors, [])
     await models.close()
     tabs.pop()
@@ -71,21 +71,19 @@ try {
   }
 
   const workshop = await open('/sprites')
-  await until(() => workshop.evaluate("document.querySelector('#frames')?.children.length"), 4, 'scout run preview')
+  await until(() => workshop.evaluate("document.querySelector('#frames')?.children.length"), 8, 'ranger turntable preview')
   await workshop.evaluate("document.querySelector('#frames button').click()")
   const preview = () => workshop.evaluate("document.querySelector('#preview').toDataURL()")
   const original = await preview()
   await click(workshop, 'next-palette')
   assert.notEqual(await preview(), original, 'palette changes the rendered pose')
-  await workshop.evaluate("document.querySelector('#art').value='car';document.querySelector('#art').dispatchEvent(new Event('change'))")
-  assert.equal(await workshop.evaluate("document.querySelector('#frames').children.length"), 8)
   const views = await workshop.evaluate(`[...document.querySelectorAll('#frames canvas')].map(frame => {
     const pixels = frame.getContext('2d').getImageData(0, 0, frame.width, frame.height).data
     if (pixels[3] !== 0 || !pixels.some((value, i) => i % 4 === 3 && value === 255)) return null
     return frame.toDataURL()
   })`)
   assert.ok(views.every(Boolean))
-  assert.equal(new Set(views).size, 8, 'eight distinct car views on transparent backgrounds')
+  assert.equal(new Set(views).size, 8, 'eight distinct model views on transparent backgrounds')
   await workshop.evaluate(`(() => {
     const art = document.querySelector('#art')
     art.value = 'ranger'

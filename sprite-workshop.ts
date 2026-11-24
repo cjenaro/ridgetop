@@ -1,8 +1,6 @@
-import { artBases, artModels, artPalette, bakeSpriteDirections, color, createArtBuilder, createArtKit, createArtRecipe, createSpriteSheet,
+import { artBases, artModels, artPalette, createArtBuilder, createArtKit, createArtRecipe,
   modelFromArtRecipe, spriteColumn, spriteDirections } from './framework/index.ts'
-import type { ArtRecipe, ArtTone, SpriteAtlasSource, SpriteClip, SpriteFrame } from './framework/index.ts'
-import { chipClips, chipPalette, frameHeight, frameWidth, paintChip, paintScout, scoutClips, suits } from './game/sprite-art.ts'
-import { createCarModels, liveryColors } from './racing/car-art.ts'
+import type { ArtRecipe, ArtTone, SpriteAtlasSource, SpriteClip } from './framework/index.ts'
 import { createPartEditor, createViewComparison } from './sprite-model-editor.ts'
 
 type Manifest = SpriteAtlasSource & { clips: Record<string, SpriteClip> }
@@ -12,18 +10,14 @@ type Template = {
   generate(palette: string[], variant: number): Asset
 }
 
-const templates: Record<string, Template> = {
-  scout: { palette: [...suits[0]], roles: ['Shadow', 'Shade', 'Suit', 'Light'], palettes: suits, variant: 0,
-    generate: palette => pixelAsset('scout', scoutClips, paintScout, palette) },
-  chip: { palette: [...chipPalette], roles: ['Shadow', 'Shell', 'Core', 'Contacts'], variant: 0,
-    generate: palette => pixelAsset('signal-chip', chipClips, paintChip, palette) },
-  car: { palette: [...liveryColors[0]], roles: ['Body', 'Stripe', 'Accent'], palettes: liveryColors, variant: 0,
-    generate(palette, variant) {
-      const models = createCarModels(palette.map(color))
-      models.add({ x: 0, z: 0, yaw: 0, slot: variant }, 0, 0, false)
-      return bakeSpriteDirections(models.full, { span: 4.4, center: [0, .55, 0], src: 'rally-car-sheet.png' })
-    } }
-}
+const paletteThemes: Record<ArtTone, string>[] = [
+  { ...artPalette },
+  { ground: '#789882', leaf: '#2d6a62', wood: '#7b5542', stone: '#6b7e8d', ink: '#243447', accent: '#e07a52', light: '#ffdfb0', glow: '#76e4dc' },
+  { ground: '#b6a57c', leaf: '#5c7c4e', wood: '#87573a', stone: '#989087', ink: '#3b333a', accent: '#d95d57', light: '#fff0c2', glow: '#f8c36c' },
+  { ground: '#6d8299', leaf: '#456a78', wood: '#6e5a5c', stone: '#9fb0bd', ink: '#1e2c3d', accent: '#6ec4d8', light: '#e8f4fa', glow: '#a9f5e1' }
+]
+
+const templates: Record<string, Template> = {}
 const element = <T extends HTMLElement>(id: string) => document.getElementById(id) as T
 const art = element<HTMLSelectElement>('art')
 const library = document.createElement('optgroup')
@@ -35,8 +29,12 @@ function bakeRecipe(recipe: ArtRecipe) {
 
 function recipeTemplate(recipe: ArtRecipe): Template {
   const roles = [...new Set(recipe.parts.map(p => p.tone))]
-  return { recipe, roles, palette: roles.map(role => (recipe.palette[role] ?? artPalette[role]).replace(/^#/, '')),
-    variant: 0, generate: () => bakeRecipe(recipe) }
+  const basePalette = roles.map(role => (recipe.palette[role] ?? artPalette[role]).replace(/^#/, ''))
+  const palettes = [
+    basePalette,
+    ...paletteThemes.slice(1).map(theme => roles.map(role => theme[role as ArtTone].replace(/^#/, '')))
+  ]
+  return { recipe, roles, palette: [...basePalette], palettes, variant: 0, generate: () => bakeRecipe(recipe) }
 }
 for (const name of Object.keys(artModels) as (keyof typeof artModels)[]) {
   templates[name] = recipeTemplate(createArtRecipe(name))
@@ -79,16 +77,6 @@ function canvas(width: number, height: number) {
   image.width = width
   image.height = height
   return image
-}
-
-function pixelAsset(name: string, clips: Record<string, SpriteClip>,
-  paint: (frame: SpriteFrame, pose: number, palette: string[]) => void, palette: string[]): Asset {
-  const columns = Math.max(...Object.values(clips).map(clip => clip.column + clip.frames))
-  const sheet = createSpriteSheet(frameWidth, frameHeight, columns)
-  for (let column = 0; column < columns; column++) paint(sheet.frame(column), column, palette)
-  const image = canvas(sheet.width, sheet.height)
-  image.getContext('2d').putImageData(new ImageData(sheet.pixels, sheet.width, sheet.height), 0, 0)
-  return { image, manifest: { src: name + '-sheet.png', frameWidth, frameHeight, clips: structuredClone(clips) } }
 }
 
 async function importPngs(input: File[]): Promise<Asset> {
@@ -165,7 +153,7 @@ function startPlayback(first = 0) {
 function showModelCode() {
   const name = art.value
   const recipe = templates[name]?.recipe
-  element('live-model').hidden = !recipe && name !== 'car'
+  element('live-model').hidden = !recipe
   if (recipe) {
     element('model-help').textContent = 'Save the editable model in game/art/. Assign its file to a role in the starter’s modelFiles, or place it directly with the art kit.'
     element('model-snippet').textContent = [
@@ -175,16 +163,6 @@ function showModelCode() {
       'const world = art.group()',
       'world.add(source.name, [0, 0, 0])',
       'renderer.render(camera, world.batches)'
-    ].join('\n')
-  } else if (name === 'car') {
-    const { palette, variant } = templates.car
-    element('model-help').textContent = 'The full framework archive includes the live Signal Drift car model in racing/car-art.js after building.'
-    element('model-snippet').textContent = [
-      "import { color } from './framework/index.js'",
-      "import { createCarModels } from './racing/car-art.js'",
-      'const cars = createCarModels(' + JSON.stringify(palette) + '.map(color))',
-      'cars.add({ x: 0, z: 0, yaw: 0, slot: ' + variant + ' }, 0, 0, false)',
-      'renderer.render(camera, cars.full)'
     ].join('\n')
   }
 }
@@ -284,7 +262,6 @@ function showAsset(preferredClip?: string, first = 0) {
     asset = imported
   }
   clipSelect.replaceChildren(...Object.keys(asset.manifest.clips).map(name => new Option(name, name)))
-  if (art.value === 'scout') clipSelect.value = 'run'
   if (preferredClip && Object.hasOwn(asset.manifest.clips, preferredClip)) clipSelect.value = preferredClip
   element('sheet-details').textContent = 'Full sheet · ' + asset.image.width + ' × ' + asset.image.height + ' px'
   showPalette(template)
@@ -309,8 +286,14 @@ frameMs.onchange = () => {
 }
 element('next-palette').onclick = () => {
   const template = templates[art.value]
+  if (!template?.palettes) return
   template.variant = (template.variant + 1) % template.palettes.length
   template.palette = [...template.palettes[template.variant]]
+  if (template.recipe) {
+    template.roles.forEach((role, i) => {
+      template.recipe.palette[role as ArtTone] = '#' + template.palette[i]
+    })
+  }
   showPalette(template)
   recolor(template)
 }
