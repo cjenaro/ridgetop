@@ -1,7 +1,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { box, chamferedPrism, cylinder, instances, mesh, multiply, octahedron, perspective, view } from '../framework/index.ts'
-import { frustum, visible } from '../framework/instances.ts'
+import { box, chamferedPrism, cylinder, instances, mesh, multiply, octahedron, perspective, view } from '../packages/ridgetop/framework/index.ts'
+import { frustum, visible } from '../packages/ridgetop/framework/instances.ts'
 
 test('mesh primitives are made of flat-shaded, nondegenerate faces', () => {
   for (const primitive of [box, chamferedPrism(.19, 1.85, 1.45), cylinder(7), cylinder(5, 0), cylinder(6, 1, 0), octahedron]) {

@@ -17,8 +17,8 @@ import {
   parseObj,
   parseWav,
   quaternionFromEuler
-} from '../framework/index.ts'
-import { bakeMotifWav, createGameHost, encodeGlb, encodeWav } from '../framework/server.ts'
+} from '../packages/ridgetop/framework/index.ts'
+import { bakeMotifWav, createGameHost, encodeGlb, encodeWav } from '../packages/ridgetop/framework/server.ts'
 
 function approx(actual: number, expected: number, eps = 1e-4, label = '') {
   assert.ok(

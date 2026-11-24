@@ -1,0 +1,39 @@
+{
+  "name": "@ridgetop/beacon-run",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "ridgetop": "workspace:*"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "typecheck": "tsc -p tsconfig.json",
+    "start": "node dist/server.js",
+    "start:testing": "node dist/server.js --testing",
+    "package": "ridgetop package --project ."
+  },
+  "ridgetop": {
+    "name": "Beacon Run",
+    "appId": "com.ridgetop.beaconrun",
+    "html": "index.html",
+    "moduleRoot": "dist",
+    "entry": "main.js",
+    "staticFiles": ["game-ui.css"],
+    "staticDirs": ["game/assets"],
+    "assetPathRewrites": {
+      "game/sprites.js": {
+        "'/game/assets/": "'./game/assets/",
+        "\"/game/assets/": "\"./game/assets/"
+      }
+    },
+    "assetsModule": "dist/game/package-assets.js",
+    "godotEntries": [
+      "game/simulation.ts",
+      "game/campaign.ts",
+      "ridgetop/ui-layout",
+      "ridgetop/ui-button",
+      "ridgetop/ui-toggle"
+    ]
+  }
+}

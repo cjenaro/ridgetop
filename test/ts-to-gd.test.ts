@@ -6,15 +6,15 @@ import { join } from 'node:path'
 import test from 'node:test'
 import { fileURLToPath } from 'node:url'
 import { promisify } from 'node:util'
-import { createArcadeDriver, createCircuit, STEP } from '../framework/index.ts'
-import { boxNode, buttonPrimitive, column, overlay, resolveLayout, row, spacerNode, togglePrimitive } from '../framework/ui.ts'
-import { ROUTE } from '../game/campaign.ts'
-import { courses } from '../game/level.ts'
-import { createPlayer, stepPlayer } from '../game/simulation.ts'
-import { createRace, standings, stepRace } from '../racing/race.ts'
-import { circuits } from '../racing/track.ts'
+import { createArcadeDriver, createCircuit, STEP } from '../packages/ridgetop/framework/index.ts'
+import { boxNode, buttonPrimitive, column, overlay, resolveLayout, row, spacerNode, togglePrimitive } from '../packages/ridgetop/framework/ui.ts'
+import { ROUTE } from '../examples/beacon-run/game/campaign.ts'
+import { courses } from '../examples/beacon-run/game/level.ts'
+import { createPlayer, stepPlayer } from '../examples/beacon-run/game/simulation.ts'
+import { createRace, standings, stepRace } from '../examples/signal-drift/racing/race.ts'
+import { circuits } from '../examples/signal-drift/racing/track.ts'
 import { courseRoute } from '../tools/course-route.ts'
-import { compileTsProjectToGodot } from '../tools/ts-to-gd.ts'
+import { compileTsProjectToGodot } from '../packages/ridgetop/tools/ts-to-gd.ts'
 
 const execFileAsync = promisify(execFile)
 const repoRoot = fileURLToPath(new URL('../', import.meta.url))
@@ -53,9 +53,10 @@ test('TS -> GDScript compiler compiles real Beacon Run simulation and matches No
   const projectDir = await mkdtemp(join(tmpdir(), 'ridgetop-gd-beacon-'))
   t.after(() => rm(projectDir, { recursive: true, force: true }))
 
+  const beaconRoot = join(repoRoot, 'examples', 'beacon-run')
   const compiled = await compileTsProjectToGodot({
-    entries: [join(repoRoot, 'game', 'simulation.ts')],
-    rootDir: repoRoot,
+    entries: [join(beaconRoot, 'game', 'simulation.ts')],
+    rootDir: beaconRoot,
     outDir: join(projectDir, 'scripts', 'compiled')
   })
   assert.ok(compiled.files.some(f => f.endsWith('framework/platformer.gd')))
@@ -136,7 +137,7 @@ test('TS -> GDScript compiler compiles real Signal Drift vehicle + circuit math 
   t.after(() => rm(projectDir, { recursive: true, force: true }))
 
   await compileTsProjectToGodot({
-    entries: [join(repoRoot, 'framework', 'vehicle.ts')],
+    entries: [join(repoRoot, 'packages', 'ridgetop', 'framework', 'vehicle.ts')],
     rootDir: repoRoot,
     outDir: join(projectDir, 'scripts', 'compiled')
   })
@@ -184,9 +185,9 @@ test('TS -> GDScript compiler compiles Ridgetop UI state machines & layout solve
 
   await compileTsProjectToGodot({
     entries: [
-      join(repoRoot, 'framework', 'ui-layout.ts'),
-      join(repoRoot, 'framework', 'ui-button.ts'),
-      join(repoRoot, 'framework', 'ui-toggle.ts')
+      join(repoRoot, 'packages', 'ridgetop', 'framework', 'ui-layout.ts'),
+      join(repoRoot, 'packages', 'ridgetop', 'framework', 'ui-button.ts'),
+      join(repoRoot, 'packages', 'ridgetop', 'framework', 'ui-toggle.ts')
     ],
     rootDir: repoRoot,
     outDir: join(projectDir, 'scripts', 'compiled')
@@ -256,9 +257,10 @@ test('TS -> GDScript compiler compiles the full Signal Drift race engine (racing
   const projectDir = await mkdtemp(join(tmpdir(), 'ridgetop-gd-race-'))
   t.after(() => rm(projectDir, { recursive: true, force: true }))
 
+  const driftRoot = join(repoRoot, 'examples', 'signal-drift')
   const compiled = await compileTsProjectToGodot({
-    entries: [join(repoRoot, 'racing', 'race.ts')],
-    rootDir: repoRoot,
+    entries: [join(driftRoot, 'racing', 'race.ts')],
+    rootDir: driftRoot,
     outDir: join(projectDir, 'scripts', 'compiled')
   })
   assert.ok(compiled.files.some(f => f.endsWith('racing/race.gd')))
@@ -410,11 +412,13 @@ export function testAll() {
 `)
 
   await compileTsProjectToGodot({
-    entries: [
-      join(repoRoot, 'racing', 'progression.ts'),
-      join(repoRoot, 'starter', 'game.ts')
-    ],
-    rootDir: repoRoot,
+    entries: [join(repoRoot, 'examples', 'signal-drift', 'racing', 'progression.ts')],
+    rootDir: join(repoRoot, 'examples', 'signal-drift'),
+    outDir: join(projectDir, 'scripts', 'compiled')
+  })
+  await compileTsProjectToGodot({
+    entries: [join(repoRoot, 'examples', 'starter', 'game.ts')],
+    rootDir: join(repoRoot, 'examples'),
     outDir: join(projectDir, 'scripts', 'compiled')
   })
   await compileTsProjectToGodot({
@@ -617,8 +621,8 @@ export function testEdge2() {
 
   await compileTsProjectToGodot({
     entries: [
-      join(repoRoot, 'framework', 'ui-machine.ts'),
-      join(repoRoot, 'framework', 'ui-button.ts')
+      join(repoRoot, 'packages', 'ridgetop', 'framework', 'ui-machine.ts'),
+      join(repoRoot, 'packages', 'ridgetop', 'framework', 'ui-button.ts')
     ],
     rootDir: repoRoot,
     outDir: join(projectDir, 'scripts', 'compiled')

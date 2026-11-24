@@ -1,10 +1,10 @@
-import type { RoomInput } from '../framework/index.ts'
+import type { RoomInput } from 'ridgetop'
 import { readFile } from 'node:fs/promises'
 import { pathToFileURL } from 'node:url'
-import { STEP, verifyTrace } from '../framework/index.ts'
-import { courses } from '../game/level.ts'
-import { platformerRules } from '../game/rules.ts'
-import { createPlayer, DEFAULT_JUMP_TIMING, EMPTY_INPUT, stepPlayer } from '../game/simulation.ts'
+import { STEP, verifyTrace } from 'ridgetop'
+import { courses } from '../examples/beacon-run/game/level.ts'
+import { platformerRules } from '../examples/beacon-run/game/rules.ts'
+import { createPlayer, DEFAULT_JUMP_TIMING, EMPTY_INPUT, stepPlayer } from '../examples/beacon-run/game/simulation.ts'
 
 const jump = { ...EMPTY_INPUT, jump: 1 }
 const right = { ...EMPTY_INPUT, right: true }
@@ -87,7 +87,7 @@ function verifyCourses(routes, timing) {
 }
 
 export async function tuneJumps(baselineTiming = DEFAULT_JUMP_TIMING) {
-  const routes = JSON.parse(await readFile(new URL('../game/verification-routes.json', import.meta.url), 'utf8'))
+  const routes = JSON.parse(await readFile(new URL('../examples/beacon-run/game/verification-routes.json', import.meta.url), 'utf8'))
   const baseline: { timing: typeof DEFAULT_JUMP_TIMING; tuning: ReturnType<typeof measure>; holdout?: ReturnType<typeof measure> } = {
     timing: baselineTiming, tuning: measure(tuning, baselineTiming)
   }

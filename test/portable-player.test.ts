@@ -6,10 +6,10 @@ import { join } from 'node:path'
 import test from 'node:test'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import vm from 'node:vm'
-import { BACKUP_FORMAT, BACKUP_SCHEMA_VERSION, createSaveBackup } from '../framework/index.ts'
-import type { SaveBackupEnvelope, SaveBackupStorage } from '../framework/index.ts'
-import { bakeMotifWav, packageGame, parsePackageArgs } from '../framework/server.ts'
-import { createGame } from '../tools/create-game.ts'
+import { BACKUP_FORMAT, BACKUP_SCHEMA_VERSION, createSaveBackup } from '../packages/ridgetop/framework/index.ts'
+import type { SaveBackupEnvelope, SaveBackupStorage } from '../packages/ridgetop/framework/index.ts'
+import { bakeMotifWav, packageGame, parsePackageArgs } from '../packages/ridgetop/framework/server.ts'
+import { createGame } from '../packages/ridgetop/tools/create-game.ts'
 
 const repoRoot = fileURLToPath(new URL('../', import.meta.url))
 

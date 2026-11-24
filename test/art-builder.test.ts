@@ -1,9 +1,9 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import { artBases, artPartBounds, artPoseBounds, bakeAnimatedSpritePixels, bakeSpritePixels, createArtBuilder, createArtKit,
-  createMeshPool, fitArtRecipe, modelFromArtRecipe, quaternionFromEuler, renderRig, rigFromArtRecipe, rotateVec3, sampleClip } from '../framework/index.ts'
-import type { ArtRecipe, Vec3 } from '../framework/index.ts'
-import { spritePartVisibility } from '../framework/art-review.ts'
+  createMeshPool, fitArtRecipe, modelFromArtRecipe, quaternionFromEuler, renderRig, rigFromArtRecipe, rotateVec3, sampleClip } from '../packages/ridgetop/framework/index.ts'
+import type { ArtRecipe, Vec3 } from '../packages/ridgetop/framework/index.ts'
+import { spritePartVisibility } from '../packages/ridgetop/framework/art-review.ts'
 
 const near = (value: number, target: number) => assert.ok(Math.abs(value-target) < 1e-5, value+' should equal '+target)
 

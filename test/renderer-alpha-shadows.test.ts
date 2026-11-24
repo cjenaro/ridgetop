@@ -4,13 +4,13 @@ import {
   box, cameraDepth, createLowPolyRenderer, createShadowBatch, cylinder, instances, mesh, multiply,
   octahedron, orthographic, perspective, projectShadow, projectShadowMesh, renderMeshPixels,
   shadowDisc, view
-} from '../framework/index.ts'
-import { createAlphaSorter } from '../framework/geometry.ts'
-import { INSTANCE_SIZE } from '../framework/instances.ts'
-import { canvasMeshes } from '../framework/mesh-canvas.ts'
-import { glMeshes } from '../framework/mesh-gl.ts'
-import { gpuMeshes } from '../framework/mesh-gpu.ts'
-import type { Matrix } from '../framework/types.ts'
+} from '../packages/ridgetop/framework/index.ts'
+import { createAlphaSorter } from '../packages/ridgetop/framework/geometry.ts'
+import { INSTANCE_SIZE } from '../packages/ridgetop/framework/instances.ts'
+import { canvasMeshes } from '../packages/ridgetop/framework/mesh-canvas.ts'
+import { glMeshes } from '../packages/ridgetop/framework/mesh-gl.ts'
+import { gpuMeshes } from '../packages/ridgetop/framework/mesh-gpu.ts'
+import type { Matrix } from '../packages/ridgetop/framework/types.ts'
 
 function createMockWebGPU() {
   const pipelines: { entryPoint: string; depthStencil: Record<string, unknown> }[] = []

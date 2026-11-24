@@ -1,5 +1,5 @@
-import { box, color, createArtKit, cylinder, instances, mesh, octahedron } from '../framework/index.ts'
-import type { InstanceBatch, Mesh, Vec3 } from '../framework/index.ts'
+import { box, color, createArtKit, cylinder, instances, mesh, octahedron } from 'ridgetop'
+import type { InstanceBatch, Mesh, Vec3 } from 'ridgetop'
 
 // One peaked roof with its ridge running along X. Each triangle gets its own flat normal.
 const roof = mesh([

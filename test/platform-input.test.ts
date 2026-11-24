@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { bindActionControls, bindPlatformControls, color, createPlatform, createPlatformer, createSynthAudio, fixedLoop, resolveStorage, STEP } from '../framework/index.ts'
-import type { RidgetopNativeBridge } from '../framework/index.ts'
+import { bindActionControls, bindPlatformControls, color, createPlatform, createPlatformer, createSynthAudio, fixedLoop, resolveStorage, STEP } from '../packages/ridgetop/framework/index.ts'
+import type { RidgetopNativeBridge } from '../packages/ridgetop/framework/index.ts'
 
 function withGlobals(overrides: Record<string, unknown>, run: () => void | Promise<void>) {
   const previous = new Map<string, PropertyDescriptor | undefined>()

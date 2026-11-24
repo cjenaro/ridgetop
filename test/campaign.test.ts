@@ -1,6 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { campaignSummary, loadCampaign, recordRelay, ROUTE, SAVE_KEY, saveCampaign } from '../game/campaign.ts'
+import { campaignSummary, loadCampaign, recordRelay, ROUTE, SAVE_KEY, saveCampaign } from '../examples/beacon-run/game/campaign.ts'
 
 test('progress unlocks the next course and survives reload, while improving records independently', () => {
   const store = new Map()

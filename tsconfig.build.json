@@ -8,5 +8,5 @@
     "declaration": true,
     "sourceMap": true
   },
-  "include": ["*.ts", "framework/**/*.ts", "game/**/*.ts", "racing/**/*.ts", "lighthouse/**/*.ts", "starter/**/*.ts", "models/**/*.ts"]
+  "include": ["*.ts", "models/**/*.ts"]
 }

@@ -1,0 +1,80 @@
+lockfileVersion: '9.0'
+
+settings:
+  autoInstallPeers: true
+  excludeLinksFromLockfile: false
+
+importers:
+
+  .:
+    devDependencies:
+      '@types/node':
+        specifier: 22.20.5
+        version: 22.20.5
+      '@webgpu/types':
+        specifier: 0.1.74
+        version: 0.1.74
+      ridgetop:
+        specifier: workspace:*
+        version: link:packages/ridgetop
+      typescript:
+        specifier: 5.9.3
+        version: 5.9.3
+
+  examples/beacon-run:
+    dependencies:
+      ridgetop:
+        specifier: workspace:*
+        version: link:../../packages/ridgetop
+
+  examples/lighthouse:
+    dependencies:
+      ridgetop:
+        specifier: workspace:*
+        version: link:../../packages/ridgetop
+
+  examples/signal-drift:
+    dependencies:
+      ridgetop:
+        specifier: workspace:*
+        version: link:../../packages/ridgetop
+
+  examples/starter:
+    dependencies:
+      ridgetop:
+        specifier: workspace:*
+        version: link:../../packages/ridgetop
+
+  packages/ridgetop:
+    dependencies:
+      typescript:
+        specifier: '>=5.0'
+        version: 5.9.3
+
+packages:
+
+  '@types/node@22.20.5':
+    resolution: {integrity: sha512-U2+DNr+wSjpsTS/wZGYHq7GcwfuSmKiKvoPvK22zwTlRhU91yOniN4qRR5KhIjvif7ysw/dz/hKmfDH0Ris4aA==}
+
+  '@webgpu/types@0.1.74':
+    resolution: {integrity: sha512-lgiI4hbuLcI9unnm2cL/tvCaQU45dp0xcLWJh5uB/9MBGvIA4F8XIk7nSiBeg+K4xWGYwgZKn80LmERI5CxoTA==}
+
+  typescript@5.9.3:
+    resolution: {integrity: sha512-jl1vZzPDinLr9eUt3J/t7V6FgNEw9QjvBPdysz9KfQDD41fQrC2Y4vKQdiaUpFT4bXlb1RHhLpp8wtm6M5TgSw==}
+    engines: {node: '>=14.17'}
+    hasBin: true
+
+  undici-types@6.21.0:
+    resolution: {integrity: sha512-iwDZqg0QAGrg9Rav5H4n0M64c3mkR59cJ6wQp+7C4nI0gsmExaedaYLNO44eT4AtBBwjbTiGPMlt2Md0T9H9JQ==}
+
+snapshots:
+
+  '@types/node@22.20.5':
+    dependencies:
+      undici-types: 6.21.0
+
+  '@webgpu/types@0.1.74': {}
+
+  typescript@5.9.3: {}
+
+  undici-types@6.21.0: {}

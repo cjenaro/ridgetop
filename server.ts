@@ -1,24 +1,65 @@
-import type { Player, PlayerSnapshot } from './game/simulation.ts'
+import type { Player, PlayerSnapshot } from './examples/beacon-run/game/simulation.ts'
 import {
   createCookieSession, createGameHost, createRoomService, isMain, sendJson, sendText, startGameHost
-} from './framework/server.ts'
-import { courses } from './game/level.ts'
-import { canEnterRegion, characterView } from './game/expedition.ts'
-import { createCharacterStore, openCharacterStore } from './game/character-store.ts'
-import { createPlayer, restartPlayer, stepPlayer } from './game/simulation.ts'
+} from 'ridgetop/server'
+import { courses } from './examples/beacon-run/game/level.ts'
+import { canEnterRegion, characterView } from './examples/beacon-run/game/expedition.ts'
+import { createCharacterStore, openCharacterStore } from './examples/beacon-run/game/character-store.ts'
+import { createPlayer, restartPlayer, stepPlayer } from './examples/beacon-run/game/simulation.ts'
 
-const files = [
-  'index.html', 'style.css', 'game-ui.css', 'main.js', 'benchmark.html', 'benchmark.js', 'racing.html',
-  'starter/index.html', 'starter/style.css', 'starter/main.js', 'starter/game.js',
+const rootStudioFiles = [
+  'game-ui.css', 'benchmark.html', 'benchmark.js',
   'models/index.html', 'models/style.css', 'models/main.js', 'models/headland.js',
-  'sprite-workshop.html', 'sprite-workshop.css', 'sprite-workshop.js', 'sprite-model-editor.js',
-  'racing/style.css', 'racing/main.js', 'racing/race.js', 'racing/scene.js', 'racing/track.js', 'racing/progression.js',
-  'racing/car-art.js', 'racing/garage.js', 'racing/garage-art.js', 'racing/save-menu.js',
-  'lighthouse.html', 'lighthouse/main.js', 'lighthouse/types.js', 'lighthouse/simulation.js',
-  'lighthouse/art.js', 'lighthouse/scene.js', 'lighthouse/audio.js',
-  'game/level.js', 'game/simulation.js', 'game/scene.js', 'game/campaign.js', 'game/sprites.js',
-  'game/sprite-art.js', 'game/assets/sprites.json', 'game/audio.js', 'game/expedition.js', 'game/assets/sprites.png', 'game/assets/scout.png'
+  'sprite-workshop.html', 'sprite-workshop.css', 'sprite-workshop.js', 'sprite-model-editor.js'
 ]
+
+function buildExampleRoutes(root: URL): Record<string, URL> {
+  const routes: Record<string, URL> = {}
+  const mount = (base: string, staticFiles: readonly string[], jsFiles: readonly string[], prefix = '') => {
+    const dir = new URL(base, root)
+    const dist = new URL('dist/', dir)
+    for (const f of staticFiles) routes['/' + prefix + f] = new URL(f, dir)
+    for (const f of jsFiles) routes['/' + prefix + f] = new URL(f, dist)
+  }
+
+  // Beacon Run at /
+  mount(
+    'examples/beacon-run/',
+    ['index.html', 'style.css', 'game/assets/sprites.json', 'game/assets/sprites.png', 'game/assets/scout.png'],
+    ['main.js', 'game/level.js', 'game/simulation.js', 'game/scene.js', 'game/campaign.js', 'game/sprites.js', 'game/sprite-art.js', 'game/audio.js', 'game/expedition.js']
+  )
+  routes['/'] = new URL('examples/beacon-run/index.html', root)
+
+  // Signal Drift at /racing
+  mount(
+    'examples/signal-drift/',
+    ['racing/style.css'],
+    ['racing/main.js', 'racing/race.js', 'racing/scene.js', 'racing/track.js', 'racing/progression.js', 'racing/car-art.js', 'racing/garage.js', 'racing/garage-art.js', 'racing/save-menu.js']
+  )
+  routes['/racing'] = new URL('examples/signal-drift/index.html', root)
+  routes['/racing.html'] = new URL('examples/signal-drift/index.html', root)
+
+  // Tidewatch (Lighthouse) at /lighthouse
+  mount(
+    'examples/lighthouse/',
+    [],
+    ['lighthouse/main.js', 'lighthouse/types.js', 'lighthouse/simulation.js', 'lighthouse/art.js', 'lighthouse/scene.js', 'lighthouse/audio.js']
+  )
+  routes['/lighthouse'] = new URL('examples/lighthouse/index.html', root)
+  routes['/lighthouse.html'] = new URL('examples/lighthouse/index.html', root)
+
+  // Starter (Lantern Grove) at /starter/
+  mount(
+    'examples/starter/',
+    ['index.html', 'style.css'],
+    ['main.js', 'game.js'],
+    'starter/'
+  )
+  routes['/starter/'] = new URL('examples/starter/index.html', root)
+
+  return routes
+}
+
 const roomRoute = /^\/rooms(?:\/([a-z0-9-]+))?\/([a-z0-9-]{1,32})\/(events|input|leave)$/
 const expeditionRoute = /^\/expeditions\/([a-z0-9-]+)\/([a-z0-9-]{1,32})\/(events|input|leave)$/
 const session = createCookieSession({ name: 'ridgetop_character', path: '/expeditions', maxAge: 31536000 })
@@ -55,11 +96,14 @@ export function createGameServer({ characters = createCharacterStore(), testing 
   })
 
   const source = import.meta.url.endsWith('.ts')
+  const root = new URL(source ? '.' : '../', import.meta.url)
   return createGameHost({
-    root: new URL(source ? '.' : '../', import.meta.url),
+    root,
     moduleRoot: new URL(source ? 'dist/' : '.', import.meta.url),
-    files, artDirectories: ['starter/art'],
-    aliases: { '/': 'index.html', '/benchmark': 'benchmark.html', '/racing': 'racing.html', '/lighthouse': 'lighthouse.html', '/sprites': 'sprite-workshop.html', '/models': 'models/index.html', '/starter/': 'starter/index.html' },
+    files: rootStudioFiles,
+    routes: buildExampleRoutes(root),
+    artMounts: { '/starter/art/': new URL('examples/starter/art/', root) },
+    aliases: { '/benchmark': 'benchmark.html', '/sprites': 'sprite-workshop.html', '/models': 'models/index.html' },
     testing,
     stop: rooms.close,
     save: characters.save,

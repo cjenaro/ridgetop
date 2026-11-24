@@ -4,8 +4,8 @@ import { access, mkdir, mkdtemp, readdir, readFile, rm, writeFile } from 'node:f
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import test from 'node:test'
-import { box, color, instances, octahedron } from '../framework/index.ts'
-import { bakeIconPng, exportGodotProject } from '../framework/server.ts'
+import { box, color, instances, octahedron } from '../packages/ridgetop/framework/index.ts'
+import { bakeIconPng, exportGodotProject } from '../packages/ridgetop/framework/server.ts'
 
 async function findGodot(): Promise<string | null> {
   if (process.env.GODOT_BIN) return process.env.GODOT_BIN

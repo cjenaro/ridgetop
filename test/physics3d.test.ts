@@ -21,8 +21,8 @@ import {
   slideSphere,
   sphereIntersectsAabb,
   sphereIntersectsSphere
-} from '../framework/index.ts'
-import type { Aabb, Vec3 } from '../framework/index.ts'
+} from '../packages/ridgetop/framework/index.ts'
+import type { Aabb, Vec3 } from '../packages/ridgetop/framework/index.ts'
 
 const execFileAsync = promisify(execFile)
 const repoRoot = fileURLToPath(new URL('../', import.meta.url))
@@ -392,7 +392,7 @@ test('framework/physics3d.ts compiles cleanly to Godot 4 GDScript and matches No
 
   await execFileAsync(
     process.execPath,
-    [join(repoRoot, 'tools', 'ts-to-gd.ts'), join(outDir, 'scripts', 'compiled'), 'framework/physics3d.ts'],
+    [join(repoRoot, 'packages', 'ridgetop', 'tools', 'ts-to-gd.ts'), join(outDir, 'scripts', 'compiled'), 'packages/ridgetop/framework/physics3d.ts'],
     { cwd: repoRoot, timeout: 20_000 }
   )
 

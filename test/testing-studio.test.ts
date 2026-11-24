@@ -9,19 +9,19 @@ import { createInterface } from 'node:readline'
 import test from 'node:test'
 import { pathToFileURL } from 'node:url'
 import { createGameServer } from '../server.ts'
-import { createGame } from '../tools/create-game.ts'
+import { createGame } from '../packages/ridgetop/tools/create-game.ts'
 import {
   bindActionControls, box, createArtKit, createMeshPool, createRig, createSpriteAtlas,
   fixedLoop, instances, isTestingPaused, multiply, octahedron, orthographic, perspective,
   projectPoint, renderRig, setTestingActive, setTestingPaused, STEP, view
-} from '../framework/index.ts'
-import { pickRenderedScene, pickSpriteDraws } from '../framework/art-review.ts'
-import { createGameHost } from '../framework/server.ts'
-import { boxNode, createCanvasUi } from '../framework/ui.ts'
+} from '../packages/ridgetop/framework/index.ts'
+import { pickRenderedScene, pickSpriteDraws } from '../packages/ridgetop/framework/art-review.ts'
+import { createGameHost } from '../packages/ridgetop/framework/server.ts'
+import { boxNode, createCanvasUi } from '../packages/ridgetop/framework/ui.ts'
 import {
   captureSourceSite, getLastSpriteDraws, recognizeAssetFromPick, resetTestingRuntime
-} from '../framework/testing-runtime.ts'
-import type { SpriteDrawRecord } from '../framework/testing-runtime.ts'
+} from '../packages/ridgetop/framework/testing-runtime.ts'
+import type { SpriteDrawRecord } from '../packages/ridgetop/framework/testing-runtime.ts'
 
 const PNG_1X1 = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aDLsAAAAASUVORK5CYII='
 

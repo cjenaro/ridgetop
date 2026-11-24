@@ -1,9 +1,9 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { evaluateDecisions, STEP, verifyBounded, verifyTrace } from '../framework/index.ts'
-import { courses } from '../game/level.ts'
-import { platformerRules } from '../game/rules.ts'
-import { createPlayer, stepPlayer } from '../game/simulation.ts'
+import { evaluateDecisions, STEP, verifyBounded, verifyTrace } from '../packages/ridgetop/framework/index.ts'
+import { courses } from '../examples/beacon-run/game/level.ts'
+import { platformerRules } from '../examples/beacon-run/game/rules.ts'
+import { createPlayer, stepPlayer } from '../examples/beacon-run/game/simulation.ts'
 
 test('a forbidden finish produces the shortest replay with the failing rule and state', () => {
   const course = courses.ridge

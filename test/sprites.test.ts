@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { createSpriteSheet, spriteColumn } from '../framework/index.ts'
-import { paintScout, scoutClips, suits } from '../game/sprite-art.ts'
+import { createSpriteSheet, spriteColumn } from '../packages/ridgetop/framework/index.ts'
+import { paintScout, scoutClips, suits } from '../examples/beacon-run/game/sprite-art.ts'
 
 test('pixel art stays within its cell and preserves transparent pixels and RGB channels', () => {
   const sheet = createSpriteSheet(3, 2, 2, 2)

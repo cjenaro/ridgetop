@@ -1,5 +1,5 @@
-import type { Backend, Vec3 } from './framework/index.ts'
-import { box, color, createLowPolyRenderer, instances, multiply, octahedron, orthographic, view } from './framework/low-poly.ts'
+import type { Backend, Vec3 } from 'ridgetop'
+import { box, color, createLowPolyRenderer, instances, multiply, octahedron, orthographic, view } from 'ridgetop'
 
 const width = 960
 const height = 540

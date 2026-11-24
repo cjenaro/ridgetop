@@ -1,6 +1,6 @@
 import { artBases, artModels, artPalette, createArtBuilder, createArtKit, createArtRecipe,
-  modelFromArtRecipe, spriteColumn, spriteDirections } from './framework/index.ts'
-import type { ArtRecipe, ArtTone, SpriteAtlasSource, SpriteClip } from './framework/index.ts'
+  modelFromArtRecipe, spriteColumn, spriteDirections } from 'ridgetop'
+import type { ArtRecipe, ArtTone, SpriteAtlasSource, SpriteClip } from 'ridgetop'
 import { createPartEditor, createViewComparison } from './sprite-model-editor.ts'
 
 type Manifest = SpriteAtlasSource & { clips: Record<string, SpriteClip> }

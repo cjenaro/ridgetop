@@ -1,11 +1,11 @@
-import type { Player } from '../game/simulation.ts'
+import type { Player } from '../examples/beacon-run/game/simulation.ts'
 import { createHash } from 'node:crypto'
 import { readFile } from 'node:fs/promises'
-import { evaluateDecisions, STEP, verifyBounded, verifyTrace } from '../framework/index.ts'
-import { courses } from '../game/level.ts'
-import { platformerRules } from '../game/rules.ts'
-import { createPlayer, stepPlayer } from '../game/simulation.ts'
-import { createDecisionApi } from '../framework/server.ts'
+import { evaluateDecisions, STEP, verifyBounded, verifyTrace } from 'ridgetop'
+import { courses } from '../examples/beacon-run/game/level.ts'
+import { platformerRules } from '../examples/beacon-run/game/rules.ts'
+import { createPlayer, stepPlayer } from '../examples/beacon-run/game/simulation.ts'
+import { createDecisionApi } from 'ridgetop/server'
 
 const alphabet = [false, true].flatMap(jump => [
   { left: false, right: false, jump },
@@ -25,9 +25,11 @@ const goals = {
   }
 }
 const files = [
-  'framework/index.ts', 'framework/server.ts', 'framework/loop.ts', 'framework/platformer.ts', 'framework/verification.ts', 'game/level.ts', 'game/simulation.ts',
-  'game/rules.ts', 'game/verification-routes.json', 'tools/verify-game.ts', 'framework/decision-api.ts',
-  'framework/decision-providers.ts'
+  'packages/ridgetop/framework/index.ts', 'packages/ridgetop/framework/server.ts', 'packages/ridgetop/framework/loop.ts',
+  'packages/ridgetop/framework/platformer.ts', 'packages/ridgetop/framework/verification.ts',
+  'examples/beacon-run/game/level.ts', 'examples/beacon-run/game/simulation.ts',
+  'examples/beacon-run/game/rules.ts', 'examples/beacon-run/game/verification-routes.json', 'tools/verify-game.ts',
+  'packages/ridgetop/framework/decision-api.ts', 'packages/ridgetop/framework/decision-providers.ts'
 ]
 
 function stepFor(course) {
@@ -65,7 +67,7 @@ function observe(initial: Player, step: ReturnType<typeof stepFor>, actions: typ
 
 async function certify(api) {
   const [routeBytes, provenance] = await Promise.all([
-    readFile(new URL('../game/verification-routes.json', import.meta.url)),
+    readFile(new URL('../examples/beacon-run/game/verification-routes.json', import.meta.url)),
     Promise.all(files.map(async path => {
       const bytes = await readFile(new URL('../' + path, import.meta.url))
       return [path, createHash('sha256').update(bytes).digest('hex')]

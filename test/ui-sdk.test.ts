@@ -3,7 +3,7 @@ import test from 'node:test'
 import {
   boxNode, buttonPrimitive, column, createCanvasUi, createMachine, createUiAgent, dialogPrimitive,
   menuPrimitive, overlay, resolveLayout, row, selectPrimitive, sliderPrimitive, spacerNode, togglePrimitive
-} from '../framework/ui.ts'
+} from '../packages/ridgetop/framework/ui.ts'
 
 test('createMachine enforces explicit transitions, guards, and actions', () => {
   const events: string[] = []

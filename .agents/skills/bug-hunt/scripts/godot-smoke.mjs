@@ -4,7 +4,7 @@ import { access, mkdtemp, readdir, readFile, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { packageGame } from '../../../../framework/packager.ts'
+import { packageGame } from '../../../../packages/ridgetop/framework/packager.ts'
 
 const repoRoot = fileURLToPath(new URL('../../../../', import.meta.url))
 
@@ -55,7 +55,7 @@ const godot = await findGodot()
 const games = [
   { game: 'signal-drift', checkFile: ['scripts', 'compiled', 'racing', 'race.gd'], glb: 'circuit-copper.glb' },
   { game: 'beacon-run', checkFile: ['scripts', 'compiled', 'game', 'simulation.gd'], glb: 'lantern.glb' },
-  { game: 'starter', checkFile: ['scripts', 'compiled', 'starter', 'game.gd'], glb: 'ranger.glb' },
+  { game: 'starter', checkFile: ['scripts', 'compiled', 'game.gd'], glb: 'ranger.glb' },
   { game: 'lighthouse', checkFile: ['scripts', 'compiled', 'lighthouse', 'simulation.gd'], glb: 'island.glb' }
 ]
 for (const entry of games) {

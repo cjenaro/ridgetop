@@ -1,5 +1,5 @@
 import { readFile, writeFile } from 'node:fs/promises'
-import { standalonePage } from './standalone-page.ts'
+import { standalonePage } from '../packages/ridgetop/tools/standalone-page.ts'
 
 const root = new URL('../', import.meta.url)
 const dist = new URL('dist/', root)

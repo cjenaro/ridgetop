@@ -1,10 +1,10 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { instances, box, quaternionFromEuler, rotateVec3, STEP } from '../framework/index.ts'
-import { createRace, recover, rivalInput, standings, stepRace } from '../racing/race.ts'
-import { circuits, route, roadMesh, trackWidth } from '../racing/track.ts'
+import { instances, box, quaternionFromEuler, rotateVec3, STEP } from '../packages/ridgetop/framework/index.ts'
+import { createRace, recover, rivalInput, standings, stepRace } from '../examples/signal-drift/racing/race.ts'
+import { circuits, route, roadMesh, trackWidth } from '../examples/signal-drift/racing/track.ts'
 import { buyUpgrade, championshipBackup, leadingEvent, loadChampionship, readChampionshipBackup,
-  recordResult, saveChampionship, unlocked } from '../racing/progression.ts'
+  recordResult, saveChampionship, unlocked } from '../examples/signal-drift/racing/progression.ts'
 
 test('portable backups round-trip existing garage saves and reject damaged or incompatible files', () => {
   const legacy = { credits: 134, build: { motor: 1, tires: 2, armor: 0, capacitor: 0 },

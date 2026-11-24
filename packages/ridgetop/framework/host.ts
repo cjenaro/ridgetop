@@ -52,11 +52,20 @@ function injectImportMap(text: string): string {
     const pos = headMatch.index + headMatch[0].length
     return text.slice(0, pos) + importMapTag + text.slice(pos)
   }
+  const htmlMatch = /<html\b[^>]*>/i.exec(text)
+  if (htmlMatch) {
+    const pos = htmlMatch.index + htmlMatch[0].length
+    return text.slice(0, pos) + importMapTag + text.slice(pos)
+  }
   return importMapTag + text
 }
 
 function prepareHtml(html: Buffer, testingEnabled: boolean): Buffer {
-  let text = injectImportMap(html.toString('utf8'))
+  let text = html.toString('utf8')
+  const hasModuleScript = /<script\b[^>]*\btype\s*=\s*["']module["']/i.test(text)
+  if (hasModuleScript || testingEnabled) {
+    text = injectImportMap(text)
+  }
   if (testingEnabled && !text.includes('/framework/testing-boot.js')) {
     const closeBody = text.lastIndexOf('</body>')
     text = closeBody >= 0

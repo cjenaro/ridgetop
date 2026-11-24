@@ -6,9 +6,8 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { createInterface } from 'node:readline'
 import { click, key, openTab, status, until } from './browser-driver.ts'
-import { createGame } from './create-game.ts'
-import { createArtRecipe } from '../framework/art.ts'
-import { multiply, orthographic, projectPoint, view } from '../framework/geometry.ts'
+import { createGame } from '../packages/ridgetop/tools/create-game.ts'
+import { createArtRecipe, multiply, orthographic, projectPoint, view } from 'ridgetop'
 
 type Tab = Awaited<ReturnType<typeof openTab>>
 const backend = process.env.RIDGETOP_REVIEW_RENDERER ?? 'canvas'

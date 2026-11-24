@@ -5,8 +5,8 @@ import { mkdtemp } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import test from 'node:test'
-import { openCharacterStore } from '../game/character-store.ts'
-import { canEnterRegion, characterView } from '../game/expedition.ts'
+import { openCharacterStore } from '../examples/beacon-run/game/character-store.ts'
+import { canEnterRegion, characterView } from '../examples/beacon-run/game/expedition.ts'
 import { createGameServer } from '../server.ts'
 
 test('expedition characters persist, progression gates zones and duplicate rewards are idempotent', async () => {

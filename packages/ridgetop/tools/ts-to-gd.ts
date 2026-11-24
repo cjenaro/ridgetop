@@ -2377,6 +2377,97 @@ async function resolveThroughBarrel(
   return { file: filePath, symbol }
 }
 
+const GODOT_TESTING_NOOP_GD = `extends RefCounted
+# No-op testing runtime shim for Godot 4 release builds (studio/testing tools stripped).
+
+func __init_module() -> void:
+	pass
+
+func isTestingActive() -> bool:
+	return false
+
+func isTestingPaused() -> bool:
+	return false
+
+func setTestingActive(_v = false) -> void:
+	pass
+
+func setTestingPaused(_v = false) -> void:
+	pass
+
+func onTestingPause(_fn = null) -> Callable:
+	return func(): pass
+
+func captureSourceSite() -> Variant:
+	return null
+
+func registerKnownShapes(_shapes = null) -> void:
+	pass
+
+func getKnownShapeName(_mesh = null) -> Variant:
+	return null
+
+func recordMeshMeta(_mesh = null, _meta = null) -> void:
+	pass
+
+func getMeshMeta(_mesh = null) -> Variant:
+	return null
+
+func recordRigMeta(_rig = null, _meta = null) -> void:
+	pass
+
+func getRigMeta(_rig = null) -> Variant:
+	return null
+
+func nextTestingGroupId() -> String:
+	return ""
+
+func nextSpriteAtlasId() -> String:
+	return ""
+
+func registerArtKitRuntime(_kit = null) -> Callable:
+	return func(): pass
+
+func getRegisteredArtKits() -> Array:
+	return []
+
+func findRegisteredArtModel(_name = null) -> Variant:
+	return null
+
+func recordFrame(_frame = null) -> void:
+	pass
+
+func getLastFrame() -> Variant:
+	return null
+
+func recordSpriteBegin(_canvas = null) -> void:
+	pass
+
+func recordSpriteDraw(_draw = null) -> void:
+	pass
+
+func getLastSpriteDraws() -> Array:
+	return []
+
+func registerHudRegion(_region = null) -> Callable:
+	return func(): pass
+
+func recordCanvasUiRegions(_regions = null) -> void:
+	pass
+
+func getHudRegions() -> Array:
+	return []
+
+func registerTestingHooks(_hooks = null) -> Callable:
+	return func(): pass
+
+func getTestingHooks() -> Array:
+	return []
+
+func resetTestingRuntime() -> void:
+	pass
+`
+
 /** Compile a TypeScript module graph into a self-contained set of Godot 4 `.gd` files + `rt.gd`. */
 export async function compileTsProjectToGodot(options: CompileProjectOptions): Promise<{ files: string[]; rtPath: string }> {
   const rootDir = resolve(options.rootDir)
@@ -2395,6 +2486,15 @@ export async function compileTsProjectToGodot(options: CompileProjectOptions): P
     const normalized = resolve(absFile)
     if (visited.has(normalized)) return
     visited.add(normalized)
+
+    const relDisplay = computeRelOutputPath(normalized, rootDir)
+    if (relDisplay === 'framework/testing-runtime.ts' || relDisplay === 'framework/testing-runtime.js') {
+      const outFile = join(outDir, 'framework', 'testing-runtime.gd')
+      await mkdir(dirname(outFile), { recursive: true })
+      await writeFile(outFile, GODOT_TESTING_NOOP_GD)
+      emitted.push(outFile)
+      return
+    }
 
     const source = await readFile(normalized, 'utf8')
     let sf = astCache.get(normalized)
@@ -2428,7 +2528,6 @@ export async function compileTsProjectToGodot(options: CompileProjectOptions): P
 
     for (const dep of importMap.values()) await compileOne(dep.absTarget)
 
-    const relDisplay = computeRelOutputPath(normalized, rootDir)
     const gd = compileTsToGd(source, relDisplay, {
       rtResPath,
       resolveImport(specifier, exportedName) {

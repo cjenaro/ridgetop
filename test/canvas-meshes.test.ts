@@ -1,8 +1,8 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { box, instances, mesh } from '../framework/index.ts'
-import { canvasMeshes } from '../framework/mesh-canvas.ts'
-import { gpuMeshes } from '../framework/mesh-gpu.ts'
+import { box, instances, mesh } from '../packages/ridgetop/framework/index.ts'
+import { canvasMeshes } from '../packages/ridgetop/framework/mesh-canvas.ts'
+import { gpuMeshes } from '../packages/ridgetop/framework/mesh-gpu.ts'
 
 test('Canvas preserves crossing triangles and rejects triangles outside each clip plane', () => {
   const camera = new Float32Array([1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1])

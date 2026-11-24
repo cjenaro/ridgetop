@@ -1,5 +1,5 @@
-import { artPalette, artShapes, fitArtRecipe } from './framework/index.ts'
-import type { ArtRecipe, ArtShape, ArtTone, SpriteSheetImage, Vec3 } from './framework/index.ts'
+import { artPalette, artShapes, fitArtRecipe } from 'ridgetop'
+import type { ArtRecipe, ArtShape, ArtTone, SpriteSheetImage, Vec3 } from 'ridgetop'
 
 export function createPartEditor(root: HTMLDetailsElement, onApply: (source: ArtRecipe) => void) {
   const select = root.querySelector<HTMLSelectElement>('#part-name')

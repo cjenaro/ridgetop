@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict'
 import { execFile } from 'node:child_process'
+import { once } from 'node:events'
 import { access, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { createRequire } from 'node:module'
 import { tmpdir } from 'node:os'
@@ -8,10 +9,10 @@ import test from 'node:test'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import { promisify } from 'node:util'
 import vm from 'node:vm'
-import { createArtKit, box, instances } from '../framework/index.ts'
-import { boxNode, column, overlay } from '../framework/ui-layout.ts'
-import { bakeIconPng, bakeMotifWav, encodeGlb, encodeWav, layoutToGodotTscn, packageGame, parsePackageArgs } from '../framework/server.ts'
-import { createGame } from '../tools/create-game.ts'
+import { createArtKit, box, instances } from '../packages/ridgetop/framework/index.ts'
+import { boxNode, column, overlay } from '../packages/ridgetop/framework/ui-layout.ts'
+import { bakeIconPng, bakeMotifWav, encodeGlb, encodeWav, layoutToGodotTscn, packageGame, parsePackageArgs } from '../packages/ridgetop/framework/server.ts'
+import { createGame } from '../packages/ridgetop/tools/create-game.ts'
 
 const execFileAsync = promisify(execFile)
 const repoRoot = fileURLToPath(new URL('../', import.meta.url))
@@ -547,4 +548,101 @@ test('packageGame builds tree-shaken Web, Steam, Mobile, and Godot outputs for T
   await access(join(godotDir, 'scripts', 'compiled', 'lighthouse', 'types.gd'))
   await access(join(godotDir, 'scripts', 'compiled', 'framework', 'ui-layout.gd'))
   await access(join(godotDir, 'scripts', 'compiled', 'framework', 'ui-button.gd'))
+})
+
+test('external standalone project outside repo with bare ridgetop imports works in host Import Map & packager (all + player)', async t => {
+  const work = await mkdtemp(join(tmpdir(), 'ridgetop-ext-repo-'))
+  t.after(() => rm(work, { recursive: true, force: true }))
+
+  const projectDir = join(work, 'external-quest')
+  await mkdir(join(projectDir, 'src'), { recursive: true })
+  await writeFile(join(projectDir, 'package.json'), JSON.stringify({
+    name: 'external-quest',
+    version: '1.2.3',
+    private: true,
+    type: 'module',
+    ridgetop: {
+      name: 'External Quest',
+      appId: 'com.example.externalquest',
+      godotEntries: ['src/sim.ts', 'ridgetop/ui-layout']
+    }
+  }, null, 2))
+  await writeFile(join(projectDir, 'index.html'), `<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>External Quest</title>
+  <link rel="stylesheet" href="./style.css">
+  <script type="module" src="./main.js"></script>
+</head>
+<body><canvas id="stage"></canvas></body>
+</html>
+`)
+  await writeFile(join(projectDir, 'style.css'), 'body { margin: 0; background: #102028; }\n')
+  await writeFile(join(projectDir, 'src', 'sim.ts'), `import { createPlatformer } from 'ridgetop'
+export const sim = createPlatformer()
+export function ping(x: number) { return x + 1 }
+`)
+  await writeFile(join(projectDir, 'main.js'), `import { color, registerTestingHooks } from 'ridgetop'
+import { boxNode, overlay } from 'ridgetop/ui-layout'
+import { buttonPrimitive } from 'ridgetop/ui-button'
+export const theme = color('#efac62')
+export const rootNode = overlay({ id: 'root' }, [boxNode({ id: 'go', style: { width: 120, height: 40 } })])
+export const btn = buttonPrimitive.create({ id: 'go', label: 'Go' })
+registerTestingHooks({ snapshot: () => ({ ok: true }) })
+`)
+
+  // 1. Verify createGameHost serves Import Map + matching SHA-256 CSP header and /framework/*.js
+  const { createGameHost } = await import('../packages/ridgetop/framework/server.ts')
+  const app = createGameHost({
+    root: pathToFileURL(projectDir + '/'),
+    files: ['index.html', 'style.css', 'main.js'],
+    aliases: { '/': 'index.html' }
+  })
+  t.after(() => app.close())
+  app.server.listen(0, '127.0.0.1')
+  await once(app.server, 'listening')
+  const port = (app.server.address() as { port: number }).port
+  const htmlRes = await fetch(`http://127.0.0.1:${port}/`)
+  assert.equal(htmlRes.status, 200)
+  const csp = htmlRes.headers.get('content-security-policy') ?? ''
+  assert.match(csp, /script-src 'self' 'sha256-[A-Za-z0-9+/=]+'/, 'CSP must permit exact SHA-256 hash of importmap without unsafe-inline')
+  assert.ok(!csp.includes('unsafe-inline'), 'CSP must never include unsafe-inline')
+  const servedHtml = await htmlRes.text()
+  assert.ok(servedHtml.includes('<script type="importmap">'), 'Host must inject importmap for bare ridgetop specifiers')
+  assert.ok(servedHtml.includes('"ridgetop":"/framework/index.js"'))
+  assert.ok(servedHtml.includes('"ridgetop/ui-layout":"/framework/ui-layout.js"'))
+  assert.equal((await fetch(`http://127.0.0.1:${port}/framework/index.js`)).status, 200)
+
+  // 2. Verify packageGame(all + player) resolves bare specifiers, tree-shakes, compiles Godot GDScript, and leaves ZERO bare specifiers
+  const outDir = join(work, 'out')
+  const result = await packageGame({ target: 'all', projectDir, outDir })
+  assert.equal(result.name, 'External Quest')
+  assert.equal(result.appId, 'com.example.externalquest')
+
+  const webMain = await readFile(join(outDir, 'web', 'main.js'), 'utf8')
+  assert.ok(!webMain.includes("'ridgetop'"), 'Bundled main.js must rewrite bare ridgetop import')
+  assert.ok(!webMain.includes("'ridgetop/ui-layout'"), 'Bundled main.js must rewrite bare ridgetop/ui-layout import')
+  assert.ok(webMain.includes("'./framework/index.js'"))
+  assert.ok(webMain.includes("'./framework/ui-layout.js'"))
+  assert.ok(webMain.includes("'./framework/ui-button.js'"))
+  await assert.rejects(access(join(outDir, 'web', 'framework', 'ui-slider.js')), 'unused ui-slider.js must be dropped')
+  await assert.rejects(access(join(outDir, 'web', 'framework', 'testing-runtime.js')), 'testing-runtime.js must be dropped')
+
+  // Verify bundled main.js actually executes cleanly in Node!
+  const bundled = await import(pathToFileURL(join(outDir, 'web', 'main.js')).href)
+  assert.equal(bundled.rootNode.id, 'root')
+  assert.equal(bundled.btn.id, 'go')
+
+  // Verify Godot target compiled TS using bundled packages/ridgetop/tools/ts-to-gd!
+  await access(join(outDir, 'godot', 'scripts', 'compiled', 'rt.gd'))
+  await access(join(outDir, 'godot', 'scripts', 'compiled', 'src', 'sim.gd'))
+  await access(join(outDir, 'godot', 'scripts', 'compiled', 'framework', 'platformer.gd'))
+  await access(join(outDir, 'godot', 'scripts', 'compiled', 'framework', 'ui-layout.gd'))
+
+  // Verify portable player HTML target also works cleanly
+  const playerRes = await packageGame({ target: 'player', projectDir, outDir: join(work, 'out-player') })
+  assert.equal(playerRes.outputs[0].files, 1)
+  const playerHtml = await readFile(playerRes.outputs[0].playerPath!, 'utf8')
+  assert.ok(playerHtml.includes('ridgetop-offline/framework/index.js'))
 })

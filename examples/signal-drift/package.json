@@ -1,0 +1,32 @@
+{
+  "name": "@ridgetop/signal-drift",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "ridgetop": "workspace:*"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "typecheck": "tsc -p tsconfig.json",
+    "start": "node dist/server.js",
+    "start:testing": "node dist/server.js --testing",
+    "package": "ridgetop package --project ."
+  },
+  "ridgetop": {
+    "name": "Signal Drift",
+    "appId": "com.ridgetop.signaldrift",
+    "html": "index.html",
+    "moduleRoot": "dist",
+    "entry": "racing/main.js",
+    "staticFiles": ["game-ui.css"],
+    "assetsModule": "dist/racing/package-assets.js",
+    "godotEntries": [
+      "racing/race.ts",
+      "racing/progression.ts",
+      "ridgetop/ui-layout",
+      "ridgetop/ui-button",
+      "ridgetop/ui-toggle"
+    ]
+  }
+}

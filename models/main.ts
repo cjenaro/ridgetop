@@ -1,5 +1,5 @@
-import { color, createArtKit, createArtRecipe, createLowPolyRenderer, modelFromArtRecipe, multiply, orthographic, view } from '../framework/index.ts'
-import type { Backend, Color, InstanceBatch } from '../framework/index.ts'
+import { color, createArtKit, createArtRecipe, createLowPolyRenderer, modelFromArtRecipe, multiply, orthographic, view } from 'ridgetop'
+import type { Backend, Color, InstanceBatch } from 'ridgetop'
 import { createHeadland } from './headland.ts'
 
 type Study = {

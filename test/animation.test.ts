@@ -3,7 +3,7 @@ import test from 'node:test'
 import {
   box, color, createAnimator, createArtBuilder, createMeshPool, createParticles, createRig, createRng,
   createSoundscape, multiply, multiplyQuat, perspective, quaternionFromEuler, renderRig, view, worldToScreen
-} from '../framework/index.ts'
+} from '../packages/ridgetop/framework/index.ts'
 
 test('createRig + renderRig composes hierarchical parent-child transforms and emits batches', () => {
   const rig = createRig([

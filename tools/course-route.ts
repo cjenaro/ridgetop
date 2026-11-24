@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
-import { STEP } from '../framework/loop.ts'
-import { createPlayer, EMPTY_INPUT, stepPlayer } from '../game/simulation.ts'
+import { STEP } from 'ridgetop'
+import { createPlayer, EMPTY_INPUT, stepPlayer } from '../examples/beacon-run/game/simulation.ts'
 
 export function courseRoute(course, { collectSignal = false } = {}) {
   const player = createPlayer('one', 0, course)

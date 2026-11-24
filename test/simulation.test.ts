@@ -1,8 +1,8 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { STEP } from '../framework/loop.ts'
-import { createPlayer, EMPTY_INPUT, restartPlayer, stepPlayer } from '../game/simulation.ts'
-import { courses, SPAWN } from '../game/level.ts'
+import { STEP } from '../packages/ridgetop/framework/loop.ts'
+import { createPlayer, EMPTY_INPUT, restartPlayer, stepPlayer } from '../examples/beacon-run/game/simulation.ts'
+import { courses, SPAWN } from '../examples/beacon-run/game/level.ts'
 import { courseRoute } from '../tools/course-route.ts'
 
 for (const course of Object.values(courses)) {

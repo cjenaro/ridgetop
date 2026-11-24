@@ -7,9 +7,9 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { createGameServer } from '../server.ts'
-import { createGameHost, createRecords } from '../framework/server.ts'
-import { connectRoom } from '../framework/index.ts'
-import { courses } from '../game/level.ts'
+import { createGameHost, createRecords } from '../packages/ridgetop/framework/server.ts'
+import { connectRoom } from '../packages/ridgetop/framework/index.ts'
+import { courses } from '../examples/beacon-run/game/level.ts'
 
 test('game art folders serve PNG and JSON exports with encoded names', async t => {
   const folder = await mkdtemp(join(tmpdir(), 'ridgetop-art-'))

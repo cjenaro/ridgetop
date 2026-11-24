@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { DEFAULT_JUMP_TIMING } from '../game/simulation.ts'
+import { DEFAULT_JUMP_TIMING } from '../examples/beacon-run/game/simulation.ts'
 import { tuneJumps } from '../tools/tune-jumps.ts'
 
 test('jump tuning improves held-out intent while preserving stale-input and course checks', async () => {

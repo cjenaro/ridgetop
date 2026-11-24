@@ -1,0 +1,32 @@
+{
+  "name": "@ridgetop/starter",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "ridgetop": "workspace:*"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "typecheck": "tsc -p tsconfig.json",
+    "start": "node dist/serve.js",
+    "start:testing": "node dist/serve.js --testing",
+    "playtest": "node dist/serve.js --testing",
+    "preview-art": "node dist/preview-art.js",
+    "art-library": "node dist/art-library.js",
+    "package": "ridgetop package --project ."
+  },
+  "ridgetop": {
+    "name": "Lantern Grove",
+    "html": "index.html",
+    "moduleRoot": "dist",
+    "entry": "main.js",
+    "staticFiles": ["style.css"],
+    "staticDirs": ["art"],
+    "overridesReset": "art/overrides.json",
+    "godotEntries": [
+      "game.ts",
+      "ridgetop/ui-layout"
+    ]
+  }
+}

@@ -2,8 +2,8 @@ import assert from 'node:assert/strict'
 import { readdir, readFile } from 'node:fs/promises'
 import test from 'node:test'
 import { artModels, bakeAnimatedSpritePixels, box, createArtBuilder, createArtKit, createArtRecipe, createMeshPool,
-  modelFromArtRecipe, renderRig, rigFromArtModel, rigFromArtRecipe } from '../framework/index.ts'
-import type { ArtModel, ArtRecipe } from '../framework/index.ts'
+  modelFromArtRecipe, renderRig, rigFromArtModel, rigFromArtRecipe } from '../packages/ridgetop/framework/index.ts'
+import type { ArtModel, ArtRecipe } from '../packages/ridgetop/framework/index.ts'
 
 test('custom art shares mesh buffers and applies the kit palette and object transform', () => {
   const sign: ArtModel = { span: 4, centerY: 1, parts: [
@@ -236,7 +236,7 @@ test('rigFromArtRecipe and kit.rig integrate with createAnimator and renderRig w
 })
 
 test('all existing v1 starter and library .art.json recipes remain 100% compatible', async () => {
-  const root = new URL('../starter/art/', import.meta.url)
+  const root = new URL('../examples/starter/art/', import.meta.url)
   const libraryDir = new URL('library/', root)
   const libraryFiles = (await readdir(libraryDir)).filter(f => f.endsWith('.art.json'))
   assert.ok(libraryFiles.length >= 10, 'expected library art recipes')

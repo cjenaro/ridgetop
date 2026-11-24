@@ -1,5 +1,5 @@
 import type { AddressInfo } from 'node:net'
-import type { RoomEntity } from '../framework/index.ts'
+import type { RoomEntity } from '../packages/ridgetop/framework/index.ts'
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { Buffer } from 'node:buffer'
@@ -7,8 +7,8 @@ import { createHash, randomBytes } from 'node:crypto'
 import { once } from 'node:events'
 import { createServer } from 'node:http'
 import { createConnection } from 'node:net'
-import { connectRoom, STEP } from '../framework/index.ts'
-import { createRoomService } from '../framework/server.ts'
+import { connectRoom, STEP } from '../packages/ridgetop/framework/index.ts'
+import { createRoomService } from '../packages/ridgetop/framework/server.ts'
 
 interface ArenaInput {
   ax: number

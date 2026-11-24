@@ -5,7 +5,7 @@ import { createServer } from 'node:http'
 import { promisify } from 'node:util'
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { createDecisionApi } from '../framework/server.ts'
+import { createDecisionApi } from '../packages/ridgetop/framework/server.ts'
 
 const execute = promisify(execFile)
 

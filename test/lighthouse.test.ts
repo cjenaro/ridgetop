@@ -1,11 +1,11 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { STEP, verifyTrace } from '../framework/index.ts'
+import { STEP, verifyTrace } from '../packages/ridgetop/framework/index.ts'
 import {
   buyUpgrade, canBuyUpgrade, createInitialState, serializeSave, stepGame
-} from '../lighthouse/simulation.ts'
-import { PADS, UPGRADES, carryCapFor, islandHeight, upgradeCost } from '../lighthouse/types.ts'
-import type { GameState, MoveInput } from '../lighthouse/types.ts'
+} from '../examples/lighthouse/lighthouse/simulation.ts'
+import { PADS, UPGRADES, carryCapFor, islandHeight, upgradeCost } from '../examples/lighthouse/lighthouse/types.ts'
+import type { GameState, MoveInput } from '../examples/lighthouse/lighthouse/types.ts'
 
 test('Tidewatch terrain tiers separate headland, pier, beach, and tidal shoals', () => {
   const headland = islandHeight(0, -2.5)

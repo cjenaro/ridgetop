@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import { writeFile } from 'node:fs/promises'
-import { courses } from '../game/level.ts'
-import { ROUTE, SAVE_KEY } from '../game/campaign.ts'
+import { courses } from '../examples/beacon-run/game/level.ts'
+import { ROUTE, SAVE_KEY } from '../examples/beacon-run/game/campaign.ts'
 import { courseRoute } from './course-route.ts'
 import { openTab, until, status, click, key } from './browser-driver.ts'
 

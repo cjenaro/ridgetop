@@ -1,0 +1,31 @@
+{
+  "name": "@ridgetop/lighthouse",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "ridgetop": "workspace:*"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "typecheck": "tsc -p tsconfig.json",
+    "start": "node dist/server.js",
+    "start:testing": "node dist/server.js --testing",
+    "package": "ridgetop package --project ."
+  },
+  "ridgetop": {
+    "name": "Tidewatch",
+    "appId": "com.ridgetop.tidewatch",
+    "html": "index.html",
+    "moduleRoot": "dist",
+    "entry": "lighthouse/main.js",
+    "staticFiles": ["game-ui.css"],
+    "assetsModule": "dist/lighthouse/package-assets.js",
+    "godotEntries": [
+      "lighthouse/simulation.ts",
+      "lighthouse/types.ts",
+      "ridgetop/ui-layout",
+      "ridgetop/ui-button"
+    ]
+  }
+}
