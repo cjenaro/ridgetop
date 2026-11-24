@@ -1,4 +1,5 @@
 import type { RoomInput } from './types.ts'
+import { isTestingPaused, onTestingPause } from './testing-runtime.ts'
 
 export type GamepadBinding =
   | { button: number; threshold?: number }
@@ -93,8 +94,15 @@ export function bindActionControls<Action extends string>({
     padDown.clear()
   }
 
+  const unsubPause = onTestingPause(paused => { if (paused) clear() })
+
   function poll() {
     if (disposed || gamepad === false) return false
+    if (isTestingPaused()) {
+      padDown.clear()
+      padPauseDown = false
+      return false
+    }
     const pads = readPads()
     if (!pads.length) {
       padDown.clear()
@@ -153,6 +161,7 @@ export function bindActionControls<Action extends string>({
   }
 
   window.addEventListener('keydown', event => {
+    if (isTestingPaused()) return
     if (event.code === 'Escape') {
       if (!event.repeat) onPause()
       return
@@ -186,7 +195,7 @@ export function bindActionControls<Action extends string>({
   for (const button of buttons) {
     const action = button.dataset.control as Action
     button.addEventListener('pointerdown', event => {
-      if (event.button !== 0 || !enabled()) return
+      if (isTestingPaused() || event.button !== 0 || !enabled()) return
       event.preventDefault()
       onGesture()
       try { button.setPointerCapture?.(event.pointerId) } catch { /* Synthetic or detached pointers cannot be captured. */ }
@@ -194,7 +203,7 @@ export function bindActionControls<Action extends string>({
       onPress(action)
     }, listeners)
     button.addEventListener('click', event => {
-      if (event.detail === 0 && enabled()) {
+      if (!isTestingPaused() && event.detail === 0 && enabled()) {
         onGesture()
         onPress(action)
       }
@@ -208,6 +217,7 @@ export function bindActionControls<Action extends string>({
     clear,
     poll,
     active(action: Action) {
+      if (isTestingPaused()) return false
       if (gamepad !== false && poll()) ensurePadLoop()
       for (const held of down.values()) if (held === action) return true
       for (const held of pointers.values()) if (held === action) return true
@@ -215,6 +225,7 @@ export function bindActionControls<Action extends string>({
     },
     dispose() {
       disposed = true
+      unsubPause()
       stopPadLoop()
       controller.abort()
       clear()
@@ -291,7 +302,7 @@ export function bindMenuGamepad({
   const listeners = { signal: controller.signal }
 
   function step(now = performance.now()) {
-    if (disposed) return
+    if (disposed || isTestingPaused()) return
     const pads = readPads()
     if (!pads.length) {
       lastDir = 0
@@ -425,12 +436,15 @@ export function bindVirtualStick(
     vecZ = 0
   }
 
+  const unsubPause = onTestingPause(paused => { if (paused) clear() })
+
   function localPoint(event: PointerEvent) {
     const rect = element.getBoundingClientRect()
     return { x: event.clientX - rect.left, y: event.clientY - rect.top }
   }
 
   element.addEventListener('pointerdown', event => {
+    if (isTestingPaused()) return
     onGesture()
     if (!enabled()) return
     if (event.button !== 0 && event.pointerType === 'mouse') return
@@ -445,7 +459,7 @@ export function bindVirtualStick(
 
   element.addEventListener('pointermove', event => {
     if (pointerId !== event.pointerId) return
-    if (!enabled()) { clear(); return }
+    if (isTestingPaused() || !enabled()) { clear(); return }
     const { x, y } = localPoint(event)
     currentX = x
     currentY = y
@@ -479,6 +493,7 @@ export function bindVirtualStick(
     state: (): VirtualStickState => ({ active: pointerId !== null, originX, originY, currentX, currentY, x: vecX, z: vecZ }),
     clear,
     dispose() {
+      unsubPause()
       clear()
       controller.abort()
     }

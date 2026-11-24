@@ -1,3 +1,6 @@
+import { captureSourceSite, isTestingActive, nextSpriteAtlasId, recordSpriteBegin, recordSpriteDraw } from './testing-runtime.ts'
+import type { SpriteAtlasMeta } from './testing-runtime.ts'
+
 export interface SpriteClip {
   /** First column of a horizontal sequence. The default row is zero. */
   column: number
@@ -42,6 +45,7 @@ async function loadSpriteImage(src: string) {
 }
 
 export async function createSpriteAtlas(canvas: HTMLCanvasElement, source: SpriteAtlasSource | SpriteSheetImage | string | URL) {
+  const manifestUrl = typeof source === 'string' ? source : source instanceof URL ? source.href : undefined
   const atlas = typeof source === 'string' || source instanceof URL ? await readManifest(source) : source
   const { src, frameWidth, frameHeight, clips = {} } = 'manifest' in atlas ? atlas.manifest : atlas
   if (![frameWidth, frameHeight].every(n => Number.isSafeInteger(n) && n > 0)) throw new RangeError('Invalid sprite frame dimensions')
@@ -59,7 +63,35 @@ export async function createSpriteAtlas(canvas: HTMLCanvasElement, source: Sprit
     }
   }
 
-  function draw(column: number, row: number, point: Point, { height, anchor = .9, flip = false }: DrawOptions) {
+  let atlasMeta: SpriteAtlasMeta | undefined
+  function ensureAtlasMeta(): SpriteAtlasMeta {
+    atlasMeta ??= {
+      id: nextSpriteAtlasId(),
+      src,
+      manifestUrl,
+      frameWidth,
+      frameHeight,
+      rows,
+      columns,
+      clips,
+      image,
+      sourceSite: captureSourceSite()
+    }
+    return atlasMeta
+  }
+  if (isTestingActive()) ensureAtlasMeta()
+
+  function inferClip(column: number, row: number): { clip?: string; frame: number } {
+    for (const [name, spec] of Object.entries(clips)) {
+      const specRow = spec.row ?? 0
+      if (specRow === row && column >= spec.column && column < spec.column + spec.frames) {
+        return { clip: name, frame: column - spec.column }
+      }
+    }
+    return { frame: 0 }
+  }
+
+  function drawInternal(column: number, row: number, point: Point, { height, anchor = .9, flip = false }: DrawOptions, clipInfo?: { clip: string; frame: number }) {
     const h = canvas.height * height
     const w = h * frameWidth / frameHeight
     const x = Math.round((point[0] + 1) * canvas.width / 2)
@@ -76,6 +108,26 @@ export async function createSpriteAtlas(canvas: HTMLCanvasElement, source: Sprit
     } else {
       context.drawImage(image, column * frameWidth, row * frameHeight, frameWidth, frameHeight, left, top, w, h)
     }
+    if (isTestingActive()) {
+      const info = clipInfo ?? inferClip(column, row)
+      recordSpriteDraw({
+        canvas,
+        atlas: ensureAtlasMeta(),
+        clip: info.clip,
+        frame: info.frame,
+        column,
+        row,
+        flip,
+        rect: { x: left, y: top, width: w, height: h },
+        canvasWidth: canvas.width,
+        canvasHeight: canvas.height,
+        point
+      })
+    }
+  }
+
+  function draw(column: number, row: number, point: Point, options: DrawOptions) {
+    drawInternal(column, row, point, options)
   }
 
   return {
@@ -95,6 +147,7 @@ export async function createSpriteAtlas(canvas: HTMLCanvasElement, source: Sprit
       if (canvas.height !== stage.height) canvas.height = stage.height
       context.clearRect(0, 0, canvas.width, canvas.height)
       context.imageSmoothingEnabled = false
+      if (isTestingActive()) recordSpriteBegin(canvas)
     },
     draw,
     drawClip(name: string, elapsedMs: number, point: Point, options: DrawOptions & { row?: number }) {
@@ -102,7 +155,8 @@ export async function createSpriteAtlas(canvas: HTMLCanvasElement, source: Sprit
       const clip = clips[name]
       const row = options.row ?? clip.row ?? 0
       if (!Number.isInteger(row) || row < 0 || row >= rows) throw new RangeError('Sprite row outside atlas')
-      draw(spriteColumn(clip, elapsedMs), row, point, options)
+      const col = spriteColumn(clip, elapsedMs)
+      drawInternal(col, row, point, options, { clip: name, frame: col - clip.column })
     },
     marker(point: readonly [number, number], { offset, size, minimumSize = 0, fill }: { offset: number; size: number; minimumSize?: number; fill: string }) {
       const x = (point[0] + 1) * canvas.width / 2

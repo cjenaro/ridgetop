@@ -1,4 +1,5 @@
-import type { BlendMode, Color, InstanceBatch, Matrix, Mesh, Quaternion, Vec3 } from './types.ts'
+import type { BatchMeta, BlendMode, Color, InstanceBatch, InstanceTag, Matrix, Mesh, Quaternion, Vec3 } from './types.ts'
+import { captureSourceSite, getMeshMeta, isTestingActive } from './testing-runtime.ts'
 
 export const INSTANCE_SIZE = 16
 const white: Vec3 = [1, 1, 1]
@@ -7,12 +8,17 @@ const uniformScale: Vec3 = [1, 1, 1]
 
 export function instances(
   mesh: Mesh,
-  options: number | { capacity?: number; blend?: BlendMode } = 16
+  options: number | { capacity?: number; blend?: BlendMode; meta?: BatchMeta } = 16
 ): InstanceBatch {
   const capacity = typeof options === 'number' ? options : (options.capacity ?? 16)
   const blend: BlendMode = typeof options === 'number' ? 'opaque' : (options.blend ?? 'opaque')
   if (!Number.isSafeInteger(capacity) || capacity <= 0) throw new RangeError('Invalid batch capacity')
   if (blend !== 'opaque' && blend !== 'alpha' && blend !== 'additive') throw new RangeError('Unknown blend mode')
+  let meta: BatchMeta | undefined = typeof options === 'number' ? undefined : options.meta ? { ...options.meta } : undefined
+  if (isTestingActive()) {
+    meta ??= {}
+    if (!meta.sourceSite) meta.sourceSite = captureSourceSite() ?? getMeshMeta(mesh)?.sourceSite
+  }
   let data = new Float32Array(capacity * INSTANCE_SIZE)
   let count = 0
   let revision = 0
@@ -20,6 +26,7 @@ export function instances(
   const max = [-Infinity, -Infinity, -Infinity]
   return {
     mesh, blend, min, max,
+    get meta() { return meta },
     get data() { return data },
     get count() { return count },
     get revision() { return revision },
@@ -28,8 +35,9 @@ export function instances(
       revision++
       min.fill(Infinity)
       max.fill(-Infinity)
+      if (meta?.tags) meta.tags.length = 0
     },
-    add(position = origin, scale = uniformScale, rotation: number | Quaternion = 0, color: Vec3 | Color = white, unlit = 0) {
+    add(position = origin, scale = uniformScale, rotation: number | Quaternion = 0, color: Vec3 | Color = white, unlit = 0, tag?: InstanceTag) {
       if (count * INSTANCE_SIZE === data.length) {
         const enlarged = new Float32Array(data.length * 2)
         enlarged.set(data)
@@ -71,6 +79,11 @@ export function instances(
         data[at + 13] = qy * inv
         data[at + 14] = qz * inv
         data[at + 15] = qw * inv
+      }
+      if (tag) {
+        meta ??= {}
+        meta.tags ??= []
+        meta.tags[count] = tag
       }
       const reach = mesh.radius * Math.max(sx, sy, sz)
       min[0] = Math.min(min[0], x - reach)

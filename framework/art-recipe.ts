@@ -1,5 +1,6 @@
 import { archMesh, box, chamferedPrism, cylinder, octahedron, revolvedMesh } from './geometry.ts'
 import { spriteDirections } from './low-poly.ts'
+import { registerKnownShapes } from './testing-runtime.ts'
 import type { Mesh, Vec3 } from './types.ts'
 
 export const artPalette = {
@@ -15,6 +16,7 @@ export const artShapes = {
   taper: revolvedMesh([[0,-.5],[.5,-.5],[.23,.5],[0,.5]], 8),
   arch: archMesh()
 }
+registerKnownShapes(artShapes)
 export type ArtTone = keyof typeof artPalette
 export type ArtShape = keyof typeof artShapes
 type Palette = Partial<Record<ArtTone, string>>

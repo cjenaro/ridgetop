@@ -27,3 +27,11 @@ export { artModels, artPalette, artShapes, createArtKit, createArtRecipe, modelF
 export type { ArtModel, ArtPart, ArtRecipe, ArtRecipePart, ArtShape, ArtTone } from './art.ts'
 export { artBases, artPartBounds, createArtBuilder, fitArtRecipe } from './art-builder.ts'
 export type { ArtBase, ArtBuilderOptions, ArtFace } from './art-builder.ts'
+export {
+  isTestingActive, isTestingPaused, onTestingPause, registerHudRegion, registerTestingHooks,
+  setTestingActive, setTestingPaused
+} from './testing-runtime.ts'
+export type {
+  ArtSourceInfo, CapturedFrame, HudRegion, Picked3DInstance, RecognizedAsset, RecognizedMember,
+  SpriteAtlasMeta, SpriteDrawRecord, TestingHooks
+} from './testing-runtime.ts'
