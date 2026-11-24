@@ -1,19 +1,25 @@
-import type { Color, InstanceBatch, Matrix, Mesh, Quaternion, Vec3 } from './types.ts'
+import type { BlendMode, Color, InstanceBatch, Matrix, Mesh, Quaternion, Vec3 } from './types.ts'
 
 export const INSTANCE_SIZE = 16
 const white: Vec3 = [1, 1, 1]
 const origin: Vec3 = [0, 0, 0]
 const uniformScale: Vec3 = [1, 1, 1]
 
-export function instances(mesh: Mesh, capacity = 16): InstanceBatch {
+export function instances(
+  mesh: Mesh,
+  options: number | { capacity?: number; blend?: BlendMode } = 16
+): InstanceBatch {
+  const capacity = typeof options === 'number' ? options : (options.capacity ?? 16)
+  const blend: BlendMode = typeof options === 'number' ? 'opaque' : (options.blend ?? 'opaque')
   if (!Number.isSafeInteger(capacity) || capacity <= 0) throw new RangeError('Invalid batch capacity')
+  if (blend !== 'opaque' && blend !== 'alpha' && blend !== 'additive') throw new RangeError('Unknown blend mode')
   let data = new Float32Array(capacity * INSTANCE_SIZE)
   let count = 0
   let revision = 0
   const min = [Infinity, Infinity, Infinity]
   const max = [-Infinity, -Infinity, -Infinity]
   return {
-    mesh, min, max,
+    mesh, blend, min, max,
     get data() { return data },
     get count() { return count },
     get revision() { return revision },
@@ -35,10 +41,13 @@ export function instances(mesh: Mesh, capacity = 16): InstanceBatch {
         throw new RangeError('Instance scale must contain three finite, positive values')
       }
       const [r, g, b] = color
+      const rawA = color.length >= 4 ? (color as Color)[3] : 1
+      const alpha = Number.isFinite(rawA) ? Math.max(0, Math.min(1, rawA)) : 1
       const at = count * INSTANCE_SIZE
       data[at] = x
       data[at + 1] = y
       data[at + 2] = z
+      data[at + 3] = alpha
       data[at + 4] = sx
       data[at + 5] = sy
       data[at + 6] = sz

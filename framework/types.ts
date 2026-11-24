@@ -9,6 +9,25 @@ export type Backend = 'auto' | 'webgpu' | 'webgl2' | 'canvas'
 
 export type RendererName = 'WebGPU' | 'WebGL 2' | 'Canvas 2D'
 
+export type BlendMode = 'opaque' | 'alpha' | 'additive'
+
+export interface PointLight {
+  readonly position: Vec3
+  readonly color: Vec3 | Color
+  readonly radius: number
+  readonly intensity?: number
+}
+
+export interface LightingOptions {
+  readonly direction?: Vec3
+  readonly ambient?: number
+  readonly color?: Vec3 | Color
+  readonly fogColor?: Vec3 | Color
+  readonly fogNear?: number
+  readonly fogFar?: number
+  readonly points?: readonly PointLight[]
+}
+
 export interface Mesh {
   /** Interleaved XYZ position and flat normal. Treat this array as read-only. */
   readonly data: Float32Array<ArrayBuffer>
@@ -18,6 +37,7 @@ export interface Mesh {
 
 export interface InstanceBatch {
   readonly mesh: Mesh
+  readonly blend: BlendMode
   readonly data: Float32Array<ArrayBuffer>
   readonly min: readonly number[]
   readonly max: readonly number[]
@@ -25,7 +45,7 @@ export interface InstanceBatch {
   readonly revision: number
   /** Reset the batch while retaining allocated capacity. */
   clear(): void
-  /** Scale components must be positive. Yaw is in radians around the Y axis. */
+  /** Scale components must be positive. Yaw is in radians around the Y axis. Fourth color component sets opacity for alpha/additive batches. */
   add(position?: Vec3, scale?: Vec3, rotation?: number | Quaternion, color?: Vec3 | Color, unlit?: number): void
 }
 
@@ -42,6 +62,8 @@ export interface LowPolyRenderer {
   readonly canvas: HTMLCanvasElement
   /** Returns the same statistics object each frame. Copy it to retain a sample. */
   render(matrix: Matrix, batches: Iterable<InstanceBatch>, clear?: Color): Readonly<RenderStats>
+  /** Update directional light, ambient, light tint, distance fog, and up to 4 point lights at runtime without rebuilding batches. */
+  setLighting(lighting: LightingOptions): void
   release(batch: InstanceBatch): void
   releaseMesh(mesh: Mesh): void
   dispose(): void
@@ -107,6 +129,7 @@ export interface MeshBackend {
   lost?: Promise<unknown>
   maxDimension: number
   draw(matrix: Matrix, clear: Color, visible: readonly InstanceBatch[], stats: RenderStats): void
+  setLighting?(light: Float32Array<ArrayBuffer>): void
   release(batch: InstanceBatch): void
   releaseMesh(mesh: Mesh): void
   dispose(): void

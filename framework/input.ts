@@ -379,3 +379,108 @@ export function bindMenuGamepad({
     }
   }
 }
+
+export interface VirtualStickState {
+  readonly active: boolean
+  readonly originX: number
+  readonly originY: number
+  readonly currentX: number
+  readonly currentY: number
+  readonly x: number
+  readonly z: number
+}
+
+/**
+ * Pointer/touch drag virtual thumbstick for top-down and isometric movement.
+ * Respects `isBlocked(x, y)` (e.g., `Boolean(ui.hitTest(x, y))`) so UI buttons always take priority.
+ */
+export function bindVirtualStick(
+  element: HTMLElement,
+  {
+    enabled = () => true,
+    isBlocked = () => false,
+    onGesture = () => {},
+    cameraYaw = 0,
+    deadzone = 8,
+    maxRadius = 56
+  }: {
+    enabled?(): boolean
+    isBlocked?(x: number, y: number): boolean
+    onGesture?(): void
+    cameraYaw?: number
+    deadzone?: number
+    maxRadius?: number
+  } = {}
+) {
+  const controller = new AbortController()
+  const signal = { signal: controller.signal }
+  let pointerId: number | null = null
+  let originX = 0, originY = 0, currentX = 0, currentY = 0
+  let vecX = 0, vecZ = 0
+  const cos = Math.cos(cameraYaw), sin = Math.sin(cameraYaw)
+
+  function clear() {
+    pointerId = null
+    vecX = 0
+    vecZ = 0
+  }
+
+  function localPoint(event: PointerEvent) {
+    const rect = element.getBoundingClientRect()
+    return { x: event.clientX - rect.left, y: event.clientY - rect.top }
+  }
+
+  element.addEventListener('pointerdown', event => {
+    onGesture()
+    if (!enabled()) return
+    if (event.button !== 0 && event.pointerType === 'mouse') return
+    const { x, y } = localPoint(event)
+    if (isBlocked(x, y)) return
+    pointerId = event.pointerId
+    originX = currentX = x
+    originY = currentY = y
+    vecX = vecZ = 0
+    try { element.setPointerCapture?.(event.pointerId) } catch { /* Synthetic events cannot be captured. */ }
+  }, signal)
+
+  element.addEventListener('pointermove', event => {
+    if (pointerId !== event.pointerId) return
+    if (!enabled()) { clear(); return }
+    const { x, y } = localPoint(event)
+    currentX = x
+    currentY = y
+    const dx = currentX - originX
+    const dy = currentY - originY
+    const dist = Math.hypot(dx, dy)
+    if (dist > deadzone) {
+      const mag = Math.min(1, dist / Math.max(1, maxRadius))
+      const sx = (dx / dist) * mag
+      const sy = (dy / dist) * mag
+      vecX = sx * cos + sy * sin
+      vecZ = -sx * sin + sy * cos
+    } else {
+      vecX = vecZ = 0
+    }
+  }, signal)
+
+  for (const type of ['pointerup', 'pointercancel', 'lostpointercapture'] as const) {
+    element.addEventListener(type, event => {
+      if ((event as PointerEvent).pointerId === pointerId) clear()
+    }, signal)
+  }
+  globalThis.window?.addEventListener('blur', clear, signal)
+  globalThis.document?.addEventListener('visibilitychange', () => {
+    if (globalThis.document.hidden) clear()
+  }, signal)
+
+  return {
+    active: () => pointerId !== null,
+    vector: () => ({ x: vecX, z: vecZ }),
+    state: (): VirtualStickState => ({ active: pointerId !== null, originX, originY, currentX, currentY, x: vecX, z: vecZ }),
+    clear,
+    dispose() {
+      clear()
+      controller.abort()
+    }
+  }
+}

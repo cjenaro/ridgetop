@@ -71,9 +71,11 @@
     "dist",
     "!dist/packages",
     "racing",
+    "lighthouse",
     "models",
     "starter",
     "racing.html",
+    "lighthouse.html",
     "tsconfig.json",
     "tsconfig.build.json"
   ],

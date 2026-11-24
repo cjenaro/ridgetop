@@ -56,6 +56,7 @@ export type CanvasWidget =
   | { type: 'toggle'; label: string; checked: boolean; disabled?: boolean; primitive?: UiPrimitiveInstance; onToggle?(next: boolean): void }
   | { type: 'select'; label: string; valueLabel: string; disabled?: boolean; primitive?: UiPrimitiveInstance; onNext?(): void; onPrev?(): void }
   | { type: 'slider'; label: string; ratio: number; valueText?: string; disabled?: boolean; primitive?: UiPrimitiveInstance; onChange?(ratio: number): void }
+  | { type: 'bar'; ratio: number; label?: string; valueText?: string; fill?: string; track?: string; stroke?: string }
 
 export interface CanvasUiHit {
   readonly id: string
@@ -389,9 +390,12 @@ export function createCanvasUi(canvas: HTMLCanvasElement, options: {
       moveFocus(-1)
     } else if (event.code === 'ArrowLeft' || event.code === 'ArrowRight') {
       const hit = hits.find(h => h.id === focusedId)
+      const dir = event.code === 'ArrowRight' ? 1 : -1
+      event.preventDefault()
       if (hit && (hit.widget.type === 'select' || hit.widget.type === 'slider')) {
-        event.preventDefault()
-        activateHit(hit, event.code === 'ArrowRight' ? 1 : -1)
+        activateHit(hit, dir)
+      } else {
+        moveFocus(dir)
       }
     } else if ((event.code === 'Enter' || event.code === 'Space') && !event.repeat) {
       const hit = hits.find(h => h.id === focusedId) ?? hits[0]
@@ -593,6 +597,34 @@ export function createCanvasUi(canvas: HTMLCanvasElement, options: {
         ctx.textAlign = 'center'
         ctx.textBaseline = 'middle'
         ctx.fillText(widget.valueText ?? widget.label, rect.x + rect.width / 2, rect.y + rect.height / 2, Math.max(1, rect.width - 10))
+        ctx.restore()
+      } else if (widget.type === 'bar') {
+        const clamped = Math.max(0, Math.min(1, Number.isFinite(widget.ratio) ? widget.ratio : 0))
+        ctx.save()
+        drawFacetedBox(ctx, rect, {
+          fill: widget.track ?? '#0c1b23cc',
+          stroke: widget.stroke ?? theme.border,
+          bevel: 4
+        })
+        const fillW = Math.round((rect.width - 6) * clamped)
+        if (fillW > 0) {
+          ctx.fillStyle = widget.fill ?? theme.accent
+          ctx.fillRect(rect.x + 3, rect.y + 3, Math.max(2, fillW), Math.max(2, rect.height - 6))
+        }
+        const caption = widget.valueText ?? widget.label
+        if (caption) {
+          ctx.fillStyle = theme.text
+          ctx.font = `700 11px ${theme.mono}`
+          ctx.textAlign = widget.valueText && widget.label ? 'left' : 'center'
+          ctx.textBaseline = 'middle'
+          if (widget.valueText && widget.label) {
+            ctx.fillText(widget.label, rect.x + 8, rect.y + rect.height / 2, Math.max(1, rect.width * 0.6))
+            ctx.textAlign = 'right'
+            ctx.fillText(widget.valueText, rect.x + rect.width - 8, rect.y + rect.height / 2, Math.max(1, rect.width * 0.4))
+          } else {
+            ctx.fillText(caption, rect.x + rect.width / 2, rect.y + rect.height / 2, Math.max(1, rect.width - 10))
+          }
+        }
         ctx.restore()
       }
     }

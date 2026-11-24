@@ -1,7 +1,9 @@
 import assert from 'node:assert/strict'
 import { setTimeout as wait } from 'node:timers/promises'
 
-const debug = process.env.CHROMIUM_DEBUG ?? 'http://localhost:9222'
+function debugUrl() {
+  return process.env.CHROMIUM_DEBUG ?? 'http://localhost:9222'
+}
 
 async function connect(url: string) {
   const socket = new WebSocket(url)
@@ -50,7 +52,7 @@ async function attach(target, beforeLoad?: string) {
     },
     async close() {
       close()
-      await fetch(debug + '/json/close/' + target.id)
+      await fetch(debugUrl() + '/json/close/' + target.id)
     }
   }
   await call('Page.enable')
@@ -61,7 +63,7 @@ async function attach(target, beforeLoad?: string) {
 }
 
 export async function openTab(url: string, beforeLoad?: string) {
-  const target = await fetch(debug + '/json/new?about:blank', { method: 'PUT' }).then(r => r.json())
+  const target = await fetch(debugUrl() + '/json/new?about:blank', { method: 'PUT' }).then(r => r.json())
   const tab = await attach(target, beforeLoad)
   await tab.call('Page.navigate', { url })
   await tab.call('Page.bringToFront')
@@ -70,7 +72,7 @@ export async function openTab(url: string, beforeLoad?: string) {
 
 // Player release checks run in temporary profiles so downloads and saves stay isolated.
 export async function openPlayerTab(downloadPath: string) {
-  const info = await fetch(debug + '/json/version').then(r => r.json())
+  const info = await fetch(debugUrl() + '/json/version').then(r => r.json())
   const browser = await connect(info.webSocketDebuggerUrl)
   const { browserContextId } = await browser.call('Target.createBrowserContext', { disposeOnDetach: true })
   async function dispose() {
@@ -80,7 +82,7 @@ export async function openPlayerTab(downloadPath: string) {
   try {
     await browser.call('Browser.setDownloadBehavior', { behavior: 'allow', downloadPath, browserContextId })
     const { targetId } = await browser.call('Target.createTarget', { url: 'about:blank', browserContextId })
-    const targets = await fetch(debug + '/json/list').then(r => r.json())
+    const targets = await fetch(debugUrl() + '/json/list').then(r => r.json())
     const tab = await attach(targets.find(entry => entry.id === targetId))
     await tab.call('Network.enable')
     await tab.call('Network.emulateNetworkConditions', { offline: true, latency: 0, downloadThroughput: 0, uploadThroughput: 0 })

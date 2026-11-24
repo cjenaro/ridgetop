@@ -129,7 +129,7 @@ export function createArtBuilder(name: string, { base = 'empty', reference, fram
     model.parts.forEach(part => placed.set(part.name, artPartBounds(part)))
   }
 
-  function adjust(id: string, { tone, scaleBy, moveBy }: { tone?: ArtTone; scaleBy?: Vec3; moveBy?: Vec3 }) {
+  function adjust(id: string, { tone, scaleBy, moveBy, unlit }: { tone?: ArtTone; scaleBy?: Vec3; moveBy?: Vec3; unlit?: number }) {
     const index = parts.findIndex(part => part.name === id)
     if (index < 0) throw new Error('Unknown part ' + id)
     const next = { ...parts[index] }
@@ -139,6 +139,11 @@ export function createArtBuilder(name: string, { base = 'empty', reference, fram
     }
     if (scaleBy) { checkVector(scaleBy, id, true); next.scale = vec(i => next.scale[i]*scaleBy[i]) }
     if (moveBy) { checkVector(moveBy, id); next.position = vec(i => next.position[i]+moveBy[i]) }
+    if (unlit !== undefined) {
+      if (typeof unlit !== 'number' || !Number.isFinite(unlit) || unlit < 0 || unlit > 1) throw new RangeError('Unlit must be in 0–1 for ' + id)
+      if (unlit > 0) next.unlit = unlit
+      else delete next.unlit
+    }
     checkVector(next.scale, id, true)
     checkVector(next.position, id)
     placed.set(id, artPartBounds({ ...next, mesh: artShapes[next.shape] }))
@@ -150,9 +155,10 @@ export function createArtBuilder(name: string, { base = 'empty', reference, fram
     parts.splice(parts.findIndex(part => part.name === id), 1)
   }
 
-  function solid(id: string, shape: ArtShape, size: Vec3, tone: ArtTone, center: Vec3 = origin, rotation: Vec3 = origin) {
+  function solid(id: string, shape: ArtShape, size: Vec3, tone: ArtTone, center: Vec3 = origin, rotation: Vec3 = origin, unlit = 0) {
     if (typeof id !== 'string' || !id.trim() || placed.has(id)) throw new Error('Each part needs a unique name: ' + id)
     if (!Object.hasOwn(artShapes, shape) || !Object.hasOwn(artPalette, tone)) throw new Error('Unknown shape or tone for ' + id)
+    if (typeof unlit !== 'number' || !Number.isFinite(unlit) || unlit < 0 || unlit > 1) throw new RangeError('Unlit must be in 0–1 for ' + id)
     checkVector(size, id, true); checkVector(center, id); checkVector(rotation, id)
     const mesh = artShapes[shape]
     let b = shapeBounds.get(shape)
@@ -163,7 +169,7 @@ export function createArtBuilder(name: string, { base = 'empty', reference, fram
     const scale = vec(i => size[i]/extent(b,i))
     const [pitch,yaw,roll] = rotation
     const part: ArtRecipePart = { name: id, shape, position: center, scale, tone,
-      ...(pitch && { pitch }), ...(yaw && { yaw }), ...(roll && { roll }) }
+      ...(pitch && { pitch }), ...(yaw && { yaw }), ...(roll && { roll }), ...(unlit > 0 && { unlit }) }
     // Some odd-sided meshes have an off-center bounding box. Honor the requested center.
     const shift = rotateVec3(quaternionFromEuler(pitch,yaw,roll), vec(i => (b.min[i]+b.max[i])*scale[i]/2))
     part.position = vec(i => center[i]-shift[i])
@@ -178,11 +184,11 @@ export function createArtBuilder(name: string, { base = 'empty', reference, fram
     checkVector(offset, parent)
     return vec(i => (b.min[i]+b.max[i]+normals[face][i]*extent(b,i))/2+offset[i])
   }
-  function attach(id: string, parent: string, face: Surface, shape: ArtShape, size: Vec3, tone: ArtTone, offset: Vec3 = origin) {
+  function attach(id: string, parent: string, face: Surface, shape: ArtShape, size: Vec3, tone: ArtTone, offset: Vec3 = origin, unlit = 0) {
     if ((face as string) === 'center') throw new Error('Attach requires a surface face, not center')
     checkVector(size, id, true)
     const anchor = point(parent, face, offset)
-    return solid(id, shape, size, tone, vec(i => anchor[i]+normals[face][i]*size[i]*.42))
+    return solid(id, shape, size, tone, vec(i => anchor[i]+normals[face][i]*size[i]*.42), origin, unlit)
   }
   function between(id: string, from: Vec3, to: Vec3, width: number | readonly [number,number], tone: ArtTone, shape: ArtShape = 'cylinder') {
     checkVector(from, id); checkVector(to, id)

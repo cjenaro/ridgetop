@@ -14,8 +14,9 @@ function imports(source) {
 test('Beacon Run depends only on its own modules and Ridgetop public entry points', async () => {
   const gameFiles = (await readdir(new URL('game/', root))).filter(file => file.endsWith('.ts'))
   const racingFiles = (await readdir(new URL('racing/', root))).filter(file => file.endsWith('.ts'))
+  const lighthouseFiles = (await readdir(new URL('lighthouse/', root))).filter(file => file.endsWith('.ts'))
   const files = ['main.ts', 'server.ts', ...gameFiles.map(file => 'game/' + file),
-    ...racingFiles.map(file => 'racing/' + file)]
+    ...racingFiles.map(file => 'racing/' + file), ...lighthouseFiles.map(file => 'lighthouse/' + file)]
   for (const file of files) {
     const url = new URL(file, root)
     for (const specifier of imports(await readFile(url, 'utf8'))) {
@@ -32,6 +33,30 @@ test('Beacon Run depends only on its own modules and Ridgetop public entry point
       assert.ok(specifier.startsWith('node:') ||
         (specifier.startsWith('.') && new URL(specifier, url).href.startsWith(new URL('framework/', root).href)),
         file + ' depends on a module outside Ridgetop: ' + specifier)
+    }
+  }
+
+  // Ensure every browser framework module reachable from framework/index.ts or framework/ui.ts
+  // is registered in framework/host.ts browserModules so it never 404s in hosted builds.
+  const hostSource = await readFile(new URL('framework/host.ts', root), 'utf8')
+  const hostedMatch = /const browserModules = \[([\s\S]*?)\]/.exec(hostSource)
+  assert.ok(hostedMatch, 'Expected browserModules list in framework/host.ts')
+  const hosted = new Set([...hostedMatch[1].matchAll(/'([^']+)'/g)].map(m => m[1]))
+  const visited = new Set<string>()
+  const queue = ['framework/index.ts', 'framework/ui.ts']
+  while (queue.length) {
+    const cur = queue.pop()!
+    if (visited.has(cur)) continue
+    visited.add(cur)
+    const jsName = cur.replace(/^framework\//, '').replace(/\.ts$/, '.js')
+    if (jsName !== 'types.js') {
+      assert.ok(hosted.has(jsName), `${jsName} is imported by browser entry points but missing from framework/host.ts browserModules`)
+    }
+    const url = new URL(cur, root)
+    for (const specifier of imports(await readFile(url, 'utf8'))) {
+      if (!specifier.startsWith('.')) continue
+      const next = new URL(specifier, url).href.slice(root.href.length)
+      if (next.startsWith('framework/') && next.endsWith('.ts')) queue.push(next)
     }
   }
 })

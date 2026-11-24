@@ -11,6 +11,6 @@
     "useUnknownInCatchVariables": false,
     "noEmit": true
   },
-  "include": ["*.ts", "framework/**/*.ts", "game/**/*.ts", "racing/**/*.ts", "starter/**/*.ts", "models/**/*.ts", "test/**/*.ts", "tools/**/*.ts"],
+  "include": ["*.ts", "framework/**/*.ts", "game/**/*.ts", "racing/**/*.ts", "lighthouse/**/*.ts", "starter/**/*.ts", "models/**/*.ts", "test/**/*.ts", "tools/**/*.ts"],
   "exclude": ["dist", "node_modules"]
 }

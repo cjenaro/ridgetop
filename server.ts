@@ -14,6 +14,8 @@ const files = [
   'sprite-workshop.html', 'sprite-workshop.css', 'sprite-workshop.js', 'sprite-model-editor.js',
   'racing/style.css', 'racing/main.js', 'racing/race.js', 'racing/scene.js', 'racing/track.js', 'racing/progression.js',
   'racing/car-art.js', 'racing/garage.js', 'racing/garage-art.js', 'racing/save-menu.js',
+  'lighthouse.html', 'lighthouse/main.js', 'lighthouse/types.js', 'lighthouse/simulation.js',
+  'lighthouse/art.js', 'lighthouse/scene.js', 'lighthouse/audio.js',
   'game/level.js', 'game/simulation.js', 'game/scene.js', 'game/campaign.js', 'game/sprites.js',
   'game/sprite-art.js', 'game/assets/sprites.json', 'game/audio.js', 'game/expedition.js', 'game/assets/sprites.png', 'game/assets/scout.png'
 ]
@@ -54,7 +56,7 @@ export function createGameServer({ characters = createCharacterStore() } = {}) {
     root: new URL(source ? '.' : '../', import.meta.url),
     moduleRoot: new URL(source ? 'dist/' : '.', import.meta.url),
     files, artDirectories: ['starter/art'],
-    aliases: { '/': 'index.html', '/benchmark': 'benchmark.html', '/racing': 'racing.html', '/sprites': 'sprite-workshop.html', '/models': 'models/index.html', '/starter/': 'starter/index.html' },
+    aliases: { '/': 'index.html', '/benchmark': 'benchmark.html', '/racing': 'racing.html', '/lighthouse': 'lighthouse.html', '/sprites': 'sprite-workshop.html', '/models': 'models/index.html', '/starter/': 'starter/index.html' },
     stop: rooms.close,
     save: characters.save,
     async handle(req, res, pathname) {

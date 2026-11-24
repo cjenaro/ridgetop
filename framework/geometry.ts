@@ -182,6 +182,29 @@ export function projectPoint(matrix: Matrix, x: number, y: number, z: number): [
   ]
 }
 
+/**
+ * Project a 3D world point to CSS-pixel screen coordinates, returning null if behind the camera
+ * or outside the optional clip margin.
+ */
+export function worldToScreen(
+  matrix: Matrix,
+  x: number,
+  y: number,
+  z: number,
+  width: number,
+  height: number,
+  margin = 0.1
+): { x: number; y: number; depth: number } | null {
+  const w = x * matrix[3] + y * matrix[7] + z * matrix[11] + matrix[15]
+  if (!(w > 1e-5)) return null
+  const nx = (x * matrix[0] + y * matrix[4] + z * matrix[8] + matrix[12]) / w
+  const ny = (x * matrix[1] + y * matrix[5] + z * matrix[9] + matrix[13]) / w
+  const nz = (x * matrix[2] + y * matrix[6] + z * matrix[10] + matrix[14]) / w
+  const limit = 1 + margin
+  if (nx < -limit || nx > limit || ny < -limit || ny > limit || nz < 0 || nz > 1) return null
+  return { x: (nx * 0.5 + 0.5) * width, y: (0.5 - ny * 0.5) * height, depth: nz }
+}
+
 /** Pitch about X, yaw about Y, and roll about Z, applied roll first. */
 export function quaternionFromEuler(pitch = 0, yaw = 0, roll = 0): Quaternion {
   const sx = Math.sin(pitch / 2), cx = Math.cos(pitch / 2)

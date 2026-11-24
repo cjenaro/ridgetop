@@ -1,4 +1,4 @@
-import type { InstanceBatch, Matrix, MeshBackend } from './types.ts'
+import type { BlendMode, InstanceBatch, Matrix, MeshBackend } from './types.ts'
 import { INSTANCE_SIZE } from './instances.ts'
 
 function clip(polygon: number[][], distance: (point: number[]) => number) {
@@ -31,7 +31,6 @@ const bottom = (point: number[]) => point[3] + point[1]
 const top = (point: number[]) => point[3] - point[1]
 const clipPlanes = [near, far, left, right, bottom, top]
 
-// Bits follow clipPlanes order. Shared bits reject a triangle before any clipping.
 function outcode(x: number, y: number, z: number, w: number) {
   return (z < 0 ? 1 : 0) | (z > w ? 2 : 0) | (x < -w ? 4 : 0) |
     (x > w ? 8 : 0) | (y < -w ? 16 : 0) | (y > w ? 32 : 0)
@@ -39,7 +38,6 @@ function outcode(x: number, y: number, z: number, w: number) {
 
 const css = (r: number, g: number, b: number) => `rgb(${Math.round(255 * r)},${Math.round(255 * g)},${Math.round(255 * b)})`
 
-// Pack through typed views so the word matches ImageData's RGBA bytes on any host.
 const channels = new Uint8ClampedArray(4)
 const packed = new Uint32Array(channels.buffer)
 function pixel(r: number, g: number, b: number) {
@@ -50,11 +48,33 @@ function pixel(r: number, g: number, b: number) {
   return packed[0]
 }
 
-// Flat [x0, y0, z0, x1, y1, z1, ...] vertex coordinates in NDC.
-interface Face { points: number[]; depth: number; tint: string; pixel: number }
+interface Face {
+  points: number[]
+  depth: number
+  tint: string
+  pixel: number
+  blend: BlendMode
+  alpha: number
+  r: number
+  g: number
+  b: number
+}
 
 function transformBatch(matrix: Matrix, batch: InstanceBatch, polygons: Face[], light: Float32Array, depthTest: boolean) {
   const lx = light[0], ly = light[1], lz = light[2], ambient = light[3]
+  const hasExtended = light.length >= 48
+  const sunR = hasExtended ? light[4] : 1
+  const sunG = hasExtended ? light[5] : 1
+  const sunB = hasExtended ? light[6] : 1
+  const pointCount = hasExtended ? Math.round(light[7]) : 0
+  const fogR = hasExtended ? light[8] : 0
+  const fogG = hasExtended ? light[9] : 0
+  const fogB = hasExtended ? light[10] : 0
+  const fogNear = hasExtended ? light[11] : 0
+  const invFogSpan = hasExtended ? light[12] : 0
+  const blend: BlendMode = batch.blend ?? 'opaque'
+  const isOpaque = blend === 'opaque'
+
   const vertices = batch.mesh.data
   const vLen = vertices.length
   const data = batch.data
@@ -66,13 +86,14 @@ function transformBatch(matrix: Matrix, batch: InstanceBatch, polygons: Face[], 
 
   for (let i = 0; i < end; i += INSTANCE_SIZE) {
     const x = data[i], y = data[i + 1], z = data[i + 2]
+    const alpha = isOpaque ? 1 : data[i + 3]
+    if (!isOpaque && alpha <= 0.004) continue
     const sx = data[i + 4], sy = data[i + 5], sz = data[i + 6]
     const qx = data[i + 12], qy = data[i + 13], qz = data[i + 14], qw = data[i + 15]
     const a = 1 - 2 * (qy * qy + qz * qz), b = 2 * (qx * qy - qz * qw), c = 2 * (qx * qz + qy * qw)
     const d = 2 * (qx * qy + qz * qw), e = 1 - 2 * (qx * qx + qz * qz), f = 2 * (qy * qz - qx * qw)
     const g = 2 * (qx * qz - qy * qw), h = 2 * (qy * qz + qx * qw), k = 1 - 2 * (qx * qx + qy * qy)
 
-    // Pre-compose MVP = matrix * (T * R * S) once per instance.
     const a0 = a * sx, d0 = d * sx, g0 = g * sx
     const b0 = b * sy, e0 = e * sy, h0 = h * sy
     const c0 = c * sz, f0 = f * sz, k0 = k * sz
@@ -98,7 +119,6 @@ function transformBatch(matrix: Matrix, batch: InstanceBatch, polygons: Face[], 
     const t3 = m3 * x + m7 * y + m11 * z + m15
 
     const invSx = 1 / sx, invSy = 1 / sy, invSz = 1 / sz
-    // Pre-transform light direction into instance local space scaled by 1/s.
     const llx = (lx * a + ly * d + lz * g) * invSx
     const lly = (lx * b + ly * e + lz * h) * invSy
     const llz = (lx * c + ly * f + lz * k) * invSz
@@ -176,25 +196,80 @@ function transformBatch(matrix: Matrix, batch: InstanceBatch, polygons: Face[], 
 
       const fnx = vertices[face + 3], fny = vertices[face + 4], fnz = vertices[face + 5]
       const nx = fnx * invSx, ny = fny * invSy, nz = fnz * invSz
+      const invNLen = 1 / Math.sqrt(nx * nx + ny * ny + nz * nz)
       const ndotl = llx * fnx + lly * fny + llz * fnz
-      const diffuse = ndotl > 0 ? ndotl / Math.sqrt(nx * nx + ny * ny + nz * nz) : 0
+      const diffuse = ndotl > 0 ? ndotl * invNLen : 0
       const shade = ambient + (1 - ambient) * diffuse
-      const brightness = shade + (1 - shade) * unlit
-      const red = r0 * brightness, green = g0c * brightness, blue = b0c * brightness
+      let litR = sunR * shade, litG = sunG * shade, litB = sunB * shade
+
+      if (pointCount > 0 && unlit < 1) {
+        const wnx = (a * nx + b * ny + c * nz) * invNLen
+        const wny = (d * nx + e * ny + f * nz) * invNLen
+        const wnz = (g * nx + h * ny + k * nz) * invNLen
+        const cx = (v0x + v1x + v2x) / 3
+        const cy = (v0y + v1y + v2y) / 3
+        const cz = (v0z + v1z + v2z) / 3
+        const wx = x + a0 * cx + b0 * cy + c0 * cz
+        const wy = y + d0 * cx + e0 * cy + f0 * cz
+        const wz = z + g0 * cx + h0 * cy + k0 * cz
+        for (let pi = 0; pi < pointCount; pi++) {
+          const pb = 16 + pi * 4
+          const cb = 32 + pi * 4
+          const dx = light[pb] - wx, dy = light[pb + 1] - wy, dz = light[pb + 2] - wz
+          const distSq = dx * dx + dy * dy + dz * dz
+          const atten = 1 - distSq * light[pb + 3]
+          if (atten > 0) {
+            const invD = 1 / Math.sqrt(distSq > 1e-5 ? distSq : 1e-5)
+            const pdot = (wnx * dx + wny * dy + wnz * dz) * invD
+            const factor = light[cb + 3] * atten * atten * (pdot > 0.25 ? pdot : 0.25)
+            litR += light[cb] * factor
+            litG += light[cb + 1] * factor
+            litB += light[cb + 2] * factor
+          }
+        }
+      }
+
+      let red = r0 * (litR + (1 - litR) * unlit)
+      let green = g0c * (litG + (1 - litG) * unlit)
+      let blue = b0c * (litB + (1 - litB) * unlit)
+      if (red > 1) red = 1
+      if (green > 1) green = 1
+      if (blue > 1) blue = 1
+
+      if (invFogSpan > 0) {
+        const avgW = (p0w + p1w + p2w) / 3
+        let fogT = (avgW - fogNear) * invFogSpan
+        if (fogT > 0) {
+          if (fogT > 1) fogT = 1
+          if (blend === 'additive') {
+            const keep = 1 - fogT * 0.65
+            red *= keep; green *= keep; blue *= keep
+          } else {
+            red += (fogR - red) * fogT
+            green += (fogG - green) * fogT
+            blue += (fogB - blue) * fogT
+          }
+        }
+      }
+
       polygons.push({
         points: flat, depth,
         tint: depthTest ? '' : css(red, green, blue),
-        pixel: depthTest ? pixel(red, green, blue) : 0
+        pixel: depthTest && isOpaque ? pixel(red, green, blue) : 0,
+        blend, alpha,
+        r: Math.round(red * 255),
+        g: Math.round(green * 255),
+        b: Math.round(blue * 255)
       })
     }
   }
 }
 
-function depthTarget(width: number, height: number, pixels: Uint32Array) {
+function depthTarget(width: number, height: number, pixels: Uint32Array, bytes: Uint8ClampedArray) {
   const depth = new Float32Array(width * height)
   const halfW = width * .5, halfH = height * .5
 
-  function triangle(pts: number[], ia: number, ib: number, ic: number, tint: number) {
+  function triangleOpaque(pts: number[], ia: number, ib: number, ic: number, tint: number) {
     const ax = (1 + pts[ia]) * halfW, ay = (1 - pts[ia + 1]) * halfH, az = pts[ia + 2]
     const bx = (1 + pts[ib]) * halfW, by = (1 - pts[ib + 1]) * halfH, bz = pts[ib + 2]
     const cx = (1 + pts[ic]) * halfW, cy = (1 - pts[ic + 1]) * halfH, cz = pts[ic + 2]
@@ -215,7 +290,6 @@ function depthTarget(width: number, height: number, pixels: Uint32Array) {
     const azc = az - cz, bzc = bz - cz
     const dzx = dax * azc + dbx * bzc
     const startX = x0 + .5 - cx
-    // The first two barycentric weights and depth advance by constants across a scanline.
     for (let y = y0; y <= y1; y++) {
       const dy = y + .5 - cy
       let wa = dax * startX + day * dy
@@ -232,14 +306,75 @@ function depthTarget(width: number, height: number, pixels: Uint32Array) {
       }
     }
   }
+
+  function triangleBlend(pts: number[], ia: number, ib: number, ic: number, r: number, g: number, b: number, alpha: number, additive: boolean) {
+    const ax = (1 + pts[ia]) * halfW, ay = (1 - pts[ia + 1]) * halfH, az = pts[ia + 2]
+    const bx = (1 + pts[ib]) * halfW, by = (1 - pts[ib + 1]) * halfH, bz = pts[ib + 2]
+    const cx = (1 + pts[ic]) * halfW, cy = (1 - pts[ic + 1]) * halfH, cz = pts[ic + 2]
+    const area = (by - cy) * (ax - cx) + (cx - bx) * (ay - cy)
+    if (!area) return
+    const minX = ax < bx ? (ax < cx ? ax : cx) : (bx < cx ? bx : cx)
+    const maxX = ax > bx ? (ax > cx ? ax : cx) : (bx > cx ? bx : cx)
+    const minY = ay < by ? (ay < cy ? ay : cy) : (by < cy ? by : cy)
+    const maxY = ay > by ? (ay > cy ? ay : cy) : (by > cy ? by : cy)
+    const x0 = Math.max(0, Math.ceil(minX - .5))
+    const x1 = Math.min(width - 1, Math.floor(maxX - .5))
+    const y0 = Math.max(0, Math.ceil(minY - .5))
+    const y1 = Math.min(height - 1, Math.floor(maxY - .5))
+    if (x0 > x1 || y0 > y1) return
+    const invArea = 1 / area
+    const dax = (by - cy) * invArea, day = (cx - bx) * invArea
+    const dbx = (cy - ay) * invArea, dby = (ax - cx) * invArea
+    const azc = az - cz, bzc = bz - cz
+    const dzx = dax * azc + dbx * bzc
+    const startX = x0 + .5 - cx
+    const invA = 1 - alpha
+    const sr = r * alpha, sg = g * alpha, sb = b * alpha
+    for (let y = y0; y <= y1; y++) {
+      const dy = y + .5 - cy
+      let wa = dax * startX + day * dy
+      let wb = dbx * startX + dby * dy
+      let z = wa * azc + wb * bzc + cz
+      const row = y * width
+      for (let x = x0; x <= x1; x++, wa += dax, wb += dbx, z += dzx) {
+        if (wa < -1e-9 || wb < -1e-9 || wa + wb > 1 + 1e-9) continue
+        const index = row + x
+        if (z < depth[index]) {
+          const off = index << 2
+          if (additive) {
+            const nr = bytes[off] + sr
+            const ng = bytes[off + 1] + sg
+            const nb = bytes[off + 2] + sb
+            bytes[off] = nr > 255 ? 255 : nr
+            bytes[off + 1] = ng > 255 ? 255 : ng
+            bytes[off + 2] = nb > 255 ? 255 : nb
+          } else {
+            bytes[off] = sr + bytes[off] * invA
+            bytes[off + 1] = sg + bytes[off + 1] * invA
+            bytes[off + 2] = sb + bytes[off + 2] * invA
+          }
+          bytes[off + 3] = 255
+        }
+      }
+    }
+  }
+
   return {
     width, height,
     draw(polygons: Face[], background: number) {
       depth.fill(1)
       pixels.fill(background)
       for (let p = 0; p < polygons.length; p++) {
-        const { points, pixel } = polygons[p]
-        for (let i = 3; i + 3 < points.length; i += 3) triangle(points, 0, i, i + 3, pixel)
+        const face = polygons[p]
+        const { points } = face
+        if (face.blend === 'opaque') {
+          for (let i = 3; i + 3 < points.length; i += 3) triangleOpaque(points, 0, i, i + 3, face.pixel)
+        } else {
+          const add = face.blend === 'additive'
+          for (let i = 3; i + 3 < points.length; i += 3) {
+            triangleBlend(points, 0, i, i + 3, face.r, face.g, face.b, face.alpha, add)
+          }
+        }
       }
     }
   }
@@ -250,7 +385,7 @@ export function meshViewPixels(cameras: readonly Matrix[], batches: readonly Ins
   const width = cameras.length * size
   const pixels = new Uint8ClampedArray(width * size * 4)
   const sheet = new Uint32Array(pixels.buffer), frame = new Uint32Array(size * size)
-  const target = depthTarget(size, size, frame)
+  const target = depthTarget(size, size, frame, new Uint8ClampedArray(frame.buffer))
   const faces: Face[] = []
   for (let column = 0; column < cameras.length; column++) {
     const camera = cameras[column]
@@ -275,6 +410,9 @@ export function canvasMeshes(canvas: HTMLCanvasElement, light: Float32Array<Arra
   return {
     name: 'Canvas 2D',
     maxDimension: 4096,
+    setLighting() {
+      cache.clear()
+    },
     draw(matrix, clear, visible, stats) {
       let changed = !hasCamera
       if (!changed) {
@@ -302,7 +440,7 @@ export function canvasMeshes(canvas: HTMLCanvasElement, light: Float32Array<Arra
       if (depthTest) {
         if (!target || target.width !== canvas.width || target.height !== canvas.height) {
           image = ctx.createImageData(canvas.width, canvas.height)
-          target = depthTarget(canvas.width, canvas.height, new Uint32Array(image.data.buffer))
+          target = depthTarget(canvas.width, canvas.height, new Uint32Array(image.data.buffer), image.data)
         }
         target.draw(polygons, transparent ? 0 : pixel(clear[0], clear[1], clear[2]))
         ctx.putImageData(image, 0, 0)
@@ -314,6 +452,10 @@ export function canvasMeshes(canvas: HTMLCanvasElement, light: Float32Array<Arra
       const w = canvas.width / 2
       const h = canvas.height / 2
       let lastFill = ''
+      let lastAlpha = 1
+      let lastComp: GlobalCompositeOperation = 'source-over'
+      ctx.globalAlpha = 1
+      ctx.globalCompositeOperation = 'source-over'
       if (transparent) ctx.clearRect(0, 0, canvas.width, canvas.height)
       else {
         lastFill = css(clear[0], clear[1], clear[2])
@@ -321,7 +463,16 @@ export function canvasMeshes(canvas: HTMLCanvasElement, light: Float32Array<Arra
         ctx.fillRect(0, 0, canvas.width, canvas.height)
       }
       for (let p = 0; p < polygons.length; p++) {
-        const { points, tint } = polygons[p]
+        const { points, tint, alpha, blend } = polygons[p]
+        const comp: GlobalCompositeOperation = blend === 'additive' ? 'lighter' : 'source-over'
+        if (comp !== lastComp) {
+          ctx.globalCompositeOperation = comp
+          lastComp = comp
+        }
+        if (alpha !== lastAlpha) {
+          ctx.globalAlpha = alpha
+          lastAlpha = alpha
+        }
         if (tint !== lastFill) {
           ctx.fillStyle = tint
           lastFill = tint
@@ -332,6 +483,8 @@ export function canvasMeshes(canvas: HTMLCanvasElement, light: Float32Array<Arra
         ctx.closePath()
         ctx.fill()
       }
+      if (lastAlpha !== 1) ctx.globalAlpha = 1
+      if (lastComp !== 'source-over') ctx.globalCompositeOperation = 'source-over'
     },
     release(batch) { cache.delete(batch) },
     releaseMesh(mesh) {

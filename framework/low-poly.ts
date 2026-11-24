@@ -1,4 +1,4 @@
-import type { Backend, Color, InstanceBatch, LowPolyRenderer, Matrix, MeshBackend, Vec3 } from './types.ts'
+import type { Backend, Color, InstanceBatch, LightingOptions, LowPolyRenderer, Matrix, MeshBackend, Vec3 } from './types.ts'
 import type { SpriteClip } from './sprites.ts'
 import { multiply, orthographic, view } from './geometry.ts'
 import { canvasMeshes, meshViewPixels } from './mesh-canvas.ts'
@@ -10,22 +10,73 @@ export { mesh, box, cylinder, octahedron, view, perspective, orthographic, multi
 export { instances } from './instances.ts'
 export { color } from './renderer.ts'
 
-type Lighting = { direction?: Vec3; ambient?: number }
-
+export const LIGHT_FLOATS = 48
 const defaultClear: Color = [0.05, 0.08, 0.12, 1]
 
-function packLighting({ direction = [-.48, .8, .36], ambient = .52 }: Lighting = {}) {
+function packLighting(options: LightingOptions = {}, prev?: Float32Array<ArrayBuffer>): Float32Array<ArrayBuffer> {
+  const out = new Float32Array(LIGHT_FLOATS)
+  if (prev && prev.length >= LIGHT_FLOATS) out.set(prev)
+  else {
+    out[0] = -.48; out[1] = .8; out[2] = .36; out[3] = .52
+    out[4] = 1; out[5] = 1; out[6] = 1; out[7] = 0
+  }
+  const direction = options.direction ?? [out[0], out[1], out[2]]
+  const ambient = options.ambient ?? out[3]
   const [x, y, z] = direction
   const length = Math.hypot(x, y, z)
   if (!length || !Number.isFinite(length) || !(ambient >= 0 && ambient <= 1)) {
     throw new RangeError('Expected a nonzero light direction and ambient in the range 0–1')
   }
-  return new Float32Array([x / length, y / length, z / length, ambient])
+  out[0] = x / length
+  out[1] = y / length
+  out[2] = z / length
+  out[3] = ambient
+
+  if (options.color) {
+    out[4] = options.color[0]
+    out[5] = options.color[1]
+    out[6] = options.color[2]
+  }
+  if (options.fogColor) {
+    out[8] = options.fogColor[0]
+    out[9] = options.fogColor[1]
+    out[10] = options.fogColor[2]
+  }
+  if (options.fogNear !== undefined || options.fogFar !== undefined) {
+    const near = options.fogNear ?? out[11]
+    const far = options.fogFar ?? (out[12] > 0 ? near + 1 / out[12] : near)
+    out[11] = Number.isFinite(near) ? near : 0
+    out[12] = Number.isFinite(far) && far > near ? 1 / (far - near) : 0
+  }
+  if (options.points !== undefined) {
+    const count = Math.min(4, options.points.length)
+    out[7] = count
+    for (let i = 0; i < 4; i++) {
+      const pBase = 16 + i * 4
+      const cBase = 32 + i * 4
+      if (i < count) {
+        const pt = options.points[i]
+        const rad = Math.max(0.05, pt.radius)
+        out[pBase] = pt.position[0]
+        out[pBase + 1] = pt.position[1]
+        out[pBase + 2] = pt.position[2]
+        out[pBase + 3] = 1 / (rad * rad)
+        out[cBase] = pt.color[0]
+        out[cBase + 1] = pt.color[1]
+        out[cBase + 2] = pt.color[2]
+        out[cBase + 3] = pt.intensity ?? 1
+      } else {
+        out[pBase] = out[pBase + 1] = out[pBase + 2] = out[pBase + 3] = 0
+        out[cBase] = out[cBase + 1] = out[cBase + 2] = out[cBase + 3] = 0
+      }
+    }
+  }
+  return out
 }
 
 export async function createLowPolyRenderer(canvas: HTMLCanvasElement,
   { backend = 'auto', pixelRatio = 2, lighting, canvasDepth = false }:
-  { backend?: Backend; pixelRatio?: number; lighting?: Lighting; canvasDepth?: boolean } = {}
+  { backend?: Backend; pixelRatio?: number; lighting?: LightingOptions; canvasDepth?: boolean } = {}
 ): Promise<LowPolyRenderer> {
   if (!['auto', 'webgpu', 'webgl2', 'canvas'].includes(backend)) throw new RangeError('Unknown rendering backend')
   if (!Number.isFinite(pixelRatio) || pixelRatio <= 0) throw new RangeError('Invalid maximum pixel ratio')
@@ -33,6 +84,7 @@ export async function createLowPolyRenderer(canvas: HTMLCanvasElement,
   let active: MeshBackend
   let disposed = false
   const selected: InstanceBatch[] = []
+  const translucent: InstanceBatch[] = []
   const planes = new Float32Array(24)
   const stats = { drawCalls: 0, triangles: 0, instances: 0, uploadBytes: 0, culledBatches: 0 }
 
@@ -90,17 +142,26 @@ export async function createLowPolyRenderer(canvas: HTMLCanvasElement,
       if (canvas.height !== height) canvas.height = height
       frustum(matrix, planes)
       selected.length = 0
+      translucent.length = 0
       stats.triangles = stats.instances = stats.uploadBytes = stats.culledBatches = 0
       for (const batch of batches) {
         if (visible(batch, planes)) {
-          selected.push(batch)
+          if (batch.blend === 'opaque') selected.push(batch)
+          else translucent.push(batch)
           stats.triangles += batch.mesh.vertexCount / 3 * batch.count
           stats.instances += batch.count
         } else if (batch.count) stats.culledBatches++
       }
+      for (let i = 0; i < translucent.length; i++) selected.push(translucent[i])
       stats.drawCalls = selected.length
       active.draw(matrix, clear, selected, stats)
       return stats
+    },
+    setLighting(next: LightingOptions) {
+      if (disposed) return
+      const packed = packLighting(next, light)
+      light.set(packed)
+      active.setLighting?.(light)
     },
     release(batch) { active.release(batch) },
     releaseMesh(mesh) { active.releaseMesh(mesh) },
@@ -115,19 +176,19 @@ export async function createLowPolyRenderer(canvas: HTMLCanvasElement,
 export const spriteDirections = ['front', 'front-right', 'right', 'back-right', 'back', 'back-left', 'left', 'front-left'] as const
 
 /** Draw a transparent, depth-tested still at the supplied camera, including offscreen authoring passes. */
-export function renderMeshFrame(canvas: HTMLCanvasElement, camera: Matrix, batches: readonly InstanceBatch[], lighting?: Lighting) {
+export function renderMeshFrame(canvas: HTMLCanvasElement, camera: Matrix, batches: readonly InstanceBatch[], lighting?: LightingOptions) {
   const renderer = canvasMeshes(canvas, packLighting(lighting), { transparent: true, depthTest: true })
   try { renderer.draw(camera, defaultClear, batches, { drawCalls: 0, triangles: 0, instances: 0, uploadBytes: 0, culledBatches: 0 }) }
   finally { renderer.dispose() }
 }
 
 /** Render a single transparent, depth-tested RGBA frame without a DOM canvas. */
-export function renderMeshPixels(camera: Matrix, batches: readonly InstanceBatch[], size: number, lighting?: Lighting) {
+export function renderMeshPixels(camera: Matrix, batches: readonly InstanceBatch[], size: number, lighting?: LightingOptions) {
   if (!Number.isInteger(size) || size < 1 || size > 2048) throw new RangeError('Render size must be 1–2048 pixels')
   return meshViewPixels([camera], batches, size, packLighting(lighting))
 }
 
-type SpriteCamera = { span: number; center?: Vec3; frameSize?: number; elevation?: number; lighting?: Lighting }
+type SpriteCamera = { span: number; center?: Vec3; frameSize?: number; elevation?: number; lighting?: LightingOptions }
 
 /** Bake the same eight mesh views on the server or in the browser, without a canvas. */
 export function bakeSpritePixels(batches: readonly InstanceBatch[], {
