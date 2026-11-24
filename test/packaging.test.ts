@@ -205,6 +205,7 @@ test('packageGame builds tree-shaken Web, Steam, Mobile, and Godot outputs for S
   const uiTscn = await readFile(join(godotDir, 'scenes', 'ui.tscn'), 'utf8')
   assert.ok(uiTscn.includes('ridgetop_ui.gd'), 'Godot UI scene should render via custom Canvas UI script, not default Controls')
   await access(join(godotDir, 'scripts', 'ridgetop_ui.gd'))
+  await access(join(godotDir, 'scripts', 'ridgetop_runtime.gd'))
   await access(join(godotDir, 'scripts', 'main.gd'))
   await access(join(godotDir, 'scripts', 'compiled', 'rt.gd'))
   await access(join(godotDir, 'scripts', 'compiled', 'racing', 'race.gd'))
@@ -540,6 +541,7 @@ test('packageGame builds tree-shaken Web, Steam, Mobile, and Godot outputs for T
   }
   const uiTscn = await readFile(join(godotDir, 'scenes', 'ui.tscn'), 'utf8')
   assert.ok(uiTscn.includes('ridgetop_ui.gd'))
+  await access(join(godotDir, 'scripts', 'ridgetop_runtime.gd'))
   await access(join(godotDir, 'scripts', 'compiled', 'rt.gd'))
   await access(join(godotDir, 'scripts', 'compiled', 'lighthouse', 'simulation.gd'))
   await access(join(godotDir, 'scripts', 'compiled', 'lighthouse', 'types.gd'))
