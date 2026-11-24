@@ -1,6 +1,6 @@
 import { createAlphaSorter } from './geometry.ts'
 import { INSTANCE_SIZE } from './instances.ts'
-import type { BlendMode, InstanceBatch, MeshBackend } from './types.ts'
+import type { BlendMode, InstanceBatch, Mesh, MeshBackend } from './types.ts'
 
 const shader = `
 struct Camera {
@@ -140,9 +140,11 @@ export async function gpuMeshes(canvas: HTMLCanvasElement, light: Float32Array<A
     const bindGroup = device.createBindGroup({
       layout: bindLayout ?? opaquePipe.getBindGroupLayout(0), entries: [{ binding: 0, resource: { buffer: camera } }]
     })
-    const context = canvas.getContext('webgpu')
+    const rawContext = canvas.getContext('webgpu')
+    if (!rawContext) throw new Error('Could not acquire WebGPU canvas context')
+    const context: GPUCanvasContext = rawContext
     context.configure({ device, format, alphaMode: 'opaque' })
-    const meshes = new Map()
+    const meshes = new Map<Mesh, GPUBuffer>()
     const buffers = new Map<InstanceBatch, {
       buffer: GPUBuffer
       revision: number
@@ -153,21 +155,22 @@ export async function gpuMeshes(canvas: HTMLCanvasElement, light: Float32Array<A
     }>()
     const batchSorter = createAlphaSorter(16)
     const instanceSorter = createAlphaSorter(32)
-    let depth
-    let depthView
+    let depth: GPUTexture | undefined
+    let depthView: GPUTextureView | undefined
     const lastCamera = new Float32Array(16)
     let hasCamera = false
     let cameraRevision = 0
-    function vertexBuffer(mesh) {
-      if (!meshes.has(mesh)) {
-        const buffer = device.createBuffer({
+    function vertexBuffer(mesh: Mesh): GPUBuffer {
+      let buffer = meshes.get(mesh)
+      if (!buffer) {
+        buffer = device.createBuffer({
           size: mesh.data.byteLength, usage: GPUBufferUsage.VERTEX, mappedAtCreation: true
         })
         new Float32Array(buffer.getMappedRange()).set(mesh.data)
         buffer.unmap()
         meshes.set(mesh, buffer)
       }
-      return meshes.get(mesh)
+      return buffer
     }
     return {
       name: 'WebGPU',
@@ -186,7 +189,7 @@ export async function gpuMeshes(canvas: HTMLCanvasElement, light: Float32Array<A
           hasCamera = true
           cameraRevision++
         }
-        if (!depth || depth.width !== canvas.width || depth.height !== canvas.height) {
+        if (!depth || !depthView || depth.width !== canvas.width || depth.height !== canvas.height) {
           depth?.destroy()
           depth = device.createTexture({
             size: [canvas.width, canvas.height], format: 'depth24plus',
@@ -204,7 +207,7 @@ export async function gpuMeshes(canvas: HTMLCanvasElement, light: Float32Array<A
           }
         })
         pass.setBindGroup(0, bindGroup)
-        let lastMesh
+        let lastMesh: Mesh | undefined
         let lastBlend: BlendMode | undefined
         const drawBatch = (batch: InstanceBatch) => {
           const blend: BlendMode = batch.blend ?? 'opaque'

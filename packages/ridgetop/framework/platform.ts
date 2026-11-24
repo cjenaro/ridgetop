@@ -78,7 +78,7 @@ function createBridgeStorage(native: NonNullable<RidgetopNativeBridge['storage']
       return Array.from(entries.keys())[index] ?? null
     },
     getItem(key: string) {
-      return entries.has(key) ? entries.get(key) : null
+      return entries.get(key) ?? null
     },
     setItem(key: string, value: string) {
       const text = String(value)

@@ -684,7 +684,8 @@ async function emitShakenModules({
 
   async function loadModule(relPath: string): Promise<string> {
     assertWithinRoot(relPath)
-    if (rawSources.has(relPath)) return rawSources.get(relPath)
+    const cached = rawSources.get(relPath)
+    if (cached !== undefined) return cached
     let code = stripSourceMap(await readFile(resolveSource(relPath), 'utf8'))
     code = rewriteBareRidgetopSpecifiers(relPath, code)
     if (rewriteSource) code = rewriteSource(relPath, code)
@@ -713,7 +714,10 @@ async function emitShakenModules({
 
   // Pass 2: prune any reached barrels to ONLY imported symbols, then trace their surviving re-exports (including transitive barrels).
   const finalSources = new Map<string, string>()
-  for (const relPath of visitedNonBarrel) finalSources.set(relPath, rawSources.get(relPath))
+  for (const relPath of visitedNonBarrel) {
+    const src = rawSources.get(relPath)
+    if (src !== undefined) finalSources.set(relPath, src)
+  }
 
   async function traceFinal(relPath: string) {
     if (finalSources.has(relPath) && !isBarrel(relPath)) return

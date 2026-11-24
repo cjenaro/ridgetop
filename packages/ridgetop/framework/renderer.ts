@@ -36,7 +36,16 @@ export function color(hex: string): Color {
   throw new RangeError('Invalid hex color: ' + hex)
 }
 
-async function gpuBackend(canvas) {
+interface RectBackend {
+  readonly name: string
+  readonly lost?: Promise<GPUDeviceLostInfo>
+  readonly maxDimension: number
+  readonly maxInstances: number
+  draw(data: Float32Array<ArrayBuffer>, count: number, clear: Color): void
+  dispose(): void
+}
+
+async function gpuBackend(canvas: HTMLCanvasElement): Promise<RectBackend | null> {
   const adapter = await navigator.gpu?.requestAdapter()
   if (!adapter) return null
   const device = await adapter.requestDevice()
@@ -64,25 +73,29 @@ async function gpuBackend(canvas) {
       }] },
       primitive: { topology: 'triangle-list' }
     })
-    const context = canvas.getContext('webgpu')
+    const rawContext = canvas.getContext('webgpu')
+    if (!rawContext) throw new Error('Could not acquire WebGPU canvas context')
+    const context: GPUCanvasContext = rawContext
     context.configure({ device, format, alphaMode: 'opaque' })
-    let buffer
+    let buffer: GPUBuffer | undefined
     return {
       name: 'WebGPU',
       lost: device.lost,
       maxDimension: device.limits.maxTextureDimension2D,
       maxInstances: Math.floor(device.limits.maxBufferSize / (STRIDE * 4)),
       draw(data, count, clear) {
-        const required = count * STRIDE * 4
-        if (count && (!buffer || buffer.size < required)) {
-          buffer?.destroy()
-          const capacity = Math.min(device.limits.maxBufferSize, Math.max(data.byteLength, required))
-          buffer = device.createBuffer({
-            size: capacity,
-            usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.VERTEX
-          })
+        if (count) {
+          const required = count * STRIDE * 4
+          if (!buffer || buffer.size < required) {
+            buffer?.destroy()
+            const capacity = Math.min(device.limits.maxBufferSize, Math.max(data.byteLength, required))
+            buffer = device.createBuffer({
+              size: capacity,
+              usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.VERTEX
+            })
+          }
+          device.queue.writeBuffer(buffer, 0, data, 0, count * STRIDE)
         }
-        if (count) device.queue.writeBuffer(buffer, 0, data, 0, count * STRIDE)
         const encoder = device.createCommandEncoder()
         const pass = encoder.beginRenderPass({
           colorAttachments: [{
@@ -90,7 +103,7 @@ async function gpuBackend(canvas) {
             clearValue: clear, loadOp: 'clear', storeOp: 'store'
           }]
         })
-        if (count) {
+        if (count && buffer) {
           pass.setPipeline(pipeline)
           pass.setVertexBuffer(0, buffer)
           pass.draw(6, count)
@@ -112,7 +125,7 @@ async function gpuBackend(canvas) {
 const css = (r: number, g: number, b: number, a: number) =>
   `rgba(${Math.round(r * 255)},${Math.round(g * 255)},${Math.round(b * 255)},${a})`
 
-function canvasBackend(canvas) {
+function canvasBackend(canvas: HTMLCanvasElement): RectBackend {
   const context = canvas.getContext('2d', { alpha: false })
   if (!context) throw new Error('Canvas 2D is unavailable')
   return {
@@ -140,29 +153,29 @@ function canvasBackend(canvas) {
 }
 
 export async function createRenderer(canvas: HTMLCanvasElement, { width, height, forceCanvas = false }: { width: number; height: number; forceCanvas?: boolean }) {
-  let backend
-  let disposed = false
-  function useCanvas() {
+  function createCanvasFallback(): RectBackend {
     // A canvas that acquired a WebGPU context cannot also acquire a 2D context.
     try {
-      backend = canvasBackend(canvas)
+      return canvasBackend(canvas)
     } catch {
       const replacement = canvas.cloneNode() as HTMLCanvasElement
       canvas.replaceWith(replacement)
       canvas = replacement
-      backend = canvasBackend(canvas)
+      return canvasBackend(canvas)
     }
   }
+  let initial: RectBackend | null = null
   if (!forceCanvas) {
-    try { backend = await gpuBackend(canvas) }
+    try { initial = await gpuBackend(canvas) }
     catch (error) { console.warn('WebGPU initialization failed', error) }
   }
-  if (!backend) useCanvas()
+  let backend: RectBackend = initial ?? createCanvasFallback()
+  let disposed = false
   backend.lost?.then(info => {
     if (!disposed) {
       console.warn('WebGPU device lost:', info.message)
       backend.dispose()
-      useCanvas()
+      backend = createCanvasFallback()
     }
   })
 
@@ -172,7 +185,7 @@ export async function createRenderer(canvas: HTMLCanvasElement, { width, height,
     get name() { return backend.name },
     get canvas() { return canvas },
     begin() { count = 0 },
-    rect(x, y, w, h, tint) {
+    rect(x: number, y: number, w: number, h: number, tint: Color) {
       if (x + w <= 0 || x >= width || y + h <= 0 || y >= height) return
       if (count >= backend.maxInstances) throw new RangeError('Rectangle batch exceeds GPU buffer limit')
       if (count * STRIDE === data.length) {
@@ -187,7 +200,7 @@ export async function createRenderer(canvas: HTMLCanvasElement, { width, height,
       data[index++] = -h / height * 2
       data.set(tint, index)
     },
-    end(clear) {
+    end(clear: Color) {
       if (disposed) throw new Error('The renderer has been disposed')
       const w = Math.max(1, canvas.clientWidth)
       const h = Math.max(1, canvas.clientHeight)

@@ -39,7 +39,7 @@ const contentSecurityPolicy =
   `default-src 'self'; script-src 'self' 'sha256-${importMapHash}'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'`
 
 const testingBootTag = '\n<script type="module" src="/framework/testing-boot.js"></script>\n'
-const mime = {
+const mime: Record<string, string> = {
   html: 'text/html', css: 'text/css', js: 'text/javascript', png: 'image/png', json: 'application/json',
   glb: 'model/gltf-binary', obj: 'text/plain', wav: 'audio/wav', ogg: 'audio/ogg', mp3: 'audio/mpeg'
 }
@@ -159,8 +159,8 @@ export function createGameHost({
       const asset = assets.get(pathname) ?? await artFile(pathname, artFolders)
       if (!asset && pathname === '/favicon.ico') return sendText(res, 204)
       if (!asset) return sendText(res, 404, 'Not found')
-      const extension = asset.pathname.split('.').at(-1).toLowerCase()
-      const type = mime[extension]
+      const extension = (asset.pathname.split('.').at(-1) ?? '').toLowerCase()
+      const type = Object.hasOwn(mime, extension) ? mime[extension] : undefined
       const contentType = binaryExtensions.has(extension) ? type : type ? type + '; charset=utf-8' : 'application/octet-stream'
       if (extension === 'html') {
         const body = prepareHtml(await readFile(asset), testingEnabled)

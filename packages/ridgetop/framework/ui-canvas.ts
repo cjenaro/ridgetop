@@ -137,7 +137,7 @@ function collectNodes(node: LayoutNode, out: LayoutNode[]) {
   for (const child of node.children ?? []) collectNodes(child, out)
 }
 
-function isInteractive(widget?: CanvasWidget): boolean {
+function isInteractive(widget?: CanvasWidget): widget is Extract<CanvasWidget, { type: 'button' | 'toggle' | 'select' | 'slider' }> {
   return Boolean(widget && (widget.type === 'button' || widget.type === 'toggle' || widget.type === 'select' || widget.type === 'slider'))
 }
 
@@ -155,8 +155,9 @@ export function createCanvasUi(canvas: HTMLCanvasElement, options: {
   keyboardEnabled?(): boolean
   onBack?(): void
 } = {}) {
-  const ctx = canvas.getContext('2d')
-  if (!ctx) throw new Error('Could not create the Canvas UI context')
+  const rawCtx = canvas.getContext('2d')
+  if (!rawCtx) throw new Error('Could not create the Canvas UI context')
+  const ctx: CanvasRenderingContext2D = rawCtx
   const theme = options.theme ?? createUiTheme()
   const controller = new AbortController()
   const signal = { signal: controller.signal }
@@ -527,7 +528,7 @@ export function createCanvasUi(canvas: HTMLCanvasElement, options: {
         const disabled = isDisabled(widget)
         const isHovered = !disabled && hoveredId === node.id
         const isFocused = !disabled && focusedId === node.id
-        const pressed = !disabled && isPressed(node.id)
+        const pressed = !disabled && Boolean(node.id && isPressed(node.id))
         const selected = widget.type === 'button' && Boolean(widget.selected)
         const primary = widget.type === 'button' ? Boolean(widget.primary) : widget.type === 'toggle' && widget.checked
         const fill = disabled ? '#152024b0'

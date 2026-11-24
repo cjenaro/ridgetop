@@ -20,8 +20,8 @@ export interface HudPainter {
 export function createHud(canvas: HTMLCanvasElement) {
   const context = canvas.getContext('2d')
   if (!context) throw new Error('Could not create the game HUD')
-  let previous: string
-  let previousStage: HTMLCanvasElement
+  let previous: string | undefined
+  let previousStage: HTMLCanvasElement | undefined
   let width = 0
   let height = 0
   canvas.addEventListener('contextrestored', () => { previousStage = undefined })

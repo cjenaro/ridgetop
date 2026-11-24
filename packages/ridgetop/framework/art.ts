@@ -133,12 +133,16 @@ export function createArtRecipe(name: keyof typeof artModels): ArtRecipe {
   const palette = Object.fromEntries(parts.map(p => [p.tone, artPalette[p.tone]]))
   return {
     format: 'ridgetop-art', version: 1, name, span, centerY, frameSize: 64, palette,
-    parts: parts.map(p => ({
-      name: p.name, shape: shapeNames.get(p.mesh), position: [...p.position], scale: [...p.scale],
-      tone: p.tone, ...(p.pitch ? { pitch: p.pitch } : {}), ...(p.yaw ? { yaw: p.yaw } : {}),
-      ...(p.roll ? { roll: p.roll } : {}), ...(p.unlit ? { unlit: p.unlit } : {}),
-      ...(p.joint ? { joint: p.joint } : {})
-    })),
+    parts: parts.map((p, index) => {
+      const shape = shapeNames.get(p.mesh)
+      if (!shape) throw new Error('Unknown art shape in built-in model: ' + name)
+      return {
+        name: p.name ?? 'part-' + (index + 1), shape, position: [...p.position] as Vec3, scale: [...p.scale] as Vec3,
+        tone: p.tone, ...(p.pitch ? { pitch: p.pitch } : {}), ...(p.yaw ? { yaw: p.yaw } : {}),
+        ...(p.roll ? { roll: p.roll } : {}), ...(p.unlit ? { unlit: p.unlit } : {}),
+        ...(p.joint ? { joint: p.joint } : {})
+      }
+    }),
     ...(entry.joints ? { joints: structuredClone(entry.joints) as ArtRecipeJoint[] } : {}),
     ...(entry.clips ? { clips: structuredClone(entry.clips) as Record<string, ArtRecipeClip> } : {})
   }

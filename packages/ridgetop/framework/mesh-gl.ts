@@ -71,15 +71,21 @@ function expandLight(light: Float32Array<ArrayBuffer>): Float32Array<ArrayBuffer
 }
 
 export function glMeshes(canvas: HTMLCanvasElement, light: Float32Array<ArrayBuffer>): MeshBackend | null {
-  const gl = canvas.getContext('webgl2', { alpha: false, antialias: false, powerPreference: 'high-performance' })
-  if (!gl) return null
+  const rawGl = canvas.getContext('webgl2', { alpha: false, antialias: false, powerPreference: 'high-performance' })
+  if (!rawGl) return null
+  const gl: WebGL2RenderingContext = rawGl
   const program = gl.createProgram()
+  if (!program) throw new Error('Could not create WebGL program')
   for (const [type, source] of [[gl.VERTEX_SHADER, vertexSource], [gl.FRAGMENT_SHADER, fragmentSource]] as const) {
     const shader = gl.createShader(type)
+    if (!shader) {
+      gl.deleteProgram(program)
+      throw new Error('Could not create WebGL shader')
+    }
     gl.shaderSource(shader, source)
     gl.compileShader(shader)
     if (!gl.getShaderParameter(shader, gl.COMPILE_STATUS)) {
-      const message = gl.getShaderInfoLog(shader)
+      const message = gl.getShaderInfoLog(shader) ?? 'WebGL shader compilation failed'
       gl.deleteShader(shader)
       gl.deleteProgram(program)
       throw new Error(message)
@@ -89,7 +95,7 @@ export function glMeshes(canvas: HTMLCanvasElement, light: Float32Array<ArrayBuf
   }
   gl.linkProgram(program)
   if (!gl.getProgramParameter(program, gl.LINK_STATUS)) {
-    const message = gl.getProgramInfoLog(program)
+    const message = gl.getProgramInfoLog(program) ?? 'WebGL program link failed'
     gl.deleteProgram(program)
     throw new Error(message)
   }
@@ -136,16 +142,16 @@ export function glMeshes(canvas: HTMLCanvasElement, light: Float32Array<ArrayBuf
   let cameraRevision = 0
   let lastWidth = -1
   let lastHeight = -1
-  let lostHandler
+  let lostHandler: ((event: Event) => void) | undefined
   const lost = new Promise<void>(resolve => {
-    lostHandler = event => {
+    lostHandler = (event: Event) => {
       event.preventDefault()
       resolve()
     }
     canvas.addEventListener('webglcontextlost', lostHandler, { once: true })
   })
 
-  function release(batch) {
+  function release(batch: InstanceBatch) {
     const entry = batches.get(batch)
     if (!entry) return
     gl.deleteVertexArray(entry.vao)
@@ -309,7 +315,7 @@ export function glMeshes(canvas: HTMLCanvasElement, light: Float32Array<ArrayBuf
       meshes.delete(mesh)
     },
     dispose() {
-      canvas.removeEventListener('webglcontextlost', lostHandler)
+      if (lostHandler) canvas.removeEventListener('webglcontextlost', lostHandler)
       for (const batch of batches.keys()) release(batch)
       for (const buffer of meshes.values()) gl.deleteBuffer(buffer)
       meshes.clear()

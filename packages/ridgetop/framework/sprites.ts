@@ -49,8 +49,9 @@ export async function createSpriteAtlas(canvas: HTMLCanvasElement, source: Sprit
   const atlas = typeof source === 'string' || source instanceof URL ? await readManifest(source) : source
   const { src, frameWidth, frameHeight, clips = {} } = 'manifest' in atlas ? atlas.manifest : atlas
   if (![frameWidth, frameHeight].every(n => Number.isSafeInteger(n) && n > 0)) throw new RangeError('Invalid sprite frame dimensions')
-  const context = canvas.getContext('2d')
-  if (!context) throw new Error('Could not create the sprite layer')
+  const rawContext = canvas.getContext('2d')
+  if (!rawContext) throw new Error('Could not create the sprite layer')
+  const context: CanvasRenderingContext2D = rawContext
   const image = 'image' in atlas ? atlas.image : await loadSpriteImage(src)
   const rows = Math.floor(('naturalHeight' in image ? image.naturalHeight : image.height) / frameHeight)
   const columns = Math.floor(('naturalWidth' in image ? image.naturalWidth : image.width) / frameWidth)
@@ -139,7 +140,9 @@ export async function createSpriteAtlas(canvas: HTMLCanvasElement, source: Sprit
       const copy = document.createElement('canvas')
       copy.width = frameWidth
       copy.height = frameHeight
-      copy.getContext('2d').drawImage(image, column * frameWidth, row * frameHeight, frameWidth, frameHeight, 0, 0, frameWidth, frameHeight)
+      const copyCtx = copy.getContext('2d')
+      if (!copyCtx) throw new Error('Could not create the sprite frame')
+      copyCtx.drawImage(image, column * frameWidth, row * frameHeight, frameWidth, frameHeight, 0, 0, frameWidth, frameHeight)
       return copy
     },
     begin(stage: HTMLCanvasElement) {

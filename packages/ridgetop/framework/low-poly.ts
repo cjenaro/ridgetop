@@ -89,7 +89,7 @@ export async function createLowPolyRenderer(canvas: HTMLCanvasElement,
   if (!['auto', 'webgpu', 'webgl2', 'canvas'].includes(backend)) throw new RangeError('Unknown rendering backend')
   if (!Number.isFinite(pixelRatio) || pixelRatio <= 0) throw new RangeError('Invalid maximum pixel ratio')
   const light = packLighting(lighting)
-  let active: MeshBackend
+  let initial: MeshBackend | null = null
   let disposed = false
   const selected: InstanceBatch[] = []
   const alphaBatches: InstanceBatch[] = []
@@ -104,38 +104,39 @@ export async function createLowPolyRenderer(canvas: HTMLCanvasElement,
     canvas = next
   }
 
-  function watch(current: MeshBackend) {
-    current.lost?.then(() => {
-      if (disposed || active !== current) return
-      current.dispose()
-      replaceCanvas()
-      if (current.name === 'WebGPU') {
-        try { active = glMeshes(canvas, light) }
-        catch { replaceCanvas(); active = null }
-      } else active = null
-      if (!active) active = canvasMeshes(canvas, light, { depthTest: canvasDepth })
-      watch(active)
-    })
-  }
-
   if (backend === 'auto' || backend === 'webgpu') {
-    try { active = await gpuMeshes(canvas, light) }
+    try { initial = await gpuMeshes(canvas, light) }
     catch (error) {
       if (backend === 'webgpu') throw error
       console.warn('WebGPU initialization failed', error)
       replaceCanvas()
     }
-    if (!active && backend === 'webgpu') throw new Error('WebGPU is unavailable')
+    if (!initial && backend === 'webgpu') throw new Error('WebGPU is unavailable')
   }
-  if (!active && (backend === 'auto' || backend === 'webgl2')) {
-    try { active = glMeshes(canvas, light) }
+  if (!initial && (backend === 'auto' || backend === 'webgl2')) {
+    try { initial = glMeshes(canvas, light) }
     catch (error) {
       if (backend === 'webgl2') throw error
       replaceCanvas()
     }
-    if (!active && backend === 'webgl2') throw new Error('WebGL 2 is unavailable')
+    if (!initial && backend === 'webgl2') throw new Error('WebGL 2 is unavailable')
   }
-  if (!active) active = canvasMeshes(canvas, light, { depthTest: canvasDepth })
+  let active: MeshBackend = initial ?? canvasMeshes(canvas, light, { depthTest: canvasDepth })
+
+  function watch(current: MeshBackend) {
+    current.lost?.then(() => {
+      if (disposed || active !== current) return
+      current.dispose()
+      replaceCanvas()
+      let next: MeshBackend | null = null
+      if (current.name === 'WebGPU') {
+        try { next = glMeshes(canvas, light) }
+        catch { replaceCanvas() }
+      }
+      active = next ?? canvasMeshes(canvas, light, { depthTest: canvasDepth })
+      watch(active)
+    })
+  }
   watch(active)
 
   return {

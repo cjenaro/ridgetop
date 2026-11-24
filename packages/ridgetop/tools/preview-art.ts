@@ -54,7 +54,7 @@ export async function runPreviewArtCli(argv: readonly string[], paletteOverride?
   const visibilityPath = join(directory, source.name + '-visibility.json')
   await writeFile(sheetPath, encodePng(native.width, native.height, native.pixels))
   await writeFile(viewsPath, encodePng(width, 2 * size, grid))
-  const visibility = spritePartVisibility(kit, 'subject', model.frameSize)
+  const visibility = spritePartVisibility(kit, 'subject', model.frameSize ?? 64)
   await writeFile(visibilityPath, JSON.stringify(visibility, null, 2) + '\n')
   console.log(native.height + ' px directional sprites: ' + sheetPath + '\nEight larger mesh views: ' + viewsPath)
   const hidden = Object.entries(visibility.parts).filter(([, counts]) => counts.every(n => n === 0)).map(([name]) => name)

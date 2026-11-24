@@ -70,7 +70,9 @@ export function pickId(image: HTMLCanvasElement, u: number, v: number) {
   if (!(u >= 0 && u <= 1 && v >= 0 && v <= 1) || image.width <= 0 || image.height <= 0) return 0
   const px = Math.min(image.width - 1, Math.floor(u * image.width))
   const py = Math.min(image.height - 1, Math.floor(v * image.height))
-  const [r, g, b, a] = image.getContext('2d').getImageData(px, py, 1, 1).data
+  const ctx = image.getContext('2d')
+  if (!ctx) return 0
+  const [r, g, b, a] = ctx.getImageData(px, py, 1, 1).data
   return a ? r + (g << 8) + (b << 16) : 0
 }
 export function reviewCanvas(width: number, height = width) {

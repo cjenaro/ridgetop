@@ -543,7 +543,7 @@ export function createRoomService<World, Player, Snapshot extends object, Input 
     const token = authorization.slice(7)
     const room = rooms.get(key)
     const member = room?.members.get(token)
-    if (!member) return sendText(res, 401)
+    if (!room || !member) return sendText(res, 401)
     if (action === 'leave') {
       removeMember(key, room, token, member)
       return sendText(res, 204)

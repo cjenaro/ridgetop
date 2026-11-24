@@ -139,7 +139,7 @@ export function createArtBuilder(name: string, { base = 'empty', reference, fram
     if (base !== 'empty' || proportions.some(n => n !== 1)) throw new Error('Choose either a reference or a scaled starter body')
     const model = modelFromArtRecipe(reference)
     parts.push(...structuredClone(reference.parts))
-    model.parts.forEach(part => placed.set(part.name, artPartBounds(part)))
+    model.parts.forEach((part, index) => placed.set(part.name ?? reference.parts[index].name, artPartBounds(part)))
     if (reference.joints) {
       for (const j of structuredClone(reference.joints)) {
         joints.push(j)
@@ -233,6 +233,7 @@ export function createArtBuilder(name: string, { base = 'empty', reference, fram
   function handle(id: string, parent: string, face: Surface, span: number, reach: number, depth: number, tone: ArtTone) {
     if (!(reach > 0 && Number.isFinite(reach))) throw new RangeError('Invalid handle reach for ' + id)
     const anchor = point(parent, face), n = normals[face], b = placed.get(parent)
+    if (!b) throw new Error('Unknown parent part ' + parent)
     const inset = n.reduce<number>((sum,v,i) => sum + Math.abs(v)*extent(b,i)*.12, 0)
     const created = between(id, vec(i => anchor[i]-n[i]*inset), vec(i => anchor[i]+n[i]*reach), [span,depth], tone, 'arch')
     inheritJoint(created, parent)

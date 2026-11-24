@@ -91,7 +91,7 @@ export function verifyBounded<S, A>({ initial, step, alphabet, checks, depth, ma
   const safeAlphabet = alphabet.map(copy)
   let transitions = 0
   // Traverse in breadth-first order so the first failure has a shortest input sequence.
-  type Node = { state: S; parent: Node | null; action?: A }
+  type Node = { state: S; parent: null } | { state: S; parent: Node; action: A }
   let frontier: Node[] = [{ state: starting, parent: null }]
   for (let tick = 1; tick <= depth; tick++) {
     const next: Node[] = []
@@ -106,7 +106,7 @@ export function verifyBounded<S, A>({ initial, step, alphabet, checks, depth, ma
         const rule = failed(checks, frame)
         if (rule) {
           const actions = [copy(action)]
-          for (let ancestor = node; ancestor.parent; ancestor = ancestor.parent) {
+          for (let ancestor: Node = node; 'action' in ancestor; ancestor = ancestor.parent) {
             actions.push(copy(ancestor.action))
           }
           return { ...violation(rule, { ...frame, action: copy(action) }, actions.reverse()), transitions }

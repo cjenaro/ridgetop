@@ -37,15 +37,15 @@ async function start() {
   if (!width) throw new Error('Add at least one row of tiles to the map.')
   const cell = (x: number, z: number) => z * width + x
   const legend: Record<string, Name> = game.scenery
-  let spawn: ObjectInGame, goal: ObjectInGame
+  let foundSpawn: ObjectInGame | undefined, foundGoal: ObjectInGame | undefined
   for (const [z, rowTiles] of game.map.entries()) {
     if (rowTiles.length !== width) throw new Error('Each map row must have the same width.')
     for (const [x, mark] of Array.from(rowTiles).entries()) {
       ground.push({ id: 'ground-' + x + '-' + z, name: game.ground, x, z })
-      if (mark === '@' && !spawn) spawn = { id: 'player', name: game.player, x, z }
-      else if (mark === 'L' && !goal) {
-        goal = { id: 'goal', name: game.goal, x, z }
-        scenery.push(goal)
+      if (mark === '@' && !foundSpawn) foundSpawn = { id: 'player', name: game.player, x, z }
+      else if (mark === 'L' && !foundGoal) {
+        foundGoal = { id: 'goal', name: game.goal, x, z }
+        scenery.push(foundGoal)
       } else if (mark === '*') pickups.push({ id: 'pickup-' + x + '-' + z, name: game.pickup, x, z })
       else if (Object.hasOwn(legend, mark)) {
         scenery.push({ id: 'prop-' + x + '-' + z, name: legend[mark], x, z })
@@ -53,7 +53,8 @@ async function start() {
       } else if (mark !== '.') throw new Error('Unexpected map character ' + mark + ' at row ' + (z + 1))
     }
   }
-  if (!spawn || !goal) throw new Error('Place one @ for the player and one L for the goal.')
+  if (!foundSpawn || !foundGoal) throw new Error('Place one @ for the player and one L for the goal.')
+  const spawn = foundSpawn, goal = foundGoal
   if (!(game.stepSeconds > 0 && Number.isFinite(game.stepSeconds))) throw new Error('stepSeconds must be positive.')
 
   const params = new URLSearchParams(location.search)
@@ -61,7 +62,7 @@ async function start() {
   const stage = $<HTMLCanvasElement>('world')
   const layer = $<HTMLCanvasElement>('sprites')
   const uiCanvas = $<HTMLCanvasElement>('ui')
-  const board = layer.parentElement
+  const board = layer.parentElement ?? document.documentElement
   let renderer: LowPolyRenderer
   let rendererPromise: Promise<LowPolyRenderer> | undefined
   let viewRequest = 0
@@ -257,12 +258,14 @@ async function start() {
     const model = art.model(obj.name)
     const point = projectPoint(camera, obj.x, (obj.y ?? 0) + model.centerY, obj.z)
     const options = { height: model.span / spanY, anchor: .5 }
+    const atlas = atlases.get(obj.name)
+    if (!atlas) return
     if (sprites[obj.name]) {
-      atlases.get(obj.name).drawClip(sprites[obj.name].clip, reduced.matches ? 0 : now, point, options)
+      atlas.drawClip(sprites[obj.name].clip, reduced.matches ? 0 : now, point, options)
       return
     }
     const columnIndex = (Math.round(-(obj.yaw ?? 0) * 4 / Math.PI) % 8 + 8) % 8
-    atlases.get(obj.name).draw(columnIndex, 0, point, options)
+    atlas.draw(columnIndex, 0, point, options)
   }
 
   function buildUiTree(w: number) {
@@ -382,7 +385,7 @@ async function start() {
     if (spriteView) {
       if (layer.width !== Math.round(w * ratio)) layer.width = Math.round(w * ratio)
       if (layer.height !== Math.round(h * ratio)) layer.height = Math.round(h * ratio)
-      atlases.get(game.ground).begin(layer)
+      atlases.get(game.ground)?.begin(layer)
       for (const obj of ground) paint(obj, now)
       for (const obj of foreground(hero, effect)) paint(obj, now)
     } else {

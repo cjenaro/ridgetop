@@ -10,7 +10,7 @@ export function createRecords<T>(file?: string, saved: Iterable<readonly [string
   let pending = Promise.resolve()
   let dirty = false
   return {
-    get(id) { return records.get(id) },
+    get(id) { return id === undefined ? undefined : records.get(id) },
     set(id, record) {
       records.set(id, record)
       dirty = true

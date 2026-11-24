@@ -1,11 +1,11 @@
 export function createSynthAudio<Name extends string>(motifs: Record<Name, readonly (readonly [number, number, number, number?])[]>,
   { volume = .22, waveform = {} }: { volume?: number; waveform?: Partial<Record<Name, OscillatorType>> } = {}) {
   let muted = false
-  let context
-  let output
+  let context: AudioContext | undefined
+  let output: GainNode | undefined
   return {
     unlock() {
-      const Audio = globalThis.AudioContext ?? globalThis.webkitAudioContext
+      const Audio = globalThis.AudioContext ?? (globalThis as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext
       if (!Audio) return
       try {
         if (!context) {
@@ -18,7 +18,7 @@ export function createSynthAudio<Name extends string>(motifs: Record<Name, reado
       } catch { /* Sound is optional. */ }
     },
     play(name: Name) {
-      if (muted || context?.state !== 'running') return
+      if (muted || !context || !output || context.state !== 'running') return
       for (const [frequency, duration, delay, endFrequency] of motifs[name] ?? []) {
         if (!(duration > 0)) continue
         const oscillator = context.createOscillator()
