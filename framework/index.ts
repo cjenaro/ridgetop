@@ -23,7 +23,14 @@ export { angleDelta, createArcadeDriver, createCircuit } from './vehicle.ts'
 export type { DriveInput, VehicleBody, TrackPoint } from './vehicle.ts'
 export { createHud } from './hud.ts'
 export type { HudPainter } from './hud.ts'
-export { artModels, artPalette, artShapes, createArtKit, createArtRecipe, modelFromArtRecipe } from './art.ts'
-export type { ArtModel, ArtPart, ArtRecipe, ArtRecipePart, ArtShape, ArtTone } from './art.ts'
-export { artBases, artPartBounds, createArtBuilder, fitArtRecipe } from './art-builder.ts'
+export {
+  artModels, artPalette, artShapes, bakeAnimatedSpriteDirections, bakeAnimatedSpritePixels, createArtKit,
+  createArtRecipe, modelFromArtRecipe, rigFromArtModel, rigFromArtRecipe
+} from './art.ts'
+export type {
+  AnimatedSpriteOptions, ArtModel, ArtPart, ArtRecipe, ArtRecipeClip, ArtRecipeClipFrame, ArtRecipeJoint,
+  ArtRecipeJointPose, ArtRecipePart, ArtRig, ArtShape, ArtTone, BakedSpriteManifest, BakedSpritePixels,
+  BakedSpriteSheet, SpriteDirection
+} from './art.ts'
+export { artBases, artPartBounds, artPoseBounds, createArtBuilder, fitArtRecipe } from './art-builder.ts'
 export type { ArtBase, ArtBuilderOptions, ArtFace } from './art-builder.ts'
