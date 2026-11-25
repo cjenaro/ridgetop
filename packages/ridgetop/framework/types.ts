@@ -18,6 +18,21 @@ export interface PointLight {
   readonly intensity?: number
 }
 
+export interface ShadowMapOptions {
+  /** Enable GPU directional shadow mapping on WebGPU & WebGL 2 (gracefully falls back to contact shadows on Canvas 2D). */
+  readonly enabled?: boolean
+  /** World-space focus point for the shadow frustum. Default `[0, 0, 0]`. */
+  readonly center?: Vec3
+  /** Half-width of the orthographic shadow volume in world units. Default `24`. */
+  readonly extent?: number
+  /** Depth bias to prevent shadow acne. Default `0.0025`. */
+  readonly bias?: number
+  /** Shadow darkening strength (`0–1`). Default `0.48`. */
+  readonly strength?: number
+  /** Stylized RGB shadow tint blended into shadowed areas (cool blue-violet looks handcrafted vs flat black). */
+  readonly color?: Vec3
+}
+
 export interface LightingOptions {
   readonly direction?: Vec3
   readonly ambient?: number
@@ -26,11 +41,25 @@ export interface LightingOptions {
   readonly fogNear?: number
   readonly fogFar?: number
   readonly points?: readonly PointLight[]
+  /** Upper-hemisphere ambient bounce color (enables sky/ground hemisphere lighting when set alongside or instead of flat ambient). */
+  readonly skyColor?: Vec3 | Color
+  /** Lower-hemisphere ground bounce color (warms/darkens downward-facing facets). */
+  readonly groundColor?: Vec3 | Color
+  /** Stylized silhouette rim light color. */
+  readonly rimColor?: Vec3 | Color
+  /** Rim light strength (`0–1`). Default `0` (disabled). */
+  readonly rimStrength?: number
+  /** Optional cel/toon diffuse banding steps (`>= 2` quantizes sun shading; `0` disables). */
+  readonly toonSteps?: number
+  /** Optional GPU directional shadow map configuration (WebGPU & WebGL 2). */
+  readonly shadows?: ShadowMapOptions
 }
 
 export interface Mesh {
   /** Interleaved XYZ position and flat normal. Treat this array as read-only. */
   readonly data: Float32Array<ArrayBuffer>
+  /** Optional per-vertex RGB color / baked AO (`vertexCount * 3`, values in 0–1). */
+  readonly colors?: Float32Array<ArrayBuffer>
   readonly vertexCount: number
   readonly radius: number
 }
@@ -80,6 +109,7 @@ export interface RenderStats {
 
 export interface LowPolyRenderer {
   readonly name: RendererName
+  readonly gpuInfo?: string
   readonly canvas: HTMLCanvasElement
   /** Returns the same statistics object each frame. Copy it to retain a sample. */
   render(matrix: Matrix, batches: Iterable<InstanceBatch>, clear?: Color): Readonly<RenderStats>
@@ -172,9 +202,10 @@ export interface PlatformerBody {
 
 export interface MeshBackend {
   name: RendererName
+  gpuInfo?: string
   lost?: Promise<unknown>
   maxDimension: number
-  draw(matrix: Matrix, clear: Color, visible: readonly InstanceBatch[], stats: RenderStats): void
+  draw(matrix: Matrix, clear: Color, visible: readonly InstanceBatch[], stats: RenderStats, shadowCasters?: readonly InstanceBatch[]): void
   setLighting?(light: Float32Array<ArrayBuffer>): void
   release(batch: InstanceBatch): void
   releaseMesh(mesh: Mesh): void
@@ -264,13 +295,21 @@ export interface ShadowBatchOptions {
   readonly bias?: number
   /** Optional outer soft penumbra expansion (`0` disables extra ring; e.g. `0.35` adds a softer outer ring). Default: `0`. */
   readonly penumbra?: number
+  /** Optional terrain height sampler `(x, z) => groundY` for automatic slope-conforming ground shadows. */
+  readonly heightAt?: (x: number, z: number) => number
+  /** Optional terrain normal sampler `(x, z) => Vec3` to tilt shadows flush against hills and ramps. */
+  readonly normalAt?: (x: number, z: number) => Vec3
 }
 
 /** Per-caster overrides when adding a contact/blob shadow to a `ShadowBatch`. */
 export interface ShadowCasterOptions {
   readonly groundY?: number
+  /** Optional ground surface normal to tilt this contact shadow flush against a slope. */
+  readonly groundNormal?: Vec3
   readonly radius?: number
   readonly radiusZ?: number
+  /** Optional explicit yaw override (in radians) for elongated casters such as cars or logs. */
+  readonly yaw?: number
   readonly opacity?: number
   readonly color?: Vec3
   readonly maxHeight?: number

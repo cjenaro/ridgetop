@@ -48,10 +48,20 @@ export function createPartEditor(root: HTMLDetailsElement, onApply: (source: Art
   const position = vectorControls('position'), scale = vectorControls('scale')
   const rotation = vectorControls('rotation'), angles = ['pitch', 'yaw', 'roll'] as const
   const values = ([x, y, z]: HTMLInputElement[]): Vec3 => [x.valueAsNumber, y.valueAsNumber, z.valueAsNumber]
+  function syncSelectOptions(recipe: ArtRecipe, isTube: boolean) {
+    const shapeKeys = Object.keys(artShapes)
+    if (isTube) shapeKeys.push('tube')
+    shape.replaceChildren(...shapeKeys.map(key => new Option(key, key)))
+    const toneKeys = Object.keys(artPalette)
+    for (const k of Object.keys(recipe.palette)) if (!toneKeys.includes(k)) toneKeys.push(k)
+    tone.replaceChildren(...toneKeys.map(key => new Option(key, key)))
+  }
   function showPart() {
     if (!source) return
     const part = source.parts[select.selectedIndex]
+    syncSelectOptions(source, part.shape === 'tube')
     shape.value = part.shape
+    shape.disabled = part.shape === 'tube'
     tone.value = part.tone
     for (let i = 0; i < 3; i++) {
       position[i].value = String(part.position[i])
@@ -68,9 +78,11 @@ export function createPartEditor(root: HTMLDetailsElement, onApply: (source: Art
     try {
       const next = structuredClone(source)
       const part = next.parts[select.selectedIndex]
-      if (!isArtShape(shape.value)) throw new Error('Unknown shape: ' + shape.value)
-      if (!isArtTone(tone.value)) throw new Error('Unknown tone: ' + tone.value)
-      part.shape = shape.value
+      if (part.shape !== 'tube') {
+        if (!isArtShape(shape.value)) throw new Error('Unknown shape: ' + shape.value)
+        part.shape = shape.value
+      }
+      if (!isArtTone(tone.value) && !Object.hasOwn(next.palette, tone.value)) throw new Error('Unknown tone: ' + tone.value)
       part.tone = tone.value
       part.position = values(position)
       part.scale = values(scale)

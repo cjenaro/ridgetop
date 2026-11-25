@@ -111,8 +111,10 @@ function placeInOverlay(box: LayoutRect, child: LayoutNode, size: Size, safe: Re
   const sb = s.respectSafeArea ? safe.bottom : 0
   const sl = s.respectSafeArea ? safe.left : 0
 
-  const availW = Math.max(0, box.width - sl - sr - ix * 2)
-  const availH = Math.max(0, box.height - st - sb - iy * 2)
+  const symX = anchor === 'fill' || anchor === 'center' || anchor === 'top' || anchor === 'bottom'
+  const symY = anchor === 'fill' || anchor === 'center'
+  const availW = Math.max(0, box.width - sl - sr - (symX ? ix * 2 : ix))
+  const availH = Math.max(0, box.height - st - sb - (symY ? iy * 2 : iy))
   const w = anchor === 'fill' ? availW : Math.min(availW, clamp(s.width ?? size.width, s.minWidth, s.maxWidth))
   const h = anchor === 'fill' ? availH : Math.min(availH, clamp(s.height ?? size.height, s.minHeight, s.maxHeight))
 

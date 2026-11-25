@@ -4,7 +4,7 @@ import type {
   ShadowProjection, Vec3
 } from './types.ts'
 import type { SpriteClip } from './sprites.ts'
-import { createAlphaSorter, multiply, orthographic, projectShadow, shadowDisc, view } from './geometry.ts'
+import { createAlphaSorter, multiply, normalTiltQuaternion, orthographic, projectShadow, shadowDisc, view } from './geometry.ts'
 import { canvasMeshes, meshViewPixels } from './mesh-canvas.ts'
 import { glMeshes } from './mesh-gl.ts'
 import { gpuMeshes } from './mesh-gpu.ts'
@@ -18,13 +18,24 @@ export {
 export { instances } from './instances.ts'
 export { color } from './renderer.ts'
 
-export const LIGHT_FLOATS = 48
+export const LIGHT_FLOATS = 72
 const defaultClear: Color = [0.05, 0.08, 0.12, 1]
 
-export function packLighting(options: LightingOptions = {}, prev?: Float32Array<ArrayBuffer>): Float32Array<ArrayBuffer> {
-  const out = new Float32Array(LIGHT_FLOATS)
-  if (prev && prev.length >= LIGHT_FLOATS) out.set(prev)
-  else {
+export function packLighting(
+  options: LightingOptions = {},
+  prev?: Float32Array<ArrayBuffer>,
+  dest?: Float32Array<ArrayBuffer>
+): Float32Array<ArrayBuffer> {
+  const out = dest && dest.length >= LIGHT_FLOATS ? dest : new Float32Array(LIGHT_FLOATS)
+  if (prev && prev !== out) {
+    out.fill(0)
+    if (prev.length >= 48) out.set(prev.subarray(0, Math.min(prev.length, LIGHT_FLOATS)))
+    else {
+      out[0] = -.48; out[1] = .8; out[2] = .36; out[3] = .52
+      out[4] = 1; out[5] = 1; out[6] = 1; out[7] = 0
+    }
+  } else if (!prev) {
+    out.fill(0)
     out[0] = -.48; out[1] = .8; out[2] = .36; out[3] = .52
     out[4] = 1; out[5] = 1; out[6] = 1; out[7] = 0
   }
@@ -80,7 +91,58 @@ export function packLighting(options: LightingOptions = {}, prev?: Float32Array<
       }
     }
   }
+  if (options.skyColor || options.groundColor) {
+    const hadHemi = out[51] > 0
+    const sky = options.skyColor ?? (hadHemi ? [out[48], out[49], out[50]] : [0.72, 0.84, 0.98])
+    const ground = options.groundColor ?? (hadHemi ? [out[52], out[53], out[54]] : [0.36, 0.30, 0.28])
+    out[48] = sky[0]; out[49] = sky[1]; out[50] = sky[2]; out[51] = 1
+    out[52] = ground[0]; out[53] = ground[1]; out[54] = ground[2]
+  }
+  if (options.toonSteps !== undefined) {
+    out[55] = Number.isFinite(options.toonSteps) && options.toonSteps >= 2 ? Math.floor(options.toonSteps) : 0
+  }
+  if (options.rimColor !== undefined) {
+    out[56] = options.rimColor[0]; out[57] = options.rimColor[1]; out[58] = options.rimColor[2]
+  }
+  if (options.rimStrength !== undefined) {
+    out[59] = Number.isFinite(options.rimStrength) ? Math.max(0, Math.min(1, options.rimStrength)) : 0
+    if (out[59] > 0 && out[56] === 0 && out[57] === 0 && out[58] === 0) {
+      out[56] = 1; out[57] = 1; out[58] = 1
+    }
+  }
+  if (options.shadows !== undefined) {
+    const sh = options.shadows
+    const hadShadow = out[67] > 0.5
+    const enabled = sh.enabled !== undefined ? (sh.enabled ? 1 : 0) : out[64]
+    const prevExt = out[63] > 0 ? out[63] : 24
+    out[60] = sh.center ? sh.center[0] : out[60]
+    out[61] = sh.center ? sh.center[1] : out[61]
+    out[62] = sh.center ? sh.center[2] : out[62]
+    out[63] = sh.extent !== undefined && Number.isFinite(sh.extent) && sh.extent > 1 ? sh.extent : prevExt
+    out[64] = enabled
+    out[65] = sh.bias !== undefined && Number.isFinite(sh.bias) ? Math.max(0.0001, sh.bias) : (hadShadow ? out[65] : 0.0028)
+    out[66] = sh.strength !== undefined && Number.isFinite(sh.strength) ? Math.max(0, Math.min(1, sh.strength)) : (hadShadow ? out[66] : 0.46)
+    out[67] = 1
+    if (sh.color) {
+      out[68] = sh.color[0]; out[69] = sh.color[1]; out[70] = sh.color[2]; out[71] = 0
+    } else if (!hadShadow) {
+      out[68] = 0.22; out[69] = 0.28; out[70] = 0.42; out[71] = 0
+    }
+  }
   return out
+}
+
+/** Build an orthographic directional sun view-projection matrix for shadow mapping. */
+export function computeShadowMatrix(light: Float32Array): Matrix {
+  const lx = light[0], ly = Math.max(0.22, light[1]), lz = light[2]
+  const len = Math.hypot(lx, ly, lz) || 1
+  const dx = lx / len, dy = ly / len, dz = lz / len
+  const cx = light[60] || 0, cy = light[61] || 0, cz = light[62] || 0
+  const extent = light[63] > 1 ? light[63] : 24
+  const dist = extent * 2.2
+  const eye: Vec3 = [cx + dx * dist, cy + dy * dist, cz + dz * dist]
+  const up: Vec3 = Math.abs(dy) > 0.96 ? [0, 0, 1] : [0, 1, 0]
+  return multiply(orthographic(extent * 2, extent * 2, 0.5, extent * 4.6), view(eye, [cx, cy, cz], up))
 }
 
 export async function createLowPolyRenderer(canvas: HTMLCanvasElement,
@@ -95,8 +157,11 @@ export async function createLowPolyRenderer(canvas: HTMLCanvasElement,
   const selected: InstanceBatch[] = []
   const alphaBatches: InstanceBatch[] = []
   const additiveBatches: InstanceBatch[] = []
+  const shadowCasters: InstanceBatch[] = []
   const alphaSorter = createAlphaSorter(16)
   const planes = new Float32Array(24)
+  const lightPlanes = new Float32Array(24)
+  let lightPlanesDirty = true
   const stats = { drawCalls: 0, triangles: 0, instances: 0, uploadBytes: 0, culledBatches: 0 }
 
   function replaceCanvas() {
@@ -107,7 +172,7 @@ export async function createLowPolyRenderer(canvas: HTMLCanvasElement,
   }
 
   if (backend === 'auto' || backend === 'webgpu') {
-    try { initial = await gpuMeshes(canvas, light) }
+    try { initial = await gpuMeshes(canvas, light, { allowFallback: backend === 'webgpu' }) }
     catch (error) {
       if (backend === 'webgpu') throw error
       console.warn('WebGPU initialization failed', error)
@@ -143,20 +208,28 @@ export async function createLowPolyRenderer(canvas: HTMLCanvasElement,
 
   return {
     get name() { return active.name },
+    get gpuInfo() { return active.gpuInfo ?? active.name },
     get canvas() { return canvas },
     render(matrix, batches, clear = defaultClear) {
       if (disposed) throw new Error('The renderer has been disposed')
       const w = Math.max(1, canvas.clientWidth)
       const h = Math.max(1, canvas.clientHeight)
-      const ratio = Math.min(globalThis.devicePixelRatio || 1, pixelRatio, active.maxDimension / Math.max(w, h))
+      const effectivePixelRatio = active.name === 'Canvas 2D' && canvasDepth ? Math.min(pixelRatio, 1) : pixelRatio
+      const ratio = Math.min(globalThis.devicePixelRatio || 1, effectivePixelRatio, active.maxDimension / Math.max(w, h))
       const width = Math.max(1, Math.round(w * ratio))
       const height = Math.max(1, Math.round(h * ratio))
       if (canvas.width !== width) canvas.width = width
       if (canvas.height !== height) canvas.height = height
       frustum(matrix, planes)
+      const useShadows = light[64] > 0.5 && active.name !== 'Canvas 2D'
+      if (useShadows && lightPlanesDirty) {
+        frustum(computeShadowMatrix(light), lightPlanes)
+        lightPlanesDirty = false
+      }
       selected.length = 0
       alphaBatches.length = 0
       additiveBatches.length = 0
+      shadowCasters.length = 0
       stats.triangles = stats.instances = stats.uploadBytes = stats.culledBatches = 0
       for (const batch of batches) {
         if (visible(batch, planes)) {
@@ -166,6 +239,9 @@ export async function createLowPolyRenderer(canvas: HTMLCanvasElement,
           stats.triangles += batch.mesh.vertexCount / 3 * batch.count
           stats.instances += batch.count
         } else if (batch.count) stats.culledBatches++
+        if (useShadows && batch.blend === 'opaque' && visible(batch, lightPlanes)) {
+          shadowCasters.push(batch)
+        }
       }
       if (alphaBatches.length > 1) {
         alphaSorter.sortBatches(matrix, alphaBatches, selected)
@@ -174,7 +250,7 @@ export async function createLowPolyRenderer(canvas: HTMLCanvasElement,
       }
       for (let i = 0; i < additiveBatches.length; i++) selected.push(additiveBatches[i])
       stats.drawCalls = selected.length
-      active.draw(matrix, clear, selected, stats)
+      active.draw(matrix, clear, selected, stats, useShadows ? shadowCasters : undefined)
       if (isTestingActive()) {
         recordFrame({
           canvas,
@@ -192,8 +268,8 @@ export async function createLowPolyRenderer(canvas: HTMLCanvasElement,
     },
     setLighting(next: LightingOptions) {
       if (disposed) return
-      const packed = packLighting(next, light)
-      light.set(packed)
+      packLighting(next, light, light)
+      lightPlanesDirty = true
       active.setLighting?.(light)
     },
     release(batch) { active.release(batch) },
@@ -237,6 +313,8 @@ export function createShadowBatch(options: ShadowBatchOptions = {}): ShadowBatch
   const defaultOffsetScale = options.offsetScale ?? 1
   const defaultBias = options.bias ?? 0.015
   const defaultPenumbra = Math.max(0, options.penumbra ?? 0)
+  const heightAt = options.heightAt
+  const normalAt = options.normalAt
 
   function setDirection(dir?: Vec3) {
     if (!dir) return
@@ -299,18 +377,39 @@ export function createShadowBatch(options: ShadowBatchOptions = {}): ShadowBatch
     },
     add(position: Vec3, caster?: ShadowCasterOptions) {
       const radius = caster?.radius ?? defaultRadius
-      projOpts.groundY = caster?.groundY ?? defaultGroundY
+      projOpts.groundY = caster?.groundY ?? (heightAt ? heightAt(position[0], position[2]) : defaultGroundY)
       projOpts.radius = radius
       projOpts.radiusZ = caster?.radiusZ ?? radius
       projOpts.opacity = caster?.opacity ?? defaultOpacity
       projOpts.maxHeight = caster?.maxHeight ?? defaultMaxHeight
       projOpts.minScale = caster?.minScale ?? defaultMinScale
-      projOpts.maxStretch = caster?.maxStretch ?? defaultMaxStretch
+      projOpts.maxStretch = caster?.maxStretch ?? (caster?.yaw !== undefined ? 1 : defaultMaxStretch)
       projOpts.offsetScale = caster?.offsetScale ?? defaultOffsetScale
       projOpts.bias = caster?.bias ?? defaultBias
 
       projectShadow(position, projOpts, projOut)
       if (!projOut.visible) return
+
+      // Re-sample ground height & slope normal at the projected shadow footprint so shadows hug hillsides cleanly!
+      if (heightAt && caster?.groundY === undefined) {
+        projOut.position[1] = heightAt(projOut.position[0], projOut.position[2]) + projOpts.bias
+      }
+      const slopeNormal = caster?.groundNormal ?? (normalAt ? normalAt(projOut.position[0], projOut.position[2]) : undefined)
+      const shadowYaw = caster?.yaw ?? projOut.yaw
+      const rot: number | readonly [number, number, number, number] = slopeNormal
+        ? normalTiltQuaternion(slopeNormal, shadowYaw)
+        : shadowYaw
+      let nux = 0, nuy = 1, nuz = 0
+      if (slopeNormal) {
+        const b = projOpts.bias
+        const nl = Math.hypot(slopeNormal[0], slopeNormal[1], slopeNormal[2]) || 1
+        nux = slopeNormal[0] / nl
+        nuy = slopeNormal[1] / nl
+        nuz = slopeNormal[2] / nl
+        projOut.position[0] += nux * b * 0.65
+        projOut.position[1] += (nuy - 1) * b * 0.35
+        projOut.position[2] += nuz * b * 0.65
+      }
 
       const rgb = caster?.color ?? baseColor
       const penumbra = caster?.penumbra ?? defaultPenumbra
@@ -324,20 +423,20 @@ export function createShadowBatch(options: ShadowBatchOptions = {}): ShadowBatch
         scaleScratch[1] = projOut.scale[1]
         scaleScratch[2] = projOut.scale[2] * outerExpand
         colorScratch[3] = projOut.opacity * 0.42
-        batch.add(projOut.position, scaleScratch, projOut.yaw, colorScratch, 1)
+        batch.add(projOut.position, scaleScratch, rot, colorScratch, 1)
 
-        posScratch[0] = projOut.position[0]
-        posScratch[1] = projOut.position[1] + 0.0005
-        posScratch[2] = projOut.position[2]
+        posScratch[0] = projOut.position[0] + nux * 0.002
+        posScratch[1] = projOut.position[1] + nuy * 0.002
+        posScratch[2] = projOut.position[2] + nuz * 0.002
         colorScratch[3] = projOut.opacity * 0.68
-        batch.add(posScratch, projOut.scale, projOut.yaw, colorScratch, 1)
+        batch.add(posScratch, projOut.scale, rot, colorScratch, 1)
       } else {
         colorScratch[3] = projOut.opacity
-        batch.add(projOut.position, projOut.scale, projOut.yaw, colorScratch, 1)
+        batch.add(projOut.position, projOut.scale, rot, colorScratch, 1)
       }
     },
     addProjected(position: Vec3, caster?: ProjectedShadowOptions) {
-      const groundY = caster?.groundY ?? defaultGroundY
+      const groundY = caster?.groundY ?? (heightAt ? heightAt(position[0], position[2]) : defaultGroundY)
       const maxHeight = caster?.maxHeight ?? defaultMaxHeight
       const rawAlt = position[1] - groundY
       if (!Number.isFinite(rawAlt) || rawAlt < -1e-3 || !(maxHeight > 0)) return
@@ -354,8 +453,12 @@ export function createShadowBatch(options: ShadowBatchOptions = {}): ShadowBatch
       const bias = caster?.bias ?? defaultBias
 
       posScratch[0] = position[0] + (horiz > 1e-6 ? -lightDir[0] * lateralFactor : 0)
-      posScratch[1] = groundY + bias
       posScratch[2] = position[2] + (horiz > 1e-6 ? -lightDir[2] * lateralFactor : 0)
+      posScratch[1] = (heightAt && caster?.groundY === undefined ? heightAt(posScratch[0], posScratch[2]) : groundY) + bias
+      const slopeNormal = normalAt ? normalAt(posScratch[0], posScratch[2]) : undefined
+      const rot = slopeNormal && (caster?.rotation === undefined || typeof caster.rotation === 'number')
+        ? normalTiltQuaternion(slopeNormal, caster?.rotation ?? 0)
+        : (caster?.rotation ?? 0)
 
       const s = caster?.scale
       if (s) {
@@ -372,7 +475,7 @@ export function createShadowBatch(options: ShadowBatchOptions = {}): ShadowBatch
       colorScratch[1] = rgb[1]
       colorScratch[2] = rgb[2]
       colorScratch[3] = opacity
-      batch.add(posScratch, scaleScratch, caster?.rotation ?? 0, colorScratch, 1)
+      batch.add(posScratch, scaleScratch, rot, colorScratch, 1)
     }
   }
 }
@@ -390,11 +493,61 @@ export function renderMeshPixels(camera: Matrix, batches: readonly InstanceBatch
   return meshViewPixels([camera], batches, size, packLighting(lighting))
 }
 
-type SpriteCamera = { span: number; center?: Vec3; frameSize?: number; elevation?: number; lighting?: LightingOptions }
+type SpriteCamera = { span: number; center?: Vec3; frameSize?: number; elevation?: number; lighting?: LightingOptions; outline?: string }
+
+export function applySpriteOutline(pixels: Uint8ClampedArray, width: number, height: number, frameSize: number, outline: string) {
+  if (!Number.isInteger(width) || width <= 0 || !Number.isInteger(height) || height <= 0 ||
+      !Number.isInteger(frameSize) || frameSize <= 0 || pixels.length < width * height * 4) {
+    throw new RangeError('applySpriteOutline requires positive integer dimensions matching the pixel buffer')
+  }
+  if (typeof outline !== 'string') throw new RangeError('Expected outline to be "selout" or a 6-digit hex color')
+  const isSelout = outline === 'selout'
+  let fr = 20, fg = 28, fb = 42
+  if (!isSelout) {
+    const raw = outline.charCodeAt(0) === 35 ? outline.slice(1) : outline
+    if (!/^[0-9a-f]{6}$/i.test(raw)) throw new RangeError(`Invalid sprite outline color: ${outline}`)
+    const n = Number.parseInt(raw, 16)
+    fr = (n >>> 16) & 255; fg = (n >>> 8) & 255; fb = n & 255
+  }
+  const cols = Math.floor(width / frameSize), rows = Math.floor(height / frameSize)
+  const snap = new Uint8ClampedArray(pixels)
+  const dirs = [[-1, 0], [1, 0], [0, -1], [0, 1]] as const
+  for (let cr = 0; cr < rows; cr++) {
+    for (let cc = 0; cc < cols; cc++) {
+      const x0 = cc * frameSize, y0 = cr * frameSize
+      for (let py = 0; py < frameSize; py++) {
+        for (let px = 0; px < frameSize; px++) {
+          const di = ((y0 + py) * width + (x0 + px)) * 4
+          if (snap[di + 3] > 16) continue
+          let nr = 0, ng = 0, nb = 0, hits = 0, topLeft = 0
+          for (const [ox, oy] of dirs) {
+            const nx = px + ox, ny = py + oy
+            if (nx < 0 || nx >= frameSize || ny < 0 || ny >= frameSize) continue
+            const ni = ((y0 + ny) * width + (x0 + nx)) * 4
+            if (snap[ni + 3] > 128) {
+              nr += snap[ni]; ng += snap[ni + 1]; nb += snap[ni + 2]; hits++
+              if (ox > 0 || oy > 0) topLeft++
+            }
+          }
+          if (!hits) continue
+          if (isSelout) {
+            const scale = topLeft > 0 ? 0.44 : 0.24
+            pixels[di] = Math.round((nr / hits) * scale + 10)
+            pixels[di + 1] = Math.round((ng / hits) * scale + 14)
+            pixels[di + 2] = Math.round((nb / hits) * scale + 24)
+            pixels[di + 3] = 255
+          } else {
+            pixels[di] = fr; pixels[di + 1] = fg; pixels[di + 2] = fb; pixels[di + 3] = 255
+          }
+        }
+      }
+    }
+  }
+}
 
 /** Bake the same eight mesh views on the server or in the browser, without a canvas. */
 export function bakeSpritePixels(batches: readonly InstanceBatch[], {
-  span, center = [0, 0, 0], frameSize = 64, elevation = Math.PI / 6, lighting
+  span, center = [0, 0, 0], frameSize = 64, elevation = Math.PI / 6, lighting, outline
 }: SpriteCamera) {
   if (!Number.isInteger(frameSize) || frameSize < 1 || frameSize > 1024) throw new RangeError('Frame size must be 1–1024 pixels')
   if (!(Number.isFinite(span) && span > 0 && center.length === 3 &&
@@ -410,7 +563,9 @@ export function bakeSpritePixels(batches: readonly InstanceBatch[], {
     return multiply(projection, view([center[0] + horizontal * Math.sin(angle), center[1] + radius * Math.sin(elevation),
       center[2] + horizontal * Math.cos(angle)], center))
   })
-  return meshViewPixels(cameras, batches, frameSize, packLighting(lighting))
+  const out = meshViewPixels(cameras, batches, frameSize, packLighting(lighting))
+  if (outline) applySpriteOutline(out.pixels, out.width, out.height, frameSize, outline)
+  return out
 }
 
 /** Bake eight camera views of a +Z-facing model into one transparent horizontal sprite sheet. */

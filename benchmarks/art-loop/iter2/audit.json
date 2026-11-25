@@ -1,0 +1,100 @@
+{
+  "iteration": "benchmarks/art-loop/iter2",
+  "useHemi": true,
+  "lowPoly": [
+    {
+      "id": "fox-courier",
+      "ok": true,
+      "parts": 44,
+      "triangles": 1104,
+      "hiddenParts": [],
+      "detachedParts": [],
+      "components": 1,
+      "edgeTouchesAll8": 0,
+      "fillRatio": 0.21,
+      "lumRange": 235,
+      "hasClips": true,
+      "animMetrics": {
+        "clips": [
+          "walk",
+          "idle"
+        ],
+        "inspectedClip": "walk",
+        "footDriftPx": 2,
+        "frameDeltaPx": 536
+      }
+    },
+    {
+      "id": "apothecary-lantern",
+      "ok": true,
+      "parts": 39,
+      "triangles": 1230,
+      "hiddenParts": [],
+      "detachedParts": [],
+      "components": 1,
+      "edgeTouchesAll8": 0,
+      "fillRatio": 0.253,
+      "lumRange": 202,
+      "hasClips": false,
+      "animMetrics": null
+    },
+    {
+      "id": "windswept-cottage",
+      "ok": true,
+      "parts": 40,
+      "triangles": 836,
+      "hiddenParts": [],
+      "detachedParts": [],
+      "components": 1,
+      "edgeTouchesAll8": 0,
+      "fillRatio": 0.434,
+      "lumRange": 221,
+      "hasClips": false,
+      "animMetrics": null
+    }
+  ],
+  "pixelArt": [
+    {
+      "id": "knight-sprout",
+      "ok": true,
+      "frames": 4,
+      "frameWidth": 32,
+      "frameHeight": 32,
+      "uniqueColors": 14,
+      "fillRatio": 0.349,
+      "lumRange": 219,
+      "orphans": 0,
+      "edgeTouches": 0,
+      "footDriftPx": 1,
+      "frameDeltaPx": 308
+    },
+    {
+      "id": "potion-flask",
+      "ok": true,
+      "frames": 4,
+      "frameWidth": 24,
+      "frameHeight": 24,
+      "uniqueColors": 14,
+      "fillRatio": 0.434,
+      "lumRange": 224,
+      "orphans": 0,
+      "edgeTouches": 0,
+      "footDriftPx": 0,
+      "frameDeltaPx": 28
+    },
+    {
+      "id": "moss-golem",
+      "ok": true,
+      "frames": 2,
+      "frameWidth": 40,
+      "frameHeight": 40,
+      "uniqueColors": 14,
+      "fillRatio": 0.516,
+      "lumRange": 215,
+      "orphans": 0,
+      "edgeTouches": 0,
+      "footDriftPx": 0,
+      "frameDeltaPx": 449
+    }
+  ]
+}

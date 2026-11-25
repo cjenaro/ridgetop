@@ -3,7 +3,7 @@ import { instances } from './instances.ts'
 import { getRigMeta, isTestingActive, nextTestingGroupId, recordRigMeta } from './testing-runtime.ts'
 import type { BlendMode, Color, InstanceBatch, InstanceTag, LowPolyRenderer, Mesh, Quaternion, Vec3 } from './types.ts'
 
-export type Easing = 'linear' | 'smooth' | 'easeOut' | 'easeInOut'
+export type Easing = 'linear' | 'smooth' | 'easeIn' | 'easeOut' | 'easeInOut' | 'backOut' | 'step'
 
 export interface JointPose {
   readonly position?: Vec3
@@ -19,6 +19,7 @@ export interface RigPart {
   readonly rotation?: readonly [pitch: number, yaw: number, roll: number]
   readonly color: Color
   readonly unlit?: number
+  readonly blend?: BlendMode
 }
 
 export interface RigJoint {
@@ -73,8 +74,11 @@ export function multiplyQuat(a: Quaternion, b: Quaternion): Quaternion {
 function applyEase(t: number, ease: Easing = 'smooth'): number {
   const c = t <= 0 ? 0 : t >= 1 ? 1 : t
   if (ease === 'linear') return c
+  if (ease === 'step') return c < 1 ? 0 : 1
+  if (ease === 'easeIn') return c * c
   if (ease === 'easeOut') return 1 - (1 - c) * (1 - c)
   if (ease === 'easeInOut') return c < 0.5 ? 2 * c * c : 1 - Math.pow(-2 * c + 2, 2) / 2
+  if (ease === 'backOut') { const u = c - 1; return 1 + 2.70158 * u * u * u + 1.70158 * u * u }
   return c * c * (3 - 2 * c)
 }
 
@@ -270,7 +274,7 @@ export function renderRig(
           finalRot,
           tint,
           part.unlit ?? 0,
-          'opaque',
+          part.blend ?? 'opaque',
           testing ? {
             kind: 'rig',
             asset: rigLabel,

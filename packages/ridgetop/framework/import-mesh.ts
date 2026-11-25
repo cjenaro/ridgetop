@@ -22,7 +22,7 @@ const IDENTITY: Matrix = new Float32Array([
 ])
 
 function clamp01(value: number): number {
-  return value <= 0 ? 0 : value >= 1 ? 1 : value
+  return !(value > 0) ? 0 : value >= 1 ? 1 : value
 }
 
 function linearToSrgb(value: number): number {
@@ -50,7 +50,8 @@ function buildTriangleMesh(
   indices: ArrayLike<number> | null,
   vertexCount: number,
   mode: number,
-  flipWinding: boolean
+  flipWinding: boolean,
+  colors?: ArrayLike<number> | null
 ): Mesh | null {
   const count = indices ? indices.length : vertexCount
   let maxTris = 0
@@ -67,6 +68,7 @@ function buildTriangleMesh(
   }
 
   const flat = new Float32Array(maxTris * 9)
+  const flatCol = colors ? new Float32Array(maxTris * 9) : null
   let out = 0
 
   const emitTri = (a: number, b: number, c: number) => {
@@ -84,6 +86,11 @@ function buildTriangleMesh(
     flat[out + 6] = positions[p2]
     flat[out + 7] = positions[p2 + 1]
     flat[out + 8] = positions[p2 + 2]
+    if (flatCol && colors) {
+      flatCol[out] = colors[p0]; flatCol[out + 1] = colors[p0 + 1]; flatCol[out + 2] = colors[p0 + 2]
+      flatCol[out + 3] = colors[p1]; flatCol[out + 4] = colors[p1 + 1]; flatCol[out + 5] = colors[p1 + 2]
+      flatCol[out + 6] = colors[p2]; flatCol[out + 7] = colors[p2 + 1]; flatCol[out + 8] = colors[p2 + 2]
+    }
     out += 9
   }
 
@@ -111,7 +118,9 @@ function buildTriangleMesh(
   }
 
   if (out === 0) return null
-  return mesh(out === flat.length ? flat : flat.subarray(0, out))
+  const finalPos = out === flat.length ? flat : flat.subarray(0, out)
+  const finalCol = flatCol ? (out === flatCol.length ? flatCol : flatCol.subarray(0, out)) : undefined
+  return mesh(finalPos, undefined, finalCol)
 }
 
 /**
@@ -384,6 +393,27 @@ function readIndices(gltf: Record<string, unknown>, bin: Uint8Array | null, acce
   return out
 }
 
+function readColors(gltf: Record<string, unknown>, bin: Uint8Array | null, accessorIndex: number, expectedCount: number): Float32Array | null {
+  const accessor = getArrayObject(gltf.accessors, accessorIndex, 'color accessor')
+  const comps = accessor.type === 'VEC3' ? 3 : accessor.type === 'VEC4' ? 4 : 0
+  if (!comps) return null
+  const compSize = accessor.componentType === 5126 ? 4 : accessor.componentType === 5121 ? 1 : accessor.componentType === 5123 ? 2 : 0
+  if (!compSize) return null
+  const { count, dv, start, stride } = resolveAccessorSlice(gltf, bin, accessorIndex, comps * compSize)
+  if (count < expectedCount) return null
+  const out = new Float32Array(expectedCount * 3)
+  for (let i = 0; i < expectedCount; i++) {
+    const off = start + i * stride
+    for (let c = 0; c < 3; c++) {
+      const raw = compSize === 4 ? dv.getFloat32(off + c * 4, true)
+        : compSize === 1 ? dv.getUint8(off + c) / 255
+        : dv.getUint16(off + c * 2, true) / 65535
+      out[i * 3 + c] = linearToSrgb(Number.isFinite(raw) ? raw : 1)
+    }
+  }
+  return out
+}
+
 function extractMaterial(mat: Record<string, unknown> | undefined): { color: Color; unlit: number; material?: string } {
   if (!isPlainObject(mat)) return { color: WHITE, unlit: 0 }
   const pbr = isPlainObject(mat.pbrMetallicRoughness) ? mat.pbrMetallicRoughness : undefined
@@ -504,6 +534,10 @@ export function parseGlb(bytes: Uint8Array | ArrayBuffer): ImportedMeshPart[] {
 
       const positions = readPositions(gltf, binChunk, posAccessor, world)
       const vertexCount = positions.length / 3
+      const colAccessor = isPlainObject(prim.attributes) ? prim.attributes.COLOR_0 : undefined
+      const vtxColors = typeof colAccessor === 'number' && Number.isInteger(colAccessor)
+        ? readColors(gltf, binChunk, colAccessor, vertexCount)
+        : null
       let rawIndices: Uint32Array | null = null
       if (prim.indices !== undefined) {
         if (typeof prim.indices !== 'number' || !Number.isInteger(prim.indices)) {
@@ -512,7 +546,7 @@ export function parseGlb(bytes: Uint8Array | ArrayBuffer): ImportedMeshPart[] {
         rawIndices = readIndices(gltf, binChunk, prim.indices, vertexCount)
       }
 
-      const built = buildTriangleMesh(positions, rawIndices, vertexCount, mode, flipWinding)
+      const built = buildTriangleMesh(positions, rawIndices, vertexCount, mode, flipWinding, vtxColors)
       if (!built) continue
 
       const matDef = prim.material !== undefined ? getArrayObject(gltf.materials, prim.material, 'material') : undefined

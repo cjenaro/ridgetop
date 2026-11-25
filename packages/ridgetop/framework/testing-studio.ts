@@ -671,8 +671,10 @@ export function mountTestingStudio(): TestingStudioHandle {
     const nameInput = el('input', { className: 'rt-input', type: 'text' })
     const shapeSelect = el('select', { className: 'rt-select' })
     for (const shape of Object.keys(artShapes)) shapeSelect.append(new Option(shape, shape))
+    const toneKeys = Object.keys(artPalette)
+    for (const tone of Object.keys(recipe.palette)) if (!toneKeys.includes(tone)) toneKeys.push(tone)
     const toneSelect = el('select', { className: 'rt-select' })
-    for (const tone of Object.keys(artPalette)) toneSelect.append(new Option(tone, tone))
+    for (const tone of toneKeys) toneSelect.append(new Option(tone, tone))
     nameShapeRow.append(
       el('label', { className: 'rt-field', text: 'Name' }, nameInput),
       el('label', { className: 'rt-field', text: 'Shape' }, shapeSelect),
@@ -705,10 +707,12 @@ export function mountTestingStudio(): TestingStudioHandle {
     const paletteSection = el('div', { className: 'rt-section' })
     paletteSection.append(el('h3', { className: 'rt-section-title', text: 'Palette Swatches' }))
     const swatches = el('div', { className: 'rt-swatches' })
-    for (const tone of Object.keys(artPalette)) {
-      if (!isArtTone(tone)) continue
+    for (const tone of toneKeys) {
+      if (!isArtTone(tone) && !Object.hasOwn(recipe.palette, tone)) continue
       const picker = el('input', { type: 'color' })
-      picker.value = recipe.palette[tone] ?? artPalette[tone]
+      const basePalette: Record<string, string | undefined> = artPalette
+      const rawHex = recipe.palette[tone] ?? basePalette[tone] ?? '#ffffff'
+      picker.value = rawHex.startsWith('#') ? rawHex : '#' + rawHex
       picker.oninput = () => {
         recipe.palette[tone] = picker.value
         dirty = true
@@ -764,7 +768,12 @@ export function mountTestingStudio(): TestingStudioHandle {
       const part = recipe.parts[selectedPartIndex]
       sel.part = part.name
       nameInput.value = part.name
+      const isTube = part.shape === 'tube'
+      const shapeKeys = Object.keys(artShapes)
+      if (isTube) shapeKeys.push('tube')
+      shapeSelect.replaceChildren(...shapeKeys.map(s => new Option(s, s)))
       shapeSelect.value = part.shape
+      shapeSelect.disabled = isTube
       toneSelect.value = part.tone
       for (let i = 0; i < 3; i++) {
         posCtrl.inputs[i].value = String(round3(part.position[i]))
@@ -785,8 +794,8 @@ export function mountTestingStudio(): TestingStudioHandle {
         sel.part = nextName
         partSelect.options[selectedPartIndex].text = nextName
       }
-      if (isArtShape(shapeSelect.value)) part.shape = shapeSelect.value
-      if (isArtTone(toneSelect.value)) part.tone = toneSelect.value
+      if (part.shape !== 'tube' && isArtShape(shapeSelect.value)) part.shape = shapeSelect.value
+      if (isArtTone(toneSelect.value) || Object.hasOwn(recipe.palette, toneSelect.value)) part.tone = toneSelect.value
       const pos: Vec3 = [posCtrl.inputs[0].valueAsNumber, posCtrl.inputs[1].valueAsNumber, posCtrl.inputs[2].valueAsNumber]
       const scl: Vec3 = [sclCtrl.inputs[0].valueAsNumber, sclCtrl.inputs[1].valueAsNumber, sclCtrl.inputs[2].valueAsNumber]
       if (!pos.every(Number.isFinite) || !scl.every(n => Number.isFinite(n) && n > 0)) {

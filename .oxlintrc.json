@@ -11,6 +11,7 @@
     "examples/*/dist/**",
     "node_modules/**",
     "test/**",
+    "benchmarks/**",
     ".agents/**"
   ],
   "rules": {

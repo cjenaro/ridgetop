@@ -1,5 +1,5 @@
 import {
-  box, chamferedPrism, color, instances, mesh, multiply, octahedron, orthographic,
+  bakeVertexAO, box, chamferedPrism, color, createShadowBatch, instances, mesh, multiply, octahedron, orthographic,
   projectPoint, view
 } from 'ridgetop'
 import type { Color, LowPolyRenderer, Matrix, Vec3 } from 'ridgetop'
@@ -43,11 +43,42 @@ const pond = mesh([0,0,0, 1.02,0,0, .68,0,.71, -.18,0,.91, -.80,0,.63,
   -1.01,0,.05, -.69,0,-.58, -.09,0,-.78, .83,0,-.65],
   [0,2,1, 0,3,2, 0,4,3, 0,5,4, 0,6,5, 0,7,6, 0,8,7, 0,1,8])
 
+const themeLighting: Record<Circuit['id'], {
+  direction: Vec3; ambient: number; color: Vec3
+  skyColor: Vec3; groundColor: Vec3
+  rimColor: Vec3; rimStrength: number
+  shadowStrength: number; shadowColor: Vec3
+}> = {
+  copper: {
+    direction: [-0.64, 0.62, 0.44], ambient: 0.50, color: [1.0, 0.94, 0.83],
+    skyColor: [0.84, 0.86, 0.98], groundColor: [0.68, 0.44, 0.34],
+    rimColor: [1.0, 0.92, 0.76], rimStrength: 0.26,
+    shadowStrength: 0.58, shadowColor: [0.24, 0.18, 0.38]
+  },
+  brine: {
+    direction: [-0.48, 0.78, 0.38], ambient: 0.48, color: [0.96, 0.98, 1.0],
+    skyColor: [0.76, 0.92, 0.98], groundColor: [0.42, 0.56, 0.58],
+    rimColor: [0.92, 1.0, 0.96], rimStrength: 0.22,
+    shadowStrength: 0.42, shadowColor: [0.20, 0.34, 0.46]
+  },
+  foundry: {
+    direction: [-0.60, 0.66, 0.44], ambient: 0.40, color: [1.0, 0.88, 0.76],
+    skyColor: [0.64, 0.62, 0.74], groundColor: [0.54, 0.34, 0.32],
+    rimColor: [1.0, 0.76, 0.54], rimStrength: 0.28,
+    shadowStrength: 0.48, shadowColor: [0.22, 0.18, 0.30]
+  },
+  night: {
+    direction: [-0.42, 0.74, 0.52], ambient: 0.34, color: [0.74, 0.84, 1.0],
+    skyColor: [0.36, 0.48, 0.76], groundColor: [0.16, 0.22, 0.36],
+    rimColor: [0.56, 0.94, 0.98], rimStrength: 0.32,
+    shadowStrength: 0.44, shadowColor: [0.08, 0.12, 0.24]
+  }
+}
+
 function terrainTiles(sand: Color[]) {
   const cols = 17
   const rows = 13
   const points: Vec3[] = []
-  const faces: number[][] = sand.map(() => [])
   for (let row = 0; row <= rows; row++) {
     for (let col = 0; col <= cols; col++) {
       const x = (col - cols / 2) * 10 + Math.sin(row * 4.8 + col * 2.32) * 1.65
@@ -55,23 +86,26 @@ function terrainTiles(sand: Color[]) {
       points.push([x, -.055, z])
     }
   }
+  const indices: number[] = []
+  const colors: number[] = []
+  const pushTri = (a: number, b: number, c: number, col: Color) => {
+    indices.push(a, b, c)
+    for (let k = 0; k < 3; k++) colors.push(col[0], col[1], col[2])
+  }
   for (let row = 0; row < rows; row++) {
     for (let col = 0; col < cols; col++) {
       const a = row * (cols + 1) + col
       const b = a + cols + 1
       const band = 2 + Math.sin(col * 1.56 + row * .73) * 1.55 + Math.cos(row * .92) * .8
       const tone = Math.max(0, Math.min(sand.length - 2, Math.round(band)))
-      faces[tone].push(a, b, a + 1)
-      faces[tone + (col * 7 + row * 13) % 2].push(a + 1, b, b + 1)
+      pushTri(a, b, a + 1, sand[tone])
+      pushTri(a + 1, b, b + 1, sand[tone + (col * 7 + row * 13) % 2])
     }
   }
-  const packed = points.flat()
-  return faces.flatMap((indices, i) => {
-    if (!indices.length) return []
-    const batch = instances(mesh(packed, indices))
-    batch.add([0, 0, 0], [1, 1, 1], 0, sand[i], .58)
-    return [batch]
-  })
+  const terrainMesh = bakeVertexAO(mesh(points.flat(), indices, colors), { strength: 0.12, verticalGradient: 0 })
+  const batch = instances(terrainMesh)
+  batch.add([0, 0, 0], [1, 1, 1], 0, [1, 1, 1, 1], .08)
+  return [batch]
 }
 
 export function buildCircuitBatches(circuit: Circuit) {
@@ -229,7 +263,18 @@ export function createRaceScene(renderer: LowPolyRenderer, circuit: Circuit) {
   const { clear, ground, shoulder, road, water, solid, rocks, lights, line, trim, scenery } = buildCircuitBatches(circuit)
   const models = createCarModels()
   const effects = instances(octahedron)
-  const trackBatches = [...ground, shoulder, road, water, solid, rocks, lights, effects]
+  const lighting = themeLighting[circuit.id]
+  const carShadows = createShadowBatch({
+    capacity: 24,
+    groundY: 0.045,
+    direction: lighting.direction,
+    color: lighting.shadowColor,
+    opacity: 0.30,
+    penumbra: 0.28,
+    offsetScale: 0.12,
+    bias: 0.012
+  })
+  const trackBatches = [...ground, shoulder, road, water, solid, rocks, lights, carShadows.batch, effects]
   const simpleBatches = [...trackBatches, ...models.common]
   const all = [...trackBatches, ...models.full, ...line, trim, scenery]
 
@@ -243,6 +288,24 @@ export function createRaceScene(renderer: LowPolyRenderer, circuit: Circuit) {
   }
   const centerX = (maxX + minX) / 2
   const centerZ = (maxZ + minZ) / 2
+  const shadowExtent = Math.max(maxX - minX, maxZ - minZ) * 0.62 + 16
+  renderer.setLighting({
+    direction: lighting.direction,
+    ambient: lighting.ambient,
+    color: lighting.color,
+    skyColor: lighting.skyColor,
+    groundColor: lighting.groundColor,
+    rimColor: lighting.rimColor,
+    rimStrength: lighting.rimStrength,
+    shadows: {
+      enabled: true,
+      center: [centerX, 0, centerZ],
+      extent: shadowExtent,
+      bias: 0.0028,
+      strength: lighting.shadowStrength,
+      color: lighting.shadowColor
+    }
+  })
   const isometric = (x: number, z: number) => view([x + 70, 70, z + 70], [x, 0, z])
   const circuitView = isometric(centerX, centerZ)
   let maxAbsX = -Infinity, maxAbsY = -Infinity
@@ -282,11 +345,19 @@ export function createRaceScene(renderer: LowPolyRenderer, circuit: Circuit) {
       }
       models.clear()
       effects.clear()
+      carShadows.clear()
       for (const driver of race.drivers) {
         const speed = Math.hypot(driver.vx, driver.vz)
         const roll = reducedMotion ? 0 : -driver.steer * Math.min(.19, speed * .011)
         const pitch = reducedMotion ? 0 : -.055 * driver.throttle
-        models.add(driver, pitch, roll, simple)
+        models.add(driver, pitch, roll, simple, undefined, false)
+        carShadows.add([driver.x, 0.45, driver.z], {
+          radius: 1.05,
+          radiusZ: 1.72,
+          yaw: driver.yaw,
+          opacity: simple ? 0.44 : 0.30,
+          offsetScale: simple ? 0.65 : 0.12
+        })
         if (driver.slot === 0) effects.add([driver.x, 1.87, driver.z], [.33, .27, .33], 0, ivory, 1)
         if (driver.disabled) effects.add([driver.x, 1.15, driver.z], [.96, .41, .96], 0, hitColor, 1)
       }
@@ -312,7 +383,7 @@ export function createRaceScene(renderer: LowPolyRenderer, circuit: Circuit) {
     },
     dispose() {
       for (const batch of all) renderer.release(batch)
-      for (const batch of [...ground, shoulder, road, ...line]) renderer.releaseMesh(batch.mesh)
+      for (const batch of [...ground, shoulder, road, carShadows.batch, ...line]) renderer.releaseMesh(batch.mesh)
     }
   }
 }

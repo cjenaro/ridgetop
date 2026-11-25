@@ -80,6 +80,20 @@ function transformBatch(
   const fogB = hasExtended ? light[10] : 0
   const fogNear = hasExtended ? light[11] : 0
   const invFogSpan = hasExtended ? light[12] : 0
+  const hasStylized = light.length >= 60
+  const hasHemi = hasStylized && light[51] > 0.5
+  const skyR = hasHemi ? light[48] : 0, skyG = hasHemi ? light[49] : 0, skyB = hasHemi ? light[50] : 0
+  const grdR = hasHemi ? light[52] : 0, grdG = hasHemi ? light[53] : 0, grdB = hasHemi ? light[54] : 0
+  const toonSteps = hasStylized && light[55] >= 2 ? light[55] : 0
+  const rimStrength = hasStylized && light[59] > 0 ? light[59] : 0
+  const rimR = rimStrength > 0 ? light[56] : 0
+  const rimG = rimStrength > 0 ? light[57] : 0
+  const rimB = rimStrength > 0 ? light[58] : 0
+  let vax = 0, vay = 0, vaz = 1
+  if (rimStrength > 0) {
+    const vLen = Math.hypot(matrix[2], matrix[6], matrix[10]) || 1
+    vax = matrix[2] / vLen; vay = matrix[6] / vLen; vaz = matrix[10] / vLen
+  }
   const blend: BlendMode = batch.blend ?? 'opaque'
   const isOpaque = blend === 'opaque'
   const blendRank = isOpaque ? 0 : blend === 'alpha' ? 1 : 2
@@ -132,6 +146,7 @@ function transformBatch(
     const lly = (lx * b + ly * e + lz * h) * invSy
     const llz = (lx * c + ly * f + lz * k) * invSz
     const r0 = data[i + 8], g0c = data[i + 9], b0c = data[i + 10], unlit = data[i + 11]
+    const vColors = batch.mesh.colors
 
     faces: for (let face = 0; face < vLen; face += 18) {
       const v0x = vertices[face], v0y = vertices[face + 1], v0z = vertices[face + 2]
@@ -215,14 +230,39 @@ function transformBatch(
       const nx = fnx * invSx, ny = fny * invSy, nz = fnz * invSz
       const invNLen = 1 / Math.sqrt(nx * nx + ny * ny + nz * nz)
       const ndotl = llx * fnx + lly * fny + llz * fnz
-      const diffuse = ndotl > 0 ? ndotl * invNLen : 0
-      const shade = ambient + (1 - ambient) * diffuse
-      let litR = sunR * shade, litG = sunG * shade, litB = sunB * shade
+      let diffuse = ndotl > 0 ? ndotl * invNLen : 0
+      if (toonSteps >= 2) diffuse = Math.floor(diffuse * toonSteps + 0.5) / toonSteps
+      let litR: number, litG: number, litB: number
+      let wnx = 0, wny = 0, wnz = 0
+      const needWorldNormal = hasHemi || rimStrength > 0 || (pointCount > 0 && unlit < 1)
+      if (needWorldNormal) {
+        wnx = (a * nx + b * ny + c * nz) * invNLen
+        wny = (d * nx + e * ny + f * nz) * invNLen
+        wnz = (g * nx + h * ny + k * nz) * invNLen
+      }
+      if (hasHemi) {
+        const ht = wny * 0.5 + 0.5
+        const hr = grdR + (skyR - grdR) * ht
+        const hg = grdG + (skyG - grdG) * ht
+        const hb = grdB + (skyB - grdB) * ht
+        const ambW = ambient * 1.25
+        const sunW = (1 - ambient * 0.85) * diffuse
+        litR = hr * ambW + sunR * sunW
+        litG = hg * ambW + sunG * sunW
+        litB = hb * ambW + sunB * sunW
+      } else {
+        const shade = ambient + (1 - ambient) * diffuse
+        litR = sunR * shade; litG = sunG * shade; litB = sunB * shade
+      }
+      if (rimStrength > 0) {
+        const vdot = Math.abs(wnx * vax + wny * vay + wnz * vaz)
+        const fres = 1 - (vdot > 1 ? 1 : vdot)
+        const upMask = 0.45 + 0.55 * (wny > 0 ? wny : 0)
+        const rf = rimStrength * fres * fres * upMask
+        litR += rimR * rf; litG += rimG * rf; litB += rimB * rf
+      }
 
       if (pointCount > 0 && unlit < 1) {
-        const wnx = (a * nx + b * ny + c * nz) * invNLen
-        const wny = (d * nx + e * ny + f * nz) * invNLen
-        const wnz = (g * nx + h * ny + k * nz) * invNLen
         const cx = (v0x + v1x + v2x) / 3
         const cy = (v0y + v1y + v2y) / 3
         const cz = (v0z + v1z + v2z) / 3
@@ -246,12 +286,19 @@ function transformBatch(
         }
       }
 
-      let red = r0 * (litR + (1 - litR) * unlit)
-      let green = g0c * (litG + (1 - litG) * unlit)
-      let blue = b0c * (litB + (1 - litB) * unlit)
-      if (red > 1) red = 1
-      if (green > 1) green = 1
-      if (blue > 1) blue = 1
+      let baseR = r0, baseG = g0c, baseB = b0c
+      if (vColors && vColors.length >= batch.mesh.vertexCount * 3) {
+        const ci = (face / 6) * 3
+        baseR *= (vColors[ci] + vColors[ci + 3] + vColors[ci + 6]) / 3
+        baseG *= (vColors[ci + 1] + vColors[ci + 4] + vColors[ci + 7]) / 3
+        baseB *= (vColors[ci + 2] + vColors[ci + 5] + vColors[ci + 8]) / 3
+      }
+      let red = baseR * (litR + (1 - litR) * unlit)
+      let green = baseG * (litG + (1 - litG) * unlit)
+      let blue = baseB * (litB + (1 - litB) * unlit)
+      if (red < 0) red = 0; else if (red > 1) red = 1
+      if (green < 0) green = 0; else if (green > 1) green = 1
+      if (blue < 0) blue = 0; else if (blue > 1) blue = 1
 
       if (invFogSpan > 0) {
         const avgW = (p0w + p1w + p2w) / 3

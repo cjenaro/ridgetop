@@ -110,7 +110,7 @@ test('every examples/* package depends ONLY on ridgetop and imports only local f
   const examplesRoot = new URL('examples/', root)
   const exampleEntries = (await readdir(examplesRoot, { withFileTypes: true })).filter(e => e.isDirectory())
   const exampleNames = exampleEntries.map(e => e.name).sort()
-  assert.deepEqual(exampleNames, ['beacon-run', 'lighthouse', 'signal-drift', 'starter'])
+  assert.deepEqual(exampleNames, ['beacon-run', 'crownshard', 'lighthouse', 'signal-drift', 'starter'])
 
   for (const name of exampleNames) {
     const exampleDir = new URL(name + '/', examplesRoot)
@@ -175,6 +175,9 @@ test('packages/ridgetop packed tarball contains ZERO example-game files', async 
     /^lighthouse\//,
     /examples\/lighthouse/i,
     /lighthouse\.html$/i,
+    /^crownshard\//,
+    /examples\/crownshard/i,
+    /crownshard\.html$/i,
     /^game\//,
     /^racing\//,
     /^models\//,

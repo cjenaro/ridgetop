@@ -1,0 +1,524 @@
+{
+  "format": "ridgetop-art",
+  "version": 2,
+  "name": "windswept-cottage",
+  "palette": {
+    "slate": "#3d586e",
+    "timber": "#ba7c4d",
+    "cobble": "#728592",
+    "brass": "#e4a849"
+  },
+  "parts": [
+    {
+      "name": "stone-plinth",
+      "shape": "prism",
+      "position": [
+        0,
+        0.13,
+        -0.09499999999999997
+      ],
+      "scale": [
+        1.48,
+        0.26,
+        1.24
+      ],
+      "tone": "cobble",
+      "shade": -0.22
+    },
+    {
+      "name": "porch-step",
+      "shape": "prism",
+      "position": [
+        -0.22,
+        0.065,
+        0.625
+      ],
+      "scale": [
+        0.6,
+        0.13,
+        0.38
+      ],
+      "tone": "cobble",
+      "shade": -0.05
+    },
+    {
+      "name": "cliff-rock",
+      "shape": "prism",
+      "position": [
+        0.68,
+        0.1,
+        0.385
+      ],
+      "scale": [
+        0.36,
+        0.2,
+        0.32
+      ],
+      "tone": "cobble",
+      "yaw": 0.3,
+      "shade": -0.3
+    },
+    {
+      "name": "wall-sill",
+      "shape": "box",
+      "position": [
+        0,
+        0.295,
+        -0.09499999999999997
+      ],
+      "scale": [
+        1.32,
+        0.09,
+        1.09
+      ],
+      "tone": "wood",
+      "shade": -0.16
+    },
+    {
+      "name": "wall-core",
+      "shape": "box",
+      "position": [
+        0,
+        0.62,
+        -0.09499999999999997
+      ],
+      "scale": [
+        1.26,
+        0.68,
+        1.04
+      ],
+      "tone": "timber"
+    },
+    {
+      "name": "gable-attic",
+      "shape": "gable",
+      "position": [
+        0,
+        1.25,
+        -0.09499999999999997
+      ],
+      "scale": [
+        1.26,
+        0.58,
+        1.04
+      ],
+      "tone": "timber",
+      "shade": 0.12
+    },
+    {
+      "name": "post-fl",
+      "shape": "box",
+      "position": [
+        -0.61,
+        0.62,
+        0.405
+      ],
+      "scale": [
+        0.11,
+        0.72,
+        0.11
+      ],
+      "tone": "wood",
+      "shade": -0.24
+    },
+    {
+      "name": "post-fr",
+      "shape": "box",
+      "position": [
+        0.61,
+        0.62,
+        0.405
+      ],
+      "scale": [
+        0.11,
+        0.72,
+        0.11
+      ],
+      "tone": "wood",
+      "shade": -0.24
+    },
+    {
+      "name": "post-bl",
+      "shape": "box",
+      "position": [
+        -0.61,
+        0.62,
+        -0.595
+      ],
+      "scale": [
+        0.11,
+        0.72,
+        0.11
+      ],
+      "tone": "wood",
+      "shade": -0.24
+    },
+    {
+      "name": "post-br",
+      "shape": "box",
+      "position": [
+        0.61,
+        0.62,
+        -0.595
+      ],
+      "scale": [
+        0.11,
+        0.72,
+        0.11
+      ],
+      "tone": "wood",
+      "shade": -0.24
+    },
+    {
+      "name": "roof-left",
+      "shape": "prism",
+      "position": [
+        -0.39,
+        1.24,
+        -0.09499999999999997
+      ],
+      "scale": [
+        1.08,
+        0.11,
+        1.38
+      ],
+      "tone": "slate",
+      "roll": 0.7440993450278421,
+      "shade": -0.02
+    },
+    {
+      "name": "roof-right",
+      "shape": "prism",
+      "position": [
+        0.39,
+        1.24,
+        -0.09499999999999997
+      ],
+      "scale": [
+        1.08,
+        0.11,
+        1.38
+      ],
+      "tone": "slate",
+      "roll": -0.7440993450278421,
+      "shade": -0.09
+    },
+    {
+      "name": "eave-left",
+      "shape": "wedge",
+      "position": [
+        -0.8,
+        0.88,
+        -0.09499999999999997
+      ],
+      "scale": [
+        1.38,
+        0.13,
+        0.22
+      ],
+      "tone": "slate",
+      "pitch": 0.22,
+      "yaw": -1.5707963267948966,
+      "shade": 0.12
+    },
+    {
+      "name": "eave-right",
+      "shape": "wedge",
+      "position": [
+        0.8,
+        0.88,
+        -0.09499999999999997
+      ],
+      "scale": [
+        1.38,
+        0.13,
+        0.22
+      ],
+      "tone": "slate",
+      "pitch": 0.22,
+      "yaw": 1.5707963267948966,
+      "shade": 0.05
+    },
+    {
+      "name": "roof-ridge",
+      "shape": "prism",
+      "position": [
+        0,
+        1.6,
+        -0.09499999999999997
+      ],
+      "scale": [
+        0.17,
+        0.14,
+        1.44
+      ],
+      "tone": "slate",
+      "shade": 0.22
+    },
+    {
+      "name": "gable-beam",
+      "shape": "box",
+      "position": [
+        0,
+        0.97,
+        0.42500000000000004
+      ],
+      "scale": [
+        1.28,
+        0.08,
+        0.08
+      ],
+      "tone": "wood",
+      "shade": -0.2
+    },
+    {
+      "name": "chimney-stack",
+      "shape": "prism",
+      "position": [
+        0.46,
+        1.48,
+        -0.27499999999999997
+      ],
+      "scale": [
+        0.3,
+        0.9,
+        0.3
+      ],
+      "tone": "cobble",
+      "roll": -0.05,
+      "shade": 0.1
+    },
+    {
+      "name": "chimney-collar",
+      "shape": "prism",
+      "position": [
+        0.48,
+        1.92,
+        -0.27499999999999997
+      ],
+      "scale": [
+        0.37,
+        0.1,
+        0.37
+      ],
+      "tone": "cobble",
+      "roll": -0.05,
+      "shade": -0.14
+    },
+    {
+      "name": "chimney-pot",
+      "shape": "taper",
+      "position": [
+        0.49,
+        2.04,
+        -0.27499999999999997
+      ],
+      "scale": [
+        0.19,
+        0.18,
+        0.19
+      ],
+      "tone": "accent",
+      "roll": -0.05,
+      "shade": -0.14
+    },
+    {
+      "name": "door-frame",
+      "shape": "prism",
+      "position": [
+        -0.22,
+        0.56,
+        0.43500000000000005
+      ],
+      "scale": [
+        0.44,
+        0.58,
+        0.1
+      ],
+      "tone": "wood",
+      "shade": -0.26
+    },
+    {
+      "name": "door-panel",
+      "shape": "box",
+      "position": [
+        -0.22,
+        0.53,
+        0.4650000000000001
+      ],
+      "scale": [
+        0.32,
+        0.5,
+        0.08
+      ],
+      "tone": "accent",
+      "shade": -0.18
+    },
+    {
+      "name": "door-knob",
+      "shape": "box",
+      "position": [
+        -0.1,
+        0.53,
+        0.515
+      ],
+      "scale": [
+        0.06,
+        0.06,
+        0.06
+      ],
+      "tone": "brass",
+      "shade": 0.18
+    },
+    {
+      "name": "porch-awning",
+      "shape": "wedge",
+      "position": [
+        -0.22,
+        0.93,
+        0.595
+      ],
+      "scale": [
+        0.66,
+        0.19,
+        0.38
+      ],
+      "tone": "slate",
+      "shade": 0.14
+    },
+    {
+      "name": "porch-post-l",
+      "shape": "cylinder",
+      "position": [
+        -0.47182332827944967,
+        0.49,
+        0.725
+      ],
+      "scale": [
+        0.036823328279449716,
+        0.72,
+        0.03590009058130504
+      ],
+      "tone": "wood",
+      "shade": -0.18
+    },
+    {
+      "name": "porch-post-r",
+      "shape": "cylinder",
+      "position": [
+        0.028176671720550283,
+        0.49,
+        0.725
+      ],
+      "scale": [
+        0.036823328279449716,
+        0.72,
+        0.03590009058130504
+      ],
+      "tone": "wood",
+      "shade": -0.18
+    },
+    {
+      "name": "porthole-frame",
+      "shape": "ring",
+      "position": [
+        0.3,
+        0.65,
+        0.45920000000000005
+      ],
+      "scale": [
+        0.43,
+        0.08999999999999997,
+        0.452128745147383
+      ],
+      "tone": "brass",
+      "pitch": 1.5707963267948966,
+      "shade": 0.1
+    },
+    {
+      "name": "porthole-glow",
+      "shape": "cylinder",
+      "position": [
+        0.2919252604767227,
+        0.65,
+        0.4497
+      ],
+      "scale": [
+        0.1630747395232773,
+        0.06500000000000006,
+        0.15898611543149374
+      ],
+      "tone": "light",
+      "pitch": 1.5707963267948966,
+      "unlit": 0.96
+    },
+    {
+      "name": "attic-vent",
+      "shape": "prism",
+      "position": [
+        0,
+        1.24,
+        0.42500000000000004
+      ],
+      "scale": [
+        0.22,
+        0.18,
+        0.08
+      ],
+      "tone": "ink",
+      "shade": 0.06
+    },
+    {
+      "name": "side-shutter",
+      "shape": "prism",
+      "position": [
+        -0.65,
+        0.64,
+        -0.034999999999999976
+      ],
+      "scale": [
+        0.08,
+        0.34,
+        0.3
+      ],
+      "tone": "leaf",
+      "shade": -0.04
+    },
+    {
+      "name": "back-shutter",
+      "shape": "prism",
+      "position": [
+        -0.12,
+        0.64,
+        -0.635
+      ],
+      "scale": [
+        0.34,
+        0.32,
+        0.08
+      ],
+      "tone": "leaf",
+      "shade": -0.06
+    },
+    {
+      "name": "log-stack",
+      "shape": "cylinder",
+      "position": [
+        -0.7446885584328707,
+        0.34,
+        -0.27499999999999997
+      ],
+      "scale": [
+        0.09468855843287069,
+        0.46,
+        0.09231451863764152
+      ],
+      "tone": "wood",
+      "pitch": 1.5707963267948966,
+      "shade": 0.08
+    }
+  ],
+  "frameSize": 64,
+  "centerY": 0.9591215392847029,
+  "span": 2.787137336557898
+}

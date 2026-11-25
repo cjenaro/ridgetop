@@ -171,7 +171,10 @@ const ART_SHAPE_NAMES: Readonly<Record<ArtShape, true>> = {
   bowl: true,
   ring: true,
   taper: true,
-  arch: true
+  arch: true,
+  wedge: true,
+  gable: true,
+  teardrop: true
 }
 
 function isArtShape(name: string): name is ArtShape {

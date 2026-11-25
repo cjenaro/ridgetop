@@ -1,3 +1,4 @@
+import { Buffer } from 'node:buffer'
 import { existsSync } from 'node:fs'
 import { access, cp, mkdir, mkdtemp, readdir, readFile, rm, stat, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
@@ -656,6 +657,12 @@ function pruneBarrelSource(code: string, usedNames: Set<string> | '*') {
         for (const [orig, exported] of stmt.pairs) {
           if (usedNames === '*' || usedNames.has(exported)) {
             out += `export const ${exported} = ${INLINE_TESTING_NOOPS[orig] ?? '() => {}'};\n`
+          }
+        }
+      } else if (targetFile === 'art-review.js' && stmt.pairs?.length) {
+        for (const [, exported] of stmt.pairs) {
+          if (usedNames === '*' || usedNames.has(exported)) {
+            out += `export const ${exported} = () => ({ passed: true, parts: 0, triangles: 0, components: 0, hiddenParts: [], detachedParts: [], edgeTouches: 0, fillRatio: 0, lumRange: 0, warnings: [] });\n`
           }
         }
       }

@@ -1,4 +1,4 @@
-body.beacon, body.race-page, body.lighthouse-page, body.ridgetop-game, body:has(> main.game-viewport) {
+body.beacon, body.race-page, body.lighthouse-page, body.crownshard-page, body.ridgetop-game, body:has(> main.game-viewport) {
   margin: 0;
   overflow: hidden;
   overscroll-behavior: none;

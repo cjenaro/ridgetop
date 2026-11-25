@@ -1,0 +1,32 @@
+{
+  "name": "@ridgetop/crownshard",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "ridgetop": "workspace:*"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "typecheck": "tsc -p tsconfig.json",
+    "start": "node dist/server.js",
+    "start:testing": "node dist/server.js --testing",
+    "package": "ridgetop package --project ."
+  },
+  "ridgetop": {
+    "name": "Crownshard",
+    "appId": "com.ridgetop.crownshard",
+    "html": "index.html",
+    "moduleRoot": "dist",
+    "entry": "crownshard/main.js",
+    "staticFiles": ["game-ui.css"],
+    "assetsModule": "dist/crownshard/package-assets.js",
+    "godotEntries": [
+      "crownshard/simulation.ts",
+      "crownshard/data.ts",
+      "crownshard/types.ts",
+      "ridgetop/ui-layout",
+      "ridgetop/ui-button"
+    ]
+  }
+}

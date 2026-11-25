@@ -1,8 +1,16 @@
 import { artPalette, artPoseBounds, artShapes, checkArtClip, checkFrameSize, isSafeArtKey, modelFromArtRecipe } from './art-recipe.ts'
 export { artPoseBounds } from './art-recipe.ts'
 import type { ArtPart, ArtRecipe, ArtRecipeClip, ArtRecipeJoint, ArtRecipeJointPose, ArtRecipePart, ArtShape, ArtTone } from './art-recipe.ts'
-import { quaternionFromEuler, rotateVec3, rotationMatrix } from './geometry.ts'
-import type { Vec3 } from './types.ts'
+import { quaternionFromEuler, rotateVec3, rotationMatrix, tubeMesh } from './geometry.ts'
+import type { BlendMode, Vec3 } from './types.ts'
+
+export interface ArtPartStyle {
+  unlit?: number
+  alpha?: number
+  blend?: BlendMode
+  shade?: number
+  joint?: string
+}
 
 const origin: Vec3 = [0, 0, 0]
 const normals = {
@@ -132,6 +140,7 @@ export function createArtBuilder(name: string, { base = 'empty', reference, fram
   if (!Object.hasOwn(artPalette, primary) || !Object.hasOwn(artPalette, trim)) throw new Error('Unknown base palette role')
   const parts: ArtRecipePart[] = []
   const placed = new Map<string, Bounds>()
+  const customPalette: Record<string, string> = {}
   const joints: ArtRecipeJoint[] = []
   const jointIds = new Set<string>()
   const clips: Record<string, ArtRecipeClip> = {}
@@ -142,6 +151,9 @@ export function createArtBuilder(name: string, { base = 'empty', reference, fram
     const model = modelFromArtRecipe(reference)
     parts.push(...structuredClone(reference.parts))
     model.parts.forEach((part, index) => placed.set(part.name ?? reference.parts[index].name, artPartBounds(part)))
+    for (const [role, hex] of Object.entries(reference.palette ?? {})) {
+      if (typeof hex === 'string' && !Object.hasOwn(artPalette, role)) customPalette[role] = hex
+    }
     if (reference.joints) {
       for (const j of structuredClone(reference.joints)) {
         joints.push(j)
@@ -151,32 +163,99 @@ export function createArtBuilder(name: string, { base = 'empty', reference, fram
     if (reference.clips) Object.assign(clips, structuredClone(reference.clips))
   }
 
+  function hasTone(tone: string): boolean {
+    return Object.hasOwn(artPalette, tone) || Object.hasOwn(customPalette, tone)
+  }
+
+  /** Register a custom named palette role (e.g. `brass`, `fur`, `glass`) on this recipe while keeping base tones inheritable. */
+  function palette(role: string, hex: string) {
+    if (!isSafeArtKey(role)) throw new RangeError('Invalid palette role ' + role)
+    if (typeof hex !== 'string' || !/^#?[\da-f]{6}$/i.test(hex)) throw new RangeError('Expected a six-digit RGB color for ' + role)
+    customPalette[role] = hex.startsWith('#') ? hex : '#' + hex
+    return role
+  }
+
+  function applyStyle(target: ArtRecipePart, id: string, style?: number | ArtPartStyle) {
+    if (style === undefined) return
+    const opts: ArtPartStyle = typeof style === 'number' ? { unlit: style } : style
+    if (opts.unlit !== undefined) {
+      if (typeof opts.unlit !== 'number' || !Number.isFinite(opts.unlit) || opts.unlit < 0 || opts.unlit > 1) {
+        throw new RangeError('Unlit must be in 0–1 for ' + id)
+      }
+      if (opts.unlit > 0) target.unlit = opts.unlit
+      else delete target.unlit
+    }
+    if (opts.alpha !== undefined) {
+      if (typeof opts.alpha !== 'number' || !Number.isFinite(opts.alpha) || opts.alpha < 0 || opts.alpha > 1) {
+        throw new RangeError('Alpha must be in 0–1 for ' + id)
+      }
+      if (opts.alpha < 1) target.alpha = opts.alpha
+      else delete target.alpha
+    }
+    if (opts.blend !== undefined) {
+      if (opts.blend !== 'opaque' && opts.blend !== 'alpha' && opts.blend !== 'additive') {
+        throw new RangeError('Unknown blend mode for ' + id)
+      }
+      if (opts.blend !== 'opaque' || (target.alpha !== undefined && target.alpha < 1)) target.blend = opts.blend
+      else delete target.blend
+    }
+    if (opts.shade !== undefined) {
+      if (typeof opts.shade !== 'number' || !Number.isFinite(opts.shade) || opts.shade < -0.5 || opts.shade > 0.5) {
+        throw new RangeError('Shade must be in -0.5–0.5 for ' + id)
+      }
+      if (opts.shade !== 0) target.shade = opts.shade
+      else delete target.shade
+    }
+    if (opts.joint !== undefined) {
+      if (!isSafeArtKey(opts.joint) || !jointIds.has(opts.joint)) throw new Error('Unknown joint ' + opts.joint)
+      target.joint = opts.joint
+    }
+  }
+
   function inheritJoint(childName: string, parentName: string) {
     const parentPart = parts.find(part => part.name === parentName)
     if (parentPart?.joint !== undefined) {
       const child = parts.find(part => part.name === childName)
-      if (child) child.joint = parentPart.joint
+      if (child && child.joint === undefined) child.joint = parentPart.joint
     }
   }
 
-  function adjust(id: string, { tone, scaleBy, moveBy, unlit }: { tone?: ArtTone; scaleBy?: Vec3; moveBy?: Vec3; unlit?: number }) {
+  function adjust(id: string, { tone, scaleBy, moveBy, rotation, rotateBy, unlit, alpha, blend, shade, joint: jointId }: {
+    tone?: ArtTone; scaleBy?: Vec3; moveBy?: Vec3; rotation?: Vec3; rotateBy?: Vec3
+    unlit?: number; alpha?: number; blend?: BlendMode; shade?: number; joint?: string
+  }) {
     const index = parts.findIndex(part => part.name === id)
     if (index < 0) throw new Error('Unknown part ' + id)
     const next = { ...parts[index] }
     if (tone !== undefined) {
-      if (!Object.hasOwn(artPalette, tone)) throw new Error('Unknown tone for ' + id)
+      if (!hasTone(tone)) throw new Error('Unknown tone for ' + id)
       next.tone = tone
     }
     if (scaleBy) { checkVector(scaleBy, id, true); next.scale = vec(i => next.scale[i]*scaleBy[i]) }
     if (moveBy) { checkVector(moveBy, id); next.position = vec(i => next.position[i]+moveBy[i]) }
-    if (unlit !== undefined) {
-      if (typeof unlit !== 'number' || !Number.isFinite(unlit) || unlit < 0 || unlit > 1) throw new RangeError('Unlit must be in 0–1 for ' + id)
-      if (unlit > 0) next.unlit = unlit
-      else delete next.unlit
+    if (rotation) {
+      checkVector(rotation, id)
+      if (rotation[0]) next.pitch = rotation[0]; else delete next.pitch
+      if (rotation[1]) next.yaw = rotation[1]; else delete next.yaw
+      if (rotation[2]) next.roll = rotation[2]; else delete next.roll
     }
+    if (rotateBy) {
+      checkVector(rotateBy, id)
+      const p = (next.pitch ?? 0) + rotateBy[0], y = (next.yaw ?? 0) + rotateBy[1], r = (next.roll ?? 0) + rotateBy[2]
+      if (p) next.pitch = p; else delete next.pitch
+      if (y) next.yaw = y; else delete next.yaw
+      if (r) next.roll = r; else delete next.roll
+    }
+    applyStyle(next, id, { unlit, alpha, blend, shade, joint: jointId })
     checkVector(next.scale, id, true)
     checkVector(next.position, id)
-    placed.set(id, artPartBounds({ ...next, mesh: artShapes[next.shape] }))
+    const adjMesh = next.shape === 'tube'
+      ? (() => {
+          if (!next.points || next.radii === undefined) throw new Error('Invalid tube part ' + id)
+          return tubeMesh(next.points, next.radii, next.sides ?? 7)
+        })()
+      : artShapes[next.shape]
+    placed.set(id, artPartBounds({ ...next, mesh: adjMesh }))
     parts[index] = next
     return id
   }
@@ -185,10 +264,9 @@ export function createArtBuilder(name: string, { base = 'empty', reference, fram
     parts.splice(parts.findIndex(part => part.name === id), 1)
   }
 
-  function solid(id: string, shape: ArtShape, size: Vec3, tone: ArtTone, center: Vec3 = origin, rotation: Vec3 = origin, unlit = 0) {
+  function solid(id: string, shape: ArtShape, size: Vec3, tone: ArtTone, center: Vec3 = origin, rotation: Vec3 = origin, style: number | ArtPartStyle = 0) {
     if (typeof id !== 'string' || !id.trim() || placed.has(id)) throw new Error('Each part needs a unique name: ' + id)
-    if (!Object.hasOwn(artShapes, shape) || !Object.hasOwn(artPalette, tone)) throw new Error('Unknown shape or tone for ' + id)
-    if (typeof unlit !== 'number' || !Number.isFinite(unlit) || unlit < 0 || unlit > 1) throw new RangeError('Unlit must be in 0–1 for ' + id)
+    if (!Object.hasOwn(artShapes, shape) || !hasTone(tone)) throw new Error('Unknown shape or tone for ' + id)
     checkVector(size, id, true); checkVector(center, id); checkVector(rotation, id)
     const mesh = artShapes[shape]
     let b = shapeBounds.get(shape)
@@ -199,7 +277,8 @@ export function createArtBuilder(name: string, { base = 'empty', reference, fram
     const scale = vec(i => size[i]/extent(b,i))
     const [pitch,yaw,roll] = rotation
     const part: ArtRecipePart = { name: id, shape, position: center, scale, tone,
-      ...(pitch && { pitch }), ...(yaw && { yaw }), ...(roll && { roll }), ...(unlit > 0 && { unlit }) }
+      ...(pitch && { pitch }), ...(yaw && { yaw }), ...(roll && { roll }) }
+    applyStyle(part, id, style)
     // Some odd-sided meshes have an off-center bounding box. Honor the requested center.
     const shift = rotateVec3(quaternionFromEuler(pitch,yaw,roll), vec(i => (b.min[i]+b.max[i])*scale[i]/2))
     part.position = vec(i => center[i]-shift[i])
@@ -214,16 +293,16 @@ export function createArtBuilder(name: string, { base = 'empty', reference, fram
     checkVector(offset, parent)
     return vec(i => (b.min[i]+b.max[i]+normals[face][i]*extent(b,i))/2+offset[i])
   }
-  function attach(id: string, parent: string, face: Surface, shape: ArtShape, size: Vec3, tone: ArtTone, offset: Vec3 = origin, unlit = 0) {
+  function attach(id: string, parent: string, face: Surface, shape: ArtShape, size: Vec3, tone: ArtTone, offset: Vec3 = origin, style: number | ArtPartStyle = 0) {
     const faceName: string = face
     if (faceName === 'center') throw new Error('Attach requires a surface face, not center')
     checkVector(size, id, true)
     const anchor = point(parent, face, offset)
-    const created = solid(id, shape, size, tone, vec(i => anchor[i]+normals[face][i]*size[i]*.42), origin, unlit)
+    const created = solid(id, shape, size, tone, vec(i => anchor[i]+normals[face][i]*size[i]*.42), origin, style)
     inheritJoint(created, parent)
     return created
   }
-  function between(id: string, from: Vec3, to: Vec3, width: number | readonly [number,number], tone: ArtTone, shape: ArtShape = 'cylinder') {
+  function between(id: string, from: Vec3, to: Vec3, width: number | readonly [number,number], tone: ArtTone, shape: ArtShape = 'cylinder', style?: number | ArtPartStyle) {
     checkVector(from, id); checkVector(to, id)
     const [dx,dy,dz] = vec(i => to[i]-from[i])
     const length = Math.hypot(dx,dy,dz)
@@ -231,21 +310,213 @@ export function createArtBuilder(name: string, { base = 'empty', reference, fram
     const [w,d] = typeof width === 'number' ? [width,width] : width
     // Roll turns local +Y toward X. Pitch then points the remaining component along YZ.
     const pitch = Math.atan2(dz,dy), roll = -Math.atan2(dx,Math.hypot(dy,dz))
-    return solid(id, shape, [w,length,d], tone, vec(i => (from[i]+to[i])/2), [pitch,0,roll])
+    return solid(id, shape, [w,length,d], tone, vec(i => (from[i]+to[i])/2), [pitch,0,roll], style)
   }
-  function handle(id: string, parent: string, face: Surface, span: number, reach: number, depth: number, tone: ArtTone) {
+  function curve(id: string, pts: readonly Vec3[], widths: number | readonly number[], tone: ArtTone, options: {
+    shape?: ArtShape; overlap?: number; style?: ArtPartStyle; tipTone?: ArtTone
+  } = {}) {
+    if (pts.length < 2) throw new Error('curve requires at least two points for ' + id)
+    for (let i = 0; i < pts.length; i++) checkVector(pts[i], id)
+    if (typeof widths === 'number') {
+      if (!Number.isFinite(widths) || widths <= 0) throw new RangeError('curve width must be positive and finite for ' + id)
+    } else if (!widths.length || !widths.every(w => typeof w === 'number' && Number.isFinite(w) && w > 0)) {
+      throw new RangeError('curve widths must be a non-empty array of positive finite numbers for ' + id)
+    }
+    const shape = options.shape ?? 'cylinder'
+    const overlap = options.overlap ?? 0
+    if (!Number.isFinite(overlap)) throw new RangeError('curve overlap must be finite for ' + id)
+    const created: string[] = []
+    for (let i = 0; i < pts.length - 1; i++) {
+      const a = pts[i], b = pts[i + 1]
+      const dx = b[0] - a[0], dy = b[1] - a[1], dz = b[2] - a[2]
+      const len = Math.hypot(dx, dy, dz)
+      if (!len) continue
+      const pad = overlap > 0 ? overlap * Math.min(len, 0.2) : 0
+      const ux = dx / len, uy = dy / len, uz = dz / len
+      const from: Vec3 = (i > 0 && pad > 0) ? [a[0] - ux * pad, a[1] - uy * pad, a[2] - uz * pad] : a
+      const to: Vec3 = (i < pts.length - 2 && pad > 0) ? [b[0] + ux * pad, b[1] + uy * pad, b[2] + uz * pad] : b
+      const w = typeof widths === 'number' ? widths : (widths[i] ?? widths[widths.length - 1])
+      const segTone = (i === pts.length - 2 && options.tipTone) ? options.tipTone : tone
+      const segName = pts.length === 2 ? id : `${id}-${i + 1}`
+      created.push(between(segName, from, to, w, segTone, shape, options.style))
+    }
+    return created
+  }
+  /** Sweep a seamless continuous low-poly tube mesh along a 3D polyline (zero bend seams, ideal for tails, arched handles, cage ribs, branches). */
+  function tube(id: string, pts: readonly Vec3[], radii: number | readonly number[], tone: ArtTone, options: { sides?: number; style?: number | ArtPartStyle } = {}) {
+    if (typeof id !== 'string' || !id.trim() || placed.has(id)) throw new Error('Each part needs a unique name: ' + id)
+    if (!hasTone(tone)) throw new Error('Unknown tone for ' + id)
+    if (!Array.isArray(pts) || pts.length < 2) throw new Error('tube requires >= 2 points for ' + id)
+    pts.forEach(p => checkVector(p, id))
+    const sides = options.sides ?? 7
+    if (!Number.isSafeInteger(sides) || sides < 3 || sides > 24) {
+      throw new RangeError('Tube sides must be an integer in 3–24 for ' + id)
+    }
+    const rList = typeof radii === 'number' ? radii : radii.slice()
+    if (typeof rList === 'number') {
+      if (!Number.isFinite(rList) || rList <= 0) throw new RangeError('Tube radius must be positive and finite for ' + id)
+    } else {
+      if (!rList.length || !rList.every(r => typeof r === 'number' && Number.isFinite(r) && r > 0)) {
+        throw new RangeError('Tube radii must be a non-empty array of positive finite numbers for ' + id)
+      }
+    }
+    // Center local tube geometry around its centroid so position shifts cleanly during fitArtRecipe.
+    let cx = 0, cy = 0, cz = 0
+    for (const p of pts) { cx += p[0]; cy += p[1]; cz += p[2] }
+    cx /= pts.length; cy /= pts.length; cz /= pts.length
+    const localPts: Vec3[] = pts.map(p => [p[0] - cx, p[1] - cy, p[2] - cz])
+    const built = tubeMesh(localPts, rList, sides)
+    const part: ArtRecipePart = {
+      name: id, shape: 'tube', points: localPts, radii: rList, sides,
+      position: [cx, cy, cz], scale: [1, 1, 1], tone
+    }
+    applyStyle(part, id, options.style)
+    placed.set(id, artPartBounds({ ...part, mesh: built }))
+    parts.push(part)
+    return id
+  }
+  /** Apply subtle automatic crevice darkening (`shade`) to opaque non-glowing parts tucked beneath overhanging surfaces. */
+  function bakeCreviceShade(strength = 0.12) {
+    const s = Number.isFinite(strength) ? Math.max(0, Math.min(0.25, strength)) : 0
+    if (!s) return
+    for (let i = 0; i < parts.length; i++) {
+      const p = parts[i]
+      if ((p.unlit ?? 0) > 0.25 || (p.alpha ?? 1) < 0.9 || (p.blend && p.blend !== 'opaque')) continue
+      const b = placed.get(p.name)
+      if (!b) continue
+      const cx = (b.min[0] + b.max[0]) * 0.5, cz = (b.min[2] + b.max[2]) * 0.5
+      let covered = 0
+      for (let j = 0; j < parts.length; j++) {
+        if (i === j) continue
+        const occ = parts[j]
+        if ((occ.alpha ?? 1) < 0.9 || (occ.blend && occ.blend !== 'opaque')) continue
+        const ob = placed.get(occ.name)
+        if (!ob) continue
+        if (ob.min[1] >= b.min[1] + (b.max[1] - b.min[1]) * 0.35 &&
+            cx >= ob.min[0] && cx <= ob.max[0] && cz >= ob.min[2] && cz <= ob.max[2] &&
+            (ob.max[0] - ob.min[0]) * (ob.max[2] - ob.min[2]) > (b.max[0] - b.min[0]) * (b.max[2] - b.min[2]) * 0.6) {
+          covered++
+        }
+      }
+      if (covered > 0) {
+        const delta = -Math.min(s, covered * (s * 0.6))
+        const nextShade = Math.max(-0.45, Math.min(0.45, (p.shade ?? 0) + delta))
+        if (Math.abs(nextShade) > 1e-4) p.shade = Math.round(nextShade * 1000) / 1000
+        else delete p.shade
+      }
+    }
+  }
+  /** Apply an expressive indie animation clip preset to whichever standard joints exist on this rig (`idle`, `walk`, `run`, `jump`, `celebrate`). */
+  function applyClipPreset(
+    clipName: string,
+    preset: 'biped-idle' | 'biped-walk' | 'biped-run' | 'biped-jump' | 'biped-celebrate',
+    options: { stride?: number; duration?: number; autoGround?: boolean } = {}
+  ) {
+    const has = (id: string) => jointIds.has(id)
+    const filterPoses = (raw: Record<string, ArtRecipeJointPose>) => {
+      const out: Record<string, ArtRecipeJointPose> = {}
+      for (const [k, v] of Object.entries(raw)) if (has(k)) out[k] = v
+      return out
+    }
+    const stride = options.stride ?? (preset === 'biped-run' ? 0.68 : 0.50)
+    const armSwing = stride * 0.88
+    const autoGround = options.autoGround ?? true
+    let def: ArtRecipeClip
+    if (preset === 'biped-idle') {
+      const dur = options.duration ?? 1.6
+      const a = filterPoses({
+        root: { position: [0, 0, 0] }, body: { position: [0, 0, 0], rotation: [0.02, 0, 0] },
+        head: { rotation: [-0.02, -0.06, 0] }, 'left-arm': { rotation: [0.05, 0, 0.05] }, 'right-arm': { rotation: [-0.04, 0, -0.05] },
+        tail: { rotation: [0.06, -0.16, 0] }, mailbag: { rotation: [0.02, 0, 0.03] }, cape: { rotation: [0.06, 0, 0] }
+      })
+      const b = filterPoses({
+        root: { position: [0, 0, 0] }, body: { position: [0, 0.028 * sy, 0], rotation: [-0.02, 0, 0] },
+        head: { rotation: [0.03, 0.08, 0.03] }, 'left-arm': { rotation: [-0.04, 0, 0.08] }, 'right-arm': { rotation: [0.05, 0, -0.08] },
+        tail: { rotation: [0.14, 0.18, 0] }, mailbag: { rotation: [-0.03, 0, -0.03] }, cape: { rotation: [0.12, 0, 0] }
+      })
+      def = { duration: dur, loop: true, easing: 'smooth', frames: [{ time: 0, poses: a }, { time: dur * 0.5, poses: b }, { time: dur, poses: structuredClone(a) }] }
+    } else if (preset === 'biped-jump') {
+      const dur = options.duration ?? 0.6
+      def = {
+        duration: dur, loop: false, easing: 'easeOut',
+        frames: [
+          { time: 0, poses: filterPoses({ root: { position: [0, 0, 0] }, body: { position: [0, -0.06 * sy, 0], rotation: [0.18, 0, 0] }, 'left-arm': { rotation: [0.45, 0, 0.15] }, 'right-arm': { rotation: [0.45, 0, -0.15] }, 'left-leg': { rotation: [-0.25, 0, 0] }, 'right-leg': { rotation: [-0.25, 0, 0] }, tail: { rotation: [-0.25, 0, 0] } }) },
+          { time: dur * 0.45, poses: filterPoses({ root: { position: [0, 0.24 * sy, 0] }, body: { position: [0, 0.04 * sy, 0], rotation: [-0.08, 0, 0] }, head: { rotation: [-0.10, 0, 0] }, 'left-arm': { rotation: [-0.75, 0, 0.35] }, 'right-arm': { rotation: [-0.75, 0, -0.35] }, 'left-leg': { rotation: [-0.38, 0, 0] }, 'right-leg': { rotation: [0.35, 0, 0] }, tail: { rotation: [0.32, 0, 0] } }) },
+          { time: dur, poses: filterPoses({ root: { position: [0, 0, 0] }, body: { position: [0, 0, 0], rotation: [0.05, 0, 0] }, 'left-arm': { rotation: [0, 0, 0.08] }, 'right-arm': { rotation: [0, 0, -0.08] }, 'left-leg': { rotation: [0, 0, 0] }, 'right-leg': { rotation: [0, 0, 0] }, tail: { rotation: [0.05, 0, 0] } }) }
+        ]
+      }
+      return clip(clipName, def, { autoGround: options.autoGround ?? false })
+    } else if (preset === 'biped-celebrate') {
+      const dur = options.duration ?? 0.8
+      const rest = filterPoses({ root: { position: [0, 0, 0] }, body: { position: [0, 0, 0], rotation: [0, 0, 0] }, 'left-arm': { rotation: [0, 0, 0.06] }, 'right-arm': { rotation: [0, 0, -0.06] }, tail: { rotation: [0.1, -0.2, 0] } })
+      const cheer = filterPoses({ root: { position: [0, 0, 0] }, body: { position: [0, 0.09 * sy, 0], rotation: [-0.08, 0, 0] }, head: { rotation: [-0.14, 0, 0] }, 'left-arm': { rotation: [-1.15, 0, 0.38] }, 'right-arm': { rotation: [-1.15, 0, -0.38] }, tail: { rotation: [0.35, 0.32, 0] } })
+      def = { duration: dur, loop: true, easing: 'backOut', frames: [{ time: 0, poses: rest }, { time: dur * 0.45, poses: cheer }, { time: dur, poses: structuredClone(rest) }] }
+    } else if (preset === 'biped-walk' || preset === 'biped-run') {
+      // biped-walk or biped-run
+      const isRun = preset === 'biped-run'
+      const dur = options.duration ?? (isRun ? 0.56 : 0.72)
+      const lean = isRun ? 0.16 : 0.09
+      const bounce = (isRun ? 0.06 : 0.038) * sy
+      const f0 = filterPoses({
+        root: { position: [0, 0, 0] },
+        body: { position: [0, 0, 0], rotation: [lean, 0.11, -0.05] },
+        head: { rotation: [-lean * 0.7, -0.09, 0.04] },
+        'left-leg': { rotation: [-stride, 0, 0] }, 'right-leg': { rotation: [stride, 0, 0] },
+        'left-arm': { rotation: [armSwing, 0, 0.08] }, 'right-arm': { rotation: [-armSwing, 0, -0.08] },
+        tail: { rotation: [0.18, -0.32, -0.08] }, mailbag: { rotation: [0.14, 0, 0.14] }, cape: { rotation: [isRun ? 0.35 : 0.18, -0.1, 0] }
+      })
+      const f1 = filterPoses({
+        root: { position: [0, 0, 0] },
+        body: { position: [0, bounce, 0], rotation: [lean * 0.6, 0, 0] },
+        head: { rotation: [-lean * 0.4, 0, 0] },
+        'left-leg': { position: [0, 0, 0], rotation: [0, 0, 0] }, 'right-leg': { position: [0, 0.06 * sy, 0], rotation: [-stride * 0.25, 0, 0] },
+        'left-arm': { rotation: [0, 0, 0.05] }, 'right-arm': { rotation: [0, 0, -0.05] },
+        tail: { rotation: [0.28, 0, 0] }, mailbag: { rotation: [-0.08, 0, 0] }, cape: { rotation: [isRun ? 0.48 : 0.26, 0, 0] }
+      })
+      const f2 = filterPoses({
+        root: { position: [0, 0, 0] },
+        body: { position: [0, 0, 0], rotation: [lean, -0.11, 0.05] },
+        head: { rotation: [-lean * 0.7, 0.09, -0.04] },
+        'left-leg': { rotation: [stride, 0, 0] }, 'right-leg': { rotation: [-stride, 0, 0] },
+        'left-arm': { rotation: [-armSwing, 0, 0.08] }, 'right-arm': { rotation: [armSwing, 0, -0.08] },
+        tail: { rotation: [0.18, 0.32, 0.08] }, mailbag: { rotation: [-0.12, 0, -0.14] }, cape: { rotation: [isRun ? 0.35 : 0.18, 0.1, 0] }
+      })
+      const f3 = filterPoses({
+        root: { position: [0, 0, 0] },
+        body: { position: [0, bounce, 0], rotation: [lean * 0.6, 0, 0] },
+        head: { rotation: [-lean * 0.4, 0, 0] },
+        'left-leg': { position: [0, 0.06 * sy, 0], rotation: [-stride * 0.25, 0, 0] }, 'right-leg': { position: [0, 0, 0], rotation: [0, 0, 0] },
+        'left-arm': { rotation: [0, 0, 0.05] }, 'right-arm': { rotation: [0, 0, -0.05] },
+        tail: { rotation: [0.28, 0, 0] }, mailbag: { rotation: [0.08, 0, 0] }, cape: { rotation: [isRun ? 0.48 : 0.26, 0, 0] }
+      })
+      def = {
+        duration: dur, loop: true, easing: 'smooth',
+        frames: [
+          { time: 0, poses: f0 },
+          { time: dur * 0.25, poses: f1 },
+          { time: dur * 0.5, poses: f2 },
+          { time: dur * 0.75, poses: f3 },
+          { time: dur, poses: structuredClone(f0) }
+        ]
+      }
+    } else {
+      throw new RangeError('Unknown clip preset: ' + String(preset))
+    }
+    return clip(clipName, def, { autoGround })
+  }
+  function handle(id: string, parent: string, face: Surface, span: number, reach: number, depth: number, tone: ArtTone, style?: number | ArtPartStyle) {
     if (!(reach > 0 && Number.isFinite(reach))) throw new RangeError('Invalid handle reach for ' + id)
     const anchor = point(parent, face), n = normals[face], b = placed.get(parent)
     if (!b) throw new Error('Unknown parent part ' + parent)
     const inset = n.reduce<number>((sum,v,i) => sum + Math.abs(v)*extent(b,i)*.12, 0)
-    const created = between(id, vec(i => anchor[i]-n[i]*inset), vec(i => anchor[i]+n[i]*reach), [span,depth], tone, 'arch')
+    const created = between(id, vec(i => anchor[i]-n[i]*inset), vec(i => anchor[i]+n[i]*reach), [span,depth], tone, 'arch', style)
     inheritJoint(created, parent)
     return created
   }
-  function disc(id: string, parent: string, face: Surface, diameter: number, depth: number, tone: ArtTone, offset: Vec3 = origin, shape: 'cylinder' | 'ring' = 'cylinder') {
+  function disc(id: string, parent: string, face: Surface, diameter: number, depth: number, tone: ArtTone, offset: Vec3 = origin, shape: 'cylinder' | 'ring' = 'cylinder', style?: number | ArtPartStyle) {
     if (!(depth > 0 && Number.isFinite(depth))) throw new RangeError('Invalid disc depth for ' + id)
     const anchor = point(parent,face,offset), n = normals[face]
-    const created = between(id, vec(i => anchor[i]-n[i]*depth*.12), vec(i => anchor[i]+n[i]*depth*.88), diameter, tone, shape)
+    const created = between(id, vec(i => anchor[i]-n[i]*depth*.12), vec(i => anchor[i]+n[i]*depth*.88), diameter, tone, shape, style)
     inheritJoint(created, parent)
     return created
   }
@@ -272,17 +543,19 @@ export function createArtBuilder(name: string, { base = 'empty', reference, fram
     parts[index] = { ...parts[index], joint: jointId }
     return partName
   }
-  /** Define or replace a named animation clip on the rig. */
-  function clip(clipName: string, clipDef: ArtRecipeClip) {
+  /** Define or replace a named animation clip on the rig. Pass `{ autoGround: true }` to keep the lowest vertex at y=0 on every keyframe. */
+  function clip(clipName: string, clipDef: ArtRecipeClip, options?: { autoGround?: boolean }) {
     checkArtClip(clipDef, clipName, jointIds, name)
     clips[clipName] = structuredClone(clipDef)
-    autoGroundClips.delete(clipName)
+    if (options?.autoGround) autoGroundClips.add(clipName)
+    else autoGroundClips.delete(clipName)
     return clipName
   }
 
   function finish(): ArtRecipe {
+    const needsV2 = Object.keys(customPalette).length > 0 || parts.some(p => p.shape === 'tube' || p.alpha !== undefined || p.blend !== undefined || p.shade !== undefined)
     const raw: ArtRecipe = {
-      format: 'ridgetop-art', version: 1, name, palette: {}, parts, frameSize, centerY: 0, span: 1,
+      format: 'ridgetop-art', version: needsV2 ? 2 : 1, name, palette: { ...customPalette }, parts, frameSize, centerY: 0, span: 1,
       ...(timings && { timings }),
       ...(joints.length && { joints }),
       ...(Object.keys(clips).length && { clips })
@@ -661,5 +934,5 @@ export function createArtBuilder(name: string, { base = 'empty', reference, fram
       ]
     })
   }
-  return { solid, point, attach, between, handle, disc, adjust, remove, joint, bind, clip, finish }
+  return { palette, solid, point, attach, between, curve, tube, handle, disc, adjust, remove, joint, bind, clip, applyClipPreset, bakeCreviceShade, finish }
 }

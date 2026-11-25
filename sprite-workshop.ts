@@ -39,10 +39,17 @@ function bakeRecipe(recipe: ArtRecipe) {
 
 function recipeTemplate(recipe: ArtRecipe): Template {
   const roles: ArtTone[] = [...new Set(recipe.parts.map(p => p.tone))]
-  const basePalette = roles.map(role => (recipe.palette[role] ?? artPalette[role]).replace(/^#/, ''))
+  const baseLookup: Record<string, string | undefined> = artPalette
+  const basePalette = roles.map(role => (recipe.palette[role] ?? baseLookup[role] ?? '#ffffff').replace(/^#/, ''))
   const palettes = [
     basePalette,
-    ...paletteThemes.slice(1).map(theme => roles.map(role => theme[role].replace(/^#/, '')))
+    ...paletteThemes.slice(1).map(theme => {
+      const lookup: Record<string, string | undefined> = theme
+      return roles.map(role => {
+        const picked = Object.hasOwn(lookup, role) ? lookup[role] : (recipe.palette[role] ?? baseLookup[role] ?? '#ffffff')
+        return (picked ?? '#ffffff').replace(/^#/, '')
+      })
+    })
   ]
   return { recipe, roles, palette: [...basePalette], palettes, variant: 0, generate: () => bakeRecipe(recipe) }
 }

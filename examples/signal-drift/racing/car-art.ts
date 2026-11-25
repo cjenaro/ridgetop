@@ -33,7 +33,7 @@ export function createCarModels(livery?: readonly Color[]) {
   const common = [cars, bodies, windows, wheels]
   const full = [...common, hubs]
   function add(driver: { x: number; z: number; yaw: number; slot: number }, pitch: number, roll: number,
-    simple: boolean, fitted?: Readonly<Build>) {
+    simple: boolean, fitted?: Readonly<Build>, builtInShadow = true) {
     const rotation = quaternionFromEuler(pitch, driver.yaw, roll)
     const wheelRotation = quaternionFromEuler(pitch, driver.yaw, roll + Math.PI / 2)
     const [paint, stripe, accent] = livery ?? carLivery[driver.slot]
@@ -43,7 +43,7 @@ export function createCarModels(livery?: readonly Color[]) {
       const orient = batch === wheels || batch === hubs ? wheelRotation : rotation
       batch.add([driver.x + x, .44 + y, driver.z + z], scale, orient, tint, emission)
     }
-    bodies.add([driver.x, .074, driver.z], [2.12, .018, 3.4], driver.yaw, shadow, 1)
+    if (builtInShadow) bodies.add([driver.x, .074, driver.z], [2.12, .018, 3.4], driver.yaw, shadow, 1)
     place(bodies, [0, .04, 0], [1.76, .55, 2.92], paint, .08)
     place(windows, [0, .50, -.23], [1.36, hatch ? .53 : .43, hatch ? 1.58 : 1.32], glass, .18)
     place(bodies, [0, hatch ? .755 : .70, -.29], [.81, .07, hatch ? .99 : .88], paint, .14)

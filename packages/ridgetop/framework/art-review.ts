@@ -1,10 +1,33 @@
-import { createArtKit } from './art.ts'
+import { createArtKit, modelFromArtRecipe } from './art.ts'
 import { multiply, orthographic, view } from './geometry.ts'
 import { INSTANCE_SIZE, frustum, instances, visible } from './instances.ts'
 import { bakeSpritePixels, renderMeshFrame, renderMeshPixels, spriteDirections } from './low-poly.ts'
-import type { ArtModel, ArtPart } from './art-recipe.ts'
+import type { ArtModel, ArtPart, ArtRecipe } from './art-recipe.ts'
 import type { Picked3DInstance, SpriteDrawRecord } from './testing-runtime.ts'
-import type { Color, InstanceBatch, Matrix, Quaternion, Vec3 } from './types.ts'
+import type { Color, InstanceBatch, Matrix, Mesh, Quaternion, Vec3 } from './types.ts'
+
+const idMeshCache = new WeakMap<Mesh, Mesh>()
+function uncoloredMesh(mesh: Mesh): Mesh {
+  if (!mesh.colors) return mesh
+  let cached = idMeshCache.get(mesh)
+  if (!cached) {
+    cached = { data: mesh.data, vertexCount: mesh.vertexCount, radius: mesh.radius }
+    idMeshCache.set(mesh, cached)
+  }
+  return cached
+}
+
+function canonicalPartNames(parts: readonly ArtPart[]): string[] {
+  const seen = new Set<string>()
+  return parts.map((p, i) => {
+    const base = partName(p, i)
+    let key = base
+    let suffix = 2
+    while (seen.has(key)) key = `${base}#${suffix++}`
+    seen.add(key)
+    return key
+  })
+}
 
 export type ReviewKit = ReturnType<typeof createArtKit<string>>
 export interface ReviewObject { id: string; name: string; x: number; z: number; y?: number; yaw?: number }
@@ -53,16 +76,14 @@ export function spritePartVisibility<Name extends string>(kit: {
   for (let i = 0; i < pixels.length; i += 4) {
     if (!pixels[i+3]) continue
     const id = pixels[i] + (pixels[i+1] << 8) + (pixels[i+2] << 16)
+    if (id < 1 || id > counts.length) continue
     const direction = Math.floor((i/4 % width)/frameSize)
     counts[id-1][direction]++
   }
   const named: Record<string, number[]> = {}
+  const keys = canonicalPartNames(model.parts)
   for (let i = 0; i < model.parts.length; i++) {
-    const base = partName(model.parts[i], i)
-    let key = base
-    let suffix = 2
-    while (Object.hasOwn(named, key)) key = `${base}#${suffix++}`
-    Object.defineProperty(named, key, { value: counts[i], enumerable: true, writable: true, configurable: true })
+    Object.defineProperty(named, keys[i], { value: counts[i], enumerable: true, writable: true, configurable: true })
   }
   return { frameSize, directions: spriteDirections, parts: named }
 }
@@ -177,7 +198,7 @@ export function pickRenderedScene(
         tag: tags?.[ii]
       })
       if (!idBatch) {
-        idBatch = instances(batch.mesh, { capacity: Math.min(batch.count, 32), blend: 'opaque' })
+        idBatch = instances(uncoloredMesh(batch.mesh), { capacity: Math.min(batch.count, 32), blend: 'opaque' })
         idBatches.push(idBatch)
       }
       idBatch.add([ix, iy, iz], [sx, sy, sz], rot, tint(entries.length), 1)
@@ -275,4 +296,146 @@ export function modelReviewFrame(kit: ReviewKit, pose: ArtView, size: number, id
   group.add(pose.asset, [0, 0, 0], { yaw: sprite ? 0 : pose.yaw, partTint: ids ? (_part, index) => tint(index + 1) : undefined })
   renderMeshFrame(canvas, camera, group.batches, ids ? { ambient: 1 } : undefined)
   return canvas
+}
+
+export interface ArtAuditReport {
+  readonly passed: boolean
+  readonly parts: number
+  readonly triangles: number
+  readonly hiddenParts: string[]
+  readonly detachedParts: string[]
+  readonly components: number
+  readonly edgeTouches: number
+  readonly fillRatio: number
+  readonly lumRange: number
+  readonly warnings: string[]
+}
+
+/** Programmatic quality constraint audit for a low-poly ArtModel or ArtRecipe. */
+export function auditArtModel(
+  rawSource: ArtModel | ArtRecipe,
+  options: { palette?: Record<string, string>; frameSize?: number; maxTriangles?: number; maxParts?: number } = {}
+): ArtAuditReport {
+  const source: ArtModel = 'format' in rawSource
+    ? modelFromArtRecipe(rawSource)
+    : rawSource
+  const frameSize = options.frameSize ?? source.frameSize ?? 48
+  const maxTriangles = options.maxTriangles ?? 2000
+  const maxParts = options.maxParts ?? 48
+  const kit = createArtKit({ palette: options.palette, models: { subject: source }, frameSize })
+  const grp = kit.group()
+  grp.add('subject', [0, 0, 0])
+  const vis = spritePartVisibility(kit, 'subject', frameSize)
+  let hiddenParts = Object.entries(vis.parts).filter(([, c]) => c.every(n => n === 0)).map(([k]) => k)
+  // If translucent/additive shells exist, verify whether flagged inner parts are visible when glass shells are removed!
+  const isTranslucent = (p: ArtModel['parts'][number]) =>
+    (p.alpha !== undefined && p.alpha < 0.95) || (p.blend !== undefined && p.blend !== 'opaque')
+  if (hiddenParts.length && source.parts.some(isTranslucent)) {
+    const canonicalNames = canonicalPartNames(source.parts)
+    const hiddenSet = new Set(hiddenParts)
+    const opaqueNamedParts = source.parts
+      .map((p, i) => ({ ...p, name: canonicalNames[i] }))
+      .filter((p) => !isTranslucent(p))
+    if (opaqueNamedParts.length) {
+      const innerModel: ArtModel = { ...source, parts: opaqueNamedParts }
+      const innerKit = createArtKit({ palette: options.palette, models: { inner: innerModel }, frameSize })
+      const innerVis = spritePartVisibility(innerKit, 'inner', frameSize)
+      hiddenParts = hiddenParts.filter(name => !Object.hasOwn(innerVis.parts, name) || innerVis.parts[name].every(n => n === 0))
+    }
+    // Also check any still-hidden translucent/additive inner part against opaque occluders alone
+    const stillHidden: string[] = []
+    for (const hName of hiddenParts) {
+      const idx = canonicalNames.indexOf(hName)
+      if (idx >= 0 && isTranslucent(source.parts[idx]) && hiddenSet.has(hName)) {
+        const testParts = [...opaqueNamedParts, { ...source.parts[idx], name: hName, alpha: 1, blend: 'opaque' as const }]
+        const testModel: ArtModel = { ...source, parts: testParts }
+        const testKit = createArtKit({ palette: options.palette, models: { test: testModel }, frameSize })
+        const testVis = spritePartVisibility(testKit, 'test', frameSize)
+        if (!Object.hasOwn(testVis.parts, hName) || testVis.parts[hName].every(n => n === 0)) stillHidden.push(hName)
+      } else {
+        stillHidden.push(hName)
+      }
+    }
+    hiddenParts = stillHidden
+  }
+  const baked = bakeSpritePixels(grp.batches, { span: source.span, center: [0, source.centerY, 0], frameSize })
+
+  let edgeTouches = 0, opaque0 = 0, lumMin = 255, lumMax = 0
+  for (let d = 0; d < 8; d++) {
+    for (let py = 0; py < frameSize; py++) {
+      for (let px = 0; px < frameSize; px++) {
+        const idx = (py * baked.width + d * frameSize + px) * 4
+        if (baked.pixels[idx + 3] <= 16) continue
+        if (px === 0 || px === frameSize - 1 || py === 0 || py === frameSize - 1) edgeTouches++
+        if (d === 0) {
+          opaque0++
+          const lum = 0.2126 * baked.pixels[idx] + 0.7152 * baked.pixels[idx + 1] + 0.0722 * baked.pixels[idx + 2]
+          if (lum < lumMin) lumMin = lum
+          if (lum > lumMax) lumMax = lum
+        }
+      }
+    }
+  }
+
+  // Approximate per-part world AABB connectivity check to catch floating pieces.
+  const boxes = source.parts.map(p => {
+    const r = p.mesh.radius * Math.max(p.scale[0], p.scale[1], p.scale[2])
+    return {
+      min: [p.position[0] - r, p.position[1] - r, p.position[2] - r],
+      max: [p.position[0] + r, p.position[1] + r, p.position[2] + r]
+    }
+  })
+  const n = boxes.length
+  const margin = Math.max(0.03, source.span * 0.02)
+  const adj: number[][] = Array.from({ length: n }, () => [])
+  for (let i = 0; i < n; i++) {
+    for (let j = i + 1; j < n; j++) {
+      const a = boxes[i], b = boxes[j]
+      if (a.min[0] - margin <= b.max[0] && a.max[0] + margin >= b.min[0] &&
+          a.min[1] - margin <= b.max[1] && a.max[1] + margin >= b.min[1] &&
+          a.min[2] - margin <= b.max[2] && a.max[2] + margin >= b.min[2]) {
+        adj[i].push(j); adj[j].push(i)
+      }
+    }
+  }
+  const visited = new Uint8Array(n)
+  const comps: number[][] = []
+  for (let i = 0; i < n; i++) {
+    if (visited[i]) continue
+    const comp: number[] = []
+    const q = [i]
+    let head = 0
+    visited[i] = 1
+    while (head < q.length) {
+      const cur = q[head++]
+      comp.push(cur)
+      for (const nxt of adj[cur]) if (!visited[nxt]) { visited[nxt] = 1; q.push(nxt) }
+    }
+    comps.push(comp)
+  }
+  comps.sort((a, b) => b.length - a.length)
+  const detachedParts = comps.slice(1).flat().map(i => partName(source.parts[i], i))
+  const triangles = Math.round(source.parts.reduce((s, p) => s + p.mesh.vertexCount / 3, 0))
+  const fillRatio = +(opaque0 / (frameSize * frameSize)).toFixed(3)
+  const lumRange = opaque0 ? Math.round(lumMax - lumMin) : 0
+  const warnings: string[] = []
+  if (hiddenParts.length) warnings.push(`Hidden parts (0 visible px): ${hiddenParts.join(', ')}`)
+  if (detachedParts.length) warnings.push(`Potentially disconnected parts: ${detachedParts.join(', ')}`)
+  if (edgeTouches > 0) warnings.push(`Touches sprite frame edge (${edgeTouches} px across 8 views)`)
+  if (triangles > maxTriangles) warnings.push(`Triangle count ${triangles} exceeds indie budget ${maxTriangles}`)
+  if (source.parts.length > maxParts) warnings.push(`Part count ${source.parts.length} exceeds budget ${maxParts}`)
+  if (lumRange < 70) warnings.push(`Low luminance contrast (${lumRange}); add stronger value separation`)
+
+  return {
+    passed: warnings.length === 0,
+    parts: source.parts.length,
+    triangles,
+    hiddenParts,
+    detachedParts,
+    components: comps.length,
+    edgeTouches,
+    fillRatio,
+    lumRange,
+    warnings
+  }
 }

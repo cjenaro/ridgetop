@@ -49,6 +49,21 @@ function buildExampleRoutes(root: URL): Record<string, URL> {
   routes['/lighthouse'] = new URL('examples/lighthouse/index.html', root)
   routes['/lighthouse.html'] = new URL('examples/lighthouse/index.html', root)
 
+  // Crownshard (Deckbuilder Tactics) at /crownshard
+  mount(
+    'examples/crownshard/',
+    [],
+    [
+      'crownshard/main.js', 'crownshard/types.js', 'crownshard/data.js', 'crownshard/simulation.js',
+      'crownshard/art.js', 'crownshard/animations.js', 'crownshard/characters.js',
+      'crownshard/parts/bodies-hair.js', 'crownshard/parts/headgear.js',
+      'crownshard/parts/armor.js', 'crownshard/parts/weapons.js',
+      'crownshard/scene.js', 'crownshard/audio.js', 'crownshard/ui-art.js'
+    ]
+  )
+  routes['/crownshard'] = new URL('examples/crownshard/index.html', root)
+  routes['/crownshard.html'] = new URL('examples/crownshard/index.html', root)
+
   // Starter (Lantern Grove) at /starter/
   mount(
     'examples/starter/',
@@ -165,7 +180,7 @@ if (isMain(import.meta.url)) {
     const address = app.server.address()
     if (typeof address === 'object' && address) {
       const origin = 'http://127.0.0.1:' + address.port
-      console.log(`Testing Mode enabled on ${origin}/ (Beacon Run), ${origin}/racing (Signal Drift), ${origin}/lighthouse (Tidewatch), ${origin}/starter/ (Starter)`)
+      console.log(`Testing Mode enabled on ${origin}/ (Beacon Run), ${origin}/racing (Signal Drift), ${origin}/lighthouse (Tidewatch), ${origin}/crownshard (Crownshard), ${origin}/starter/ (Starter)`)
     }
   })
 }

@@ -1,5 +1,5 @@
 import {
-  box, color, createAnimator, createMeshPool, createParticles, multiply, octahedron, perspective,
+  box, color, createAnimator, createMeshPool, createParticles, createShadowBatch, multiply, octahedron, perspective,
   quaternionFromEuler, renderRig, view, worldToScreen
 } from 'ridgetop'
 import type { Color, JointPose, LowPolyRenderer, Matrix, PointLight, RigPart, Vec3 } from 'ridgetop'
@@ -26,12 +26,41 @@ const OCEAN_COLORS: Record<WeatherKind, Color> = {
 }
 
 const WEATHER_LIGHT: Record<WeatherKind, {
-  dir: Vec3; ambient: number; color: Vec3; fogNear: number; fogFar: number
+  dir: Vec3; ambient: number; color: Vec3; sky: Vec3; ground: Vec3
+  rimStrength: number; shadowStrength: number; shadowColor: Vec3
+  fogNear: number; fogFar: number
 }> = {
-  clear: { dir: [-0.45, 0.84, 0.36], ambient: 0.56, color: [1.0, 0.97, 0.90], fogNear: 34, fogFar: 112 },
-  fog:   { dir: [-0.22, 0.92, 0.22], ambient: 0.62, color: [0.84, 0.91, 0.93], fogNear: 14, fogFar: 46 },
-  rain:  { dir: [-0.55, 0.68, 0.26], ambient: 0.38, color: [0.70, 0.82, 0.95], fogNear: 18, fogFar: 62 },
-  storm: { dir: [-0.72, 0.46, 0.20], ambient: 0.22, color: [0.54, 0.68, 0.90], fogNear: 16, fogFar: 52 }
+  clear: {
+    dir: [-0.62, 0.66, 0.38], ambient: 0.48, color: [1.0, 0.96, 0.87],
+    sky: [0.68, 0.88, 1.0], ground: [0.52, 0.44, 0.34],
+    rimStrength: 0.24, shadowStrength: 0.56, shadowColor: [0.22, 0.36, 0.56],
+    fogNear: 34, fogFar: 112
+  },
+  fog: {
+    dir: [-0.26, 0.90, 0.24], ambient: 0.58, color: [0.86, 0.92, 0.94],
+    sky: [0.76, 0.86, 0.88], ground: [0.46, 0.50, 0.48],
+    rimStrength: 0.16, shadowStrength: 0.22, shadowColor: [0.36, 0.45, 0.52],
+    fogNear: 14, fogFar: 46
+  },
+  rain: {
+    dir: [-0.55, 0.68, 0.26], ambient: 0.38, color: [0.72, 0.84, 0.96],
+    sky: [0.44, 0.58, 0.72], ground: [0.24, 0.30, 0.34],
+    rimStrength: 0.26, shadowStrength: 0.30, shadowColor: [0.16, 0.24, 0.38],
+    fogNear: 18, fogFar: 62
+  },
+  storm: {
+    dir: [-0.72, 0.46, 0.20], ambient: 0.24, color: [0.56, 0.70, 0.92],
+    sky: [0.24, 0.36, 0.52], ground: [0.14, 0.18, 0.24],
+    rimStrength: 0.30, shadowStrength: 0.34, shadowColor: [0.10, 0.16, 0.28],
+    fogNear: 16, fogFar: 52
+  }
+}
+
+function islandNormal(x: number, z: number): Vec3 {
+  const eps = 0.25
+  const hx = islandHeight(x + eps, z) - islandHeight(x - eps, z)
+  const hz = islandHeight(x, z + eps) - islandHeight(x, z - eps)
+  return [-hx, 2 * eps, -hz]
 }
 
 const FOAM_COLOR: Color = [0.55, 0.85, 0.86, 0.62]
@@ -84,12 +113,27 @@ export function createLighthouseScene(renderer: LowPolyRenderer) {
   const pool = createMeshPool(64)
   const particles = createParticles(260)
   const keeperAnim = createAnimator(keeperClips, 'idle')
+  const contactShadows = createShadowBatch({
+    capacity: 96,
+    heightAt: islandHeight,
+    normalAt: islandNormal,
+    color: [0.10, 0.18, 0.30],
+    opacity: 0.22,
+    penumbra: 0.30,
+    offsetScale: 0.14,
+    bias: 0.03
+  })
 
   let currentSky: Color = [...SKY_COLORS.clear]
   let currentOcean: Color = [...OCEAN_COLORS.clear]
   let curAmbient = WEATHER_LIGHT.clear.ambient
   let curLightDir: [number, number, number] = [...WEATHER_LIGHT.clear.dir]
   let curLightColor: [number, number, number] = [...WEATHER_LIGHT.clear.color]
+  let curHemiSky: [number, number, number] = [...WEATHER_LIGHT.clear.sky]
+  let curHemiGround: [number, number, number] = [...WEATHER_LIGHT.clear.ground]
+  let curRim = WEATHER_LIGHT.clear.rimStrength
+  let curShadowStrength = WEATHER_LIGHT.clear.shadowStrength
+  let curShadowColor: [number, number, number] = [...WEATHER_LIGHT.clear.shadowColor]
   let curFogNear = WEATHER_LIGHT.clear.fogNear
   let curFogFar = WEATHER_LIGHT.clear.fogFar
   let lanternWorldPos: Vec3 = [0, 1.5, 0]
@@ -327,6 +371,17 @@ export function createLighthouseScene(renderer: LowPolyRenderer) {
     curLightColor[0] += (targetLight.color[0] - curLightColor[0]) * blend
     curLightColor[1] += (targetLight.color[1] - curLightColor[1]) * blend
     curLightColor[2] += (targetLight.color[2] - curLightColor[2]) * blend
+    curHemiSky[0] += (targetLight.sky[0] - curHemiSky[0]) * blend
+    curHemiSky[1] += (targetLight.sky[1] - curHemiSky[1]) * blend
+    curHemiSky[2] += (targetLight.sky[2] - curHemiSky[2]) * blend
+    curHemiGround[0] += (targetLight.ground[0] - curHemiGround[0]) * blend
+    curHemiGround[1] += (targetLight.ground[1] - curHemiGround[1]) * blend
+    curHemiGround[2] += (targetLight.ground[2] - curHemiGround[2]) * blend
+    curRim += (targetLight.rimStrength - curRim) * blend
+    curShadowStrength += (targetLight.shadowStrength - curShadowStrength) * blend
+    curShadowColor[0] += (targetLight.shadowColor[0] - curShadowColor[0]) * blend
+    curShadowColor[1] += (targetLight.shadowColor[1] - curShadowColor[1]) * blend
+    curShadowColor[2] += (targetLight.shadowColor[2] - curShadowColor[2]) * blend
     curFogNear += (targetLight.fogNear - curFogNear) * blend
     curFogFar += (targetLight.fogFar - curFogFar) * blend
 
@@ -372,6 +427,18 @@ export function createLighthouseScene(renderer: LowPolyRenderer) {
       direction: curLightDir,
       ambient: flashAmbient,
       color: state.lightningFlash > 0.02 ? [0.95, 0.98, 1.0] : curLightColor,
+      skyColor: curHemiSky,
+      groundColor: curHemiGround,
+      rimColor: [1.0, 0.96, 0.88],
+      rimStrength: curRim,
+      shadows: {
+        enabled: true,
+        center: [0, 1.2, 0.4],
+        extent: 22,
+        bias: 0.0020,
+        strength: curShadowStrength,
+        color: curShadowColor
+      },
       fogColor: sky,
       fogNear: curFogNear,
       fogFar: curFogFar,
@@ -379,6 +446,8 @@ export function createLighthouseScene(renderer: LowPolyRenderer) {
     })
 
     pool.clear()
+    contactShadows.clear()
+    contactShadows.setLighting(curLightDir)
 
     // 1. Semi-Transparent Dynamic Ocean (reveals submerged shoals & sunken amber beneath rising tide!)
     const waveAmp = state.weather === 'storm' ? 0.16 : state.weather === 'rain' ? 0.09 : 0.045
@@ -475,15 +544,26 @@ export function createLighthouseScene(renderer: LowPolyRenderer) {
     pool.add(ovalMesh, [fireX, fireY + 0.24, fireZ], [1.45 * flick, 1.35 * flick, 1.45 * flick], 0, FIRE_HALO, 1.0, 'additive')
 
     // 5. Wind-Swaying Articulated Coastal Pines (bending with wind speed & gusts!)
+    const isCanvas2D = renderer.name === 'Canvas 2D'
+    const shadowOpacity = isCanvas2D ? 0.48 : 0.22
+    const shadowOffsetScale = isCanvas2D ? 0.90 : 0.14
     const windStrength = state.weather === 'storm' ? 0.24 : state.weather === 'rain' ? 0.11 : 0.045
     for (const [px, pz, scale, phase] of COASTAL_PINES) {
       const gust = Math.sin(state.time * (state.weather === 'storm' ? 4.2 : 1.7) + phase) * windStrength
       const lean = windStrength * 0.65 + gust
-      renderRig(pineRig, { position: [px, islandHeight(px, pz) - 0.05, pz], yaw: phase, scale }, {
+      const py = islandHeight(px, pz)
+      renderRig(pineRig, { position: [px, py - 0.05, pz], yaw: phase, scale }, {
         lower: { rotation: [lean * 0.35, 0, -lean * 0.45] },
         mid: { rotation: [lean * 0.55, 0, -lean * 0.70] },
         crown: { rotation: [lean * 0.75, 0, -lean * 0.95] }
       }, pool)
+      contactShadows.add([px, py + 0.5, pz], { radius: 0.85 * scale, opacity: shadowOpacity, offsetScale: shadowOffsetScale })
+    }
+
+    // Grounded contact shadows for hero landmarks on Canvas 2D fallback (GPU uses full directional shadow map!)
+    if (isCanvas2D) {
+      contactShadows.add([LIGHTHOUSE_POS.x, lhY + 2.4, LIGHTHOUSE_POS.z], { radius: 2.05, opacity: shadowOpacity, offsetScale: shadowOffsetScale })
+      contactShadows.add([COTTAGE_POS.x, islandHeight(COTTAGE_POS.x, COTTAGE_POS.z) + 1.2, COTTAGE_POS.z], { radius: 1.75, radiusZ: 1.35, opacity: shadowOpacity, offsetScale: shadowOffsetScale })
     }
 
     // 6. Bobbing Offshore Signal Buoys (flashing marine beacon!)
@@ -533,6 +613,15 @@ export function createLighthouseScene(renderer: LowPolyRenderer) {
       renderRig(rig, { position: [item.x, floatY, item.z], yaw, scale }, {
         root: { rotation: [item.y < waterY ? Math.sin(state.time * 2.2 + item.id) * 0.14 : 0, 0, 0] }
       }, pool)
+      if (item.y >= waterY - 0.06) {
+        contactShadows.add([item.x, floatY + 0.15, item.z], {
+          radius: item.kind === 'driftwood' ? 0.58 * scale : 0.48 * scale,
+          radiusZ: item.kind === 'driftwood' ? 0.30 * scale : 0.48 * scale,
+          yaw,
+          opacity: shadowOpacity,
+          offsetScale: shadowOffsetScale
+        })
+      }
     }
 
     // 10. Articulated Offshore Passing Ships (rocking hull + billowing sail + fluttering pennant!)
@@ -615,7 +704,7 @@ export function createLighthouseScene(renderer: LowPolyRenderer) {
     }
 
     lastMatrix = multiply(perspective(Math.PI / 3.4, aspect, 0.4, 150), view(eyePos, lookTarget))
-    return renderer.render(lastMatrix, [...staticBatches, ...pool.batches], sky)
+    return renderer.render(lastMatrix, [...staticBatches, contactShadows.batch, ...pool.batches], sky)
   }
 
   function drawAnimatedKeeper(state: GameState, dt: number) {
@@ -660,6 +749,14 @@ export function createLighthouseScene(renderer: LowPolyRenderer) {
     }
 
     const y = Math.max(p.y, state.tideLevel - 0.28)
+    if (!p.inWater) {
+      const canvas2d = renderer.name === 'Canvas 2D'
+      contactShadows.add([p.x, y + 0.4, p.z], {
+        radius: 0.48,
+        opacity: canvas2d ? 0.48 : 0.22,
+        offsetScale: canvas2d ? 0.90 : 0.14
+      })
+    }
     const worldJoints = renderRig(
       keeperRig,
       { position: [p.x, y, p.z], yaw: p.yaw, scale: 1.04 },
@@ -704,6 +801,8 @@ export function createLighthouseScene(renderer: LowPolyRenderer) {
       renderer.release(batch)
       if (!isSharedLighthouseMesh(batch.mesh)) renderer.releaseMesh(batch.mesh)
     }
+    renderer.release(contactShadows.batch)
+    renderer.releaseMesh(contactShadows.batch.mesh)
     pool.release(renderer)
   }
 

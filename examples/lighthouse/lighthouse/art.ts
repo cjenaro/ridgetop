@@ -1,5 +1,5 @@
 import {
-  archMesh, box, chamferedPrism, color, createRig, cylinder, instances, mesh, octahedron, revolvedMesh
+  archMesh, bakeVertexAO, box, chamferedPrism, color, createRig, cylinder, instances, mesh, octahedron, revolvedMesh
 } from 'ridgetop'
 import type { AnimationClip, InstanceBatch, Mesh, Rig, Vec3 } from 'ridgetop'
 import { COTTAGE_POS, LIGHTHOUSE_POS, PIER_POS, islandHeight } from './types.ts'
@@ -637,7 +637,7 @@ function bareTerrainHeight(x: number, z: number): number {
   return islandHeight(x, z)
 }
 
-/** Generate the static faceted low-poly coastal headland, beach, and tidal shoals. */
+/** Generate the static faceted low-poly coastal headland, beach, and tidal shoals as a single vertex-colored + AO mesh. */
 export function buildTerrainBatches(): InstanceBatch[] {
   const cols = 40
   const rows = 32
@@ -662,20 +662,13 @@ export function buildTerrainBatches(): InstanceBatch[] {
     }
   }
 
-  const buckets = new Map<string, number[]>()
-  const addTri = (hex: string, a: number, b: number, c: number) => {
-    let arr = buckets.get(hex)
-    if (!arr) { arr = []; buckets.set(hex, arr) }
-    arr.push(a, b, c)
-  }
+  const grassTones = ['76b066', '6ba45e', '84bc70', '649a58'].map(color)
+  const cliffTones = ['6b7f89', '7b8f96', '5c707a', '899a9e'].map(color)
+  const sandTones = ['e0ca96', 'd6be89', 'e8d4a2'].map(color)
+  const shoalTones = ['9d957a', '8d8770', 'aba184'].map(color)
+  const seabedTones = ['2f5a6b', '264e5e'].map(color)
 
-  const grassTones = ['76b066', '6ba45e', '84bc70', '649a58']
-  const cliffTones = ['6b7f89', '7b8f96', '5c707a', '899a9e']
-  const sandTones = ['e0ca96', 'd6be89', 'e8d4a2']
-  const shoalTones = ['9d957a', '8d8770', 'aba184']
-  const seabedTones = ['2f5a6b', '264e5e']
-
-  const classify = (a: Vec3, b: Vec3, c: Vec3, hash: number): string => {
+  const classify = (a: Vec3, b: Vec3, c: Vec3, hash: number): readonly [number, number, number, number] => {
     const avgY = (a[1] + b[1] + c[1]) / 3
     const slope = Math.max(a[1], b[1], c[1]) - Math.min(a[1], b[1], c[1])
     if (avgY > 1.02 && slope < 0.28) return grassTones[hash % grassTones.length]
@@ -685,28 +678,37 @@ export function buildTerrainBatches(): InstanceBatch[] {
     return seabedTones[hash % seabedTones.length]
   }
 
+  const indices: number[] = []
+  const triColors: number[] = []
+  const pushTri = (ia: number, ib: number, ic: number, hash: number) => {
+    const c = classify(pts[ia], pts[ib], pts[ic], hash)
+    indices.push(ia, ib, ic)
+    // Per-vertex subtle shoreline & slope crevice shading before bakeVertexAO
+    for (const vi of [ia, ib, ic]) {
+      const y = pts[vi][1]
+      const shoreDark = y < 0.45 && y > -0.25 ? 0.90 + Math.max(0, y + 0.25) * 0.14 : 1
+      triColors.push(c[0] * shoreDark, c[1] * shoreDark, c[2] * shoreDark)
+    }
+  }
+
   for (let r = 0; r < rows; r++) {
     for (let c = 0; c < cols; c++) {
       const a = r * (cols + 1) + c
       const b = a + cols + 1
-      addTri(classify(pts[a], pts[b], pts[a + 1], (r * 7 + c * 13) & 15), a, b, a + 1)
-      addTri(classify(pts[a + 1], pts[b], pts[b + 1], (r * 11 + c * 5 + 3) & 15), a + 1, b, b + 1)
+      pushTri(a, b, a + 1, (r * 7 + c * 13) & 15)
+      pushTri(a + 1, b, b + 1, (r * 11 + c * 5 + 3) & 15)
     }
   }
 
-  const packed = pts.flat()
-  const batches: InstanceBatch[] = []
-  for (const [hex, indices] of buckets) {
-    const batch = instances(mesh(packed, indices))
-    batch.add([0, 0, 0], [1, 1, 1], 0, color(hex))
-    batches.push(batch)
-  }
-  return batches
+  const terrainMesh = bakeVertexAO(mesh(pts.flat(), indices, triColors), { strength: 0.22, verticalGradient: 0.08 })
+  const batch = instances(terrainMesh)
+  batch.add([0, 0, 0], [1, 1, 1], 0, [1, 1, 1, 1])
+  return [batch]
 }
 
 const SHARED_LIGHTHOUSE_MESHES = new Set<Mesh>([
   box, octahedron, drum, drum12, cone, pineCone, rockMesh, softBox, taperedCoat, arch,
-  domeMesh, ovalMesh, barrelMesh, buoyFloatMesh, ringTorus, coinMesh, roofMesh, beamMesh, sailMesh, hullMesh
+  domeMesh, ovalMesh, barrelMesh, buoyFloatMesh, ringTorus, coinMesh, roofMesh, beamMesh, sailMesh, hullMesh, flatRing
 ])
 
 export function isSharedLighthouseMesh(candidate: Mesh): boolean {

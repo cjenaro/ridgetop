@@ -62,7 +62,7 @@ export function instances(
       data[at + 8] = r
       data[at + 9] = g
       data[at + 10] = b
-      data[at + 11] = unlit
+      data[at + 11] = Number.isFinite(unlit) ? Math.max(0, Math.min(1, unlit)) : 0
       if (typeof rotation === 'number') {
         const half = rotation * .5
         data[at + 12] = 0

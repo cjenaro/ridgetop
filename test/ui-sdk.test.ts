@@ -154,6 +154,14 @@ test('resolveLayout computes exact flex, overlay, anchor, and safe-area rectangl
     boxNode({ id: 'c', style: { width: 500, maxWidth: 200, height: 90, maxHeight: 50 } })
   ]), { width: 800, height: 100 })
   assert.deepEqual(clamped.get('c'), { x: 0, y: 0, width: 200, height: 50 })
+
+  // Single-edge anchored overlay children (e.g. a toast floated above a tall bottom sheet)
+  // must not subtract the anchored inset twice when clamping available height/width.
+  const toastTree = overlay({ id: 'root', style: { anchor: 'fill' } }, [
+    boxNode({ id: 'toast', style: { anchor: 'bottom', width: 320, height: 32, inset: [8, 380], respectSafeArea: true } })
+  ])
+  const toastRects = resolveLayout(toastTree, { width: 1280, height: 720 }, { top: 8, right: 8, bottom: 8, left: 8 })
+  assert.deepEqual(toastRects.get('toast'), { x: 480, y: 720 - 8 - 380 - 32, width: 320, height: 32 })
 })
 
 test('createMachine preserves re-entrant transitions and select/slider handle edge cases', () => {
@@ -321,6 +329,30 @@ test('createCanvasUi handles non-Array GamepadList, hidden hold release, scrim b
     ui.render(buildTree(false, false), { width: 800, height: 400, pixelRatio: 1 })
     canvas.dispatchEvent(Object.assign(new Event('pointermove'), { pointerId: 9, clientX: 50, clientY: 25 }))
     assert.equal(canvas.style.cursor, 'pointer')
+
+    // blocksPoint detects interactive widgets and blocksPointer panels, while allowing clicks on open viewport
+    const trayTree = overlay({ id: 'root', style: { anchor: 'fill' } }, [
+      boxNode({
+        id: 'tray', style: { anchor: 'bottom', width: 400, height: 80 },
+        widget: { type: 'panel', blocksPointer: true }
+      }, [
+        boxNode({
+          id: 'card', style: { width: 120, height: 60 },
+          widget: {
+            type: 'button', label: 'Fireball', subtitle: 'AOE 14 DMG',
+            accent: '#5ca8ff', badge: { text: '2 AP', fill: '#5ca8ff', color: '#0c1622' }
+          }
+        })
+      ]),
+      boxNode({
+        id: 'story', style: { anchor: 'top', width: 300, height: 80 },
+        widget: { type: 'text', text: 'Line one\nLine two', wrap: true }
+      })
+    ])
+    ui.render(trayTree, { width: 800, height: 400, pixelRatio: 1 })
+    assert.equal(ui.blocksPoint(400, 360), true, 'blocksPointer panel should block world clicks')
+    assert.equal(ui.blocksPoint(100, 100), false, 'open viewport should not block world clicks')
+
     ui.dispose()
     assert.equal(canvas.style.cursor, '')
   } finally {

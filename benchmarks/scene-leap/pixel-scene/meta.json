@@ -1,0 +1,97 @@
+{
+  "track": "Track 2: Full-Scene 2D Pixel Art Leap + 3D-to-Pixel Hybrid Showcase",
+  "files": {
+    "before-scene.png": {
+      "width": 960,
+      "height": 135,
+      "frameWidth": 240,
+      "frameHeight": 135,
+      "frames": 4
+    },
+    "before-frame0.png": {
+      "width": 240,
+      "height": 135,
+      "frames": 1
+    },
+    "after-scene.png": {
+      "width": 960,
+      "height": 135,
+      "frameWidth": 240,
+      "frameHeight": 135,
+      "frames": 4
+    },
+    "after-frame0.png": {
+      "width": 240,
+      "height": 135,
+      "frames": 1
+    },
+    "fox-3d-to-pixel-raw.png": {
+      "width": 192,
+      "height": 48,
+      "frameWidth": 48,
+      "frameHeight": 48,
+      "frames": 4,
+      "clip": "walk",
+      "direction": "front-right",
+      "outline": false
+    },
+    "fox-3d-to-pixel-selout.png": {
+      "width": 192,
+      "height": 48,
+      "frameWidth": 48,
+      "frameHeight": 48,
+      "frames": 4,
+      "clip": "walk",
+      "direction": "front-right",
+      "outline": "selout"
+    },
+    "preview-compare.png": {
+      "width": 808,
+      "height": 1090
+    }
+  },
+  "spriteAudits": {
+    "knight": {
+      "passed": true,
+      "frames": 4,
+      "frameWidth": 40,
+      "frameHeight": 40,
+      "uniqueColors": 13,
+      "orphans": 0,
+      "edgeTouches": 0,
+      "fillRatio": 0.196,
+      "lumRange": 220,
+      "footDriftPx": 1,
+      "frameDeltaPx": 320,
+      "warnings": []
+    },
+    "potion": {
+      "passed": true,
+      "frames": 4,
+      "frameWidth": 24,
+      "frameHeight": 24,
+      "uniqueColors": 13,
+      "orphans": 0,
+      "edgeTouches": 0,
+      "fillRatio": 0.234,
+      "lumRange": 224,
+      "footDriftPx": 0,
+      "frameDeltaPx": 27,
+      "warnings": []
+    },
+    "golem": {
+      "passed": true,
+      "frames": 4,
+      "frameWidth": 48,
+      "frameHeight": 48,
+      "uniqueColors": 13,
+      "orphans": 0,
+      "edgeTouches": 0,
+      "fillRatio": 0.425,
+      "lumRange": 180,
+      "footDriftPx": 0,
+      "frameDeltaPx": 260,
+      "warnings": []
+    }
+  }
+}

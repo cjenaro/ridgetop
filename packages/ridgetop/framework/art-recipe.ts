@@ -1,9 +1,9 @@
 import { multiplyQuat } from './animation.ts'
 import type { Easing } from './animation.ts'
-import { archMesh, box, chamferedPrism, cylinder, octahedron, quaternionFromEuler, revolvedMesh, rotateVec3, rotationMatrix } from './geometry.ts'
+import { archMesh, box, chamferedPrism, cylinder, gableMesh, octahedron, quaternionFromEuler, revolvedMesh, rotateVec3, rotationMatrix, tubeMesh, wedgeMesh } from './geometry.ts'
 import { spriteDirections } from './low-poly.ts'
 import { registerKnownShapes } from './testing-runtime.ts'
-import type { Mesh, Quaternion, Vec3 } from './types.ts'
+import type { BlendMode, Mesh, Quaternion, Vec3 } from './types.ts'
 
 export const artPalette = {
   ground: '#92b878', leaf: '#43836c', wood: '#96694e', stone: '#889ba7',
@@ -16,12 +16,16 @@ export const artShapes = {
   bowl: revolvedMesh([[0,-.5],[.30,-.5],[.42,-.28],[.50,.39],[.48,.5],[.40,.5],[.38,.31],[.28,-.22],[0,-.25]]),
   ring: revolvedMesh([[.36,-.5],[.47,-.5],[.50,-.32],[.50,.32],[.47,.5],[.36,.5],[.33,.30],[.33,-.30],[.36,-.5]]),
   taper: revolvedMesh([[0,-.5],[.5,-.5],[.23,.5],[0,.5]], 8),
-  arch: archMesh()
+  arch: archMesh(),
+  wedge: wedgeMesh(),
+  gable: gableMesh(),
+  teardrop: revolvedMesh([[0,-.5],[.30,-.45],[.48,-.22],[.46,.04],[.34,.26],[.17,.42],[0,.5]], 8)
 }
 registerKnownShapes(artShapes)
-export type ArtTone = keyof typeof artPalette
+export type BaseArtTone = keyof typeof artPalette
+export type ArtTone = BaseArtTone | (string & {})
 export type ArtShape = keyof typeof artShapes
-type Palette = Partial<Record<ArtTone, string>>
+type Palette = Record<string, string | undefined>
 
 export interface ArtRecipeJoint {
   id: string
@@ -56,6 +60,12 @@ export interface ArtPart {
   yaw?: number
   roll?: number
   unlit?: number
+  /** Optional opacity (`0–1`) for translucent or additive parts. Defaults to `1`. */
+  alpha?: number
+  /** Optional blend mode (`opaque`, `alpha`, or `additive`). Defaults to `alpha` if `alpha < 1`, else `opaque`. */
+  blend?: BlendMode
+  /** Optional per-part lightness nudge (`-0.5` darker to `+0.5` brighter) to separate adjacent materials cleanly. */
+  shade?: number
   /** Optional joint id binding this part to an articulated rig joint. */
   joint?: string
 }
@@ -72,7 +82,13 @@ export interface ArtModel {
 }
 export interface ArtRecipePart extends Omit<ArtPart, 'mesh' | 'name'> {
   name: string
-  shape: ArtShape
+  shape: ArtShape | 'tube'
+  /** For `shape: 'tube'`, local 3D polyline points swept into one seamless low-poly tube mesh. */
+  points?: readonly Vec3[]
+  /** For `shape: 'tube'`, constant radius or per-point radius array. */
+  radii?: number | readonly number[]
+  /** For `shape: 'tube'`, radial segments (`3–24`, default `7`). */
+  sides?: number
 }
 export interface ArtRecipe {
   format: 'ridgetop-art'
@@ -89,7 +105,8 @@ export interface ArtRecipe {
 }
 
 const FORBIDDEN_KEYS = new Set(['__proto__', 'constructor', 'prototype'])
-const VALID_EASINGS = new Set<string>(['linear', 'smooth', 'easeOut', 'easeInOut'])
+const VALID_EASINGS = new Set<string>(['linear', 'smooth', 'easeIn', 'easeOut', 'easeInOut', 'backOut', 'step'])
+const VALID_BLENDS = new Set<string>(['opaque', 'alpha', 'additive'])
 const clips = new Set<string>(['turntable', ...spriteDirections])
 
 function isPlainObject(value: unknown): boolean {
@@ -238,7 +255,10 @@ export function checkArtModel(model: ArtModel, name: string, palette: Palette = 
     if (!validMesh || !(Object.hasOwn(palette, p.tone) || Object.hasOwn(model.palette ?? {}, p.tone)) ||
         !isVec3(p.position) || !isVec3(p.scale, true) ||
         !isOptionalFinite(p.pitch) || !isOptionalFinite(p.yaw) || !isOptionalFinite(p.roll) ||
-        !isOptionalFinite(p.unlit) || (p.unlit !== undefined && (p.unlit < 0 || p.unlit > 1))) {
+        !isOptionalFinite(p.unlit) || (p.unlit !== undefined && (p.unlit < 0 || p.unlit > 1)) ||
+        !isOptionalFinite(p.alpha) || (p.alpha !== undefined && (p.alpha < 0 || p.alpha > 1)) ||
+        !isOptionalFinite(p.shade) || (p.shade !== undefined && (p.shade < -0.5 || p.shade > 0.5)) ||
+        (p.blend !== undefined && !VALID_BLENDS.has(p.blend))) {
       throw new RangeError('Invalid mesh, palette tone or transform in ' + name + (p?.name ? ' / ' + p.name : ''))
     }
     if (p.joint !== undefined && (!isSafeArtKey(p.joint) || !jointIds.has(p.joint))) {
@@ -253,10 +273,18 @@ export function checkArtModel(model: ArtModel, name: string, palette: Palette = 
   }
 }
 
+function isBlendMode(value: unknown): value is BlendMode {
+  return value === 'opaque' || value === 'alpha' || value === 'additive'
+}
+
 /** Reject prototype-polluted records before structuredClone strips non-standard prototypes. */
 function checkRawRecipePrototypes(input: unknown): asserts input is Record<string, unknown> {
   if (!isPlainRecord(input)) throw new Error('Expected a Ridgetop art recipe, version 1 or 2.')
   if (input.palette !== undefined && !isPlainRecord(input.palette)) throw new RangeError('Expected an art palette object')
+  if (input.parts !== undefined) {
+    if (!Array.isArray(input.parts)) throw new Error('A recipe needs at least one named part.')
+    for (const p of input.parts) if (!isPlainRecord(p)) throw new Error('Each model part needs a unique name.')
+  }
   if (input.timings !== undefined && !isPlainRecord(input.timings)) throw new RangeError('Invalid direction or frame time')
   if (input.joints !== undefined) {
     if (!Array.isArray(input.joints)) throw new RangeError('Expected joints array')
@@ -294,7 +322,6 @@ export function modelFromArtRecipe(value: unknown): ArtModel {
   const palette: Palette = {}
   for (const [role, hex] of Object.entries(source.palette)) {
     if (!isSafeArtKey(role)) throw new RangeError('Invalid palette role ' + role)
-    if (!isArtTone(role)) throw new RangeError('Unknown palette role ' + role)
     if (typeof hex !== 'string' || !/^#?[\da-f]{6}$/i.test(hex)) throw new RangeError('Expected a six-digit RGB color for ' + role)
     palette[role] = hex
   }
@@ -302,16 +329,44 @@ export function modelFromArtRecipe(value: unknown): ArtModel {
   const names = new Set<string>()
   const parts: ArtPart[] = source.parts.map(p => {
     if (!isPlainRecord(p) || typeof p.name !== 'string' || !p.name.trim() || names.has(p.name)) throw new Error('Each model part needs a unique name.')
-    if (!isArtShape(p.shape)) throw new Error('Unknown shape in ' + p.name)
+    let resolvedMesh: Mesh
+    if (p.shape === 'tube') {
+      if (!Array.isArray(p.points) || p.points.length < 2 || !p.points.every(pt => isVec3(pt))) {
+        throw new RangeError('Tube shape requires >= 2 valid XYZ points in ' + p.name)
+      }
+      let radiiVal: number | number[]
+      if (typeof p.radii === 'number' && Number.isFinite(p.radii) && p.radii > 0) {
+        radiiVal = p.radii
+      } else if (Array.isArray(p.radii) && p.radii.length >= 1 && p.radii.every((r): r is number => typeof r === 'number' && Number.isFinite(r) && r > 0)) {
+        radiiVal = p.radii
+      } else {
+        throw new RangeError('Tube shape requires positive finite radii in ' + p.name)
+      }
+      const sides = p.sides === undefined ? 7 : p.sides
+      if (typeof sides !== 'number' || !Number.isSafeInteger(sides) || sides < 3 || sides > 24) {
+        throw new RangeError('Tube sides must be an integer in 3–24 in ' + p.name)
+      }
+      resolvedMesh = tubeMesh(p.points, radiiVal, sides)
+    } else {
+      if (!isArtShape(p.shape)) throw new Error('Unknown shape in ' + p.name)
+      resolvedMesh = artShapes[p.shape]
+    }
     names.add(p.name)
-    if (!isArtTone(p.tone) || !isVec3(p.position) || !isVec3(p.scale, true) ||
+    if (!isSafeArtKey(p.tone) || !(isArtTone(p.tone) || Object.hasOwn(palette, p.tone)) || !isVec3(p.position) || !isVec3(p.scale, true) ||
         !isOptionalFinite(p.pitch) || !isOptionalFinite(p.yaw) || !isOptionalFinite(p.roll) ||
-        !isOptionalFinite(p.unlit) || (p.unlit !== undefined && (p.unlit < 0 || p.unlit > 1))) {
+        !isOptionalFinite(p.unlit) || (p.unlit !== undefined && (p.unlit < 0 || p.unlit > 1)) ||
+        !isOptionalFinite(p.alpha) || (p.alpha !== undefined && (p.alpha < 0 || p.alpha > 1)) ||
+        !isOptionalFinite(p.shade) || (p.shade !== undefined && (p.shade < -0.5 || p.shade > 0.5)) ||
+        (p.blend !== undefined && !isBlendMode(p.blend))) {
       throw new RangeError('Invalid mesh, palette tone or transform in ' + name + ' / ' + p.name)
     }
+    const blendVal: BlendMode | undefined = isBlendMode(p.blend) ? p.blend : undefined
     const part: ArtPart = {
-      name: p.name, mesh: artShapes[p.shape], position: p.position, scale: p.scale, tone: p.tone,
-      pitch: p.pitch, yaw: p.yaw, roll: p.roll, unlit: p.unlit
+      name: p.name, mesh: resolvedMesh, position: p.position, scale: p.scale, tone: p.tone,
+      pitch: p.pitch, yaw: p.yaw, roll: p.roll, unlit: p.unlit,
+      ...(p.alpha !== undefined ? { alpha: p.alpha } : {}),
+      ...(blendVal !== undefined ? { blend: blendVal } : {}),
+      ...(p.shade !== undefined ? { shade: p.shade } : {})
     }
     if (p.joint !== undefined) {
       if (typeof p.joint !== 'string') {

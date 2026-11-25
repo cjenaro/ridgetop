@@ -38,8 +38,24 @@ export function createUiTheme(palette: Partial<Record<string, string>> = {}): Ui
   }
 }
 
+export interface CanvasWidgetDrawState {
+  readonly hovered: boolean
+  readonly pressed: boolean
+  readonly focused: boolean
+  readonly selected: boolean
+  readonly disabled: boolean
+}
+
 export type CanvasWidget =
-  | { type: 'panel'; fill?: string; stroke?: string; scrim?: boolean; bevel?: number }
+  | {
+      type: 'panel'
+      fill?: string
+      stroke?: string
+      scrim?: boolean
+      bevel?: number
+      blocksPointer?: boolean
+      draw?(ctx: CanvasRenderingContext2D, rect: LayoutRect, state: CanvasWidgetDrawState): void
+    }
   | { type: 'text'; text: string; size?: number; weight?: number; color?: string; align?: CanvasTextAlign; mono?: boolean; wrap?: boolean }
   | { type: 'icon'; image: CanvasImageSource; padding?: number; pixelated?: boolean }
   | {
@@ -49,9 +65,14 @@ export type CanvasWidget =
       primary?: boolean
       disabled?: boolean
       selected?: boolean
+      fill?: string
+      stroke?: string
+      accent?: string
+      badge?: { text: string; fill?: string; color?: string }
       icon?: CanvasImageSource
       pips?: { filled: number; total: number }
       primitive?: UiPrimitiveInstance
+      draw?(ctx: CanvasRenderingContext2D, rect: LayoutRect, state: CanvasWidgetDrawState): void
       onPress?(): void
       onHold?(active: boolean): void
     }
@@ -83,7 +104,7 @@ function chamferPath(ctx: CanvasRenderingContext2D, x: number, y: number, w: num
 function drawFacetedBox(
   ctx: CanvasRenderingContext2D,
   rect: LayoutRect,
-  { fill, stroke, topHighlight, bevel }: { fill: string; stroke: string; topHighlight?: string; bevel: number }
+  { fill, stroke, topHighlight, bevel, innerGlow }: { fill: string; stroke: string; topHighlight?: string; bevel: number; innerGlow?: string }
 ) {
   chamferPath(ctx, rect.x, rect.y, rect.width, rect.height, bevel)
   ctx.fillStyle = fill
@@ -92,12 +113,20 @@ function drawFacetedBox(
     ctx.save()
     ctx.clip()
     ctx.fillStyle = topHighlight
-    ctx.fillRect(rect.x, rect.y, rect.width, Math.max(2, Math.round(rect.height * 0.14)))
+    ctx.fillRect(rect.x, rect.y, rect.width, Math.max(2, Math.round(rect.height * 0.16)))
+    ctx.fillStyle = '#00000028'
+    ctx.fillRect(rect.x, rect.y + rect.height - Math.max(2, Math.round(rect.height * 0.10)), rect.width, Math.max(2, Math.round(rect.height * 0.10)))
     ctx.restore()
+  }
+  if (innerGlow && rect.width >= 24 && rect.height >= 24) {
+    chamferPath(ctx, rect.x + 3, rect.y + 3, rect.width - 6, rect.height - 6, Math.max(2, bevel - 2))
+    ctx.strokeStyle = innerGlow
+    ctx.lineWidth = 1
+    ctx.stroke()
   }
   chamferPath(ctx, rect.x + 0.5, rect.y + 0.5, rect.width - 1, rect.height - 1, bevel)
   ctx.strokeStyle = stroke
-  ctx.lineWidth = 1.5
+  ctx.lineWidth = 1.75
   ctx.stroke()
 }
 
@@ -108,18 +137,25 @@ function drawWrappedText(
   size: number,
   align: CanvasTextAlign
 ) {
-  const words = text.split(/\s+/)
   const lines: string[] = []
-  let current = ''
-  for (const word of words) {
-    const candidate = current ? current + ' ' + word : word
-    if (ctx.measureText(candidate).width <= rect.width || !current) current = candidate
-    else {
-      lines.push(current)
-      current = word
+  for (const paragraph of text.split('\n')) {
+    const trimmed = paragraph.trim()
+    if (!trimmed) {
+      lines.push('')
+      continue
     }
+    const words = trimmed.split(/\s+/)
+    let current = ''
+    for (const word of words) {
+      const candidate = current ? current + ' ' + word : word
+      if (ctx.measureText(candidate).width <= rect.width || !current) current = candidate
+      else {
+        lines.push(current)
+        current = word
+      }
+    }
+    if (current) lines.push(current)
   }
-  if (current) lines.push(current)
   const lineHeight = Math.round(size * 1.32)
   const maxLines = Math.max(1, Math.floor(rect.height / lineHeight))
   const shown = lines.slice(0, maxLines)
@@ -127,7 +163,7 @@ function drawWrappedText(
   const startY = rect.y + Math.max(0, (rect.height - totalH) / 2) + lineHeight / 2
   const tx = align === 'center' ? rect.x + rect.width / 2 : align === 'right' ? rect.x + rect.width : rect.x
   for (const [i, line] of shown.entries()) {
-    ctx.fillText(line, tx, startY + i * lineHeight, rect.width)
+    if (line) ctx.fillText(line, tx, startY + i * lineHeight, rect.width)
   }
 }
 
@@ -258,6 +294,21 @@ export function createCanvasUi(canvas: HTMLCanvasElement, options: {
       if (widget.type === 'panel' && widget.scrim) return undefined
     }
     return undefined
+  }
+
+  function blocksPoint(x: number, y: number): boolean {
+    for (let i = nodes.length - 1; i >= 0; i--) {
+      const node = nodes[i]
+      if (!node.id) continue
+      const widget = getCanvasWidget(node)
+      if (!widget) continue
+      const rect = rects.get(node.id)
+      if (!rect || rect.width <= 0 || rect.height <= 0) continue
+      if (x < rect.x || x > rect.x + rect.width || y < rect.y || y > rect.y + rect.height) continue
+      if (isInteractive(widget)) return true
+      if (widget.type === 'panel' && (widget.scrim || widget.blocksPointer)) return true
+    }
+    return false
   }
 
   function driveSlider(widget: Extract<CanvasWidget, { type: 'slider' }>, ratio: number, phase: 'start' | 'move') {
@@ -524,7 +575,11 @@ export function createCanvasUi(canvas: HTMLCanvasElement, options: {
     const widget = getCanvasWidget(node)
     if (rect && widget) {
       if (widget.type === 'panel') {
-        if (widget.scrim) {
+        if (widget.draw) {
+          ctx.save()
+          widget.draw(ctx, rect, { hovered: false, pressed: false, focused: false, selected: false, disabled: false })
+          ctx.restore()
+        } else if (widget.scrim) {
           ctx.fillStyle = widget.fill ?? theme.scrim
           ctx.fillRect(rect.x, rect.y, rect.width, rect.height)
         } else {
@@ -532,7 +587,8 @@ export function createCanvasUi(canvas: HTMLCanvasElement, options: {
             fill: widget.fill ?? theme.surface,
             stroke: widget.stroke ?? theme.border,
             topHighlight: theme.surfaceTop,
-            bevel: widget.bevel ?? theme.bevel
+            bevel: widget.bevel ?? theme.bevel,
+            innerGlow: widget.stroke ? '#ffe8b024' : undefined
           })
         }
       } else if (widget.type === 'text') {
@@ -561,31 +617,44 @@ export function createCanvasUi(canvas: HTMLCanvasElement, options: {
         const isFocused = !disabled && focusedId === node.id
         const pressed = !disabled && Boolean(node.id && isPressed(node.id))
         const selected = widget.type === 'button' && Boolean(widget.selected)
+        if (widget.type === 'button' && widget.draw) {
+          ctx.save()
+          widget.draw(ctx, rect, { hovered: isHovered, pressed, focused: isFocused, selected, disabled })
+          ctx.restore()
+        } else {
         const primary = widget.type === 'button' ? Boolean(widget.primary) : widget.type === 'toggle' && widget.checked
+        const customFill = widget.type === 'button' ? widget.fill : undefined
+        const customStroke = widget.type === 'button' ? widget.stroke : undefined
+        const customAccent = widget.type === 'button' ? widget.accent : undefined
         const fill = disabled ? '#152024b0'
-          : primary ? theme.accent
+          : customFill ?? (primary ? theme.accent
           : pressed ? theme.surfaceTop
           : selected || isHovered ? theme.surfaceAlt
-          : theme.surface
-        const stroke = disabled ? '#3b4e5066' : selected || isFocused || isHovered ? theme.accent : theme.border
+          : theme.surface)
+        const stroke = disabled ? '#3b4e5066'
+          : selected || isFocused || isHovered ? (customAccent ?? theme.accent)
+          : (customStroke ?? theme.border)
         const offsetY = pressed ? 1 : 0
         ctx.save()
         if (disabled) ctx.globalAlpha = 0.62
+        const highlight = customAccent && /^#[0-9a-f]{6}$/i.test(customAccent)
+          ? customAccent + '44'
+          : primary ? '#ffffff30' : theme.surfaceTop
         drawFacetedBox(ctx, { ...rect, y: rect.y + offsetY }, {
           fill,
           stroke,
-          topHighlight: primary ? '#ffffff30' : theme.surfaceTop,
+          topHighlight: highlight,
           bevel: theme.bevel
         })
 
         let textLeft = rect.x + 10
         let textRight = rect.x + rect.width - 10
         if (widget.type === 'button' && widget.icon) {
-          const iconSize = Math.min(28, rect.height - 12)
+          const iconSize = Math.min(38, rect.height - 8)
           if (iconSize > 0) {
             ctx.imageSmoothingEnabled = false
-            ctx.drawImage(widget.icon, textLeft, rect.y + offsetY + (rect.height - iconSize) / 2, iconSize, iconSize)
-            textLeft += iconSize + 10
+            ctx.drawImage(widget.icon, textLeft - 2, rect.y + offsetY + (rect.height - iconSize) / 2, iconSize, iconSize)
+            textLeft += iconSize + 8
           }
         }
 
@@ -595,26 +664,43 @@ export function createCanvasUi(canvas: HTMLCanvasElement, options: {
             ? `${widget.label}: ${widget.checked ? 'ON' : 'OFF'}`
             : `${widget.label}: ${widget.valueLabel}`
 
-        ctx.fillStyle = primary ? theme.accentText : theme.text
+        if (widget.type === 'button' && widget.badge && widget.badge.text) {
+          ctx.font = `800 10px ${theme.mono}`
+          const bw = Math.min(Math.max(24, Math.ceil(ctx.measureText(widget.badge.text).width) + 12), Math.max(24, rect.width * 0.45))
+          const bh = 16
+          const bx = textRight - bw
+          const by = rect.y + offsetY + 6
+          ctx.fillStyle = widget.badge.fill ?? customAccent ?? theme.accent
+          chamferPath(ctx, bx, by, bw, bh, 3)
+          ctx.fill()
+          ctx.fillStyle = widget.badge.color ?? theme.accentText
+          ctx.textAlign = 'center'
+          ctx.textBaseline = 'middle'
+          ctx.fillText(widget.badge.text, bx + bw / 2, by + bh / 2 + 0.5, bw - 4)
+          textRight = Math.max(textLeft + 16, bx - 6)
+        }
+
+        ctx.fillStyle = primary && !customFill ? theme.accentText : theme.text
         if (widget.type === 'button' && (widget.subtitle || widget.pips)) {
           ctx.textAlign = 'left'
           ctx.textBaseline = 'middle'
-          ctx.font = `700 14px ${theme.font}`
+          ctx.font = `700 13px ${theme.font}`
           ctx.fillText(label, textLeft, rect.y + offsetY + rect.height * 0.34, Math.max(1, textRight - textLeft))
+          const fullRight = rect.x + rect.width - 10
           if (widget.pips) {
             const pipW = 12, pipH = 5, gap = 4
             const py = rect.y + offsetY + rect.height * 0.68 - pipH / 2
             for (let i = 0; i < widget.pips.total; i++) {
-              ctx.fillStyle = i < widget.pips.filled ? theme.accent : '#ffffff26'
+              ctx.fillStyle = i < widget.pips.filled ? (customAccent ?? theme.accent) : '#ffffff26'
               ctx.fillRect(textLeft + i * (pipW + gap), py, pipW, pipH)
             }
           }
           if (widget.subtitle) {
-            ctx.fillStyle = primary ? theme.accentText : theme.muted
+            ctx.fillStyle = primary && !customFill ? theme.accentText : theme.muted
             ctx.font = `600 11px ${theme.mono}`
             ctx.textAlign = widget.pips ? 'right' : 'left'
-            const sx = widget.pips ? textRight : textLeft
-            ctx.fillText(widget.subtitle, sx, rect.y + offsetY + rect.height * 0.68, Math.max(1, textRight - textLeft))
+            const sx = widget.pips ? fullRight : textLeft
+            ctx.fillText(widget.subtitle, sx, rect.y + offsetY + rect.height * 0.68, Math.max(1, fullRight - textLeft))
           }
         } else {
           ctx.font = `700 14px ${theme.font}`
@@ -623,6 +709,7 @@ export function createCanvasUi(canvas: HTMLCanvasElement, options: {
           ctx.fillText(label, (textLeft + textRight) / 2, rect.y + offsetY + rect.height / 2, Math.max(1, textRight - textLeft))
         }
         ctx.restore()
+        }
       } else if (widget.type === 'slider') {
         const disabled = isDisabled(widget)
         const isFocused = !disabled && (focusedId === node.id || hoveredId === node.id)
@@ -741,6 +828,7 @@ export function createCanvasUi(canvas: HTMLCanvasElement, options: {
       return rects
     },
     hitTest: findHit,
+    blocksPoint,
     clearHolds,
     get rects(): ReadonlyMap<string, LayoutRect> { return rects },
     get dirty() { return dirty },

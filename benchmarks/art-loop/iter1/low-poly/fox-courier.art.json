@@ -1,0 +1,1350 @@
+{
+  "format": "ridgetop-art",
+  "version": 2,
+  "name": "fox-courier",
+  "palette": {
+    "fur": "#dc6c34",
+    "cream": "#f7e6c4",
+    "scarf": "#2d7567",
+    "leather": "#6c3f26"
+  },
+  "parts": [
+    {
+      "name": "left-boot",
+      "shape": "prism",
+      "position": [
+        -0.1616825174931386,
+        0.085,
+        0.20568618728157356
+      ],
+      "scale": [
+        0.19,
+        0.17,
+        0.3
+      ],
+      "tone": "ink",
+      "shade": 0.06,
+      "joint": "left-leg"
+    },
+    {
+      "name": "left-leg",
+      "shape": "taper",
+      "position": [
+        -0.1616825174931386,
+        0.295,
+        0.16568618728157355
+      ],
+      "scale": [
+        0.17,
+        0.29000000000000004,
+        0.17
+      ],
+      "tone": "fur",
+      "pitch": 3.141592653589793,
+      "shade": -0.1,
+      "joint": "left-leg"
+    },
+    {
+      "name": "right-boot",
+      "shape": "prism",
+      "position": [
+        0.13831748250686138,
+        0.085,
+        0.20568618728157356
+      ],
+      "scale": [
+        0.19,
+        0.17,
+        0.3
+      ],
+      "tone": "ink",
+      "shade": 0.06,
+      "joint": "right-leg"
+    },
+    {
+      "name": "right-leg",
+      "shape": "taper",
+      "position": [
+        0.13831748250686138,
+        0.295,
+        0.16568618728157355
+      ],
+      "scale": [
+        0.17,
+        0.29000000000000004,
+        0.17
+      ],
+      "tone": "fur",
+      "pitch": 3.141592653589793,
+      "shade": -0.1,
+      "joint": "right-leg"
+    },
+    {
+      "name": "torso",
+      "shape": "prism",
+      "position": [
+        -0.011682517493138617,
+        0.65,
+        0.16568618728157355
+      ],
+      "scale": [
+        0.46,
+        0.46,
+        0.36
+      ],
+      "tone": "fur",
+      "joint": "body"
+    },
+    {
+      "name": "chest-fluff",
+      "shape": "prism",
+      "position": [
+        -0.011682517493138617,
+        0.67,
+        0.31568618728157355
+      ],
+      "scale": [
+        0.28,
+        0.3,
+        0.12
+      ],
+      "tone": "cream",
+      "shade": 0.06,
+      "joint": "body"
+    },
+    {
+      "name": "belt",
+      "shape": "prism",
+      "position": [
+        -0.011682517493138617,
+        0.47,
+        0.17568618728157356
+      ],
+      "scale": [
+        0.5,
+        0.085,
+        0.39
+      ],
+      "tone": "leather",
+      "shade": -0.08,
+      "joint": "body"
+    },
+    {
+      "name": "scarf-collar",
+      "shape": "prism",
+      "position": [
+        -0.011682517493138617,
+        0.89,
+        0.17568618728157356
+      ],
+      "scale": [
+        0.56,
+        0.16,
+        0.48
+      ],
+      "tone": "scarf",
+      "joint": "body"
+    },
+    {
+      "name": "scarf-hood",
+      "shape": "prism",
+      "position": [
+        -0.011682517493138617,
+        0.96,
+        -0.004313812718426457
+      ],
+      "scale": [
+        0.46,
+        0.22,
+        0.28
+      ],
+      "tone": "scarf",
+      "pitch": -0.42,
+      "shade": -0.16,
+      "joint": "body"
+    },
+    {
+      "name": "scarf-tail",
+      "shape": "prism",
+      "position": [
+        -0.15168251749313863,
+        0.75,
+        0.36568618728157354
+      ],
+      "scale": [
+        0.13,
+        0.23,
+        0.085
+      ],
+      "tone": "scarf",
+      "pitch": -0.18,
+      "yaw": 0.08,
+      "roll": -0.14,
+      "shade": 0.15,
+      "joint": "body"
+    },
+    {
+      "name": "satchel-strap",
+      "shape": "box",
+      "position": [
+        0.02831748250686139,
+        0.7150000000000001,
+        0.26568618728157356
+      ],
+      "scale": [
+        0.065,
+        0.563648826841678,
+        0.05
+      ],
+      "tone": "leather",
+      "pitch": -2.82955053202726,
+      "roll": -0.9546490636939569,
+      "shade": 0.1,
+      "joint": "body"
+    },
+    {
+      "name": "satchel-body",
+      "shape": "prism",
+      "position": [
+        0.3183174825068614,
+        0.49,
+        0.11568618728157355
+      ],
+      "scale": [
+        0.18,
+        0.27,
+        0.29
+      ],
+      "tone": "leather",
+      "roll": 0.12,
+      "joint": "satchel"
+    },
+    {
+      "name": "satchel-flap",
+      "shape": "prism",
+      "position": [
+        0.32831748250686144,
+        0.58,
+        0.11568618728157355
+      ],
+      "scale": [
+        0.2,
+        0.11,
+        0.3
+      ],
+      "tone": "leather",
+      "roll": 0.12,
+      "shade": 0.22,
+      "joint": "satchel"
+    },
+    {
+      "name": "letter-peek",
+      "shape": "box",
+      "position": [
+        0.2983174825068614,
+        0.65,
+        0.09568618728157355
+      ],
+      "scale": [
+        0.06,
+        0.12,
+        0.19
+      ],
+      "tone": "light",
+      "yaw": 0.06,
+      "roll": -0.15,
+      "shade": 0.04,
+      "joint": "satchel"
+    },
+    {
+      "name": "left-arm",
+      "shape": "taper",
+      "position": [
+        -0.3216825174931386,
+        0.66,
+        0.20568618728157356
+      ],
+      "scale": [
+        0.14,
+        0.30789608636681304,
+        0.14
+      ],
+      "tone": "fur",
+      "pitch": 2.8632929945846817,
+      "roll": 0.3307842910822571,
+      "shade": -0.06,
+      "joint": "left-arm"
+    },
+    {
+      "name": "left-paw",
+      "shape": "prism",
+      "position": [
+        -0.37168251749313863,
+        0.49,
+        0.25568618728157355
+      ],
+      "scale": [
+        0.125,
+        0.125,
+        0.135
+      ],
+      "tone": "ink",
+      "shade": 0.08,
+      "joint": "left-arm"
+    },
+    {
+      "name": "right-arm",
+      "shape": "taper",
+      "position": [
+        0.2983174825068614,
+        0.665,
+        0.24568618728157354
+      ],
+      "scale": [
+        0.14,
+        0.3119294792096445,
+        0.14
+      ],
+      "tone": "fur",
+      "pitch": 2.723368324010564,
+      "roll": -0.3263473172417143,
+      "shade": -0.06,
+      "joint": "right-arm"
+    },
+    {
+      "name": "right-paw",
+      "shape": "prism",
+      "position": [
+        0.34831748250686134,
+        0.5,
+        0.31568618728157355
+      ],
+      "scale": [
+        0.125,
+        0.125,
+        0.135
+      ],
+      "tone": "ink",
+      "shade": 0.08,
+      "joint": "right-arm"
+    },
+    {
+      "name": "head",
+      "shape": "oval",
+      "position": [
+        -0.011682517493138617,
+        1.15,
+        0.19568618728157355
+      ],
+      "scale": [
+        0.54,
+        0.43,
+        0.4836726110878981
+      ],
+      "tone": "fur",
+      "joint": "head"
+    },
+    {
+      "name": "muzzle-mask",
+      "shape": "prism",
+      "position": [
+        -0.011682517493138617,
+        1.05,
+        0.3456861872815735
+      ],
+      "scale": [
+        0.58,
+        0.15,
+        0.3
+      ],
+      "tone": "cream",
+      "shade": 0.03,
+      "joint": "head"
+    },
+    {
+      "name": "snout-top",
+      "shape": "wedge",
+      "position": [
+        -0.011682517493138617,
+        1.14,
+        0.4656861872815735
+      ],
+      "scale": [
+        0.24,
+        0.15,
+        0.28
+      ],
+      "tone": "fur",
+      "shade": 0.08,
+      "joint": "head"
+    },
+    {
+      "name": "nose",
+      "shape": "octahedron",
+      "position": [
+        -0.011682517493138617,
+        1.09,
+        0.6056861872815735
+      ],
+      "scale": [
+        0.0475,
+        0.04,
+        0.0425
+      ],
+      "tone": "ink",
+      "shade": -0.1,
+      "joint": "head"
+    },
+    {
+      "name": "left-eye",
+      "shape": "prism",
+      "position": [
+        -0.14668251749313863,
+        1.21,
+        0.39368618728157356
+      ],
+      "scale": [
+        0.088,
+        0.105,
+        0.055
+      ],
+      "tone": "ink",
+      "shade": -0.12,
+      "joint": "head"
+    },
+    {
+      "name": "left-eye-glint",
+      "shape": "box",
+      "position": [
+        -0.14668251749313863,
+        1.23,
+        0.4176861872815736
+      ],
+      "scale": [
+        0.046,
+        0.048,
+        0.025
+      ],
+      "tone": "light",
+      "unlit": 0.95,
+      "joint": "head"
+    },
+    {
+      "name": "right-eye",
+      "shape": "prism",
+      "position": [
+        0.12331748250686139,
+        1.21,
+        0.39368618728157356
+      ],
+      "scale": [
+        0.088,
+        0.105,
+        0.055
+      ],
+      "tone": "ink",
+      "shade": -0.12,
+      "joint": "head"
+    },
+    {
+      "name": "right-eye-glint",
+      "shape": "box",
+      "position": [
+        0.12331748250686139,
+        1.23,
+        0.4176861872815736
+      ],
+      "scale": [
+        0.046,
+        0.048,
+        0.025
+      ],
+      "tone": "light",
+      "unlit": 0.95,
+      "joint": "head"
+    },
+    {
+      "name": "left-ear-base",
+      "shape": "taper",
+      "position": [
+        -0.1916825174931386,
+        1.4,
+        0.17568618728157356
+      ],
+      "scale": [
+        0.23,
+        0.29,
+        0.14
+      ],
+      "tone": "fur",
+      "pitch": 0.05,
+      "roll": 0.22,
+      "shade": 0.04,
+      "joint": "head"
+    },
+    {
+      "name": "left-ear-tip",
+      "shape": "cone",
+      "position": [
+        -0.24549547767286864,
+        1.609148413643246,
+        0.18564357244545227
+      ],
+      "scale": [
+        0.07890713202739225,
+        0.23,
+        0.053850135871957555
+      ],
+      "tone": "ink",
+      "pitch": 0.05,
+      "roll": 0.22,
+      "shade": -0.06,
+      "joint": "head"
+    },
+    {
+      "name": "left-ear-inner",
+      "shape": "prism",
+      "position": [
+        -0.1866825174931386,
+        1.41,
+        0.23368618728157356
+      ],
+      "scale": [
+        0.095,
+        0.18,
+        0.055
+      ],
+      "tone": "ink",
+      "pitch": 0.05,
+      "roll": 0.22,
+      "shade": 0.12,
+      "joint": "head"
+    },
+    {
+      "name": "right-ear-base",
+      "shape": "taper",
+      "position": [
+        0.16831748250686138,
+        1.4,
+        0.17568618728157356
+      ],
+      "scale": [
+        0.23,
+        0.29,
+        0.14
+      ],
+      "tone": "fur",
+      "pitch": 0.05,
+      "roll": -0.22,
+      "shade": 0.04,
+      "joint": "head"
+    },
+    {
+      "name": "right-ear-tip",
+      "shape": "cone",
+      "position": [
+        0.21450452232713138,
+        1.6108515863567543,
+        0.18572880211769482
+      ],
+      "scale": [
+        0.07890713202739225,
+        0.23,
+        0.053850135871957555
+      ],
+      "tone": "ink",
+      "pitch": 0.05,
+      "roll": -0.22,
+      "shade": -0.06,
+      "joint": "head"
+    },
+    {
+      "name": "right-ear-inner",
+      "shape": "prism",
+      "position": [
+        0.16331748250686137,
+        1.41,
+        0.23368618728157356
+      ],
+      "scale": [
+        0.095,
+        0.18,
+        0.055
+      ],
+      "tone": "ink",
+      "pitch": 0.05,
+      "roll": -0.22,
+      "shade": 0.12,
+      "joint": "head"
+    },
+    {
+      "name": "tail-1",
+      "shape": "cylinder",
+      "position": [
+        -0.016892026862994947,
+        0.4377983330683079,
+        -0.1412379832279619
+      ],
+      "scale": [
+        0.10520950936985633,
+        0.3546888370749726,
+        0.10257168737515725
+      ],
+      "tone": "fur",
+      "pitch": -1.6396528160959414,
+      "joint": "tail"
+    },
+    {
+      "name": "tail-2",
+      "shape": "cylinder",
+      "position": [
+        -0.019236306079430297,
+        0.555,
+        -0.37431381271842645
+      ],
+      "scale": [
+        0.15255378858629168,
+        0.4745544690232692,
+        0.148728946693978
+      ],
+      "tone": "fur",
+      "pitch": -0.7649928327109101,
+      "joint": "tail"
+    },
+    {
+      "name": "tail-3",
+      "shape": "cylinder",
+      "position": [
+        -0.01897583061093748,
+        0.7805290479658061,
+        -0.45178229242520085
+      ],
+      "scale": [
+        0.14729331311779886,
+        0.3463118842698619,
+        0.14360036232522017
+      ],
+      "tone": "cream",
+      "pitch": 0.40024065703397427,
+      "joint": "tail"
+    },
+    {
+      "name": "tail-tip",
+      "shape": "teardrop",
+      "position": [
+        -0.011682517493138617,
+        1,
+        -0.3243138127184264
+      ],
+      "scale": [
+        0.2604166724874329,
+        0.3,
+        0.2604166724874329
+      ],
+      "tone": "cream",
+      "pitch": 0.55,
+      "shade": 0.08,
+      "joint": "tail"
+    }
+  ],
+  "frameSize": 48,
+  "centerY": 0.8360979373638453,
+  "span": 2.0287397734720867,
+  "joints": [
+    {
+      "id": "root",
+      "pivot": [
+        -0.011682517493138617,
+        0,
+        0.16568618728157355
+      ]
+    },
+    {
+      "id": "body",
+      "parent": "root",
+      "pivot": [
+        -0.011682517493138617,
+        0.44,
+        0.16568618728157355
+      ]
+    },
+    {
+      "id": "head",
+      "parent": "body",
+      "pivot": [
+        -0.011682517493138617,
+        0.92,
+        0.18568618728157354
+      ]
+    },
+    {
+      "id": "left-arm",
+      "parent": "body",
+      "pivot": [
+        -0.28168251749313866,
+        0.8,
+        0.16568618728157355
+      ]
+    },
+    {
+      "id": "right-arm",
+      "parent": "body",
+      "pivot": [
+        0.2583174825068614,
+        0.8,
+        0.16568618728157355
+      ]
+    },
+    {
+      "id": "satchel",
+      "parent": "body",
+      "pivot": [
+        0.2583174825068614,
+        0.64,
+        0.11568618728157355
+      ]
+    },
+    {
+      "id": "tail",
+      "parent": "body",
+      "pivot": [
+        -0.011682517493138617,
+        0.46,
+        0.02568618728157354
+      ]
+    },
+    {
+      "id": "left-leg",
+      "parent": "root",
+      "pivot": [
+        -0.1616825174931386,
+        0.43,
+        0.16568618728157355
+      ]
+    },
+    {
+      "id": "right-leg",
+      "parent": "root",
+      "pivot": [
+        0.13831748250686138,
+        0.43,
+        0.16568618728157355
+      ]
+    }
+  ],
+  "clips": {
+    "idle": {
+      "duration": 1.6,
+      "loop": true,
+      "easing": "easeInOut",
+      "frames": [
+        {
+          "time": 0,
+          "poses": {
+            "root": {
+              "position": [
+                0,
+                0,
+                0
+              ]
+            },
+            "body": {
+              "position": [
+                0,
+                0,
+                0
+              ],
+              "rotation": [
+                0.02,
+                0,
+                0
+              ],
+              "scale": [
+                1,
+                1,
+                1
+              ]
+            },
+            "head": {
+              "rotation": [
+                0,
+                0.08,
+                0.03
+              ]
+            },
+            "left-arm": {
+              "rotation": [
+                0.06,
+                0,
+                0.04
+              ]
+            },
+            "right-arm": {
+              "rotation": [
+                -0.04,
+                0,
+                -0.04
+              ]
+            },
+            "tail": {
+              "rotation": [
+                0.04,
+                0.2,
+                0
+              ]
+            },
+            "satchel": {
+              "rotation": [
+                0.02,
+                0,
+                0.02
+              ]
+            },
+            "left-leg": {
+              "rotation": [
+                0,
+                0,
+                0
+              ]
+            },
+            "right-leg": {
+              "rotation": [
+                0,
+                0,
+                0
+              ]
+            }
+          }
+        },
+        {
+          "time": 0.8,
+          "poses": {
+            "root": {
+              "position": [
+                0,
+                0,
+                0
+              ]
+            },
+            "body": {
+              "position": [
+                0,
+                0.028,
+                0
+              ],
+              "rotation": [
+                -0.03,
+                0,
+                0
+              ],
+              "scale": [
+                1.025,
+                1.04,
+                1.025
+              ]
+            },
+            "head": {
+              "rotation": [
+                -0.06,
+                -0.12,
+                -0.04
+              ]
+            },
+            "left-arm": {
+              "rotation": [
+                -0.05,
+                0,
+                0.08
+              ]
+            },
+            "right-arm": {
+              "rotation": [
+                0.06,
+                0,
+                -0.08
+              ]
+            },
+            "tail": {
+              "rotation": [
+                0.14,
+                -0.22,
+                0
+              ]
+            },
+            "satchel": {
+              "rotation": [
+                -0.05,
+                0,
+                0.06
+              ]
+            },
+            "left-leg": {
+              "rotation": [
+                0,
+                0,
+                0
+              ]
+            },
+            "right-leg": {
+              "rotation": [
+                0,
+                0,
+                0
+              ]
+            }
+          }
+        },
+        {
+          "time": 1.6,
+          "poses": {
+            "root": {
+              "position": [
+                0,
+                0,
+                0
+              ]
+            },
+            "body": {
+              "position": [
+                0,
+                0,
+                0
+              ],
+              "rotation": [
+                0.02,
+                0,
+                0
+              ],
+              "scale": [
+                1,
+                1,
+                1
+              ]
+            },
+            "head": {
+              "rotation": [
+                0,
+                0.08,
+                0.03
+              ]
+            },
+            "left-arm": {
+              "rotation": [
+                0.06,
+                0,
+                0.04
+              ]
+            },
+            "right-arm": {
+              "rotation": [
+                -0.04,
+                0,
+                -0.04
+              ]
+            },
+            "tail": {
+              "rotation": [
+                0.04,
+                0.2,
+                0
+              ]
+            },
+            "satchel": {
+              "rotation": [
+                0.02,
+                0,
+                0.02
+              ]
+            },
+            "left-leg": {
+              "rotation": [
+                0,
+                0,
+                0
+              ]
+            },
+            "right-leg": {
+              "rotation": [
+                0,
+                0,
+                0
+              ]
+            }
+          }
+        }
+      ]
+    },
+    "walk": {
+      "duration": 0.72,
+      "loop": true,
+      "easing": "easeInOut",
+      "frames": [
+        {
+          "time": 0,
+          "poses": {
+            "root": {
+              "position": [
+                0,
+                0.03650057140053588,
+                0
+              ]
+            },
+            "body": {
+              "position": [
+                0,
+                0,
+                0
+              ],
+              "rotation": [
+                0.11,
+                0.11,
+                0.03
+              ]
+            },
+            "head": {
+              "rotation": [
+                -0.07,
+                -0.07,
+                -0.03
+              ]
+            },
+            "left-leg": {
+              "rotation": [
+                -0.54,
+                0,
+                0
+              ]
+            },
+            "right-leg": {
+              "rotation": [
+                0.54,
+                0,
+                0
+              ]
+            },
+            "left-arm": {
+              "rotation": [
+                0.48,
+                0,
+                0.08
+              ]
+            },
+            "right-arm": {
+              "rotation": [
+                -0.46,
+                0,
+                -0.08
+              ]
+            },
+            "tail": {
+              "rotation": [
+                0.12,
+                -0.34,
+                0
+              ]
+            },
+            "satchel": {
+              "rotation": [
+                0.2,
+                0,
+                0.09
+              ]
+            }
+          }
+        },
+        {
+          "time": 0.18,
+          "poses": {
+            "root": {
+              "position": [
+                0,
+                0.013808525564269173,
+                0
+              ]
+            },
+            "body": {
+              "position": [
+                0,
+                0.055,
+                0
+              ],
+              "rotation": [
+                0.08,
+                0,
+                -0.02
+              ]
+            },
+            "head": {
+              "rotation": [
+                -0.04,
+                0,
+                0.02
+              ]
+            },
+            "left-leg": {
+              "rotation": [
+                0.08,
+                0,
+                0
+              ]
+            },
+            "right-leg": {
+              "rotation": [
+                -0.16,
+                0,
+                0
+              ]
+            },
+            "left-arm": {
+              "rotation": [
+                0.04,
+                0,
+                0.04
+              ]
+            },
+            "right-arm": {
+              "rotation": [
+                -0.04,
+                0,
+                -0.04
+              ]
+            },
+            "tail": {
+              "rotation": [
+                -0.04,
+                0.04,
+                0
+              ]
+            },
+            "satchel": {
+              "rotation": [
+                -0.06,
+                0,
+                -0.03
+              ]
+            }
+          }
+        },
+        {
+          "time": 0.36,
+          "poses": {
+            "root": {
+              "position": [
+                0,
+                0.03650057140053588,
+                0
+              ]
+            },
+            "body": {
+              "position": [
+                0,
+                0,
+                0
+              ],
+              "rotation": [
+                0.11,
+                -0.11,
+                -0.03
+              ]
+            },
+            "head": {
+              "rotation": [
+                -0.07,
+                0.07,
+                0.03
+              ]
+            },
+            "left-leg": {
+              "rotation": [
+                0.54,
+                0,
+                0
+              ]
+            },
+            "right-leg": {
+              "rotation": [
+                -0.54,
+                0,
+                0
+              ]
+            },
+            "left-arm": {
+              "rotation": [
+                -0.46,
+                0,
+                0.08
+              ]
+            },
+            "right-arm": {
+              "rotation": [
+                0.48,
+                0,
+                -0.08
+              ]
+            },
+            "tail": {
+              "rotation": [
+                0.12,
+                0.34,
+                0
+              ]
+            },
+            "satchel": {
+              "rotation": [
+                -0.18,
+                0,
+                0.04
+              ]
+            }
+          }
+        },
+        {
+          "time": 0.54,
+          "poses": {
+            "root": {
+              "position": [
+                0,
+                0.013808525564269173,
+                0
+              ]
+            },
+            "body": {
+              "position": [
+                0,
+                0.055,
+                0
+              ],
+              "rotation": [
+                0.08,
+                0,
+                0.02
+              ]
+            },
+            "head": {
+              "rotation": [
+                -0.04,
+                0,
+                -0.02
+              ]
+            },
+            "left-leg": {
+              "rotation": [
+                -0.16,
+                0,
+                0
+              ]
+            },
+            "right-leg": {
+              "rotation": [
+                0.08,
+                0,
+                0
+              ]
+            },
+            "left-arm": {
+              "rotation": [
+                -0.04,
+                0,
+                0.04
+              ]
+            },
+            "right-arm": {
+              "rotation": [
+                0.04,
+                0,
+                -0.04
+              ]
+            },
+            "tail": {
+              "rotation": [
+                -0.04,
+                -0.04,
+                0
+              ]
+            },
+            "satchel": {
+              "rotation": [
+                0.06,
+                0,
+                0.07
+              ]
+            }
+          }
+        },
+        {
+          "time": 0.72,
+          "poses": {
+            "root": {
+              "position": [
+                0,
+                0.03650057140053588,
+                0
+              ]
+            },
+            "body": {
+              "position": [
+                0,
+                0,
+                0
+              ],
+              "rotation": [
+                0.11,
+                0.11,
+                0.03
+              ]
+            },
+            "head": {
+              "rotation": [
+                -0.07,
+                -0.07,
+                -0.03
+              ]
+            },
+            "left-leg": {
+              "rotation": [
+                -0.54,
+                0,
+                0
+              ]
+            },
+            "right-leg": {
+              "rotation": [
+                0.54,
+                0,
+                0
+              ]
+            },
+            "left-arm": {
+              "rotation": [
+                0.48,
+                0,
+                0.08
+              ]
+            },
+            "right-arm": {
+              "rotation": [
+                -0.46,
+                0,
+                -0.08
+              ]
+            },
+            "tail": {
+              "rotation": [
+                0.12,
+                -0.34,
+                0
+              ]
+            },
+            "satchel": {
+              "rotation": [
+                0.2,
+                0,
+                0.09
+              ]
+            }
+          }
+        }
+      ]
+    }
+  }
+}

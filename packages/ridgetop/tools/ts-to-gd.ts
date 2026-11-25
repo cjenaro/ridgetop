@@ -5,6 +5,7 @@ import ts from 'typescript'
 import { isMain } from '../framework/server.ts'
 
 const GD_KEYWORDS = new Set([
+  '_',
   'if', 'elif', 'else', 'for', 'while', 'match', 'when', 'break', 'continue', 'pass', 'return',
   'class', 'class_name', 'extends', 'is', 'in', 'as', 'self', 'super', 'signal', 'func',
   'static', 'const', 'enum', 'var', 'breakpoint', 'preload', 'await', 'yield', 'assert',
@@ -799,6 +800,10 @@ static func arr_from(iterable: Variant, mapper: Variant = null) -> Array:
 \t\t\tout = (d["__store"] as Dictionary).keys()
 \t\telif d.has("__is_map"):
 \t\t\tout = obj_entries(d["__store"] as Dictionary)
+\t\telif d.has("length"):
+\t\t\tvar n := maxi(0, int(num(d["length"])))
+\t\t\tfor i in range(n):
+\t\t\t\tout.append(get_prop(d, i))
 \t\telse:
 \t\t\tfor k in d.keys():
 \t\t\t\tout.append(k)
@@ -809,6 +814,13 @@ static func arr_from(iterable: Variant, mapper: Variant = null) -> Array:
 \tif mapper is Callable:
 \t\treturn map(out, mapper as Callable)
 \treturn out
+
+static func reverse_arr(target: Variant) -> Variant:
+\tif target is Dictionary and (target as Dictionary).has("reverse"):
+\t\treturn invoke((target as Dictionary)["reverse"], [])
+\tif target is Array:
+\t\t(target as Array).reverse()
+\treturn target
 
 static func make_map(init: Variant = null) -> Dictionary:
 \tvar store: Dictionary = {}
@@ -1456,7 +1468,7 @@ export function compileTsToGd(sourceText: string, fileName = 'module.ts', option
           const arg = node.arguments?.[0] ? emitExpr(node.arguments[0], indent) : 'null'
           return `RT.make_set(${arg})`
         }
-        if (target.text === 'Float32Array' || target.text === 'Float64Array' || target.text === 'Int32Array' || target.text === 'Uint16Array' || target.text === 'Uint32Array' || target.text === 'Uint8Array') {
+        if (target.text === 'Float32Array' || target.text === 'Float64Array' || target.text === 'Int32Array' || target.text === 'Uint16Array' || target.text === 'Uint32Array' || target.text === 'Uint8Array' || target.text === 'Uint8ClampedArray') {
           const arg = node.arguments?.[0] ? emitExpr(node.arguments[0], indent) : '0'
           return `RT.typed_array(${arg})`
         }
@@ -1725,7 +1737,7 @@ export function compileTsToGd(sourceText: string, fileName = 'module.ts', option
       const builtinMethod = new Set([
         'map', 'flatMap', 'filter', 'some', 'every', 'find', 'findIndex', 'forEach', 'reduce',
         'slice', 'subarray', 'set', 'at', 'entries', 'includes', 'indexOf', 'push', 'pop',
-        'shift', 'splice', 'sort', 'join', 'toFixed', 'trim', 'toLowerCase', 'toUpperCase',
+        'shift', 'splice', 'sort', 'reverse', 'join', 'toFixed', 'trim', 'toLowerCase', 'toUpperCase',
         'startsWith', 'endsWith', 'split', 'padStart', 'replaceAll'
       ]).has(method)
 
@@ -1751,6 +1763,7 @@ export function compileTsToGd(sourceText: string, fileName = 'module.ts', option
         if (method === 'shift') return `RT.shift_arr(${o})`
         if (method === 'splice') return `RT.splice_arr(${o}, ${args[0] ?? '0'}, ${args[1] ?? 'null'}, ${sliceArgsArr(2)})`
         if (method === 'sort') return `RT.sort_arr${formatList('(', [o, args[0] ?? 'null'], ')', useIndent)}`
+        if (method === 'reverse') return `RT.reverse_arr(${o})`
         if (method === 'join') return `RT.join_arr(${o}, ${args[0] ?? '","'})`
         if (method === 'toFixed') return `("%." + str(int(${args[0] ?? '0'})) + "f") % RT.num(${o})`
         if (method === 'trim') return `RT.js_str(${o}).strip_edges()`

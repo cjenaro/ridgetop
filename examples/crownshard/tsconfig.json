@@ -1,0 +1,14 @@
+{
+  "compilerOptions": {
+    "target": "ES2023",
+    "lib": ["ES2023", "DOM", "DOM.Iterable"],
+    "types": ["node", "@webgpu/types"],
+    "module": "NodeNext",
+    "rewriteRelativeImportExtensions": true,
+    "strict": true,
+    "useUnknownInCatchVariables": false,
+    "noEmit": true
+  },
+  "include": ["*.ts", "crownshard/**/*.ts"],
+  "exclude": ["dist", "node_modules"]
+}

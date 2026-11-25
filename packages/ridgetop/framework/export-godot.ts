@@ -1,3 +1,4 @@
+import { Buffer } from 'node:buffer'
 import { mkdir, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import type { InstanceBatch } from './types.ts'
@@ -15,14 +16,17 @@ function srgbToLinear(c: number) {
 export function encodeGlb(batches: readonly InstanceBatch[], name = 'RidgetopModel'): Buffer {
   // Group geometry by quantized (r, g, b, unlit) so every glTF viewer (Godot 4, Blender, Switch) renders exact colors & glow natively.
   type Bucket = {
-    r: number; g: number; b: number; unlit: number
+    r: number; g: number; b: number; unlit: number; hasColors: boolean
     positions: number[]
     normals: number[]
+    colors: number[]
   }
   const buckets = new Map<string, Bucket>()
 
   for (const batch of batches) {
     const vData = batch.mesh.data
+    const vColors = batch.mesh.colors
+    const hasColors = Boolean(vColors && vColors.length >= batch.mesh.vertexCount * 3)
     const vCount = batch.mesh.vertexCount
     const iData = batch.data
     for (let i = 0; i < batch.count; i++) {
@@ -47,15 +51,16 @@ export function encodeGlb(batches: readonly InstanceBatch[], name = 'RidgetopMod
       const m21 = 2 * (qy * qz + qx * qw)
       const m22 = 1 - 2 * (qx * qx + qy * qy)
 
-      const key = `${Math.round(r * 1000)}:${Math.round(g * 1000)}:${Math.round(b * 1000)}:${Math.round(unlit * 100)}`
+      const key = `${Math.round(r * 1000)}:${Math.round(g * 1000)}:${Math.round(b * 1000)}:${Math.round(unlit * 100)}:${hasColors ? 1 : 0}`
       let bucket = buckets.get(key)
       if (!bucket) {
-        bucket = { r, g, b, unlit, positions: [], normals: [] }
+        bucket = { r, g, b, unlit, hasColors, positions: [], normals: [], colors: [] }
         buckets.set(key, bucket)
       }
 
       const pos = bucket.positions
       const norm = bucket.normals
+      const cols = bucket.colors
       for (let v = 0; v < vCount; v++) {
         const vb = v * 6
         const lx = vData[vb] * sx
@@ -74,6 +79,13 @@ export function encodeGlb(batches: readonly InstanceBatch[], name = 'RidgetopMod
         const nz = m20 * nlx + m21 * nly + m22 * nlz
         const nLen = Math.sqrt(nx * nx + ny * ny + nz * nz) || 1
         norm.push(nx / nLen, ny / nLen, nz / nLen)
+        if (hasColors && vColors) {
+          const cb = v * 3
+          const vr = Number.isFinite(vColors[cb]) ? Math.max(0, Math.min(1, vColors[cb])) : 1
+          const vg = Number.isFinite(vColors[cb + 1]) ? Math.max(0, Math.min(1, vColors[cb + 1])) : 1
+          const vb = Number.isFinite(vColors[cb + 2]) ? Math.max(0, Math.min(1, vColors[cb + 2])) : 1
+          cols.push(srgbToLinear(vr), srgbToLinear(vg), srgbToLinear(vb))
+        }
       }
     }
   }
@@ -117,6 +129,19 @@ export function encodeGlb(batches: readonly InstanceBatch[], name = 'RidgetopMod
     const normAcc = accessors.length
     accessors.push({ bufferView: normView, componentType: 5126, count: vertCount, type: 'VEC3' })
 
+    const attributes: Record<string, number> = { POSITION: posAcc, NORMAL: normAcc }
+    if (bucket.hasColors && bucket.colors.length === vertCount * 3) {
+      const colArr = new Float32Array(bucket.colors)
+      const colBuf = Buffer.from(colArr.buffer, colArr.byteOffset, colArr.byteLength)
+      const colView = bufferViews.length
+      bufferViews.push({ buffer: 0, byteOffset, byteLength: colBuf.length, target: 34962 })
+      byteOffset += colBuf.length
+      chunks.push(colBuf)
+      const colAcc = accessors.length
+      accessors.push({ bufferView: colView, componentType: 5126, count: vertCount, type: 'VEC3' })
+      attributes.COLOR_0 = colAcc
+    }
+
     const matIndex = materials.length
     const litWeight = 1 - bucket.unlit
     const mat: Record<string, unknown> = {
@@ -131,7 +156,7 @@ export function encodeGlb(batches: readonly InstanceBatch[], name = 'RidgetopMod
       mat.emissiveFactor = [bucket.r * bucket.unlit, bucket.g * bucket.unlit, bucket.b * bucket.unlit]
     }
     materials.push(mat)
-    primitives.push({ attributes: { POSITION: posAcc, NORMAL: normAcc }, material: matIndex })
+    primitives.push({ attributes, material: matIndex })
   }
 
   const binPadLen = pad4(byteOffset)
@@ -1986,6 +2011,19 @@ func sanitize_asset_name(raw_name: String) -> String:
 \t\t\tprev_dash = true
 \treturn out
 
+func _enable_vertex_colors(node: Node) -> void:
+\tif node is MeshInstance3D:
+\t\tvar mi := node as MeshInstance3D
+\t\tif mi.mesh is ArrayMesh:
+\t\t\tvar am := mi.mesh as ArrayMesh
+\t\t\tfor s in range(am.get_surface_count()):
+\t\t\t\tif (am.surface_get_format(s) & Mesh.ARRAY_FORMAT_COLOR) != 0:
+\t\t\t\t\tvar mat = mi.get_active_material(s)
+\t\t\t\t\tif mat is StandardMaterial3D:
+\t\t\t\t\t\t(mat as StandardMaterial3D).vertex_color_use_as_albedo = true
+\tfor child in node.get_children():
+\t\t_enable_vertex_colors(child)
+
 func load_model_template(model_name: String) -> Variant:
 \tvar safe := sanitize_asset_name(model_name)
 \tif models_cache.has(safe):
@@ -2005,6 +2043,7 @@ func load_model_template(model_name: String) -> Variant:
 \t\t\tif doc.append_from_buffer(bytes, "", state) == OK:
 \t\t\t\tvar scene := doc.generate_scene(state)
 \t\t\t\tif scene is Node3D:
+\t\t\t\t\t_enable_vertex_colors(scene)
 \t\t\t\t\tmodels_cache[safe] = scene
 \t\t\t\t\treturn scene
 \treturn null

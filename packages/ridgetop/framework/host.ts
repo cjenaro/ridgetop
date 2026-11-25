@@ -4,7 +4,8 @@ import { Buffer } from 'node:buffer'
 import { createHash } from 'node:crypto'
 import { createServer } from 'node:http'
 import { existsSync } from 'node:fs'
-import { lstat, readFile, stat } from 'node:fs/promises'
+import { appendFile, lstat, mkdir, readFile, stat, writeFile } from 'node:fs/promises'
+import { dirname } from 'node:path'
 import process from 'node:process'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 
@@ -12,8 +13,8 @@ const browserModules = [
   'index.js', 'verification.js', 'loop.js', 'renderer.js', 'room-client.js',
   'geometry.js', 'instances.js', 'low-poly.js', 'mesh-gpu.js', 'mesh-gl.js', 'mesh-canvas.js',
   'input.js', 'vehicle.js', 'page.js', 'platform.js', 'backup.js', 'audio.js', 'audio-assets.js', 'import-mesh.js',
-  'hud.js', 'sprites.js', 'sprite-sheet.js',
-  'art.js', 'art-recipe.js', 'art-review.js', 'art-builder.js', 'platformer.js', 'animation.js', 'physics3d.js',
+  'hud.js', 'perf.js', 'sprites.js', 'sprite-sheet.js', 'pixel-rig.js',
+  'art.js', 'art-recipe.js', 'art-review.js', 'art-builder.js', 'character-builder.js', 'platformer.js', 'animation.js', 'physics3d.js',
   'testing-runtime.js', 'testing-boot.js', 'testing-studio.js',
   'ui.js', 'ui-machine.js', 'ui-layout.js', 'ui-button.js', 'ui-toggle.js', 'ui-select.js', 'ui-slider.js', 'ui-menu.js', 'ui-canvas.js'
 ]
@@ -154,6 +155,113 @@ export function createGameHost({
     return reviewHandler(req, res, pathname)
   }
 
+  const perfLogPath = fileURLToPath(new URL('data/perf.ndjson', root))
+  const MAX_PERF_LOG_LINES = 2000
+  let perfWriteCount = 0
+
+  function isLoopbackRequest(req: IncomingMessage): boolean {
+    const addr = req.socket?.remoteAddress ?? ''
+    return addr === '127.0.0.1' || addr === '::1' || addr === '::ffff:127.0.0.1'
+  }
+
+  async function handlePerfLog(req: IncomingMessage, res: ServerResponse, pathname: string): Promise<boolean> {
+    if (pathname !== '/__perf/log') return false
+    if (!isLoopbackRequest(req)) {
+      sendText(res, 403, 'Performance telemetry logging is restricted to loopback connections')
+      return true
+    }
+    if (req.method === 'POST') {
+      const chunks: Buffer[] = []
+      let total = 0
+      for await (const chunk of req) {
+        const buf = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk)
+        total += buf.byteLength
+        if (total > 16_384) {
+          sendText(res, 413, 'Telemetry payload too large')
+          return true
+        }
+        chunks.push(buf)
+      }
+      let parsed: unknown
+      try {
+        parsed = JSON.parse(Buffer.concat(chunks).toString('utf8'))
+      } catch {
+        sendText(res, 400, 'Invalid JSON')
+        return true
+      }
+      if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
+        sendText(res, 400, 'Expected JSON object')
+        return true
+      }
+      await mkdir(dirname(perfLogPath), { recursive: true })
+      const line = JSON.stringify({ ...parsed, serverTs: new Date().toISOString() }) + '\n'
+      await appendFile(perfLogPath, line, 'utf8')
+      perfWriteCount++
+      if (perfWriteCount % 100 === 0) {
+        try {
+          const all = (await readFile(perfLogPath, 'utf8')).trim().split('\n')
+          if (all.length > MAX_PERF_LOG_LINES) {
+            await writeFile(perfLogPath, all.slice(all.length - MAX_PERF_LOG_LINES).join('\n') + '\n', 'utf8')
+          }
+        } catch {
+          // Best-effort trim
+        }
+      }
+      sendJson(res, { ok: true, path: 'data/perf.ndjson' })
+      return true
+    }
+    if (req.method === 'GET') {
+      let entries: Record<string, unknown>[] = []
+      try {
+        const raw = await readFile(perfLogPath, 'utf8')
+        for (const line of raw.trim().split('\n')) {
+          if (!line) continue
+          try {
+            const obj: unknown = JSON.parse(line)
+            if (typeof obj === 'object' && obj !== null && !Array.isArray(obj)) {
+              const rec: Record<string, unknown> = {}
+              for (const [k, v] of Object.entries(obj)) rec[k] = v
+              entries.push(rec)
+            }
+          } catch {
+            // Skip malformed line
+          }
+        }
+      } catch (err) {
+        if (errorCode(err) !== 'ENOENT') throw err
+      }
+      let fpsSum = 0, fpsCount = 0, minFps = Infinity, worstFrameMs = 0
+      for (const e of entries) {
+        const f = e.fps
+        if (typeof f === 'number' && Number.isFinite(f) && f > 0) {
+          fpsSum += f; fpsCount++
+          if (f < minFps) minFps = f
+        }
+        const w = e.worstMs
+        if (typeof w === 'number' && Number.isFinite(w) && w > worstFrameMs) worstFrameMs = w
+      }
+      sendJson(res, {
+        path: 'data/perf.ndjson',
+        count: entries.length,
+        summary: {
+          avgFps: fpsCount > 0 ? Math.round((fpsSum / fpsCount) * 10) / 10 : 0,
+          minFps: Number.isFinite(minFps) ? Math.round(minFps * 10) / 10 : 0,
+          worstFrameMs: Math.round(worstFrameMs * 10) / 10
+        },
+        recent: entries.slice(-40)
+      })
+      return true
+    }
+    if (req.method === 'DELETE') {
+      await mkdir(dirname(perfLogPath), { recursive: true })
+      await writeFile(perfLogPath, '', 'utf8')
+      sendJson(res, { ok: true, cleared: true })
+      return true
+    }
+    sendText(res, 405)
+    return true
+  }
+
   const server = createServer({ requestTimeout: 10_000, headersTimeout: 8_000 }, async (req, res) => {
     res.setHeader('X-Content-Type-Options', 'nosniff')
     res.setHeader('Referrer-Policy', 'same-origin')
@@ -166,6 +274,7 @@ export function createGameHost({
         return sendText(res, 400, 'Bad request')
       }
       if (await handle?.(req, res, pathname)) return
+      if (await handlePerfLog(req, res, pathname)) return
       if (await handleTesting(req, res, pathname)) return
       if (req.method !== 'GET' && req.method !== 'HEAD') return sendText(res, 405)
       if (pathname === '/healthz') return sendText(res, 200, 'ok')

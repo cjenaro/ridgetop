@@ -59,7 +59,7 @@ export function perspective(fieldOfView: number, aspect: number, near: number, f
   ])
 }
 
-export function mesh(positions: ArrayLike<number>, indices?: ArrayLike<number>): Mesh {
+export function mesh(positions: ArrayLike<number>, indices?: ArrayLike<number>, colors?: ArrayLike<number>): Mesh {
   const posLen = positions.length
   if (!posLen || posLen % 3) {
     throw new RangeError('Mesh positions must contain finite XYZ triples')
@@ -72,6 +72,18 @@ export function mesh(positions: ArrayLike<number>, indices?: ArrayLike<number>):
   const vertMax = posLen / 3
   const count = indices ? indices.length : vertMax
   if (!count || count % 3) throw new RangeError('Mesh must contain complete triangles')
+  let expandedColors: Float32Array<ArrayBuffer> | undefined
+  let colorMode: 'none' | 'perPos' | 'perVert' = 'none'
+  if (colors) {
+    if (indices && colors.length === posLen) colorMode = 'perPos'
+    else if (colors.length === count * 3) colorMode = 'perVert'
+    else if (colors.length === posLen) colorMode = 'perPos'
+    else throw new RangeError('Mesh colors must supply 3 RGB floats per position or per triangle vertex')
+    for (let i = 0; i < colors.length; i++) {
+      if (!Number.isFinite(colors[i])) throw new RangeError('Mesh colors must contain finite RGB triples')
+    }
+    expandedColors = new Float32Array(count * 3)
+  }
   const data = new Float32Array(count * 6)
   let radiusSq = 0
   for (let i = 0; i < count; i += 3) {
@@ -113,10 +125,299 @@ export function mesh(positions: ArrayLike<number>, indices?: ArrayLike<number>):
     data[off + 9] = nx; data[off + 10] = ny; data[off + 11] = nz
     data[off + 12] = x2; data[off + 13] = y2; data[off + 14] = z2
     data[off + 15] = nx; data[off + 16] = ny; data[off + 17] = nz
+
+    if (expandedColors && colors) {
+      const cOff = i * 3
+      const s0 = colorMode === 'perPos' ? a0 : cOff
+      const s1 = colorMode === 'perPos' ? a1 : cOff + 3
+      const s2 = colorMode === 'perPos' ? a2 : cOff + 6
+      expandedColors[cOff] = colors[s0]; expandedColors[cOff + 1] = colors[s0 + 1]; expandedColors[cOff + 2] = colors[s0 + 2]
+      expandedColors[cOff + 3] = colors[s1]; expandedColors[cOff + 4] = colors[s1 + 1]; expandedColors[cOff + 5] = colors[s1 + 2]
+      expandedColors[cOff + 6] = colors[s2]; expandedColors[cOff + 7] = colors[s2 + 1]; expandedColors[cOff + 8] = colors[s2 + 2]
+    }
   }
-  const created: Mesh = { data, vertexCount: count, radius: Math.sqrt(radiusSq) }
+  const created: Mesh = expandedColors
+    ? { data, colors: expandedColors, vertexCount: count, radius: Math.sqrt(radiusSq) }
+    : { data, vertexCount: count, radius: Math.sqrt(radiusSq) }
   if (isTestingActive()) recordMeshMeta(created)
   return created
+}
+
+/**
+ * Bake subtle low-poly crevice ambient occlusion and optional vertical height gradient into per-vertex RGB colors.
+ * Works across WebGPU, WebGL 2, Canvas 2D, and Godot exports with zero runtime shader overhead.
+ */
+export function bakeVertexAO(
+  source: Mesh,
+  { strength = 0.24, verticalGradient = 0.14 }: { strength?: number; verticalGradient?: number } = {}
+): Mesh {
+  const safeStrength = Number.isFinite(strength) ? Math.max(0, Math.min(1, strength)) : 0.24
+  const safeGrad = Number.isFinite(verticalGradient) ? Math.max(0, Math.min(1, verticalGradient)) : 0.14
+  const n = source.vertexCount
+  const data = source.data
+  const base = source.colors && source.colors.length >= n * 3 ? source.colors : undefined
+  const out = new Float32Array(n * 3)
+  let minY = Infinity, maxY = -Infinity
+  const qKey = (x: number, y: number, z: number) => `${Math.round(x * 200)},${Math.round(y * 200)},${Math.round(z * 200)}`
+  const accum = new Map<string, [number, number, number]>()
+  for (let i = 0; i < n; i++) {
+    const o = i * 6
+    const x = data[o], y = data[o + 1], z = data[o + 2]
+    const nx = data[o + 3], ny = data[o + 4], nz = data[o + 5]
+    if (y < minY) minY = y; if (y > maxY) maxY = y
+    const k = qKey(x, y, z)
+    let entry = accum.get(k)
+    if (!entry) { entry = [0, 0, 0]; accum.set(k, entry) }
+    entry[0] += nx; entry[1] += ny; entry[2] += nz
+  }
+  const hasSpanY = maxY - minY > 1e-4
+  const spanY = hasSpanY ? maxY - minY : 1
+  for (let i = 0; i < n; i++) {
+    const o = i * 6
+    const x = data[o], y = data[o + 1], z = data[o + 2]
+    const nx = data[o + 3], ny = data[o + 4], nz = data[o + 5]
+    const entry = accum.get(qKey(x, y, z))
+    const ex = entry ? entry[0] : nx, ey = entry ? entry[1] : ny, ez = entry ? entry[2] : nz
+    const avgLen = Math.hypot(ex, ey, ez) || 1
+    // Sharp dihedral / inward-facing seams have lower alignment between face normal and smooth vertex normal.
+    const align = Math.max(0, Math.min(1, (nx * ex + ny * ey + nz * ez) / avgLen))
+    const downFactor = Math.max(0, -ny) * 0.45
+    const crease = (1 - align) * 0.85 + downFactor
+    const ao = Math.max(0.55, 1 - safeStrength * crease)
+    const hT = hasSpanY ? (y - minY) / spanY : 1
+    const grad = 1 - safeGrad * (1 - hT)
+    const mul = Math.max(0.45, Math.min(1.12, ao * grad))
+    const c = i * 3
+    out[c] = Math.max(0, Math.min(1, (base ? base[c] : 1) * mul))
+    out[c + 1] = Math.max(0, Math.min(1, (base ? base[c + 1] : 1) * mul))
+    out[c + 2] = Math.max(0, Math.min(1, (base ? base[c + 2] : 1) * mul))
+  }
+  return { data: source.data, colors: out, vertexCount: source.vertexCount, radius: source.radius }
+}
+
+/**
+ * Recompute smooth crease-angle vertex normals for a mesh so curved and beveled forms shade
+ * softly (modern stylized low-poly look) while preserving crisp edges above `creaseAngleDeg`.
+ * Works across WebGPU, WebGL 2, Canvas 2D, and Godot exports.
+ */
+export function smoothMesh(source: Mesh, creaseAngleDeg = 52): Mesh {
+  const n = source.vertexCount
+  const src = source.data
+  const out = new Float32Array(src)
+  const cosLimit = Math.cos(Math.max(0, Math.min(180, creaseAngleDeg)) * Math.PI / 180)
+  const qKey = (x: number, y: number, z: number) => `${Math.round(x * 500)},${Math.round(y * 500)},${Math.round(z * 500)}`
+
+  // Store face normal + triangle area per vertex so large faces weight smooth normals evenly.
+  const buckets = new Map<string, number[]>()
+  const faceNormals = new Float32Array(n * 3)
+  const faceWeights = new Float32Array(n)
+  for (let i = 0; i < n; i += 3) {
+    const o0 = i * 6, o1 = (i + 1) * 6, o2 = (i + 2) * 6
+    const e1x = src[o1] - src[o0], e1y = src[o1 + 1] - src[o0 + 1], e1z = src[o1 + 2] - src[o0 + 2]
+    const e2x = src[o2] - src[o0], e2y = src[o2 + 1] - src[o0 + 1], e2z = src[o2 + 2] - src[o0 + 2]
+    const cx = e1y * e2z - e1z * e2y
+    const cy = e1z * e2x - e1x * e2z
+    const cz = e1x * e2y - e1y * e2x
+    const area2 = Math.hypot(cx, cy, cz)
+    const inv = area2 > 1e-10 ? 1 / area2 : 1
+    const nx = area2 > 1e-10 ? cx * inv : src[o0 + 3]
+    const ny = area2 > 1e-10 ? cy * inv : src[o0 + 4]
+    const nz = area2 > 1e-10 ? cz * inv : src[o0 + 5]
+    const weight = Math.max(1e-5, area2)
+    for (let k = 0; k < 3; k++) {
+      const vi = i + k
+      const vo = vi * 6
+      const fo = vi * 3
+      faceNormals[fo] = nx; faceNormals[fo + 1] = ny; faceNormals[fo + 2] = nz
+      faceWeights[vi] = weight
+      const key = qKey(src[vo], src[vo + 1], src[vo + 2])
+      let list = buckets.get(key)
+      if (!list) { list = []; buckets.set(key, list) }
+      list.push(vi)
+    }
+  }
+
+  for (let i = 0; i < n; i++) {
+    const vo = i * 6
+    const fo = i * 3
+    const fnx = faceNormals[fo], fny = faceNormals[fo + 1], fnz = faceNormals[fo + 2]
+    const list = buckets.get(qKey(src[vo], src[vo + 1], src[vo + 2]))
+    if (!list || list.length <= 1) continue
+    let sx = 0, sy = 0, sz = 0
+    for (let j = 0; j < list.length; j++) {
+      const other = list[j]
+      const ofo = other * 3
+      const onx = faceNormals[ofo], ony = faceNormals[ofo + 1], onz = faceNormals[ofo + 2]
+      if (fnx * onx + fny * ony + fnz * onz >= cosLimit) {
+        const w = faceWeights[other]
+        sx += onx * w; sy += ony * w; sz += onz * w
+      }
+    }
+    const len = Math.hypot(sx, sy, sz)
+    if (len > 1e-6) {
+      out[vo + 3] = sx / len
+      out[vo + 4] = sy / len
+      out[vo + 5] = sz / len
+    }
+  }
+  return source.colors
+    ? { data: out, colors: source.colors, vertexCount: n, radius: source.radius }
+    : { data: out, vertexCount: n, radius: source.radius }
+}
+
+/**
+ * A 1×1×1 box with all 12 edges and 8 corners cleanly beveled in 3D, catching soft stylized
+ * rim highlights on tiles, stonework, architectural trim, and armor plates.
+ */
+export function bevelBox(bevel = 0.14): Mesh {
+  if (!(bevel > 0.005 && bevel < 0.45) || !Number.isFinite(bevel)) {
+    throw new RangeError('Bevel must be between 0.005 and 0.45')
+  }
+  const h = 0.5
+  const a = h - bevel
+  // 24 vertices: 4 corners on each of the 6 faces (+X, -X, +Y, -Y, +Z, -Z), wound CCW outward.
+  const pos: number[] = [
+    // +X (0..3)
+    h, -a, -a,   h,  a, -a,   h,  a,  a,   h, -a,  a,
+    // -X (4..7)
+    -h, -a,  a,  -h,  a,  a,  -h,  a, -a,  -h, -a, -a,
+    // +Y (8..11)
+    -a,  h,  a,   a,  h,  a,   a,  h, -a,  -a,  h, -a,
+    // -Y (12..15)
+    -a, -h, -a,   a, -h, -a,   a, -h,  a,  -a, -h,  a,
+    // +Z (16..19)
+    -a, -a,  h,   a, -a,  h,   a,  a,  h,  -a,  a,  h,
+    // -Z (20..23)
+    a, -a, -h,  -a, -a, -h,  -a,  a, -h,   a,  a, -h
+  ]
+  const idx: number[] = []
+  const quad = (p0: number, p1: number, p2: number, p3: number) => {
+    idx.push(p0, p1, p2, p0, p2, p3)
+  }
+  // 6 main faces
+  for (let f = 0; f < 6; f++) {
+    const b = f * 4
+    quad(b, b + 1, b + 2, b + 3)
+  }
+  // 12 edge bevel strips (verified CCW outward around each edge)
+  quad(1, 10, 9, 2)   // +X/+Y
+  quad(0, 3, 14, 13)  // +X/-Y
+  quad(3, 2, 18, 17)  // +X/+Z
+  quad(1, 0, 20, 23)  // +X/-Z
+  quad(5, 8, 11, 6)   // -X/+Y
+  quad(7, 12, 15, 4)  // -X/-Y
+  quad(4, 16, 19, 5)  // -X/+Z
+  quad(6, 22, 21, 7)  // -X/-Z
+  quad(19, 18, 9, 8)  // +Y/+Z
+  quad(23, 22, 11, 10) // +Y/-Z
+  quad(16, 15, 14, 17) // -Y/+Z
+  quad(20, 13, 12, 21) // -Y/-Z
+  // 8 corner triangles
+  idx.push(
+    2, 9, 18,    // +X +Y +Z
+    1, 23, 10,   // +X +Y -Z
+    3, 17, 14,   // +X -Y +Z
+    0, 13, 20,   // +X -Y -Z
+    5, 19, 8,    // -X +Y +Z
+    6, 11, 22,   // -X +Y -Z
+    4, 15, 16,   // -X -Y +Z
+    7, 21, 12    // -X -Y -Z
+  )
+  return smoothMesh(mesh(pos, idx), 52)
+}
+
+/**
+ * Smooth rounded 3D capsule centered at Y in `[-height/2, +height/2]` — ideal for chunky
+ * stylized miniature characters, rounded limbs, boulders, and cozy props.
+ */
+export function capsuleMesh(radius = 0.36, height = 1.0, sides = 12, capRings = 4): Mesh {
+  if (!(radius > 0 && height >= radius * 2) || !Number.isFinite(radius + height) ||
+      !Number.isSafeInteger(sides) || sides < 6 || sides > 64 ||
+      !Number.isSafeInteger(capRings) || capRings < 2 || capRings > 16) {
+    throw new RangeError('Invalid capsule dimensions')
+  }
+  const halfCyl = Math.max(0, height * 0.5 - radius)
+  const section: [number, number][] = []
+  for (let i = 0; i <= capRings; i++) {
+    const a = -Math.PI * 0.5 + (Math.PI * 0.5 * i) / capRings
+    const r = i === 0 ? 0 : Math.cos(a) * radius
+    section.push([r, -halfCyl + Math.sin(a) * radius])
+  }
+  for (let i = 0; i <= capRings; i++) {
+    if (i === 0 && halfCyl < 1e-4) continue
+    const a = (Math.PI * 0.5 * i) / capRings
+    const r = i === capRings ? 0 : Math.cos(a) * radius
+    section.push([r, halfCyl + Math.sin(a) * radius])
+  }
+  return smoothMesh(revolvedMesh(section, sides), 72)
+}
+
+/**
+ * Scalloped multi-lobed stylized foliage cone tier (1 unit tall, Y in `[-0.5, +0.5]`),
+ * designed for layered miniature conifers and decorative trees.
+ */
+export function scallopedCone(lobes = 6, flare = 0.20, topRadius = 0.14): Mesh {
+  if (!Number.isSafeInteger(lobes) || lobes < 3 || lobes > 24 ||
+      !Number.isFinite(flare + topRadius) || flare < 0 || flare > 0.5 || topRadius < 0) {
+    throw new RangeError('Invalid scalloped cone parameters')
+  }
+  const ringPts = lobes * 2
+  const positions: number[] = [0, -0.44, 0, 0, 0.5, 0]
+  const indices: number[] = []
+  for (let i = 0; i < ringPts; i++) {
+    const a = (i / ringPts) * Math.PI * 2
+    const c = Math.cos(a), s = Math.sin(a)
+    const isOuter = i % 2 === 0
+    const br = isOuter ? 0.5 * (1 + flare) : 0.5 * (1 - flare * 0.65)
+    const by = isOuter ? -0.50 : -0.43
+    const mr = br * 0.66 + topRadius * 0.34
+    const my = 0.04
+    const tr = topRadius * (isOuter ? 1.06 : 0.94)
+    positions.push(
+      c * br, by, s * br,
+      c * mr, my, s * mr,
+      c * tr, 0.5, s * tr
+    )
+    const cur = 2 + i * 3
+    const nxt = 2 + ((i + 1) % ringPts) * 3
+    indices.push(0, cur, nxt)
+    indices.push(cur, cur + 1, nxt, nxt, cur + 1, nxt + 1)
+    if (topRadius > 1e-4) {
+      indices.push(cur + 1, cur + 2, nxt + 1, nxt + 1, cur + 2, nxt + 2)
+      indices.push(1, nxt + 2, cur + 2)
+    } else {
+      indices.push(cur + 1, 1, nxt + 1)
+    }
+  }
+  return smoothMesh(mesh(positions, indices), 46)
+}
+
+/** Build a quaternion tilting `+Y` onto a terrain `normal`, composed with a local `yaw` rotation around `+Y`. */
+export function normalTiltQuaternion(normal: Vec3, yaw = 0): Quaternion {
+  const len = Math.hypot(normal[0], normal[1], normal[2])
+  const nx = len > 1e-6 ? normal[0] / len : 0
+  const ny = len > 1e-6 ? normal[1] / len : 1
+  const nz = len > 1e-6 ? normal[2] / len : 0
+  let tx = 0, ty = 0, tz = 0, tw = 1
+  if (ny < 0.9999) {
+    if (ny < -0.9999) { tx = 1; ty = 0; tz = 0; tw = 0 }
+    else {
+      // Cross((0,1,0), n) = (nz, 0, -nx), dot = ny
+      const cx = nz, cz = -nx
+      const w = 1 + ny
+      const qLen = Math.hypot(cx, cz, w)
+      tx = cx / qLen; tz = cz / qLen; tw = w / qLen
+    }
+  }
+  if (!yaw) return [tx, ty, tz, tw]
+  const sy = Math.sin(yaw * 0.5), cy = Math.cos(yaw * 0.5)
+  // multiplyQuat(tilt, yawQ)
+  return [
+    tx * cy - tz * sy,
+    tw * sy + ty * cy,
+    tz * cy + tx * sy,
+    tw * cy - ty * sy
+  ]
 }
 
 export const box = mesh([
@@ -208,6 +509,206 @@ export function archMesh() {
   return mesh(positions, indices)
 }
 
+/** A 1x1x1 triangular wedge (flat bottom, vertical back at z=-0.5, sloped face down to +Z). */
+export function wedgeMesh(): Mesh {
+  return mesh([
+    -.5, -.5, -.5,  .5, -.5, -.5,  .5, -.5,  .5,  -.5, -.5,  .5,
+    -.5,  .5, -.5,  .5,  .5, -.5
+  ], [
+    0, 1, 2,  0, 2, 3,
+    0, 4, 5,  0, 5, 1,
+    4, 3, 2,  4, 2, 5,
+    0, 3, 4,
+    1, 5, 2
+  ])
+}
+
+/** A 1x1x1 symmetric pitched gable prism (ridge along Z at y=+0.5, flat base at y=-0.5). */
+export function gableMesh(): Mesh {
+  return mesh([
+    -.5, -.5, -.5,  .5, -.5, -.5,  0, .5, -.5,
+    -.5, -.5,  .5,  .5, -.5,  .5,  0, .5,  .5
+  ], [
+    0, 1, 4,  0, 4, 3,
+    0, 2, 1,
+    3, 4, 5,
+    0, 3, 5,  0, 5, 2,
+    1, 2, 5,  1, 5, 4
+  ])
+}
+
+/** Extrude a simple 2D polygon in the XY plane along Z (`[-depth/2, +depth/2]`) with CCW outward winding. */
+export function extrudeMesh(points: readonly (readonly [number, number])[], depth = 0.2): Mesh {
+  if (points.length < 3 || !Number.isFinite(depth) || depth <= 0) {
+    throw new RangeError('Expected >= 3 polygon points and positive depth')
+  }
+  for (let i = 0; i < points.length; i++) {
+    const p = points[i]
+    if (!p || !Number.isFinite(p[0]) || !Number.isFinite(p[1])) {
+      throw new RangeError('Extrude polygon points must be finite XY pairs')
+    }
+  }
+  // Remove consecutive duplicate points, then remove collinear intermediate vertices
+  const dedup: (readonly [number, number])[] = []
+  for (let i = 0; i < points.length; i++) {
+    const cur = points[i]
+    const prev = dedup[dedup.length - 1]
+    if (!prev || Math.hypot(cur[0] - prev[0], cur[1] - prev[1]) > 1e-7) dedup.push(cur)
+  }
+  if (dedup.length > 1 && Math.hypot(dedup[0][0] - dedup[dedup.length - 1][0], dedup[0][1] - dedup[dedup.length - 1][1]) <= 1e-7) {
+    dedup.pop()
+  }
+  const clean: (readonly [number, number])[] = []
+  for (let i = 0; i < dedup.length; i++) {
+    const a = dedup[(i + dedup.length - 1) % dedup.length]
+    const b = dedup[i]
+    const c = dedup[(i + 1) % dedup.length]
+    const crossVal = (b[0] - a[0]) * (c[1] - b[1]) - (b[1] - a[1]) * (c[0] - b[0])
+    if (Math.abs(crossVal) > 1e-8) clean.push(b)
+  }
+  const n = clean.length
+  if (n < 3) throw new RangeError('Extrude polygon has zero area')
+  let area2 = 0
+  for (let i = 0; i < n; i++) {
+    const a = clean[i], b = clean[(i + 1) % n]
+    area2 += a[0] * b[1] - b[0] * a[1]
+  }
+  if (!Number.isFinite(area2) || Math.abs(area2) < 1e-8) throw new RangeError('Extrude polygon has zero area')
+  const pts = area2 > 0 ? clean.slice() : clean.slice().reverse()
+  const hz = depth * 0.5
+  const positions: number[] = []
+  for (let i = 0; i < n; i++) positions.push(pts[i][0], pts[i][1], hz)
+  for (let i = 0; i < n; i++) positions.push(pts[i][0], pts[i][1], -hz)
+
+  // Ear-clipping triangulation for arbitrary simple (including concave) 2D polygons.
+  const idxList: number[] = []
+  for (let i = 0; i < n; i++) idxList.push(i)
+  const capTris: number[] = []
+  const cross2 = (ax: number, ay: number, bx: number, by: number, cx: number, cy: number) =>
+    (bx - ax) * (cy - ay) - (by - ay) * (cx - ax)
+  const inTri = (px: number, py: number, ax: number, ay: number, bx: number, by: number, cx: number, cy: number) =>
+    cross2(ax, ay, bx, by, px, py) >= -1e-9 &&
+    cross2(bx, by, cx, cy, px, py) >= -1e-9 &&
+    cross2(cx, cy, ax, ay, px, py) >= -1e-9
+  let guard = n * n
+  while (idxList.length > 3 && guard-- > 0) {
+    let clipped = false
+    for (let i = 0; i < idxList.length; i++) {
+      const prev = idxList[(i + idxList.length - 1) % idxList.length]
+      const cur = idxList[i]
+      const next = idxList[(i + 1) % idxList.length]
+      const [ax, ay] = pts[prev], [bx, by] = pts[cur], [cx, cy] = pts[next]
+      if (cross2(ax, ay, bx, by, cx, cy) <= 1e-9) continue
+      let contains = false
+      for (let j = 0; j < idxList.length; j++) {
+        const k = idxList[j]
+        if (k === prev || k === cur || k === next) continue
+        if (inTri(pts[k][0], pts[k][1], ax, ay, bx, by, cx, cy)) { contains = true; break }
+      }
+      if (!contains) {
+        capTris.push(prev, cur, next)
+        idxList.splice(i, 1)
+        clipped = true
+        break
+      }
+    }
+    if (!clipped) break
+  }
+  if (idxList.length === 3) {
+    const [a0, b0, c0] = idxList
+    if (Math.abs(cross2(pts[a0][0], pts[a0][1], pts[b0][0], pts[b0][1], pts[c0][0], pts[c0][1])) > 1e-9) {
+      capTris.push(a0, b0, c0)
+    }
+  }
+  const indices: number[] = []
+  for (let i = 0; i < capTris.length; i += 3) {
+    indices.push(capTris[i], capTris[i + 1], capTris[i + 2])
+    indices.push(n + capTris[i], n + capTris[i + 2], n + capTris[i + 1])
+  }
+  for (let i = 0; i < n; i++) {
+    const j = (i + 1) % n
+    indices.push(i, n + i, n + j, i, n + j, j)
+  }
+  return mesh(positions, indices)
+}
+
+/** Sweep a low-poly closed circular tube along a 3D polyline with per-point radius. */
+export function tubeMesh(points: readonly Vec3[], radii: number | readonly number[], sides = 7): Mesh {
+  if (points.length < 2 || !Number.isSafeInteger(sides) || sides < 3 || sides > 64) {
+    throw new RangeError('Expected >= 2 tube points and 3–64 sides')
+  }
+  if (typeof radii === 'number') {
+    if (!Number.isFinite(radii) || radii <= 0) throw new RangeError('Tube radius must be positive and finite')
+  } else {
+    if (!radii.length) throw new RangeError('Tube radii array must be non-empty')
+    for (let i = 0; i < radii.length; i++) {
+      if (!Number.isFinite(radii[i]) || radii[i] <= 0) throw new RangeError('Tube radii must be positive and finite')
+    }
+  }
+  // Deduplicate consecutive identical points while preserving matching radii
+  const cleanPts: Vec3[] = []
+  const cleanRadii: number[] = []
+  const rawRAt = (i: number) => typeof radii === 'number' ? radii : (radii[i] ?? radii[radii.length - 1])
+  for (let i = 0; i < points.length; i++) {
+    const p = points[i]
+    if (!p || !Number.isFinite(p[0]) || !Number.isFinite(p[1]) || !Number.isFinite(p[2])) {
+      throw new RangeError('Tube points must contain finite XYZ triples')
+    }
+    const prev = cleanPts[cleanPts.length - 1]
+    if (!prev || Math.hypot(p[0] - prev[0], p[1] - prev[1], p[2] - prev[2]) > 1e-6) {
+      cleanPts.push(p)
+      cleanRadii.push(rawRAt(i))
+    }
+  }
+  if (cleanPts.length < 2) throw new RangeError('Tube requires >= 2 distinct points')
+  const positions: number[] = []
+  const indices: number[] = []
+  let prevN: Vec3 = [1, 0, 0]
+  for (let i = 0; i < cleanPts.length; i++) {
+    const p = cleanPts[i]
+    const prev = cleanPts[Math.max(0, i - 1)]
+    const next = cleanPts[Math.min(cleanPts.length - 1, i + 1)]
+    const diff = sub(next, prev)
+    const fallback = i > 0 ? sub(p, prev) : sub(next, p)
+    const t = Math.hypot(diff[0], diff[1], diff[2]) > 1e-6 ? unit(diff) : unit(fallback)
+    if (i === 0) {
+      const ref: Vec3 = Math.abs(t[1]) < 0.9 ? [0, 1, 0] : [1, 0, 0]
+      prevN = unit(cross(ref, t))
+    } else {
+      const proj = dot(prevN, t)
+      const ortho: Vec3 = [prevN[0] - t[0] * proj, prevN[1] - t[1] * proj, prevN[2] - t[2] * proj]
+      const len = Math.hypot(ortho[0], ortho[1], ortho[2])
+      prevN = len > 1e-5 ? [ortho[0] / len, ortho[1] / len, ortho[2] / len] : unit(cross(Math.abs(t[1]) < 0.9 ? [0, 1, 0] : [1, 0, 0], t))
+    }
+    const b = cross(t, prevN)
+    const r = Math.max(1e-4, cleanRadii[i])
+    for (let s = 0; s < sides; s++) {
+      const a = (s / sides) * Math.PI * 2
+      const ca = Math.cos(a) * r, sa = Math.sin(a) * r
+      positions.push(p[0] + prevN[0] * ca + b[0] * sa, p[1] + prevN[1] * ca + b[1] * sa, p[2] + prevN[2] * ca + b[2] * sa)
+    }
+    if (i > 0) {
+      const r0 = (i - 1) * sides, r1 = i * sides
+      for (let s = 0; s < sides; s++) {
+        const sn = (s + 1) % sides
+        indices.push(r0 + s, r0 + sn, r1 + sn, r0 + s, r1 + sn, r1 + s)
+      }
+    }
+  }
+  const startCenter = positions.length / 3
+  positions.push(cleanPts[0][0], cleanPts[0][1], cleanPts[0][2])
+  const endCenter = positions.length / 3
+  const last = cleanPts[cleanPts.length - 1]
+  positions.push(last[0], last[1], last[2])
+  const lastRing = (cleanPts.length - 1) * sides
+  for (let s = 0; s < sides; s++) {
+    const sn = (s + 1) % sides
+    indices.push(startCenter, sn, s)
+    indices.push(endCenter, lastRing + s, lastRing + sn)
+  }
+  return mesh(positions, indices)
+}
+
 export function projectPoint(matrix: Matrix, x: number, y: number, z: number): [number, number] {
   const w = x * matrix[3] + y * matrix[7] + z * matrix[11] + matrix[15]
   return [
@@ -237,6 +738,95 @@ export function worldToScreen(
   const limit = 1 + margin
   if (nx < -limit || nx > limit || ny < -limit || ny > limit || nz < 0 || nz > 1) return null
   return { x: (nx * 0.5 + 0.5) * width, y: (0.5 - ny * 0.5) * height, depth: nz }
+}
+
+/** Invert a 4×4 column-major matrix, returning null if singular or non-finite. */
+export function invertMatrix(m: Matrix): Matrix | null {
+  if (m.length < 16) return null
+  const m00 = m[0], m01 = m[1], m02 = m[2], m03 = m[3]
+  const m10 = m[4], m11 = m[5], m12 = m[6], m13 = m[7]
+  const m20 = m[8], m21 = m[9], m22 = m[10], m23 = m[11]
+  const m30 = m[12], m31 = m[13], m32 = m[14], m33 = m[15]
+
+  const b00 = m00 * m11 - m01 * m10
+  const b01 = m00 * m12 - m02 * m10
+  const b02 = m00 * m13 - m03 * m10
+  const b03 = m01 * m12 - m02 * m11
+  const b04 = m01 * m13 - m03 * m11
+  const b05 = m02 * m13 - m03 * m12
+  const b06 = m20 * m31 - m21 * m30
+  const b07 = m20 * m32 - m22 * m30
+  const b08 = m20 * m33 - m23 * m30
+  const b09 = m21 * m32 - m22 * m31
+  const b10 = m21 * m33 - m23 * m31
+  const b11 = m22 * m33 - m23 * m32
+
+  const det = b00 * b11 - b01 * b10 + b02 * b09 + b03 * b08 - b04 * b07 + b05 * b06
+  if (!Number.isFinite(det) || Math.abs(det) < 1e-12) return null
+  const inv = 1 / det
+  const out = new Float32Array(16)
+  out[0] = (m11 * b11 - m12 * b10 + m13 * b09) * inv
+  out[1] = (m02 * b10 - m01 * b11 - m03 * b09) * inv
+  out[2] = (m31 * b05 - m32 * b04 + m33 * b03) * inv
+  out[3] = (m22 * b04 - m21 * b05 - m23 * b03) * inv
+  out[4] = (m12 * b08 - m10 * b11 - m13 * b07) * inv
+  out[5] = (m00 * b11 - m02 * b08 + m03 * b07) * inv
+  out[6] = (m32 * b02 - m30 * b05 - m33 * b01) * inv
+  out[7] = (m20 * b05 - m22 * b02 + m23 * b01) * inv
+  out[8] = (m10 * b10 - m11 * b08 + m13 * b06) * inv
+  out[9] = (m01 * b08 - m00 * b10 - m03 * b06) * inv
+  out[10] = (m30 * b04 - m31 * b02 + m33 * b00) * inv
+  out[11] = (m21 * b02 - m20 * b04 - m23 * b00) * inv
+  out[12] = (m11 * b07 - m10 * b09 - m12 * b06) * inv
+  out[13] = (m00 * b09 - m01 * b07 + m02 * b06) * inv
+  out[14] = (m31 * b01 - m30 * b03 - m32 * b00) * inv
+  out[15] = (m20 * b03 - m21 * b01 + m22 * b00) * inv
+  for (let i = 0; i < 16; i++) if (!Number.isFinite(out[i])) return null
+  return out
+}
+
+/**
+ * Unproject a CSS-pixel screen coordinate `(x, y)` into a world-space ray `{ origin, direction }`
+ * matching Ridgetop's clip depth `[0, 1]` convention for both perspective and orthographic cameras.
+ */
+export function screenToRay(
+  matrix: Matrix,
+  x: number,
+  y: number,
+  width: number,
+  height: number
+): { origin: Vec3; direction: Vec3 } | null {
+  if (!(width > 0 && height > 0) || !Number.isFinite(x) || !Number.isFinite(y)) return null
+  const inv = invertMatrix(matrix)
+  if (!inv) return null
+  const nx = (x / width) * 2 - 1
+  const ny = 1 - (y / height) * 2
+
+  const nearW = nx * inv[3] + ny * inv[7] + inv[15]
+  const farW = nx * inv[3] + ny * inv[7] + inv[11] + inv[15]
+  if (!Number.isFinite(nearW) || !Number.isFinite(farW) || Math.abs(nearW) < 1e-9 || Math.abs(farW) < 1e-9) return null
+
+  const ox = (nx * inv[0] + ny * inv[4] + inv[12]) / nearW
+  const oy = (nx * inv[1] + ny * inv[5] + inv[13]) / nearW
+  const oz = (nx * inv[2] + ny * inv[6] + inv[14]) / nearW
+
+  const fx = (nx * inv[0] + ny * inv[4] + inv[8] + inv[12]) / farW
+  const fy = (nx * inv[1] + ny * inv[5] + inv[9] + inv[13]) / farW
+  const fz = (nx * inv[2] + ny * inv[6] + inv[10] + inv[14]) / farW
+
+  const dx = fx - ox, dy = fy - oy, dz = fz - oz
+  const len = Math.hypot(dx, dy, dz)
+  if (!Number.isFinite(len) || len < 1e-9) return null
+  return { origin: [ox, oy, oz], direction: [dx / len, dy / len, dz / len] }
+}
+
+/** Intersect a world-space ray with the horizontal plane `y = planeY`, returning null if parallel or behind the origin. */
+export function intersectRayPlane(origin: Vec3, direction: Vec3, planeY = 0): Vec3 | null {
+  const dy = direction[1]
+  if (!Number.isFinite(dy) || Math.abs(dy) < 1e-8) return null
+  const t = (planeY - origin[1]) / dy
+  if (!Number.isFinite(t) || t < 0) return null
+  return [origin[0] + direction[0] * t, planeY, origin[2] + direction[2] * t]
 }
 
 /** Pitch about X, yaw about Y, and roll about Z, applied roll first. */

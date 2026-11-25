@@ -2,15 +2,31 @@ import { createAnimator, createMeshPool, createRig, renderRig, sampleClip } from
 import type { AnimationClip, Keyframe, Rig, RigJoint, RigPart } from './animation.ts'
 import { instances } from './instances.ts'
 import { multiply, orthographic, quaternionFromEuler, view } from './geometry.ts'
-import { bakeSpriteDirections, bakeSpritePixels, renderMeshPixels, spriteDirections } from './low-poly.ts'
+import { applySpriteOutline, bakeSpriteDirections, bakeSpritePixels, renderMeshPixels, spriteDirections } from './low-poly.ts'
 import { color } from './renderer.ts'
 import type { SpriteAtlasSource, SpriteClip, SpriteSheetImage } from './sprites.ts'
 import { artPalette, artPoseBounds, artShapes, checkArtModel, checkArtPalette, checkFrameSize, compileArtJoints, modelFromArtRecipe } from './art-recipe.ts'
 import type { ArtModel, ArtPart, ArtRecipe, ArtShape, ArtTone } from './art-recipe.ts'
 import { captureSourceSite, isTestingActive, nextTestingGroupId, registerArtKitRuntime } from './testing-runtime.ts'
-import type { Color, InstanceBatch, LightingOptions, Mesh, Vec3 } from './types.ts'
+import type { BlendMode, Color, InstanceBatch, LightingOptions, Mesh, Vec3 } from './types.ts'
 export { artPalette, artShapes, modelFromArtRecipe } from './art-recipe.ts'
 export type { ArtModel, ArtPart, ArtRecipe, ArtRecipeClip, ArtRecipeClipFrame, ArtRecipeJoint, ArtRecipeJointPose, ArtRecipePart, ArtShape, ArtTone } from './art-recipe.ts'
+
+function resolvePartColor(base: Color, part: Pick<ArtPart, 'alpha' | 'shade'>): Color {
+  const shade = part.shade ?? 0
+  const alpha = part.alpha ?? 1
+  if (!shade && alpha === 1) return base
+  const clamp = (n: number) => n < 0 ? 0 : n > 1 ? 1 : n
+  const r = shade >= 0 ? base[0] + (1 - base[0]) * shade : base[0] * (1 + shade)
+  const g = shade >= 0 ? base[1] + (1 - base[1]) * shade : base[1] * (1 + shade)
+  const b = shade >= 0 ? base[2] + (1 - base[2]) * shade : base[2] * (1 + shade)
+  return [clamp(r), clamp(g), clamp(b), alpha]
+}
+
+function resolvePartBlend(part: Pick<ArtPart, 'alpha' | 'blend'>): BlendMode {
+  if (part.blend) return part.blend
+  return (part.alpha !== undefined && part.alpha < 1) ? 'alpha' : 'opaque'
+}
 
 export type SpriteDirection = typeof spriteDirections[number]
 
@@ -42,6 +58,8 @@ export interface AnimatedSpriteOptions {
   centerY?: number
   elevation?: number
   lighting?: LightingOptions
+  /** Optional 1px pixel-art exterior outline (`'selout'` or 6-digit hex color) for Dead Cells-style 3D-to-pixel sprite sheets. */
+  outline?: string
   /** Manifest `src` filename. */
   src?: string
 }
@@ -137,7 +155,8 @@ export function createArtRecipe(name: keyof typeof artModels): ArtRecipe {
   if (!Object.hasOwn(artModels, name)) throw new Error('Unknown built-in art model: ' + name)
   const entry: ArtModel = artModels[name]
   const { span, centerY, parts } = entry
-  const palette = Object.fromEntries(parts.map(p => [p.tone, artPalette[p.tone]]))
+  const paletteMap: Record<string, string | undefined> = { ...artPalette, ...entry.palette }
+  const palette = Object.fromEntries(parts.map(p => [p.tone, paletteMap[p.tone] ?? artPalette.accent]))
   return {
     format: 'ridgetop-art', version: 1, name, span, centerY, frameSize: 64, palette,
     parts: parts.map((p, index) => {
@@ -175,14 +194,16 @@ export function rigFromArtModel(model: ArtModel, palette: Partial<Record<ArtTone
     const rp = jIdx !== undefined ? restPos[jIdx] : [0, 0, 0]
     const partColor = toneColors.get(p.tone)
     if (!partColor) throw new RangeError('Unknown palette tone: ' + p.tone)
+    const blend = resolvePartBlend(p)
     const rigPart: RigPart = {
       ...(p.name !== undefined ? { name: p.name } : {}),
       mesh: p.mesh,
       position: [p.position[0] - rp[0], p.position[1] - rp[1], p.position[2] - rp[2]],
       scale: [p.scale[0], p.scale[1], p.scale[2]],
       ...(p.pitch || p.yaw || p.roll ? { rotation: [p.pitch ?? 0, p.yaw ?? 0, p.roll ?? 0] as const } : {}),
-      color: partColor,
-      ...(p.unlit ? { unlit: p.unlit } : {})
+      color: resolvePartColor(partColor, p),
+      ...(p.unlit ? { unlit: p.unlit } : {}),
+      ...(blend !== 'opaque' ? { blend } : {})
     }
     if (jIdx !== undefined) partsByJoint[jIdx].push(rigPart)
     else unboundParts.push(rigPart)
@@ -425,7 +446,7 @@ export function bakeAnimatedSpritePixels(source: ArtModel | ArtRecipe, options: 
       renderRig(rig, { position: [0, liftY, 0] }, poses, pool)
       if (cameras === null) {
         const strip = bakeSpritePixels(pool.batches, {
-          span, center: [0, centerY, 0], frameSize, elevation, lighting: options.lighting
+          span, center: [0, centerY, 0], frameSize, elevation, lighting: options.lighting, outline: options.outline
         })
         const stripWidth = strip.width
         for (let row = 0; row < directions.length; row++) {
@@ -438,6 +459,7 @@ export function bakeAnimatedSpritePixels(source: ArtModel | ArtRecipe, options: 
       } else {
         for (let row = 0; row < directions.length; row++) {
           const tile = renderMeshPixels(cameras[row], pool.batches, frameSize, options.lighting)
+          if (options.outline) applySpriteOutline(tile.pixels, tile.width, tile.height, frameSize, options.outline)
           for (let y = 0; y < frameSize; y++) {
             const srcStart = y * rowBytes
             const dstStart = ((row * frameSize + y) * width + col * frameSize) * 4
@@ -473,6 +495,17 @@ export function bakeAnimatedSpriteDirections(source: ArtModel | ArtRecipe, optio
   return { image, manifest }
 }
 
+const uncoloredMeshCache = new WeakMap<Mesh, Mesh>()
+function meshWithoutVertexColors(source: Mesh): Mesh {
+  if (!source.colors) return source
+  let cached = uncoloredMeshCache.get(source)
+  if (!cached) {
+    cached = { data: source.data, vertexCount: source.vertexCount, radius: source.radius }
+    uncoloredMeshCache.set(source, cached)
+  }
+  return cached
+}
+
 /** A palette and named model recipes shared by mesh batches, rigs and cached, in-memory sprite sheets. */
 export function createArtKit<Extra extends string = never>({
   palette = {}, models, frameSize = 64
@@ -498,13 +531,23 @@ export function createArtKit<Extra extends string = never>({
   function recipeFromModel(name: string): ArtRecipe | undefined {
     if (!Object.hasOwn(catalog, name)) return undefined
     const m = catalog[name]
+    let isV2 = Boolean(m.joints?.length || m.clips)
+    const usedNames = new Set<string>()
     const recipeParts = []
     for (let i = 0; i < m.parts.length; i++) {
       const p = m.parts[i]
       const shape = shapeNames.get(p.mesh)
       if (!shape) return undefined
+      if (p.alpha !== undefined || p.blend !== undefined || p.shade !== undefined || p.joint !== undefined || !Object.hasOwn(artPalette, p.tone)) {
+        isV2 = true
+      }
+      const baseName = p.name?.trim() || ('part-' + (i + 1))
+      let uniqueName = baseName
+      let suffix = 2
+      while (usedNames.has(uniqueName)) uniqueName = `${baseName}-${suffix++}`
+      usedNames.add(uniqueName)
       recipeParts.push({
-        name: p.name ?? ('part-' + (i + 1)),
+        name: uniqueName,
         shape,
         position: [p.position[0], p.position[1], p.position[2]] as const,
         scale: [p.scale[0], p.scale[1], p.scale[2]] as const,
@@ -512,20 +555,26 @@ export function createArtKit<Extra extends string = never>({
         ...(p.pitch ? { pitch: p.pitch } : {}),
         ...(p.yaw ? { yaw: p.yaw } : {}),
         ...(p.roll ? { roll: p.roll } : {}),
-        ...(p.unlit ? { unlit: p.unlit } : {})
+        ...(p.unlit ? { unlit: p.unlit } : {}),
+        ...(p.alpha !== undefined ? { alpha: p.alpha } : {}),
+        ...(p.blend !== undefined ? { blend: p.blend } : {}),
+        ...(p.shade !== undefined ? { shade: p.shade } : {}),
+        ...(p.joint !== undefined ? { joint: p.joint } : {})
       })
     }
-    const mergedPalette = { ...rgb, ...m.palette }
-    const usedPalette = Object.fromEntries(recipeParts.map(p => [p.tone, mergedPalette[p.tone]]))
+    const mergedPalette: Record<string, string | undefined> = { ...rgb, ...m.palette }
+    const usedPalette = Object.fromEntries(recipeParts.map(p => [p.tone, mergedPalette[p.tone] ?? artPalette.accent]))
     return {
       format: 'ridgetop-art',
-      version: 1,
+      version: isV2 ? 2 : 1,
       name,
       span: m.span,
       centerY: m.centerY,
       frameSize: m.frameSize ?? frameSize,
       palette: usedPalette,
       parts: recipeParts,
+      ...(m.joints ? { joints: m.joints.map(j => ({ id: j.id, ...(j.parent !== undefined ? { parent: j.parent } : {}), ...(j.pivot ? { pivot: [j.pivot[0], j.pivot[1], j.pivot[2]] as const } : {}) })) } : {}),
+      ...(m.clips ? { clips: Object.fromEntries(Object.entries(m.clips).map(([k, v]) => [k, structuredClone(v)])) } : {}),
       ...(m.timings ? { timings: { ...m.timings } } : {})
     }
   }
@@ -556,7 +605,9 @@ export function createArtKit<Extra extends string = never>({
   function group() {
     const batches: InstanceBatch[] = []
     const readonlyBatches: readonly InstanceBatch[] = batches
-    const byMesh = new Map<Mesh, InstanceBatch>()
+    const byMesh: Record<BlendMode, Map<Mesh, InstanceBatch>> = {
+      opaque: new Map(), alpha: new Map(), additive: new Map()
+    }
     return {
       batches: readonlyBatches,
       clear() { for (const batch of batches) batch.clear() },
@@ -570,21 +621,29 @@ export function createArtKit<Extra extends string = never>({
         const instanceId = id ?? groupId
         let index = 0
         for (const piece of model(name).parts) {
-          let batch = byMesh.get(piece.mesh)
+          const blend = partTint ? 'opaque' : resolvePartBlend(piece)
+          const pieceMesh = partTint ? meshWithoutVertexColors(piece.mesh) : piece.mesh
+          const bucket = byMesh[blend]
+          let batch = bucket.get(pieceMesh)
           if (!batch) {
-            batch = instances(piece.mesh, testing ? { meta: { kind: 'model', asset: String(name), sourceSite: kitSourceSite } } : undefined)
-            byMesh.set(piece.mesh, batch)
+            batch = instances(pieceMesh, {
+              blend,
+              ...(testing ? { meta: { kind: 'model', asset: String(name), sourceSite: kitSourceSite } } : {})
+            })
+            bucket.set(pieceMesh, batch)
             batches.push(batch)
           }
           const [px, py, pz] = piece.position
           const [sx, sy, sz] = piece.scale
           const facing = yaw + (piece.yaw ?? 0)
           const rotation = piece.pitch || piece.roll ? quaternionFromEuler(piece.pitch, facing, piece.roll) : facing
+          const baseColor = tones.get(piece.tone)
+          const tint = partTint?.(piece, index) ?? (baseColor ? resolvePartColor(baseColor, piece) : undefined)
           batch.add(
             [x + (px * cos + pz * sin) * scale, y + py * scale, z + (pz * cos - px * sin) * scale],
             [sx * scale, sy * scale, sz * scale],
             rotation,
-            partTint?.(piece, index) ?? tones.get(piece.tone),
+            tint,
             piece.unlit,
             testing ? {
               kind: 'model',

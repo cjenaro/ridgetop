@@ -687,7 +687,7 @@ test('createGameServer({ testing: true }) enables Testing Mode on all 4 games an
   assert.ok(addr && typeof addr === 'object')
   const origin = `http://127.0.0.1:${addr.port}`
 
-  for (const route of ['/', '/racing', '/lighthouse', '/starter/']) {
+  for (const route of ['/', '/racing', '/lighthouse', '/crownshard', '/starter/']) {
     const res = await fetch(origin + route)
     assert.equal(res.status, 200, `${route} should return 200`)
     const html = await res.text()
@@ -706,7 +706,7 @@ test('createGameServer({ testing: true }) enables Testing Mode on all 4 games an
   assert.ok(normalAddr && typeof normalAddr === 'object')
   const normalOrigin = `http://127.0.0.1:${normalAddr.port}`
 
-  for (const route of ['/', '/racing', '/lighthouse', '/starter/']) {
+  for (const route of ['/', '/racing', '/lighthouse', '/crownshard', '/starter/']) {
     const html = await (await fetch(normalOrigin + route)).text()
     assert.ok(!html.includes('/framework/testing-boot.js'), `${route} must not inject testing-boot.js in normal mode`)
   }

@@ -1,0 +1,68 @@
+{
+  "version": 1,
+  "palette": {
+    "ground": "#8db573",
+    "leaf": "#35755e",
+    "wood": "#9a6644",
+    "stone": "#7f929d",
+    "ink": "#273847",
+    "accent": "#e88848",
+    "light": "#fff0c4",
+    "glow": "#7ef2d4"
+  },
+  "lowPoly": [
+    {
+      "id": "fox-courier",
+      "title": "Fox Courier",
+      "category": "Organic Character (Rigged)",
+      "frameSize": 48,
+      "animated": true,
+      "brief": "A standing indie-game fox courier character facing +Z: pointed triangular ears with inner dark tips, tapered snout with dark nose, cozy hooded neck scarf, bushy curved pale-tipped tail arching behind, and a slung leather courier mailbag at the side. Must include idle and walk animation clips with grounded feet."
+    },
+    {
+      "id": "apothecary-lantern",
+      "title": "Apothecary Storm Lantern",
+      "category": "Hero Prop (Silhouette & Glow)",
+      "frameSize": 48,
+      "animated": false,
+      "brief": "A handcrafted brass-and-iron apothecary storm lantern: tiered octagonal base, four thin protective corner cage ribs surrounding a warm glowing ember chamber, domed rain cap with chimney vent, and an open overhead arched carry handle with visible negative space inside the loop."
+    },
+    {
+      "id": "windswept-cottage",
+      "title": "Windswept Cliff Cottage",
+      "category": "Stylized Indie Architecture",
+      "frameSize": 64,
+      "animated": false,
+      "brief": "A cozy cliffside fisher's cottage: stone foundation base, warm timber walls, overhanging pitched gable roof with a raised chimney on one side, a framed front doorway with a tiny porch awning, and a glowing round porthole window facing forward."
+    }
+  ],
+  "pixelArt": [
+    {
+      "id": "knight-sprout",
+      "title": "Sprout Knight",
+      "category": "2D Action Hero (32x32, 4-frame run)",
+      "frameWidth": 32,
+      "frameHeight": 32,
+      "frames": 4,
+      "brief": "A charming 32x32 side-view indie platformer hero: tiny forest sprout-knight wearing a round moss-green helmet topped with a bouncy twin-leaf sprout, bright glowing visor eyes, warm cloak fluttering behind, wooden round buckler shield on the front arm, and dark boots. Four crisp run-cycle frames with clear leg stride, bobbing sprout, and grounded feet."
+    },
+    {
+      "id": "potion-flask",
+      "title": "Alchemist Elixir Flask",
+      "category": "Inventory Pickup (24x24, 4-frame shimmer)",
+      "frameWidth": 24,
+      "frameHeight": 24,
+      "frames": 4,
+      "brief": "A readable 24x24 RPG inventory icon: bulbous faceted crystal potion flask filled halfway with glowing teal-emerald elixir, cork stopper with a crimson-orange wax ribbon tied around the narrow neck, crisp glass specular highlight on the upper-left curve, and a 4-frame bubbling/glint shimmer animation."
+    },
+    {
+      "id": "moss-golem",
+      "title": "Ancient Moss Golem",
+      "category": "Indie Creature / Boss (40x40, 2-frame idle)",
+      "frameWidth": 40,
+      "frameHeight": 40,
+      "frames": 2,
+      "brief": "A heavy 40x40 three-quarter front-view ancient stone golem: broad hunched stone shoulders draped with lush hanging moss carpets, sunken dark face cavity with two glowing amber-gold rune eyes, carved chest rune, asymmetric heavy boulder fists resting near the ground, and a 2-frame heavy breathing idle."
+    }
+  ]
+}
