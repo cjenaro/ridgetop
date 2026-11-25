@@ -2193,19 +2193,19 @@ export async function packageGame(options: PackageGameOptions): Promise<PackageR
           'open:android': 'cap open android'
         },
         dependencies: {
-          '@capacitor/app': '^7.0.0',
-          '@capacitor/core': '^7.0.0',
-          '@capacitor/haptics': '^7.0.0',
-          '@capacitor/preferences': '^7.0.0',
-          '@capacitor/screen-orientation': '^7.0.0',
-          '@capacitor/splash-screen': '^7.0.0',
-          '@capacitor/status-bar': '^7.0.0'
+          '@capacitor/app': '^8.1.0',
+          '@capacitor/core': '^8.6.0',
+          '@capacitor/haptics': '^8.0.0',
+          '@capacitor/preferences': '^8.0.0',
+          '@capacitor/screen-orientation': '^8.0.0',
+          '@capacitor/splash-screen': '^8.0.0',
+          '@capacitor/status-bar': '^8.0.0'
         },
         devDependencies: {
-          '@capacitor/android': '^7.0.0',
-          '@capacitor/assets': '^3.0.5',
-          '@capacitor/cli': '^7.0.0',
-          '@capacitor/ios': '^7.0.0'
+          '@capacitor/android': '^8.6.0',
+          '@capacitor/assets': '^4.0.0',
+          '@capacitor/cli': '^8.6.0',
+          '@capacitor/ios': '^8.6.0'
         }
       }, null, 2) + '\n')
       await writeFile(join(dir, 'README.md'), renderMobileReadme(resolvedName, resolvedAppId, orientation))

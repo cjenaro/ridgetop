@@ -157,6 +157,10 @@ test('packageGame builds tree-shaken Web, Steam, Mobile, and Godot outputs for S
 
   // 3. Mobile (Capacitor) package
   const mobileDir = join(outDir, 'mobile')
+  const mobilePkg = JSON.parse(await readFile(join(mobileDir, 'package.json'), 'utf8'))
+  assert.match(mobilePkg.dependencies['@capacitor/core'], /^\^8\.6\./, 'Mobile package must require Capacitor >=8.6 for iOS UIScene lifecycle support')
+  assert.match(mobilePkg.devDependencies['@capacitor/ios'], /^\^8\.6\./)
+  assert.match(mobilePkg.devDependencies['@capacitor/cli'], /^\^8\.6\./)
   const capConfig = JSON.parse(await readFile(join(mobileDir, 'capacitor.config.json'), 'utf8'))
   assert.equal(capConfig.appId, 'com.ridgetop.signaldrift')
   const bridgeCode = await readFile(join(mobileDir, 'www', 'ridgetop-mobile-bridge.js'), 'utf8')
