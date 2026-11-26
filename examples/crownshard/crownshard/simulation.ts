@@ -1896,7 +1896,7 @@ export function computeCombatForecast(state: GameState, col: number, row: number
 
   // Build Strike vs Skill comparison alternatives against this same target
   const alternatives: CombatForecastAlt[] = []
-  const keycaps: readonly string[] = ['Q', 'W', 'E']
+  const keycaps: readonly string[] = ['2', '3', '4']
   const distNow = manhattan(active.col, active.row, primary.col, primary.row)
 
   // Basic Strike option (for enemy targets)
@@ -1941,7 +1941,7 @@ export function computeCombatForecast(state: GameState, col: number, row: number
     if (sk.target === 'ally') {
       alternatives.push({
         skillIndex: i,
-        keycap: keycaps[i] ?? 'Q',
+        keycap: keycaps[i] ?? '2',
         name: sk.name,
         normalDmg: 0,
         critDmg: 0,
@@ -1959,7 +1959,7 @@ export function computeCombatForecast(state: GameState, col: number, row: number
       const m = previewDamageMath(battle, active, primary, skApproach.col, skApproach.row, raw, sk.ignoreArmor, true)
       alternatives.push({
         skillIndex: i,
-        keycap: keycaps[i] ?? 'Q',
+        keycap: keycaps[i] ?? '2',
         name: sk.name,
         normalDmg: m.normalDmg,
         critDmg: m.critDmg,
