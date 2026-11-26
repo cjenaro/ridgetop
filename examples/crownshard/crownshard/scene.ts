@@ -16,10 +16,16 @@ import {
 import type { Gait, UnitClipName } from './animations.ts'
 import { VFX_COLORS, arrowMesh, createBattleVfx } from './vfx.ts'
 import type { StrikeShape } from './vfx.ts'
-import { getEquipmentByUid, getHeroByUid, getPatternCells, getHeroSkill, getUnitByUid, getTacticByUid, unitAt } from './simulation.ts'
+import {
+  computeDangerZone, computeEnemyThreat, getEquipmentByUid, getHeroByUid, getHeroSkill,
+  getPatternCells, getTacticByUid, getUnitByUid, unitAt
+} from './simulation.ts'
 import { TACTIC_BY_ID } from './data.ts'
 import { TILE_SIZE, facingToYaw, gridToWorld } from './types.ts'
-import type { AttackArc, BattleState, BattleUnit, CombatForecast, EquipSlot, GameState, OwnedHeroCard } from './types.ts'
+import type {
+  AttackArc, BattleState, BattleUnit, CombatForecast, DangerZoneMap, EnemyThreatMap,
+  EquipSlot, FlankThreatTile, GameState, OwnedHeroCard
+} from './types.ts'
 
 const C_MOVE_TILE: Color = [0.22, 0.80, 1.0, 0.34]
 const C_MOVE_BORDER: Color = [0.84, 0.97, 1.0, 0.94]
@@ -35,6 +41,16 @@ const C_ALLY_TARGET: Color = [0.24, 0.92, 0.74, 0.38]
 const C_ALLY_MARK: Color = [0.94, 1.0, 0.97, 0.98]
 const C_AOE_PREVIEW: Color = [1.0, 0.84, 0.24, 0.42]
 const C_AOE_MARK: Color = [1.0, 0.97, 0.78, 0.98]
+const C_DANGER_TILE: Color = [0.96, 0.34, 0.16, 0.22]
+const C_DANGER_TILE_HIGH: Color = [0.96, 0.24, 0.16, 0.30]
+const C_DANGER_HATCH: Color = [1.0, 0.72, 0.30, 0.56]
+const C_DANGER_CORNER: Color = [1.0, 0.56, 0.22, 0.74]
+const C_ENEMY_MOVE_TILE: Color = [0.92, 0.54, 0.14, 0.24]
+const C_ENEMY_MOVE_DASH: Color = [1.0, 0.82, 0.36, 0.90]
+const C_ENEMY_REACH_TILE: Color = [0.98, 0.22, 0.18, 0.28]
+const C_ENEMY_REACH_HATCH: Color = [1.0, 0.62, 0.34, 0.82]
+const C_FLANK_WARN: Color = [1.0, 0.78, 0.16, 0.96]
+const C_BACKSTAB_WARN: Color = [1.0, 0.24, 0.66, 0.98]
 const C_HOVER_TILE: Color = [1.0, 0.98, 0.90, 0.28]
 const C_HOVER_BORDER: Color = [1.0, 1.0, 1.0, 0.98]
 const C_APPROACH_RING: Color = [0.42, 0.95, 1.0, 0.96]
@@ -188,6 +204,44 @@ const tileDiamondMesh = flatSegmentsMesh([
   [0, 0.42, -0.42, 0],
   [-0.42, 0, 0, -0.42]
 ], 0.045)
+// 6. Parallel Diagonal Hazard Hatching -> ENEMY DANGER ZONE / ATTACK REACH (distinct from X, +, Square, Diamond!)
+const tileHazardHatchMesh = flatSegmentsMesh([
+  [-0.36, -0.06, -0.06, -0.36],
+  [-0.34, 0.34, 0.34, -0.34],
+  [0.06, 0.36, 0.36, 0.06]
+], 0.028)
+// 7. Diagonal Diamond-Corner Bevel Ticks -> Subtle DANGER ZONE perimeter without clashing with Move solid frame
+const tileDangerCornersMesh = flatSegmentsMesh([
+  [-0.44, -0.26, -0.26, -0.44],
+  [0.26, -0.44, 0.44, -0.26],
+  [0.44, 0.26, 0.26, 0.44],
+  [-0.26, 0.44, -0.44, 0.26]
+], 0.032)
+// 8. Dashed Square Perimeter -> Inspected ENEMY MOVE RANGE (distinct from Hero's solid frame!)
+const tileDashedFrameMesh = flatSegmentsMesh([
+  [-0.42, -0.43, -0.14, -0.43], [0.14, -0.43, 0.42, -0.43],
+  [-0.42, 0.43, -0.14, 0.43], [0.14, 0.43, 0.42, 0.43],
+  [-0.43, -0.42, -0.43, -0.14], [-0.43, 0.14, -0.43, 0.42],
+  [0.43, -0.42, 0.43, -0.14], [0.43, 0.14, 0.43, 0.42]
+], 0.034)
+// 9. Double-Chevron Warning Arrowhead -> FLANK / BACKSTAB directional threat indicator (pointing along +Z)
+const flankWarningChevronMesh = (() => {
+  const pos: number[] = []
+  const idx: number[] = []
+  function tri(a: Vec3, b: Vec3, c: Vec3) {
+    const n = pos.length / 3
+    pos.push(...a, ...b, ...c, ...a, ...c, ...b)
+    idx.push(n, n + 1, n + 2, n + 3, n + 4, n + 5)
+  }
+  const y = 0.0
+  // Outer sharp chevron
+  tri([0, y, 0.42], [-0.24, y, 0.10], [0, y, 0.20])
+  tri([0, y, 0.42], [0, y, 0.20], [0.24, y, 0.10])
+  // Inner trailing chevron
+  tri([0, y, 0.12], [-0.20, y, -0.16], [0, y, -0.06])
+  tri([0, y, 0.12], [0, y, -0.06], [0.20, y, -0.16])
+  return mesh(pos, idx)
+})()
 
 function vfxColor(style: 'slash' | 'arrow' | 'arcane' | 'fire' | 'frost' | 'holy' | 'shadow' | 'gold'): Color {
   if (style === 'fire') return C_FIRE_CORE
@@ -401,6 +455,8 @@ export function createCrownshardScene(renderer: LowPolyRenderer) {
   let lastMatrix: Matrix = multiply(perspective(Math.PI / 3.6, 16 / 9, 0.5, 120), view([0, 12, 13], [0, 0, 0]))
   let hoveredCell: { col: number; row: number } | null = null
   let activeForecast: CombatForecast | null = null
+  let dangerZoneVisible = false
+  let inspectedEnemyUid: string | null = null
   let cameraYawTarget = 0
   let cameraYawActual = 0
   const DEFAULT_CAMERA_PITCH = 0.72
@@ -1062,9 +1118,16 @@ export function createCrownshardScene(renderer: LowPolyRenderer) {
     fx.lastTimer = unit.animTimer
 
     // Facing-pivot footwork when the unit is turned in place (Turn Facing / F)
+    const teleported = unit.path.length === 0 && st === 'idle' &&
+      (Math.abs(unit.col - fx.lastCol) + Math.abs(unit.row - fx.lastRow) > 1)
+    if (teleported) {
+      fx.yaw = unit.yaw
+      fx.simYaw = unit.yaw
+      fx.action = null
+    }
     const yawJump = wrapAngle(unit.yaw - fx.simYaw)
     fx.simYaw = unit.yaw
-    if (Math.abs(yawJump) > 0.3 && st === 'idle' && !retrigger && !fx.action && unit.path.length === 0) {
+    if (!teleported && Math.abs(yawJump) > 0.3 && st === 'idle' && !retrigger && !fx.action && unit.path.length === 0) {
       startAction(fx, turnClipFor(Math.abs(yawJump) > 2.4 ? 'about' : yawJump > 0 ? 'left' : 'right'), 0.05)
     }
 
@@ -1330,6 +1393,66 @@ export function createCrownshardScene(renderer: LowPolyRenderer) {
     ]
     lastMatrix = multiply(perspective(Math.PI / 3.9, aspect, 0.5, 220), view(eye, target))
 
+    // 0. Enemy Danger Zone & Individual Enemy Threat overlays (layered cleanly below Move/Target/AoE!)
+    const isBattleActive = battle.phase === 'player' || battle.phase === 'enemy'
+    let dangerZone: DangerZoneMap | null = null
+    let focusedThreat: EnemyThreatMap | null = null
+    if (isBattleActive) {
+      let focusUid: string | null = null
+      if (inspectedEnemyUid) {
+        const u = getUnitByUid(battle, inspectedEnemyUid)
+        if (u && u.team === 'enemy') focusUid = u.uid
+      }
+      if (!focusUid && hoveredCell && hoveredCell.row < battle.rows && hoveredCell.col < battle.cols) {
+        const hovUnit = unitAt(battle, hoveredCell.col, hoveredCell.row)
+        if (hovUnit && hovUnit.team === 'enemy') focusUid = hovUnit.uid
+      }
+      if (!focusUid && battle.selectedUnitUid) {
+        const selUnit = getUnitByUid(battle, battle.selectedUnitUid)
+        if (selUnit && selUnit.team === 'enemy') focusUid = selUnit.uid
+      }
+
+      if (dangerZoneVisible) {
+        dangerZone = computeDangerZone(battle)
+        for (const tile of dangerZone.tiles) {
+          const cell = battle.cells[tile.row]?.[tile.col]
+          if (!cell || cell.terrain === 'void') continue
+          const [wx, wy, wz] = gridToWorld(tile.col, tile.row, cell.elevation, battle.cols, battle.rows)
+          const wash = tile.threatCount >= 2 ? C_DANGER_TILE_HIGH : C_DANGER_TILE
+          pool.add(tileQuad, [wx, wy + 0.014, wz], [TILE_SIZE * 0.88, 1, TILE_SIZE * 0.88], 0, wash, 0.92, 'alpha')
+          pool.add(tileHazardHatchMesh, [wx, wy + 0.018, wz], [TILE_SIZE * 0.86, 1, TILE_SIZE * 0.86], 0, C_DANGER_HATCH, 0.94, 'alpha')
+          pool.add(tileDangerCornersMesh, [wx, wy + 0.020, wz], [TILE_SIZE * 0.90, 1, TILE_SIZE * 0.90], 0, C_DANGER_CORNER, 0.95, 'alpha')
+        }
+      }
+
+      if (focusUid) {
+        focusedThreat = computeEnemyThreat(battle, focusUid)
+        for (const tile of focusedThreat.moveTiles) {
+          const cell = battle.cells[tile.row]?.[tile.col]
+          if (!cell || cell.terrain === 'void') continue
+          const [wx, wy, wz] = gridToWorld(tile.col, tile.row, cell.elevation, battle.cols, battle.rows)
+          pool.add(tileQuad, [wx, wy + 0.016, wz], [TILE_SIZE * 0.84, 1, TILE_SIZE * 0.84], 0, C_ENEMY_MOVE_TILE, 0.92, 'alpha')
+          pool.add(tileDashedFrameMesh, [wx, wy + 0.021, wz], [TILE_SIZE * 0.88, 1, TILE_SIZE * 0.88], 0, C_ENEMY_MOVE_DASH, 0.96, 'alpha')
+        }
+        for (const tile of focusedThreat.attackTiles) {
+          const cell = battle.cells[tile.row]?.[tile.col]
+          if (!cell || cell.terrain === 'void') continue
+          const [wx, wy, wz] = gridToWorld(tile.col, tile.row, cell.elevation, battle.cols, battle.rows)
+          pool.add(tileQuad, [wx, wy + 0.017, wz], [TILE_SIZE * 0.88, 1, TILE_SIZE * 0.88], 0, C_ENEMY_REACH_TILE, 0.94, 'alpha')
+          pool.add(tileHazardHatchMesh, [wx, wy + 0.022, wz], [TILE_SIZE * 0.88, 1, TILE_SIZE * 0.88], 0, C_ENEMY_REACH_HATCH, 0.96, 'alpha')
+        }
+        // Subtle directional chevron on staging tiles from which this enemy can flank/backstab an ally
+        for (const origin of focusedThreat.flankOriginTiles) {
+          const cell = battle.cells[origin.row]?.[origin.col]
+          if (!cell || cell.terrain === 'void') continue
+          const [wx, wy, wz] = gridToWorld(origin.col, origin.row, cell.elevation, battle.cols, battle.rows)
+          const yaw = Math.atan2(origin.fromCol - origin.col, origin.fromRow - origin.row)
+          const warnCol = origin.arc === 'back' ? C_BACKSTAB_WARN : C_FLANK_WARN
+          pool.add(flankWarningChevronMesh, [wx, wy + 0.036, wz], [TILE_SIZE * 0.56, 1, TILE_SIZE * 0.56], yaw, warnCol, 0.96, 'alpha')
+        }
+      }
+    }
+
     // 1. Move tiles: Hollow Square Frame + center dot (unmistakable vs Attack [X] even in grayscale!)
     for (const tile of battle.moveTiles) {
       const cell = battle.cells[tile.row][tile.col]
@@ -1407,6 +1530,41 @@ export function createCrownshardScene(renderer: LowPolyRenderer) {
       pool.add(tileCornersMesh, [wx, wy + 0.040, wz], [TILE_SIZE * 0.88, 1, TILE_SIZE * 0.88], 0, isAllyTarget ? C_ALLY_MARK : C_MOVE_ATTACK_MARK, 0.96, 'alpha')
       const pulse = 0.60 + Math.sin(state.time * 5.5) * 0.05
       pool.add(flatRing, [wx, wy + 0.044, wz], [pulse, 1, pulse], state.time * 1.4, C_FORECAST_ARC, 0.96, 'alpha')
+    }
+
+    // 4. High-contrast Flank / Backstab threat markers on exposed hero tiles (colorblind-safe diamond + directional double-chevron!)
+    if (isBattleActive && (focusedThreat || dangerZone)) {
+      const flankWarnings = new Map<string, FlankThreatTile>()
+      const addWarning = (ft: FlankThreatTile) => {
+        const key = `${ft.col},${ft.row}`
+        const prev = flankWarnings.get(key)
+        if (!prev || (ft.arc === 'back' && prev.arc !== 'back')) {
+          flankWarnings.set(key, ft)
+        }
+      }
+      if (dangerZone) {
+        for (const et of dangerZone.enemyThreats) {
+          for (const ft of et.flankThreatTiles) addWarning(ft)
+        }
+      }
+      if (focusedThreat) {
+        for (const ft of focusedThreat.flankThreatTiles) addWarning(ft)
+      }
+      const warnPulse = 1 + Math.sin(state.time * 7.0) * 0.06
+      for (const ft of flankWarnings.values()) {
+        const cell = battle.cells[ft.row]?.[ft.col]
+        if (!cell || cell.terrain === 'void') continue
+        const [wx, wy, wz] = gridToWorld(ft.col, ft.row, cell.elevation, battle.cols, battle.rows)
+        const warnCol = ft.arc === 'back' ? C_BACKSTAB_WARN : C_FLANK_WARN
+        pool.add(tileDiamondMesh, [wx, wy + 0.050, wz], [TILE_SIZE * 0.92 * warnPulse, 1, TILE_SIZE * 0.92 * warnPulse], 0, warnCol, 0.98, 'alpha')
+        const inDx = ft.col - ft.fromCol
+        const inDz = ft.row - ft.fromRow
+        const dirLen = Math.hypot(inDx, inDz) || 1
+        const yaw = Math.atan2(inDx, inDz)
+        const ox = wx - (inDx / dirLen) * TILE_SIZE * 0.34
+        const oz = wz - (inDz / dirLen) * TILE_SIZE * 0.34
+        pool.add(flankWarningChevronMesh, [ox, wy + 0.054, oz], [TILE_SIZE * 0.62 * warnPulse, 1, TILE_SIZE * 0.62 * warnPulse], yaw, warnCol, 0.98, 'alpha')
+      }
     }
 
     const previewCell = activeForecast
@@ -1799,6 +1957,42 @@ export function createCrownshardScene(renderer: LowPolyRenderer) {
     },
     setForecast(forecast: CombatForecast | null) {
       activeForecast = forecast
+    },
+    setDangerZoneVisible(visible: boolean) {
+      dangerZoneVisible = visible
+    },
+    isDangerZoneVisible() {
+      return dangerZoneVisible
+    },
+    toggleDangerZone() {
+      dangerZoneVisible = !dangerZoneVisible
+      return dangerZoneVisible
+    },
+    setInspectedEnemyUid(uid: string | null) {
+      inspectedEnemyUid = uid
+    },
+    getInspectedEnemyUid() {
+      return inspectedEnemyUid
+    },
+    /** Snap presentation rig cleanly to a unit's restored tile & facing (used by Undo Move). */
+    snapUnit(unit: BattleUnit) {
+      const fx = getFx(unit.uid, unit)
+      fx.yaw = unit.yaw
+      fx.simYaw = unit.yaw
+      fx.lastCol = unit.col
+      fx.lastRow = unit.row
+      fx.lastElev = unit.y
+      fx.lastState = unit.animState
+      fx.lastTimer = unit.animTimer
+      fx.action = null
+      fx.actionT = 0
+      fx.pendingReady = false
+      fx.kbX = 0
+      fx.kbZ = 0
+      fx.landT = 0
+      fx.landAmp = 0.08
+      fx.anim.play(idleClipFor(unit.team, unit.hp / Math.max(1, unit.maxHp), unit.stunTurns > 0), 0.04)
+      spawnDust(unit.x, unit.y, unit.z, 5, 0.8)
     },
     rotateCamera(delta: number) {
       if (!Number.isFinite(delta)) return
