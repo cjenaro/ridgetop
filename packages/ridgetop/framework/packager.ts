@@ -7,7 +7,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url'
 import type { ArtModel, ArtRecipe } from './art.ts'
 import type { InstanceBatch } from './types.ts'
 import { createArtKit, modelFromArtRecipe } from './art.ts'
-import { exportGodotProject } from './export-godot.ts'
+import { exportGodotProject, loadGodotCompiler, resolveGodotCompilerPath } from './export-godot.ts'
 import { multiply, orthographic, view } from './geometry.ts'
 import { renderMeshPixels } from './low-poly.ts'
 import { BLOCKED_STUDIO_DIRS, BLOCKED_STUDIO_FILES, lookupAssetMime } from './manifest.ts'
@@ -637,22 +637,7 @@ async function assembleWebBundle(
 
 async function tryCompileGodotScripts(projectDir: string, config: RidgetopProjectConfig, godotDir: string): Promise<number> {
   const hasExplicitEntries = Boolean(config.godotEntries?.length)
-  const pkgRoot = resolvePackageRootDir()
-  const candidates = [
-    join(pkgRoot, 'tools', 'ts-to-gd.ts'),
-    join(pkgRoot, 'dist', 'tools', 'ts-to-gd.js'),
-    join(projectDir, 'tools', 'ts-to-gd.js')
-  ]
-  let compilerPath: string | null = null
-  for (const candidate of candidates) {
-    try { await access(candidate); compilerPath = candidate; break } catch { /* Candidate compiler path not present; try next. */ }
-  }
-  if (!compilerPath) {
-    if (hasExplicitEntries) {
-      throw new Error('Godot TypeScript compiler (ts-to-gd) not found; cannot compile configured godotEntries.')
-    }
-    return 0
-  }
+  if (!hasExplicitEntries && !resolveGodotCompilerPath({ projectDir })) return 0
 
   let entries: string[] = []
   if (config.godotEntries?.length) {
@@ -668,14 +653,8 @@ async function tryCompileGodotScripts(projectDir: string, config: RidgetopProjec
 
   const compiledDir = join(godotDir, 'scripts', 'compiled')
   try {
-    const mod = await import(pathToFileURL(compilerPath).href)
-    if (typeof mod.compileTsProjectToGodot !== 'function') {
-      if (hasExplicitEntries) {
-        throw new Error(`Godot compiler module at ${compilerPath} does not export compileTsProjectToGodot().`)
-      }
-      return 0
-    }
-    const compiled = await mod.compileTsProjectToGodot({
+    const { compileTsProjectToGodot } = await loadGodotCompiler({ projectDir })
+    const compiled = await compileTsProjectToGodot({
       entries,
       rootDir: projectDir,
       outDir: compiledDir

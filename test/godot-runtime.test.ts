@@ -5,7 +5,14 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import test from 'node:test'
 import { box, color, instances, octahedron } from '../packages/ridgetop/framework/index.ts'
-import { bakeIconPng, exportGodotProject } from '../packages/ridgetop/framework/server.ts'
+import {
+  MISSING_TYPESCRIPT_COMPILER_MESSAGE,
+  bakeIconPng,
+  exportGodotProject,
+  loadGodotCompiler,
+  readGodotRuntimeTemplate,
+  resolveGodotRuntimeTemplatePath
+} from '../packages/ridgetop/framework/server.ts'
 
 async function findGodot(): Promise<string | null> {
   if (process.env.GODOT_BIN) return process.env.GODOT_BIN
@@ -98,10 +105,26 @@ test('exportGodotProject emits clean GDScript 4 scripts/ridgetop_runtime.gd and 
   assert.ok(mainGd.includes('preload("res://scripts/ridgetop_runtime.gd")'), 'main.gd should preload ridgetop_runtime.gd')
   assert.ok(mainGd.includes('_setup_generic_game'), 'main.gd should include generic game bootstrap')
 
-  // GDScript 4 strictness checks: no integer-literal division, no Variant := from dict.get/subscript
+  // GDScript 4 strictness checks on all 4 extracted runtime templates + emitted & host scripts
+  const templateFiles = ['ridgetop_ui.gd', 'ridgetop_runtime.gd', 'main.gd', 'rt.gd'] as const
+  const templateSources: Array<[string, string]> = []
+  for (const tplName of templateFiles) {
+    const tplPath = resolveGodotRuntimeTemplatePath(tplName)
+    await access(tplPath)
+    const diskSource = await readFile(tplPath, 'utf8')
+    assert.equal(readGodotRuntimeTemplate(tplName), diskSource, `readGodotRuntimeTemplate(${tplName}) should match on-disk file`)
+    assert.ok(!diskSource.includes('\\t'), `templates/godot-runtime/${tplName} should use real tabs, not escaped \\t`)
+    templateSources.push([`templates/godot-runtime/${tplName}`, diskSource])
+  }
+  const mainTemplate = readGodotRuntimeTemplate('main.gd')
+  assert.ok(mainTemplate.includes('"__GAME_NAME__"'), 'templates/godot-runtime/main.gd should contain __GAME_NAME__ placeholder')
+  assert.ok(!mainGd.includes('__GAME_NAME__'), 'emitted main.gd should substitute __GAME_NAME__')
+  assert.ok(mainGd.includes('"Generic Harbor"'), 'emitted main.gd should contain the escaped game name')
+
   const signalDriftHostGd = await readFile(new URL('../examples/signal-drift/racing/godot-main.gd', import.meta.url), 'utf8')
   const starterHostGd = await readFile(new URL('../packages/ridgetop/templates/starter/godot-main.gd', import.meta.url), 'utf8')
   for (const [label, src] of [
+    ...templateSources,
     ['ridgetop_runtime.gd', rtGd],
     ['main.gd', mainGd],
     ['examples/signal-drift/racing/godot-main.gd', signalDriftHostGd],
@@ -120,12 +143,45 @@ test('exportGodotProject emits clean GDScript 4 scripts/ridgetop_runtime.gd and 
         `${label}:${i + 1} has uncast Variant := from .get(): ${line}`
       )
       assert.ok(
-        !/\bvar\s+[a-zA-Z_]\w*\s*:=\s*[a-zA-Z_]\w*\[/.test(line),
+        !/\bvar\s+[a-zA-Z_]\w*\s*:=\s*[a-zA-Z_]\w*\[[^\]]*\](?!\s+as\s+[A-Z])/.test(line),
         `${label}:${i + 1} has uncast Variant := from subscript: ${line}`
       )
     }
   }
   assert.ok(!rtGd.includes('.look_at('), 'ridgetop_runtime.gd should use safe Basis.looking_at instead of Node3D.look_at')
+})
+
+test('loadGodotCompiler resolves ts-to-gd and reports consistent diagnostics on missing compiler or typescript peer dep', async t => {
+  const compiler = await loadGodotCompiler()
+  assert.equal(typeof compiler.compileTsToGd, 'function')
+  assert.equal(typeof compiler.compileTsProjectToGodot, 'function')
+  assert.equal(typeof compiler.renderRtGd, 'function')
+  assert.equal(compiler.renderRtGd(), readGodotRuntimeTemplate('rt.gd'))
+
+  const work = await mkdtemp(join(tmpdir(), 'ridgetop-loader-test-'))
+  t.after(() => rm(work, { recursive: true, force: true }))
+
+  await assert.rejects(
+    loadGodotCompiler({ compilerPath: join(work, 'missing-compiler.js') }),
+    /Godot TypeScript compiler \(ts-to-gd\) not found/
+  )
+
+  const badExportPath = join(work, 'bad-compiler.mjs')
+  await writeFile(badExportPath, 'export const notACompiler = true\n')
+  await assert.rejects(
+    loadGodotCompiler({ compilerPath: badExportPath }),
+    /does not export compileTsProjectToGodot\(\)/
+  )
+
+  const missingTsStub = join(work, 'missing-ts.mjs')
+  await writeFile(
+    missingTsStub,
+    `const err = new Error("Cannot find package 'typescript' imported from ts-to-gd.js"); err.code = 'ERR_MODULE_NOT_FOUND'; throw err;\n`
+  )
+  await assert.rejects(
+    loadGodotCompiler({ compilerPath: missingTsStub }),
+    error => error instanceof Error && error.message === MISSING_TYPESCRIPT_COMPILER_MESSAGE
+  )
 })
 
 test('live Godot 4 headless exercises RidgetopRuntime lighting/fog/point lights, batches, rigs, particles, audio, and Canvas UI with zero stderr', async t => {

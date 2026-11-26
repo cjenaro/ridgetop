@@ -88,13 +88,22 @@ test('packages/ridgetop is completely isolated with zero example-game imports an
   assert.ok(!BLOCKED_STUDIO_FILES.has('rng.js'), 'rng.js must not be in BLOCKED_STUDIO_FILES')
   assert.ok(BLOCKED_STUDIO_FILES.has('verification.js'), 'verification.js must remain in BLOCKED_STUDIO_FILES')
 
-  // export-godot.ts must remain strictly game-agnostic with zero hardcoded example-game GDScript
-  const exportGodotSource = await readFile(new URL('export-godot.ts', ridgetopFrameworkRoot), 'utf8')
-  for (const forbiddenToken of ['signal-drift', 'racing/race.gd', 'racing/track.gd', 'Lantern Grove']) {
-    assert.ok(
-      !exportGodotSource.includes(forbiddenToken),
-      `packages/ridgetop/framework/export-godot.ts must not reference example-game logic (${forbiddenToken})`
-    )
+  // export-godot.ts and templates/godot-runtime/*.gd must remain strictly game-agnostic with zero hardcoded example-game GDScript
+  const godotRuntimeFiles = [
+    ['framework/export-godot.ts', new URL('export-godot.ts', ridgetopFrameworkRoot)],
+    ['templates/godot-runtime/ridgetop_ui.gd', new URL('templates/godot-runtime/ridgetop_ui.gd', ridgetopPkgRoot)],
+    ['templates/godot-runtime/ridgetop_runtime.gd', new URL('templates/godot-runtime/ridgetop_runtime.gd', ridgetopPkgRoot)],
+    ['templates/godot-runtime/main.gd', new URL('templates/godot-runtime/main.gd', ridgetopPkgRoot)],
+    ['templates/godot-runtime/rt.gd', new URL('templates/godot-runtime/rt.gd', ridgetopPkgRoot)]
+  ] as const
+  for (const [label, fileUrl] of godotRuntimeFiles) {
+    const content = await readFile(fileUrl, 'utf8')
+    for (const forbiddenToken of ['signal-drift', 'racing/race.gd', 'racing/track.gd', 'Lantern Grove']) {
+      assert.ok(
+        !content.includes(forbiddenToken),
+        `packages/ridgetop/${label} must not reference example-game logic (${forbiddenToken})`
+      )
+    }
   }
 
   // Every browser framework module reachable from framework/index.ts or framework/ui.ts
@@ -273,6 +282,12 @@ test('packages/ridgetop packed tarball contains ZERO example-game files', async 
   assert.ok(paths.includes('dist/framework/testing-overlay.css'), 'Tarball must include dist/framework/testing-overlay.css')
   assert.ok(paths.includes('dist/tools/cli.js'), 'Tarball must include dist/tools/cli.js')
   assert.ok(paths.includes('dist/tools/ts-to-gd.js'), 'Tarball must include dist/tools/ts-to-gd.js')
+  assert.ok(paths.includes('dist/tools/gd-analysis.js'), 'Tarball must include dist/tools/gd-analysis.js')
+  assert.ok(paths.includes('dist/tools/gd-emit.js'), 'Tarball must include dist/tools/gd-emit.js')
+  assert.ok(paths.includes('templates/godot-runtime/ridgetop_ui.gd'), 'Tarball must include templates/godot-runtime/ridgetop_ui.gd')
+  assert.ok(paths.includes('templates/godot-runtime/ridgetop_runtime.gd'), 'Tarball must include templates/godot-runtime/ridgetop_runtime.gd')
+  assert.ok(paths.includes('templates/godot-runtime/main.gd'), 'Tarball must include templates/godot-runtime/main.gd')
+  assert.ok(paths.includes('templates/godot-runtime/rt.gd'), 'Tarball must include templates/godot-runtime/rt.gd')
   assert.ok(paths.includes('package.json'))
   assert.ok(paths.includes('README.md'))
 })

@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import { execFile } from 'node:child_process'
 import { once } from 'node:events'
-import { access, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { access, mkdir, mkdtemp, readFile, realpath, rm, symlink, writeFile } from 'node:fs/promises'
 import { createRequire } from 'node:module'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -268,8 +268,9 @@ test('generated create-game projects use pure Canvas UI, drop studio reviews/too
   assert.equal(pkg.scripts['package:web'], 'node game/package.js --target web')
   assert.equal(pkg.scripts['package:godot'], 'node game/package.js --target godot')
 
-  const { stdout } = await execFileAsync(process.execPath, ['game/package.js', '--target', 'all'], { cwd: projectDir })
+  const { stdout, stderr } = await execFileAsync(process.execPath, ['game/package.js', '--target', 'all'], { cwd: projectDir })
   assert.match(stdout, /Packaged Lantern Grove/)
+  assert.match(stderr, /optional peer dependency "typescript"/, 'Standalone project without typescript should emit consistent peer-dependency warning')
 
   const webDir = join(projectDir, 'dist', 'packages', 'web')
   // Consolidated Canvas UI modules ARE included
@@ -299,15 +300,39 @@ test('generated create-game projects use pure Canvas UI, drop studio reviews/too
   assert.equal(typeof unregister, 'function')
   unregister()
 
-  // Godot export includes baked 3D models and starter's project-owned godot-main.gd (not leaked into web/)
+  // Godot export includes baked 3D models, extracted GDScript runtime templates, and starter's godot-main.gd (not leaked into web/)
+  for (const tpl of ['ridgetop_ui.gd', 'ridgetop_runtime.gd', 'main.gd', 'rt.gd']) {
+    await access(join(projectDir, 'templates', 'godot-runtime', tpl))
+  }
+  for (const tool of ['ts-to-gd.js', 'gd-analysis.js', 'gd-emit.js']) {
+    await access(join(projectDir, 'tools', tool))
+  }
   const godotDir = join(projectDir, 'dist', 'packages', 'godot')
   await access(join(godotDir, 'assets', 'models', 'ranger.glb'))
   await access(join(godotDir, 'assets', 'models', 'crystal.glb'))
   await access(join(godotDir, 'assets', 'models', 'flower.glb'))
   await access(join(godotDir, 'scenes', 'ui.tscn'))
+  await access(join(godotDir, 'scripts', 'ridgetop_ui.gd'))
+  await access(join(godotDir, 'scripts', 'ridgetop_runtime.gd'))
   const starterMainGd = await readFile(join(godotDir, 'scripts', 'main.gd'), 'utf8')
   assert.ok(starterMainGd.includes('_setup_grid_game'), 'Starter Godot export should use starter godot-main.gd host')
   await assert.rejects(access(join(webDir, 'godot-main.gd')), 'godot-main.gd must not be copied into web bundle')
+  await assert.rejects(access(join(webDir, 'templates')), 'godot-runtime templates must not leak into web bundle')
+
+  // With optional peer dep `typescript` installed and custom godot-main.gd removed, standalone project compiles game/game.js
+  // via copied tools/{ts-to-gd,gd-analysis,gd-emit}.js + templates/godot-runtime/*.gd and emits generic main.gd
+  await mkdir(join(projectDir, 'node_modules'), { recursive: true })
+  await symlink(await realpath(join(repoRoot, 'node_modules', 'typescript')), join(projectDir, 'node_modules', 'typescript'))
+  await rm(join(projectDir, 'godot-main.gd'))
+  const godotStandaloneRes = await execFileAsync(process.execPath, ['game/package.js', '--target', 'godot'], { cwd: projectDir })
+  assert.equal(godotStandaloneRes.stderr.trim(), '', 'Standalone Godot packaging with typescript installed should emit zero stderr')
+  const standaloneGodotDir = join(projectDir, 'dist', 'godot')
+  await access(join(standaloneGodotDir, 'scripts', 'compiled', 'rt.gd'))
+  await access(join(standaloneGodotDir, 'scripts', 'compiled', 'game', 'game.gd'))
+  const genericMainGd = await readFile(join(standaloneGodotDir, 'scripts', 'main.gd'), 'utf8')
+  assert.ok(genericMainGd.includes('_setup_generic_game'), 'Standalone project without godot-main.gd should use templates/godot-runtime/main.gd')
+  assert.ok(!genericMainGd.includes('__GAME_NAME__'), 'Generic main.gd should substitute __GAME_NAME__')
+  assert.ok(genericMainGd.includes('"Lantern Grove"'), 'Generic main.gd should contain the project title')
 })
 
 test('binary-encoders fixes Float32 accessor bounds, unlit PBR attenuation, and WAV safety', () => {
