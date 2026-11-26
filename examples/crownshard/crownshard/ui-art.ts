@@ -1,8 +1,8 @@
 import type { CanvasWidgetDrawState, LayoutRect } from 'ridgetop/ui'
 import type {
   BattleUnit, ChapterSpec, CombatForecast, CombatForecastAlt, DifficultyLevel, EquipSlot, EquipmentSpec,
-  HeroSpec, LandmarkKind, OwnedHeroCard, PackRevealItem, PackSpec, Rarity, SkillSpec, TacticCardSpec,
-  TurnPreviewEntry
+  FacingDir, FacingExposureLevel, HeroSpec, LandmarkKind, OwnedHeroCard, PackRevealItem, PackSpec,
+  Rarity, SkillSpec, TacticCardSpec, TurnPreviewEntry
 } from './types.ts'
 import { DIFFICULTY_META, RARITY_META, RARITY_ORDER } from './data.ts'
 
@@ -2089,8 +2089,17 @@ export function drawTacticCard(ctx: CanvasRenderingContext2D, rect: LayoutRect, 
   if (st.focused && !st.disabled) drawFocusRing(ctx, x, y, w, h, r)
 }
 
-/** Chunky golden Wait / End Turn arcade button (or pulsing crimson Enemy Turn plate). */
-export function drawEndTurnButton(ctx: CanvasRenderingContext2D, rect: LayoutRect, o: { isPlayerTurn: boolean; ctBonus: number }, st: CanvasWidgetDrawState) {
+/** Chunky golden Wait / End Turn arcade button (or pulsing crimson Enemy Turn plate / Wait-to-Face confirm). */
+export function drawEndTurnButton(
+  ctx: CanvasRenderingContext2D,
+  rect: LayoutRect,
+  o: {
+    isPlayerTurn: boolean
+    ctBonus: number
+    facingPicker?: { facing: FacingDir; exposureLevel: FacingExposureLevel } | null
+  },
+  st: CanvasWidgetDrawState
+) {
   const { x, width: w, height: h } = rect
   const r = RADIUS.lg
   if (!o.isPlayerTurn) {
@@ -2107,6 +2116,47 @@ export function drawEndTurnButton(ctx: CanvasRenderingContext2D, rect: LayoutRec
       ctx.stroke()
     }
     drawText(ctx, 'Enemy Turn', cx, rect.y + h / 2 + 10, { size: 12, weight: 900, color: '#ffd0d6', align: 'center', maxW: w - 10, display: true, stroke: true })
+    return
+  }
+
+  const fp = o.facingPicker
+  if (fp) {
+    const variant = fp.exposureLevel === 'back' ? 'danger' : fp.exposureLevel === 'flank' ? 'primary' : 'success'
+    drawButton(ctx, rect, '', st, { variant, r })
+    const pressed = st.pressed && !st.disabled
+    const y = rect.y + (pressed ? 3 : 0)
+    const faceH = h - 4
+    const cx = x + w / 2
+    const tall = faceH >= 80
+    const txtColor = variant === 'primary' ? COLOR.accentText : '#ffffff'
+    const dirLabel = `Face ${fp.facing.toUpperCase()}`
+    if (tall) drawIcon(ctx, 'check', cx, y + faceH * 0.27, 20, txtColor)
+    drawText(ctx, dirLabel, cx, tall ? y + faceH * 0.54 : y + faceH / 2 - (o.ctBonus > 0 ? 7 : 0), {
+      size: w < 100 ? 14 : 17,
+      weight: 900,
+      color: txtColor,
+      align: 'center',
+      display: true,
+      maxW: w - 10,
+      stroke: variant !== 'primary'
+    })
+    const sub = fp.exposureLevel === 'back'
+      ? 'BACK RISK'
+      : fp.exposureLevel === 'flank'
+        ? 'FLANK'
+        : o.ctBonus > 0
+          ? `+${o.ctBonus} CT`
+          : 'Confirm'
+    const cy = tall ? y + faceH * 0.79 : y + faceH / 2 + 11
+    drawChip(ctx, cx, cy - 8.5, sub, {
+      h: 17,
+      size: 9.5,
+      bg: '#090d1a44',
+      border: '#ffffff55',
+      color: txtColor,
+      align: 'center'
+    })
+    if (tall) drawKeycap(ctx, x + w - 45, y + 6, 'Space', 15)
     return
   }
 

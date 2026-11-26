@@ -5,14 +5,15 @@ import {
   MERGE_COPIES_REQUIRED, PACK_BY_ID, PLAYABLE_CHAPTERS, RARITY_META, RARITY_ORDER, TACTIC_BY_ID, TACTIC_LIST
 } from './data.ts'
 import {
-  GRID_COLS, GRID_ROWS, cellHeightAt, cellHeightLevel, defaultTerrainHeightLevel,
+  FACING_DIRS, GRID_COLS, GRID_ROWS, cellHeightAt, cellHeightLevel, defaultTerrainHeightLevel,
   facingToYaw, facingVector, gridToWorld, terrainDefBonus, terrainElevation, terrainMoveCost,
   terrainWalkable, vectorToFacing
 } from './types.ts'
 import type {
   AttackArc, BattleReward, BattleState, BattleUnit, BiomeId, CampaignState, ChapterSpec, CombatForecast,
-  CombatForecastAlt, DifficultyLevel, EquipSlot, EquipmentSpec, FacingDir, GameState, GridCell, HeroClassId,
-  MoveAttackTile, OwnedEquipCard, OwnedHeroCard, OwnedTacticCard, PackId, PackRevealItem, Rarity, SaveData,
+  CombatForecastAlt, DifficultyLevel, EquipSlot, EquipmentSpec, FacingDir, FacingExposureLevel,
+  FacingExposureReport, FacingThreatEntry, GameState, GridCell, HeroClassId, MoveAttackTile,
+  OwnedEquipCard, OwnedHeroCard, OwnedTacticCard, PackId, PackRevealItem, Rarity, SaveData,
   SkillSpec, TacticCardSpec, TileTerrain, TurnPreviewEntry
 } from './types.ts'
 
@@ -983,6 +984,7 @@ export function startChapterBattle(state: GameState, chapterIndex: number, endle
     targetTiles: [],
     moveAttackTiles: [],
     pendingAction: null,
+    facingPicker: null,
     enemyDelay: 0,
     enemyActedThisTurn: false,
     floatingNumbers: [],
@@ -1355,10 +1357,324 @@ export function rotateActiveUnitFacing(state: GameState, dir?: FacingDir): boole
   if (battle.units.some(u => u.path.length > 0)) return false
   const active = getUnitByUid(battle, battle.activeUnitUid)
   if (!active || active.team !== 'ally') return false
-  const order: readonly FacingDir[] = ['n', 'e', 's', 'w']
-  const nextDir = dir ?? order[(order.indexOf(active.facing) + 1) % order.length]
+  const nextDir = dir ?? FACING_DIRS[(FACING_DIRS.indexOf(active.facing) + 1) % FACING_DIRS.length]
   setUnitFacing(active, nextDir)
+  if (battle.facingPicker && battle.facingPicker.unitUid === active.uid) {
+    battle.facingPicker.previewFacing = nextDir
+  }
   state.sounds.push({ kind: 'card', pitch: 1.12 })
+  return true
+}
+
+function computeReachableTilesForThreat(battle: BattleState, unit: BattleUnit): { col: number; row: number }[] {
+  if (!unit.alive || unit.stunTurns > 0) return []
+  const maxMove = Math.max(1, unit.move - (unit.slowTurns > 0 ? 1 : 0))
+  const visited = new Map<string, number>()
+  const queue: { col: number; row: number; dist: number }[] = [{ col: unit.col, row: unit.row, dist: 0 }]
+  visited.set(`${unit.col},${unit.row}`, 0)
+  const result: { col: number; row: number }[] = []
+  const dirs = [[1, 0], [-1, 0], [0, 1], [0, -1]] as const
+
+  while (queue.length > 0) {
+    let bestIdx = 0
+    for (let i = 1; i < queue.length; i++) {
+      if (queue[i].dist < queue[bestIdx].dist) bestIdx = i
+    }
+    const cur = queue.splice(bestIdx, 1)[0]
+    if (!cur) break
+    const curBest = visited.get(`${cur.col},${cur.row}`)
+    if (curBest !== undefined && cur.dist > curBest) continue
+    if (cur.dist > 0) {
+      const occ = unitAt(battle, cur.col, cur.row)
+      if (!occ) result.push({ col: cur.col, row: cur.row })
+    }
+    if (cur.dist >= maxMove) continue
+    const fromCell = battle.cells[cur.row][cur.col]
+    for (const [dc, dr] of dirs) {
+      const nc = cur.col + dc
+      const nr = cur.row + dr
+      if (!isCellInBounds(nc, nr, battle.cols, battle.rows)) continue
+      const cell = battle.cells[nr][nc]
+      if (!canTraverseStep(fromCell, cell, unit.jump)) continue
+      const occ = unitAt(battle, nc, nr)
+      if (occ && occ.team !== unit.team) continue
+      const stepCost = terrainMoveCost(cell.terrain)
+      const nextDist = cur.dist + stepCost
+      if (nextDist > maxMove) continue
+      const key = `${nc},${nr}`
+      const prev = visited.get(key)
+      if (prev === undefined || nextDist < prev) {
+        visited.set(key, nextDist)
+        queue.push({ col: nc, row: nr, dist: nextDist })
+      }
+    }
+  }
+  return result
+}
+
+function opponentThreatStatus(
+  battle: BattleState,
+  opp: BattleUnit,
+  target: BattleUnit
+): { inRangeNow: boolean; canReachNextTurn: boolean; distance: number } {
+  const distance = manhattan(opp.col, opp.row, target.col, target.row)
+  if (opp.stunTurns > 0) {
+    return { inRangeNow: false, canReachNextTurn: false, distance }
+  }
+  const effRangeNow = effectiveAttackRange(battle, opp.col, opp.row, target.col, target.row, opp.range)
+  const hasLoSNow = opp.isBoss || hasLineOfSight(battle, opp.col, opp.row, target.col, target.row, false)
+  const inRangeNow = distance <= effRangeNow && hasLoSNow
+  if (inRangeNow) {
+    return { inRangeNow: true, canReachNextTurn: true, distance }
+  }
+  // Quick lower-bound reject before running BFS
+  const maxMove = Math.max(1, opp.move - (opp.slowTurns > 0 ? 1 : 0))
+  if (distance > maxMove + opp.range + 2) {
+    return { inRangeNow: false, canReachNextTurn: false, distance }
+  }
+  const tiles = computeReachableTilesForThreat(battle, opp)
+  for (const t of tiles) {
+    const d = manhattan(t.col, t.row, target.col, target.row)
+    const effR = effectiveAttackRange(battle, t.col, t.row, target.col, target.row, opp.range)
+    if (d <= effR && (opp.isBoss || hasLineOfSight(battle, t.col, t.row, target.col, target.row, false))) {
+      return { inRangeNow: false, canReachNextTurn: true, distance }
+    }
+  }
+  return { inRangeNow: false, canReachNextTurn: false, distance }
+}
+
+function buildFacingExposureFromThreats(
+  unit: BattleUnit,
+  facing: FacingDir,
+  activeThreats: readonly { opp: BattleUnit; inRangeNow: boolean; canReachNextTurn: boolean; distance: number }[]
+): FacingExposureReport {
+  const threats: FacingThreatEntry[] = []
+  let backstabCount = 0
+  let flankCount = 0
+  const backNames: string[] = []
+  const flankNames: string[] = []
+
+  for (const item of activeThreats) {
+    const arc = computeAttackArc(item.opp.col, item.opp.row, unit.col, unit.row, facing)
+    threats.push({
+      enemyUid: item.opp.uid,
+      enemyName: item.opp.name,
+      arc,
+      inRangeNow: item.inRangeNow,
+      canReachNextTurn: item.canReachNextTurn,
+      distance: item.distance
+    })
+    if (arc === 'back') {
+      backstabCount += 1
+      backNames.push(item.opp.name)
+    } else if (arc === 'flank') {
+      flankCount += 1
+      flankNames.push(item.opp.name)
+    }
+  }
+
+  const level: FacingExposureLevel = backstabCount > 0 ? 'back' : flankCount > 0 ? 'flank' : 'safe'
+  const worstArc: AttackArc = backstabCount > 0 ? 'back' : flankCount > 0 ? 'flank' : 'front'
+  let warningText: string | null = null
+  if (backstabCount > 0) {
+    warningText = backstabCount === 1
+      ? `BACKSTAB RISK (${backNames[0]})`
+      : `BACKSTAB RISK (${backstabCount} foes)`
+  } else if (flankCount > 0) {
+    warningText = flankCount === 1
+      ? `FLANK EXPOSED (${flankNames[0]})`
+      : `FLANK EXPOSED (${flankCount} foes)`
+  }
+
+  return {
+    facing,
+    level,
+    worstArc,
+    backstabCount,
+    flankCount,
+    threats,
+    warningText
+  }
+}
+
+/**
+ * Evaluates whether any opposing unit in threat range (currently in attack range or able to reach
+ * and strike on its next turn) gains a Backstab or Flank arc against `unitUid` when facing `facing`.
+ */
+export function evaluateFacingExposure(
+  battle: BattleState,
+  unitUid: string,
+  facing: FacingDir
+): FacingExposureReport {
+  const unit = getUnitByUid(battle, unitUid)
+  if (!unit || !unit.alive) {
+    return {
+      facing,
+      level: 'safe',
+      worstArc: 'front',
+      backstabCount: 0,
+      flankCount: 0,
+      threats: [],
+      warningText: null
+    }
+  }
+  const activeThreats: { opp: BattleUnit; inRangeNow: boolean; canReachNextTurn: boolean; distance: number }[] = []
+  for (const opp of battle.units) {
+    if (!opp.alive || opp.team === unit.team) continue
+    const st = opponentThreatStatus(battle, opp, unit)
+    if (st.inRangeNow || st.canReachNextTurn) {
+      activeThreats.push({ opp, ...st })
+    }
+  }
+  return buildFacingExposureFromThreats(unit, facing, activeThreats)
+}
+
+/** Evaluates facing exposure across all 4 cardinal facings in one pass. */
+export function evaluateAllFacingExposures(
+  battle: BattleState,
+  unitUid: string
+): Record<FacingDir, FacingExposureReport> {
+  const unit = getUnitByUid(battle, unitUid)
+  if (!unit || !unit.alive) {
+    return {
+      n: evaluateFacingExposure(battle, unitUid, 'n'),
+      e: evaluateFacingExposure(battle, unitUid, 'e'),
+      s: evaluateFacingExposure(battle, unitUid, 's'),
+      w: evaluateFacingExposure(battle, unitUid, 'w')
+    }
+  }
+  const activeThreats: { opp: BattleUnit; inRangeNow: boolean; canReachNextTurn: boolean; distance: number }[] = []
+  for (const opp of battle.units) {
+    if (!opp.alive || opp.team === unit.team) continue
+    const st = opponentThreatStatus(battle, opp, unit)
+    if (st.inRangeNow || st.canReachNextTurn) {
+      activeThreats.push({ opp, ...st })
+    }
+  }
+  return {
+    n: buildFacingExposureFromThreats(unit, 'n', activeThreats),
+    e: buildFacingExposureFromThreats(unit, 'e', activeThreats),
+    s: buildFacingExposureFromThreats(unit, 's', activeThreats),
+    w: buildFacingExposureFromThreats(unit, 'w', activeThreats)
+  }
+}
+
+/**
+ * Evaluates all 4 cardinal facings against all alive opposing units (weighted by distance, attack reach,
+ * and ATK/threat) and returns the facing that minimizes backstab/flank exposure while facing the
+ * nearest/highest-threat opponent.
+ */
+export function chooseOptimalTurnEndFacing(battle: BattleState, unit: BattleUnit): FacingDir {
+  if (!unit.alive) return unit.facing
+  const opponents = battle.units.filter(u => u.alive && u.team !== unit.team)
+  if (opponents.length === 0) return unit.facing
+
+  const weighted = opponents.map(opp => {
+    const st = opponentThreatStatus(battle, opp, unit)
+    const dist = Math.max(1, st.distance)
+    const atkPower = opp.atk * (opp.empowerTurns > 0 ? 1.25 : 1.0) * (1 + opp.crit * 0.5)
+    const reachMul = st.inRangeNow ? 3.2 : st.canReachNextTurn ? 1.8 : 0.65
+    const stunMul = opp.stunTurns > 0 ? 0.35 : 1.0
+    const weight = (atkPower * reachMul * stunMul) / (dist + 0.5)
+    const vc = opp.col - unit.col
+    const vr = opp.row - unit.row
+    const norm = Math.hypot(vc, vr) || 1
+    return { opp, weight, nx: vc / norm, nz: vr / norm }
+  })
+
+  let bestDir: FacingDir = unit.facing
+  let bestScore = -Infinity
+  for (const dir of FACING_DIRS) {
+    const [fc, fr] = facingVector(dir)
+    let score = dir === unit.facing ? 0.01 : 0
+    for (const item of weighted) {
+      const arc = computeAttackArc(item.opp.col, item.opp.row, unit.col, unit.row, dir)
+      if (arc === 'back') score -= 100 * item.weight
+      else if (arc === 'flank') score -= 35 * item.weight
+      else score += 15 * item.weight
+      const align = item.nx * fc + item.nz * fr
+      score += align * 12 * item.weight
+    }
+    if (score > bestScore) {
+      bestScore = score
+      bestDir = dir
+    }
+  }
+  return bestDir
+}
+
+/** Enter the on-board 4-way Wait-to-Face directional picker for the active hero. */
+export function beginWaitFacingPicker(state: GameState): boolean {
+  const battle = state.battle
+  if (!battle || battle.phase !== 'player') return false
+  if (battle.units.some(u => u.path.length > 0)) return false
+  const active = getUnitByUid(battle, battle.activeUnitUid)
+  if (!active || !active.alive || active.team !== 'ally') return false
+  if (battle.facingPicker && battle.facingPicker.unitUid === active.uid) return true
+
+  battle.selectedUnitUid = active.uid
+  battle.armedSkillIndex = null
+  battle.armedTacticUid = null
+  battle.pendingAction = null
+  battle.moveTiles = []
+  battle.targetTiles = []
+  battle.moveAttackTiles = []
+  battle.facingPicker = {
+    unitUid: active.uid,
+    originalFacing: active.facing,
+    previewFacing: active.facing
+  }
+  state.sounds.push({ kind: 'card', pitch: 1.15 })
+  return true
+}
+
+/** Live-preview a candidate facing direction while the Wait-to-Face picker is open. */
+export function previewWaitFacing(state: GameState, dir: FacingDir): boolean {
+  const battle = state.battle
+  if (!battle || battle.phase !== 'player' || !battle.facingPicker) return false
+  const active = getUnitByUid(battle, battle.facingPicker.unitUid)
+  if (!active || !active.alive || active.team !== 'ally') {
+    battle.facingPicker = null
+    return false
+  }
+  if (battle.facingPicker.previewFacing === dir && active.facing === dir) return false
+  battle.facingPicker.previewFacing = dir
+  setUnitFacing(active, dir)
+  state.sounds.push({ kind: 'card', pitch: 1.08 })
+  return true
+}
+
+/** Cancel the Wait-to-Face picker, restoring the active hero's pre-picker facing without ending the turn. */
+export function cancelWaitFacingPicker(state: GameState): boolean {
+  const battle = state.battle
+  if (!battle || !battle.facingPicker) return false
+  const picker = battle.facingPicker
+  const active = getUnitByUid(battle, picker.unitUid)
+  if (active && active.alive) {
+    setUnitFacing(active, picker.originalFacing)
+  }
+  battle.facingPicker = null
+  if (battle.phase === 'player') {
+    refreshHighlights(battle, state.campaign)
+  }
+  state.sounds.push({ kind: 'card', pitch: 0.92 })
+  return true
+}
+
+/** Commit the chosen (or currently previewed) facing and end the player's turn with Wait CT bonus intact. */
+export function confirmWaitFacingPicker(state: GameState, dir?: FacingDir): boolean {
+  const battle = state.battle
+  if (!battle || battle.phase !== 'player' || !battle.facingPicker) return false
+  const picker = battle.facingPicker
+  const active = getUnitByUid(battle, picker.unitUid)
+  if (!active || !active.alive || active.team !== 'ally') {
+    battle.facingPicker = null
+    return false
+  }
+  const chosen = dir ?? picker.previewFacing
+  setUnitFacing(active, chosen)
+  battle.facingPicker = null
+  endPlayerTurn(state)
   return true
 }
 
@@ -2570,6 +2886,7 @@ export function selectHeroByUid(state: GameState, uid: string): boolean {
   if (!battle) return false
   const unit = getUnitByUid(battle, uid)
   if (!unit) return false
+  if (battle.facingPicker) cancelWaitFacingPicker(state)
   battle.selectedUnitUid = unit.uid
   battle.armedSkillIndex = null
   battle.armedTacticUid = null
@@ -2582,6 +2899,7 @@ export function selectHeroByUid(state: GameState, uid: string): boolean {
 export function armSkill(state: GameState, skillIndex: number | null): boolean {
   const battle = state.battle
   if (!battle || battle.phase !== 'player') return false
+  if (battle.facingPicker) cancelWaitFacingPicker(state)
   const unit = getUnitByUid(battle, battle.activeUnitUid)
   if (!unit || unit.team !== 'ally' || unit.acted || unit.stunTurns > 0) return false
 
@@ -2611,6 +2929,7 @@ export function armSkill(state: GameState, skillIndex: number | null): boolean {
 export function armTacticCard(state: GameState, tacticUid: string | null): boolean {
   const battle = state.battle
   if (!battle || battle.phase !== 'player') return false
+  if (battle.facingPicker) cancelWaitFacingPicker(state)
   battle.pendingAction = null
   if (tacticUid === null || battle.armedTacticUid === tacticUid) {
     battle.armedTacticUid = null
@@ -2641,6 +2960,7 @@ export function armTacticCard(state: GameState, tacticUid: string | null): boole
 export function selectTile(state: GameState, col: number, row: number): boolean {
   const battle = state.battle
   if (!battle || battle.phase !== 'player' || !isCellInBounds(col, row, battle.cols, battle.rows)) return false
+  if (battle.facingPicker) return false
 
   // Wait if a unit is currently mid-stride along a path
   if (battle.units.some(u => u.path.length > 0)) return false
@@ -2784,6 +3104,7 @@ function advanceToNextUnitTurn(state: GameState, initial = false): void {
     battle.armedSkillIndex = null
     battle.armedTacticUid = null
     battle.pendingAction = null
+    battle.facingPicker = null
     next.moved = false
     next.acted = false
 
@@ -2844,6 +3165,7 @@ export function endPlayerTurn(state: GameState): void {
   const battle = state.battle
   if (!battle || battle.phase !== 'player') return
   battle.pendingAction = null
+  battle.facingPicker = null
   const active = getUnitByUid(battle, battle.activeUnitUid)
   if (active) {
     // Classic Tactics CT Wait Bonus: waiting or only moving recovers CT faster!
@@ -3082,6 +3404,9 @@ export function stepGame(state: GameState, dt: number): void {
         executeEnemyUnitTurn(state, enemy)
         battle.enemyDelay = 0.42
       } else {
+        if (enemy.stunTurns === 0) {
+          setUnitFacing(enemy, chooseOptimalTurnEndFacing(battle, enemy))
+        }
         enemy.ct = Math.max(0, enemy.ct - 100)
         advanceToNextUnitTurn(state)
       }
