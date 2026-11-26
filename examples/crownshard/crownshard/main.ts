@@ -16,19 +16,22 @@ import { cameraAlignedFacing, cameraCardinalHeading, createCrownshardScene, faci
 import {
   abandonBattle, armSkill, armTacticCard, autoEquipBestFit, beginWaitFacingPicker, buyPack, canBuyPack,
   canMergeHero, canUndoMove, cancelWaitFacingPicker, clearSave, computeCombatForecast, computeDangerZone,
-  computeDeckValue, computeEnemyThreat, computeHeroStats, computeSquadPower, confirmDeployment, confirmWaitFacingPicker,
-  createInitialState, createTurnBoundaryTracker, effectiveSpeed, equipItem, evaluateAllFacingExposures,
-  evaluateFacingExposure, findBestFitUpgrades, findEquipOwner, getChapterObjectiveSummary, getEquipmentByUid, getHeroByUid,
-  getHeroSkill, getMergeCandidates, getNextRecommendedStage, getObjectiveProgressText, getStageUnlockHint, getTacticByUid,
-  getUnitByUid, isChestClaimed, isDeployTile, isEndlessUnlocked, isStageCleared, isStageUnlocked, loadSave, maxSquadSize, mergeHero,
-  moveDeployUnit, persistSave, previewTurnOrderAfterAction, previewWaitFacing, restoreBattleState, rotateDeployUnit, salvageEquipCard,
-  salvageHeroCard, selectHeroByUid, selectTile, serializeBattleState, shouldAutoSaveOnTurnBoundary,
-  startChapterBattle, stepGame, swapDeployUnit, syncTurnBoundaryTracker, toggleSquadMember, undoMove, unequipItem, unitAt
+  computeDeckValue, computeEnemyThreat, computeHeroStats, computeSquadPower, computeZocPerimeterTiles,
+  confirmDeployment, confirmWaitFacingPicker, createInitialState, createTurnBoundaryTracker, effectiveSpeed,
+  equipItem, evaluateAllFacingExposures, evaluateFacingExposure, findBestFitUpgrades, findEquipOwner, findGridPath,
+  formatOpportunityWarning, getChapterObjectiveSummary, getEquipmentByUid, getHeroByUid, getHeroSkill,
+  getMergeCandidates, getNextRecommendedStage, getObjectiveProgressText, getStageUnlockHint, getTacticByUid,
+  getUnitByUid, isChestClaimed, isDeployTile, isEndlessUnlocked, isStageCleared, isStageUnlocked, loadSave,
+  maxSquadSize, mergeHero, moveDeployUnit, persistSave, previewPathOpportunityAttacks, previewTurnOrderAfterAction,
+  previewWaitFacing, restoreBattleState, rotateDeployUnit, salvageEquipCard, salvageHeroCard, selectHeroByUid,
+  selectTile, serializeBattleState, shouldAutoSaveOnTurnBoundary, startChapterBattle, stepGame, swapDeployUnit,
+  syncTurnBoundaryTracker, toggleSquadMember, undoMove, unequipItem, unitAt
 } from './simulation.ts'
 import { FACING_DIRS, cellHeightLevel, gridToWorld, isUnitDowned } from './types.ts'
 import type {
-  BattleSaveSnapshot, BattleUnit, ChapterSpec, CombatForecast, EnemyArchetypeId, FacingDir, GameState, OwnedEquipCard,
-  OwnedHeroCard, PackId, PackRevealItem, Rarity, TurnActionKind, TurnOrderActionPreview
+  BattleSaveSnapshot, BattleUnit, ChapterSpec, CombatForecast, EnemyArchetypeId, FacingDir, GameState,
+  OwnedEquipCard, OwnedHeroCard, PackId, PackRevealItem, PathOpportunityPreview, Rarity, TurnActionKind,
+  TurnOrderActionPreview
 } from './types.ts'
 import {
   COLOR, RADIUS, TIER_COLOR, TYPE, UI_THEME_PALETTE, WORLD_MAP_H, WORLD_MAP_W,
@@ -361,6 +364,23 @@ async function start() {
     const hov = scene.getHoveredCell()
     if (!hov) return null
     return computeCombatForecast(state, hov.col, hov.row)
+  }
+
+  function resolveHoveredMoveOa(activeForecast: CombatForecast | null): PathOpportunityPreview | null {
+    const battle = state.battle
+    if (screen !== 'battle' || !battle || battle.phase !== 'player' || battle.facingPicker) return null
+    if (battle.units.some(u => u.path.length > 0)) return null
+    if (activeForecast?.opportunityAttacks && activeForecast.opportunityAttacks.triggers.length > 0) {
+      return activeForecast.opportunityAttacks
+    }
+    const active = getUnitByUid(battle, battle.activeUnitUid)
+    if (!active || active.team !== 'ally' || !active.alive || active.moved) return null
+    const hov = scene.getHoveredCell()
+    if (!hov || !battle.moveTiles.some(t => t.col === hov.col && t.row === hov.row)) return null
+    const path = findGridPath(battle, active, hov.col, hov.row)
+    if (path.length === 0) return null
+    const preview = previewPathOpportunityAttacks(battle, active, path)
+    return preview.triggers.length > 0 ? preview : null
   }
 
   function confirmLockedForecast(): boolean {
@@ -2351,6 +2371,7 @@ async function start() {
       : null
 
     const undoAvailable = canUndoMove(battle)
+    const hoveredMoveOa = resolveHoveredMoveOa(activeForecast)
     let statusLine = undoAvailable
       ? 'Moved — strike/cast, press Z / Backspace to Undo Move, T for Danger Zone, or Space Wait-to-Face.'
       : 'Click [.] frame to move, [X] crosshair to strike, T for Danger Zone, or arm a skill (1-4). Space Wait-to-Face.'
@@ -2380,6 +2401,11 @@ async function start() {
         statusLine = `FACE ${dirTxt} — Front Secured! ${hintKeys}`
         statusAccent = COLOR.good
       }
+      statusImportant = true
+    } else if (hoveredMoveOa && hoveredMoveOa.triggers.length > 0 && !activeForecast) {
+      const names = Array.from(new Set(hoveredMoveOa.triggers.map(t => t.attackerName))).join(' & ')
+      statusLine = `${formatOpportunityWarning(hoveredMoveOa)} from ${names} — leaves Zone of Control!`
+      statusAccent = hoveredMoveOa.lethal ? COLOR.danger : '#ff8c2b'
       statusImportant = true
     } else if (battle.armedTacticUid) {
       const owned = getTacticByUid(state.campaign, battle.armedTacticUid)
@@ -5031,6 +5057,15 @@ async function start() {
         const hLvl = cellHeightLevel(cell)
         const dzTile = dangerMap?.tiles.find(t => t.col === hovered.col && t.row === hovered.row)
         const deployTag = battle.phase === 'deploy' && isDeployTile(battle, hovered.col, hovered.row) ? ' · DEPLOY ZONE' : ''
+        const activeForecastForTip = resolveActiveForecast()
+        const hoveredOa = resolveHoveredMoveOa(activeForecastForTip)
+        const enemyZocTiles = battle.phase === 'player' ? computeZocPerimeterTiles(battle, 'enemy') : []
+        const inEnemyZoc = enemyZocTiles.some(z => z.col === hovered.col && z.row === hovered.row)
+        const oaTag = hoveredOa && hoveredOa.triggers.length > 0
+          ? ` · ${formatOpportunityWarning(hoveredOa)}`
+          : inEnemyZoc
+            ? ' · ENEMY ZoC'
+            : ''
         const threatTag = dzTile
           ? dzTile.hasBackstabRisk
             ? ` · Threat x${dzTile.threatCount} BACKSTAB!`
@@ -5038,15 +5073,16 @@ async function start() {
               ? ` · Threat x${dzTile.threatCount} FLANK!`
               : ` · Threat x${dzTile.threatCount}`
           : ''
-        const text = `${desc} · H${hLvl} (${hovered.col + 1},${hovered.row + 1})${deployTag}${threatTag}`
-        const pw = Math.min(460, Math.max(148, text.length * 6.8 + 24))
+        const text = `${desc} · H${hLvl} (${hovered.col + 1},${hovered.row + 1})${deployTag}${oaTag}${threatTag}`
+        const pw = Math.min(560, Math.max(148, text.length * 6.8 + 24))
         const py = g.height < 480 ? 80 : 94
+        const hasOaWarn = Boolean(hoveredOa && hoveredOa.triggers.length > 0)
         g.panel(10, py, pw, 28, {
-          fill: dzTile ? '#3d1e2e' : deployTag ? '#1b365e' : '#253357',
-          stroke: dzTile ? '#ff7d6b' : deployTag ? '#68c8ff' : COLOR.borderHi,
+          fill: hasOaWarn ? '#4a1d14' : dzTile ? '#3d1e2e' : deployTag ? '#1b365e' : '#253357',
+          stroke: hasOaWarn ? '#ff7a2b' : dzTile ? '#ff7d6b' : deployTag ? '#68c8ff' : COLOR.borderHi,
           radius: 10
         })
-        g.text(text, 22, py + 8, { fill: '#ffffff', size: 11.5, weight: 800 })
+        g.text(text, 22, py + 8, { fill: hasOaWarn ? '#ffe2b8' : '#ffffff', size: 11.5, weight: 800 })
       }
     }
 
@@ -5362,9 +5398,13 @@ async function start() {
 
       const activeForecast = resolveActiveForecast()
       scene.setForecast(activeForecast)
+      const hovCell = scene.getHoveredCell()
+      const hovMoveSig = hovCell && state.battle?.moveTiles.some(t => t.col === hovCell.col && t.row === hovCell.row)
+        ? `m:${hovCell.col},${hovCell.row}`
+        : ''
       const fcSig = activeForecast
         ? `${activeForecast.attackerUid}:${activeForecast.targetUid}:${activeForecast.mode}:${activeForecast.skillIndex}:${activeForecast.targetCol},${activeForecast.targetRow}:${lockedForecastCell ? 1 : 0}`
-        : ''
+        : hovMoveSig
       if (fcSig !== lastForecastSig) {
         lastForecastSig = fcSig
         uiDirty = true

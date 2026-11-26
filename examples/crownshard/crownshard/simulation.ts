@@ -7,11 +7,20 @@ import {
 import {
   BARRICADE_DEFAULT_HP, CURSED_ALTAR_HP_COST, FACING_DIRS, GRID_COLS, GRID_ROWS, KO_COUNTDOWN_TURNS,
   LAVA_GEYSER_DAMAGE, LAVA_GEYSER_PERIOD, MAX_HEIGHT_LEVEL, MAX_POISON_STACKS,
+  OPPORTUNITY_ATTACK_DAMAGE_MUL,
   TALL_GRASS_RANGED_COVER, TALL_GRASS_RANGED_CRIT_REDUCTION, TAUNT_RADIUS,
   cellHeightAt, cellHeightLevel, defaultTerrainHeightLevel,
   facingToYaw, facingVector, gridToWorld, isUnitActive, isUnitDowned, terrainDefBonus,
   terrainElevation, terrainMoveCost, terrainWalkable, vectorToFacing
 } from './types.ts'
+import {
+  canEvadeZoneOfControl, computeAiOpportunityPenalty, findStepOpportunityAttackers,
+  getOpposingZocSentinelsAt, previewPathOpportunityAttacks
+} from './zoc.ts'
+export {
+  canEvadeZoneOfControl, computeOpportunityAttackDamage, computeZocPerimeterTiles,
+  formatOpportunityWarning, hasZoneOfControl, previewPathOpportunityAttacks
+} from './zoc.ts'
 import type {
   AttackArc, BattleCellSnapshot, BattleObjectiveEvaluation, BattleObjectiveKind, BattleObjectiveSnapshot,
   BattleObjectiveState, BattleReward, BattleSaveSnapshot, BattleState, BattleUnit,
@@ -1379,6 +1388,7 @@ export function restoreBattleState(state: GameState, snapshot: unknown): boolean
     targetTiles: [],
     moveAttackTiles: [],
     moveUndo: null,
+    oaTriggeredUids: [],
     facingPicker: null,
     pendingAction: null,
     enemyDelay: valid.phase === 'enemy' ? Math.max(0.25, valid.enemyDelay) : 0,
@@ -2294,6 +2304,7 @@ export function startChapterBattle(
     targetTiles: [],
     moveAttackTiles: [],
     moveUndo: null,
+    oaTriggeredUids: [],
     pendingAction: null,
     facingPicker: null,
     enemyDelay: 0,
@@ -2998,23 +3009,39 @@ export function findGridPath(
   goalRow: number
 ): { col: number; row: number }[] {
   const maxMove = Math.max(1, unit.move - (unit.slowTurns > 0 ? 1 : 0))
+  const ignoreZoc = canEvadeZoneOfControl(unit)
   const startStateKey = `${unit.col},${unit.row},0`
   const parent = new Map<string, { col: number; row: number; prevKey: string } | null>()
-  const distMap = new Map<string, { dist: number; steps: number }>()
-  const queue: { col: number; row: number; dist: number; steps: number; glided: 0 | 1 }[] = [
-    { col: unit.col, row: unit.row, dist: 0, steps: 0, glided: 0 }
+  const distMap = new Map<string, { dist: number; steps: number; oaRisk: number }>()
+  const queue: { col: number; row: number; dist: number; steps: number; oaRisk: number; glided: 0 | 1 }[] = [
+    { col: unit.col, row: unit.row, dist: 0, steps: 0, oaRisk: 0, glided: 0 }
   ]
   parent.set(startStateKey, null)
-  distMap.set(startStateKey, { dist: 0, steps: 0 })
+  distMap.set(startStateKey, { dist: 0, steps: 0, oaRisk: 0 })
   const dirs = [[1, 0], [-1, 0], [0, 1], [0, -1]] as const
   let goalStateKey: string | null = null
+
+  const isBetterCost = (
+    aDist: number,
+    aSteps: number,
+    aRisk: number,
+    bDist: number,
+    bSteps: number,
+    bRisk: number
+  ): boolean => {
+    if (aDist !== bDist) return aDist < bDist
+    if (aSteps !== bSteps) return aSteps < bSteps
+    return aRisk < bRisk
+  }
 
   while (queue.length > 0) {
     let bestIdx = 0
     for (let i = 1; i < queue.length; i++) {
       if (
-        queue[i].dist < queue[bestIdx].dist ||
-        (queue[i].dist === queue[bestIdx].dist && queue[i].steps < queue[bestIdx].steps)
+        isBetterCost(
+          queue[i].dist, queue[i].steps, queue[i].oaRisk,
+          queue[bestIdx].dist, queue[bestIdx].steps, queue[bestIdx].oaRisk
+        )
       ) {
         bestIdx = i
       }
@@ -3023,12 +3050,13 @@ export function findGridPath(
     if (!cur) break
     const curKey = `${cur.col},${cur.row},${cur.glided}`
     const curBest = distMap.get(curKey)
-    if (curBest && (cur.dist > curBest.dist || (cur.dist === curBest.dist && cur.steps > curBest.steps))) continue
+    if (curBest && isBetterCost(curBest.dist, curBest.steps, curBest.oaRisk, cur.dist, cur.steps, cur.oaRisk)) continue
     if (cur.col === goalCol && cur.row === goalRow) {
       goalStateKey = curKey
       break
     }
     const fromCell = battle.cells[cur.row][cur.col]
+    const leavingOaRisk = ignoreZoc ? 0 : getOpposingZocSentinelsAt(battle, unit.team, cur.col, cur.row).length
     for (const [dc, dr] of dirs) {
       const nc = cur.col + dc
       const nr = cur.row + dr
@@ -3043,13 +3071,14 @@ export function findGridPath(
       const nextGlided: 0 | 1 = canGlide ? 1 : cur.glided
       const nextDist = cur.dist + stepCost
       const nextSteps = cur.steps + 1
+      const nextOaRisk = cur.oaRisk + leavingOaRisk
       if (nextDist > maxMove) continue
       const key = `${nc},${nr},${nextGlided}`
       const prev = distMap.get(key)
-      if (!prev || nextDist < prev.dist || (nextDist === prev.dist && nextSteps < prev.steps)) {
+      if (!prev || isBetterCost(nextDist, nextSteps, nextOaRisk, prev.dist, prev.steps, prev.oaRisk)) {
         parent.set(key, { col: cur.col, row: cur.row, prevKey: curKey })
-        distMap.set(key, { dist: nextDist, steps: nextSteps })
-        queue.push({ col: nc, row: nr, dist: nextDist, steps: nextSteps, glided: nextGlided })
+        distMap.set(key, { dist: nextDist, steps: nextSteps, oaRisk: nextOaRisk })
+        queue.push({ col: nc, row: nr, dist: nextDist, steps: nextSteps, oaRisk: nextOaRisk, glided: nextGlided })
       }
     }
   }
@@ -3896,6 +3925,9 @@ export function computeCombatForecast(state: GameState, col: number, row: number
   const approachRow = moveEntry ? moveEntry.fromRow : active.row
   const requiresMove = Boolean(moveEntry)
   const path = requiresMove ? findGridPath(battle, active, approachCol, approachRow) : []
+  const pathOaPreview = requiresMove && path.length > 0
+    ? previewPathOpportunityAttacks(battle, active, path)
+    : undefined
   const armedIdx = battle.armedSkillIndex !== null && battle.armedSkillIndex >= 0 ? battle.armedSkillIndex : null
   const armedSkill = armedIdx !== null ? getHeroSkill(active, armedIdx) : null
   const canSkillRevive = Boolean(armedSkill?.canRevive)
@@ -3987,6 +4019,7 @@ export function computeCombatForecast(state: GameState, col: number, row: number
         targetHpAfterCrit: hpAfter,
         lethalNormal: hpAfter <= 0,
         lethalCrit: hpAfter <= 0,
+        ...(pathOaPreview ? { opportunityAttacks: pathOaPreview } : {}),
         alternatives: []
       }
     }
@@ -4274,6 +4307,7 @@ export function computeCombatForecast(state: GameState, col: number, row: number
     targetHpAfterCrit: hpAfterCrit,
     lethalNormal: normalDmg > 0 && hpAfterNormal <= 0,
     lethalCrit: critDmg > 0 && hpAfterCrit <= 0,
+    ...(pathOaPreview ? { opportunityAttacks: pathOaPreview } : {}),
     alternatives
   }
 }
@@ -4613,6 +4647,7 @@ function checkBattleOutcome(state: GameState): void {
     battle.targetTiles = []
     battle.moveAttackTiles = []
     battle.moveUndo = null
+    battle.oaTriggeredUids = []
     battle.pendingAction = null
     battle.facingPicker = null
     battle.armedSkillIndex = null
@@ -4635,6 +4670,7 @@ function checkBattleOutcome(state: GameState): void {
     battle.targetTiles = []
     battle.moveAttackTiles = []
     battle.moveUndo = null
+    battle.oaTriggeredUids = []
     battle.pendingAction = null
     battle.facingPicker = null
     battle.armedSkillIndex = null
@@ -5293,6 +5329,7 @@ export function selectTile(state: GameState, col: number, row: number): boolean 
         active.animState = 'run'
         battle.selectedUnitUid = active.uid
         battle.moveUndo = null
+        battle.oaTriggeredUids = []
         battle.pendingAction = { col, row, skillIndex: battle.armedSkillIndex }
         battle.moveTiles = []
         battle.targetTiles = []
@@ -5328,6 +5365,7 @@ export function selectTile(state: GameState, col: number, row: number): boolean 
         active.animState = 'run'
         battle.selectedUnitUid = active.uid
         battle.moveUndo = null
+        battle.oaTriggeredUids = []
         battle.pendingAction = { col, row, skillIndex: null }
         battle.moveTiles = []
         battle.targetTiles = []
@@ -5359,6 +5397,7 @@ export function selectTile(state: GameState, col: number, row: number): boolean 
         active.moved = true
         active.animState = 'run'
         battle.selectedUnitUid = active.uid
+        battle.oaTriggeredUids = []
         battle.pendingAction = null
         battle.moveTiles = []
         battle.targetTiles = []
@@ -5434,6 +5473,7 @@ export function undoMove(state: GameState): boolean {
   active.lungeZ = 0
 
   battle.moveUndo = null
+  battle.oaTriggeredUids = []
   battle.facingPicker = null
   battle.pendingAction = null
   battle.armedSkillIndex = null
@@ -5446,6 +5486,66 @@ export function undoMove(state: GameState): boolean {
 
 function isBattleEnded(battle: BattleState): boolean {
   return battle.phase === 'victory' || battle.phase === 'defeat'
+}
+
+/**
+ * Trigger Opportunity Attacks from any opposing ZoC sentinels adjacent to `(mover.col, mover.row)`
+ * right as `mover` begins leaving that tile toward `(nextCol, nextRow)`.
+ * Each sentinel triggers at most once per movement action. Locks Undo Move on player triggers.
+ */
+function triggerLeavingZocOpportunityAttacks(
+  state: GameState,
+  mover: BattleUnit,
+  nextCol: number,
+  nextRow: number
+): void {
+  const battle = state.battle
+  if (!battle || !mover.alive) return
+  const already = new Set<string>(battle.oaTriggeredUids)
+  const sentinels = findStepOpportunityAttackers(battle, mover, mover.col, mover.row, already)
+  if (sentinels.length === 0) return
+
+  for (const sentinel of sentinels) {
+    if (!mover.alive || isBattleEnded(battle)) break
+    battle.oaTriggeredUids.push(sentinel.uid)
+    if (mover.team === 'ally' && battle.phase === 'player') {
+      battle.moveUndo = null
+    }
+
+    faceToward(sentinel, mover.x, mover.z)
+    sentinel.animState = 'attack'
+    sentinel.animTimer = 0.34
+    const dx = mover.x - sentinel.x
+    const dz = mover.z - sentinel.z
+    const dist = Math.hypot(dx, dz) || 1
+    sentinel.lungeX = (dx / dist) * 0.42
+    sentinel.lungeZ = (dz / dist) * 0.42
+
+    state.sounds.push({ kind: 'slash', pitch: 1.16 })
+    state.vfx.push({ kind: 'burst', style: 'slash', at: [mover.x, mover.y + 0.75, mover.z], uid: sentinel.uid })
+    addFloat(battle, mover.x, mover.y + 0.72, mover.z, 'OPPORTUNITY!', '#ffaa33')
+
+    applyDamage(state, sentinel, mover, sentinel.atk * OPPORTUNITY_ATTACK_DAMAGE_MUL, 0, false)
+    if (!mover.alive) {
+      // If mover was stepping through an ally's tile when downed, avoid stacking two units on one cell
+      const stacked = battle.units.some(
+        o => o.uid !== mover.uid && (o.alive || isUnitDowned(o)) && o.col === mover.col && o.row === mover.row
+      )
+      if (stacked && isCellInBounds(nextCol, nextRow, battle.cols, battle.rows) && !unitOrDownedAt(battle, nextCol, nextRow)) {
+        const nextCell = battle.cells[nextRow][nextCol]
+        const [nx, ny, nz] = gridToWorld(nextCol, nextRow, nextCell.elevation, battle.cols, battle.rows)
+        mover.col = nextCol
+        mover.row = nextRow
+        mover.x = nx
+        mover.y = ny
+        mover.z = nz
+      }
+      mover.path = []
+      battle.pendingAction = null
+      checkBattleOutcome(state)
+      break
+    }
+  }
 }
 
 function applyLavaGeyserHazard(state: GameState, unit: BattleUnit, cell: GridCell): void {
@@ -5569,6 +5669,7 @@ function advanceToNextUnitTurn(state: GameState, initial = false): void {
     battle.armedSkillIndex = null
     battle.armedTacticUid = null
     battle.moveUndo = null
+    battle.oaTriggeredUids = []
     battle.pendingAction = null
     battle.facingPicker = null
     next.moved = false
@@ -5760,6 +5861,8 @@ function executeEnemyUnitTurn(state: GameState, enemy: BattleUnit): void {
   if (wantMove) {
     const moveOptions = computeMoveTiles(battle, enemy)
     let bestTile: { col: number; row: number } | null = null
+    let bestPath: { col: number; row: number }[] = []
+    let bestOaLethal = false
     let bestScore = -9999
     for (const tile of moveOptions) {
       const d = manhattan(tile.col, tile.row, target.col, target.row)
@@ -5777,8 +5880,9 @@ function executeEnemyUnitTurn(state: GameState, enemy: BattleUnit): void {
         if (arc === 'back') score += 18
         else if (arc === 'flank') score += 9
       }
+      const isObjectiveBreach = Boolean(defendTile && spec.ai === 'melee' && tile.col === defendTile.col && tile.row === defendTile.row)
       if (defendTile && spec.ai === 'melee') {
-        if (tile.col === defendTile.col && tile.row === defendTile.row) {
+        if (isObjectiveBreach) {
           score += 240
         } else {
           score -= manhattan(tile.col, tile.row, defendTile.col, defendTile.row) * 4
@@ -5787,18 +5891,29 @@ function executeEnemyUnitTurn(state: GameState, enemy: BattleUnit): void {
       if (spec.ai === 'ranged') {
         score = canHit && d >= 2 ? 50 - d * 2 + elev * 10 : -Math.abs(d - enemy.range) * 10 + elev * 4
       }
+      const candidatePath = findGridPath(battle, enemy, tile.col, tile.row)
+      const oaPreview = previewPathOpportunityAttacks(battle, enemy, candidatePath)
+      if (oaPreview.triggers.length > 0) {
+        const estDmg = Math.max(4, Math.round(enemy.atk * 1.15 - target.def * 0.72))
+        const isLethalTarget = canHit && target.hp + target.shield <= estDmg
+        score -= computeAiOpportunityPenalty(oaPreview, isLethalTarget, isObjectiveBreach)
+      }
       if (score > bestScore) {
         bestScore = score
         bestTile = tile
+        bestPath = candidatePath
+        bestOaLethal = oaPreview.lethal
       }
     }
+    const safeRangedRetreat = spec.ai === 'ranged' && distNow === 1 && !(hasLoSNow && bestOaLethal)
     const shouldTakeTile = bestTile && (
-      distNow > effRangeNow || !hasLoSNow || (spec.ai === 'ranged' && distNow === 1) ||
+      distNow > effRangeNow || !hasLoSNow || safeRangedRetreat ||
       Boolean(defendTile && bestTile.col === defendTile.col && bestTile.row === defendTile.row)
     )
     if (shouldTakeTile && bestTile) {
-      const path = findGridPath(battle, enemy, bestTile.col, bestTile.row)
+      const path = bestPath.length > 0 ? bestPath : findGridPath(battle, enemy, bestTile.col, bestTile.row)
       if (path.length > 0) {
+        battle.oaTriggeredUids = []
         enemy.path = path
         enemy.moveProgress = 0
         enemy.moved = true
@@ -5882,6 +5997,31 @@ export function stepGame(state: GameState, dt: number): void {
       const [tx, ty, tz] = gridToWorld(next.col, next.row, toCell.elevation, battle.cols, battle.rows)
       faceToward(u, tx, tz)
 
+      if (safeDt > 0 && u.moveProgress === 0) {
+        triggerLeavingZocOpportunityAttacks(state, u, next.col, next.row)
+        if (isBattleEnded(battle)) {
+          u.path = []
+          break
+        }
+        if (!u.alive) {
+          u.path = []
+          if (u.uid === battle.activeUnitUid) {
+            battle.pendingAction = null
+            battle.armedSkillIndex = null
+            battle.armedTacticUid = null
+            battle.moveUndo = null
+            battle.oaTriggeredUids = []
+            battle.facingPicker = null
+            if (battle.phase === 'player') {
+              battle.objective.roundsElapsed += 1
+            }
+            advanceToNextUnitTurn(state)
+            break
+          }
+          continue
+        }
+      }
+
       u.moveProgress += safeDt * 5.2
       if (u.moveProgress >= 1) {
         u.col = next.col
@@ -5919,6 +6059,7 @@ export function stepGame(state: GameState, dt: number): void {
           break
         }
         if (u.path.length === 0) {
+          battle.oaTriggeredUids = []
           u.animState = 'idle'
           if (u.team === 'ally' && battle.phase === 'player') {
             const pending = battle.pendingAction

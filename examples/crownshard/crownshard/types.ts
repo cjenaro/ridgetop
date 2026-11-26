@@ -17,6 +17,7 @@ export const LAVA_GEYSER_PERIOD = 2
 export const CURSED_ALTAR_HP_COST = 10
 export const TALL_GRASS_RANGED_COVER = 3
 export const TALL_GRASS_RANGED_CRIT_REDUCTION = 0.12
+export const OPPORTUNITY_ATTACK_DAMAGE_MUL = 0.75
 
 export type Rarity = 'common' | 'uncommon' | 'rare' | 'epic' | 'legendary'
 
@@ -105,6 +106,10 @@ export interface HeroSpec {
   readonly jump: number
   readonly range: number
   readonly crit: number
+  /** Optional Zone of Control sentinel override (defaults to melee `range <= 1`). */
+  readonly zoc?: boolean
+  /** Optional skirmisher trait allowing the unit to slip past opposing Zones of Control without provoking OA. */
+  readonly evadeZoc?: boolean
   readonly lore: string
   readonly skills: readonly [SkillSpec, SkillSpec, SkillSpec]
 }
@@ -242,6 +247,10 @@ export interface EnemySpec {
   readonly range: number
   readonly ai: 'melee' | 'ranged' | 'support' | 'boss'
   readonly isBoss?: boolean
+  /** Optional Zone of Control sentinel override (defaults to melee `range <= 1`). */
+  readonly zoc?: boolean
+  /** Optional skirmisher trait allowing the unit to evade opposing Zones of Control. */
+  readonly evadeZoc?: boolean
 }
 
 export interface ChapterEnemySpawn {
@@ -606,6 +615,35 @@ export interface DangerZoneMap {
   readonly enemyThreats: readonly EnemyThreatMap[]
 }
 
+export interface OpportunityAttackTrigger {
+  readonly stepIndex: number
+  readonly fromCol: number
+  readonly fromRow: number
+  readonly toCol: number
+  readonly toRow: number
+  readonly attackerUid: string
+  readonly attackerName: string
+  readonly attackerCol: number
+  readonly attackerRow: number
+  readonly projectedDamage: number
+  readonly projectedHpLoss: number
+  readonly attackArc: AttackArc
+  readonly lethal: boolean
+}
+
+export interface PathOpportunityPreview {
+  readonly triggers: readonly OpportunityAttackTrigger[]
+  readonly totalDamage: number
+  readonly totalHpLoss: number
+  readonly lethal: boolean
+}
+
+export interface ZocTileInfo {
+  readonly col: number
+  readonly row: number
+  readonly controllerUids: readonly string[]
+}
+
 export interface PendingUnitAction {
   readonly col: number
   readonly row: number
@@ -679,6 +717,7 @@ export interface CombatForecast {
   readonly targetHpAfterCrit: number
   readonly lethalNormal: boolean
   readonly lethalCrit: boolean
+  readonly opportunityAttacks?: PathOpportunityPreview
   readonly alternatives: readonly CombatForecastAlt[]
 }
 
@@ -711,6 +750,8 @@ export interface BattleState {
   targetTiles: { col: number; row: number }[]
   moveAttackTiles: MoveAttackTile[]
   moveUndo: MoveUndoRecord | null
+  /** Sentinel UIDs that already triggered an Opportunity Attack during the active unit's current move. */
+  oaTriggeredUids: string[]
   pendingAction: PendingUnitAction | null
   facingPicker: FacingPickerState | null
   enemyDelay: number

@@ -83,6 +83,7 @@ export const HERO_SPECS: Record<HeroClassId, HeroSpec> = {
     jump: 1,
     range: 1,
     crit: 0.10,
+    zoc: true,
     lore: 'Sworn shieldbearer of the Solis Vanguard who holds the line against the Eclipse.',
     skills: [
       {
@@ -121,6 +122,7 @@ export const HERO_SPECS: Record<HeroClassId, HeroSpec> = {
     jump: 2,
     range: 3,
     crit: 0.22,
+    zoc: false,
     lore: 'Highland scout whose fletched arrows strike true from every ridge and tower.',
     skills: [
       {
@@ -159,6 +161,7 @@ export const HERO_SPECS: Record<HeroClassId, HeroSpec> = {
     jump: 2,
     range: 3,
     crit: 0.16,
+    zoc: false,
     lore: 'Keeper of the Solis Lantern who channels raw starfire into tactical bursts.',
     skills: [
       {
@@ -197,6 +200,7 @@ export const HERO_SPECS: Record<HeroClassId, HeroSpec> = {
     jump: 2,
     range: 3,
     crit: 0.12,
+    zoc: false,
     lore: 'Sun-order healer who mends shattered bones and burns shadow creatures.',
     skills: [
       {
@@ -238,6 +242,8 @@ export const HERO_SPECS: Record<HeroClassId, HeroSpec> = {
     jump: 3,
     range: 1,
     crit: 0.32,
+    zoc: true,
+    evadeZoc: true,
     lore: 'Swift twilight duelist who vaults across battle lines to sever enemy casters.',
     skills: [
       {
@@ -276,6 +282,7 @@ export const HERO_SPECS: Record<HeroClassId, HeroSpec> = {
     jump: 1,
     range: 1,
     crit: 0.15,
+    zoc: true,
     lore: 'Gilded champion of the High Bastion, armored in sun-forged plate.',
     skills: [
       {
@@ -314,6 +321,7 @@ export const HERO_SPECS: Record<HeroClassId, HeroSpec> = {
     jump: 2,
     range: 3,
     crit: 0.18,
+    zoc: false,
     lore: 'Glacial arcanist from Frostspire who locks entire enemy flanks in crystal ice.',
     skills: [
       {
@@ -352,6 +360,7 @@ export const HERO_SPECS: Record<HeroClassId, HeroSpec> = {
     jump: 2,
     range: 2,
     crit: 0.26,
+    zoc: true,
     lore: 'Mythic heir of the First Crown, wielding twin blades of living starlight.',
     skills: [
       {
@@ -605,25 +614,25 @@ export const PACK_BY_ID: Record<PackId, PackSpec> = {
 
 export const ENEMY_SPECS: Record<EnemyArchetypeId, EnemySpec> = {
   goblin: {
-    id: 'goblin', name: 'Ashen Goblin', maxHp: 38, atk: 12, def: 2, speed: 12, move: 3, jump: 2, range: 1, ai: 'melee'
+    id: 'goblin', name: 'Ashen Goblin', maxHp: 38, atk: 12, def: 2, speed: 12, move: 3, jump: 2, range: 1, ai: 'melee', zoc: true
   },
   bone_archer: {
-    id: 'bone_archer', name: 'Bone Archer', maxHp: 34, atk: 14, def: 1, speed: 11, move: 2, jump: 2, range: 3, ai: 'ranged'
+    id: 'bone_archer', name: 'Bone Archer', maxHp: 34, atk: 14, def: 1, speed: 11, move: 2, jump: 2, range: 3, ai: 'ranged', zoc: false
   },
   orc_brute: {
-    id: 'orc_brute', name: 'Ironclad Orc', maxHp: 64, atk: 17, def: 5, speed: 7, move: 2, jump: 1, range: 1, ai: 'melee'
+    id: 'orc_brute', name: 'Ironclad Orc', maxHp: 64, atk: 17, def: 5, speed: 7, move: 2, jump: 1, range: 1, ai: 'melee', zoc: true
   },
   bog_shaman: {
-    id: 'bog_shaman', name: 'Eclipse Shaman', maxHp: 46, atk: 14, def: 2, speed: 10, move: 2, jump: 2, range: 3, ai: 'support'
+    id: 'bog_shaman', name: 'Eclipse Shaman', maxHp: 46, atk: 14, def: 2, speed: 10, move: 2, jump: 2, range: 3, ai: 'support', zoc: false
   },
   crypt_knight: {
-    id: 'crypt_knight', name: 'Dread Knight', maxHp: 78, atk: 20, def: 7, speed: 9, move: 3, jump: 1, range: 1, ai: 'melee'
+    id: 'crypt_knight', name: 'Dread Knight', maxHp: 78, atk: 20, def: 7, speed: 9, move: 3, jump: 1, range: 1, ai: 'melee', zoc: true
   },
   frost_golem: {
-    id: 'frost_golem', name: 'Frost Golem', maxHp: 96, atk: 22, def: 8, speed: 6, move: 2, jump: 1, range: 1, ai: 'melee'
+    id: 'frost_golem', name: 'Frost Golem', maxHp: 96, atk: 22, def: 8, speed: 6, move: 2, jump: 1, range: 1, ai: 'melee', zoc: true
   },
   eclipse_archon: {
-    id: 'eclipse_archon', name: 'Archon Malakor', maxHp: 190, atk: 26, def: 7, speed: 11, move: 3, jump: 3, range: 3, ai: 'boss', isBoss: true
+    id: 'eclipse_archon', name: 'Archon Malakor', maxHp: 190, atk: 26, def: 7, speed: 11, move: 3, jump: 3, range: 3, ai: 'boss', isBoss: true, zoc: true
   }
 }
 

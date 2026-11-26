@@ -2824,8 +2824,21 @@ export function drawCombatForecast(
     strokeWidth: 2.2
   })
 
-  // Action + tactical modifier chips (priority: Revive / Friendly Fire / Backstab / Flank first!)
+  // Action + tactical modifier chips (priority: OA Risk / Revive / Friendly Fire / Backstab / Flank first!)
   const tags: { text: string; bg: string; color: string }[] = []
+  if (fc.opportunityAttacks && fc.opportunityAttacks.triggers.length > 0) {
+    const oa = fc.opportunityAttacks
+    const oaLabel = oa.lethal
+      ? `⚠ OA LETHAL!`
+      : oa.totalHpLoss > 0
+        ? `⚠ OA -${oa.totalHpLoss} HP`
+        : `⚠ OA BLK`
+    tags.push({
+      text: oaLabel,
+      bg: oa.lethal ? '#8c1424' : '#7a2c0e',
+      color: oa.lethal ? '#ffd6dc' : '#ffd28a'
+    })
+  }
   if (isRevive) {
     tags.push({
       text: fc.reviveKoCountdown ? `REVIVE · KO ${fc.reviveKoCountdown}` : 'REVIVE!',

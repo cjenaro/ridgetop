@@ -23,6 +23,7 @@
     "assetsModule": "dist/crownshard/package-assets.js",
     "godotEntries": [
       "crownshard/simulation.ts",
+      "crownshard/zoc.ts",
       "crownshard/data.ts",
       "crownshard/types.ts",
       "ridgetop/ui"
