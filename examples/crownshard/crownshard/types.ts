@@ -270,6 +270,7 @@ export interface GridCell {
   readonly elevation: number
   readonly walkable: boolean
   readonly heightLevel?: number
+  shrineUsed?: boolean
 }
 
 export interface BattleUnit {
@@ -488,6 +489,7 @@ export interface BattleState {
   drawPile: string[]
   hand: string[]
   discardPile: string[]
+  tacticsPlayed: number
   moveTiles: { col: number; row: number }[]
   targetTiles: { col: number; row: number }[]
   moveAttackTiles: MoveAttackTile[]
@@ -500,6 +502,74 @@ export interface BattleState {
   bannerTimer: number
   shake: number
   reward: BattleReward | null
+}
+
+export interface BattleCellSnapshot {
+  readonly terrain: TileTerrain
+  readonly heightLevel: number
+  readonly shrineUsed?: boolean
+}
+
+export interface BattleUnitSnapshot {
+  readonly uid: string
+  readonly team: 'ally' | 'enemy'
+  readonly name: string
+  readonly heroId?: HeroClassId
+  readonly enemyId?: EnemyArchetypeId
+  readonly stars: 1 | 2 | 3
+  readonly isBoss: boolean
+  readonly weaponId?: string
+  readonly armorId?: string
+  readonly relicId?: string
+  readonly col: number
+  readonly row: number
+  readonly facing: FacingDir
+  readonly hp: number
+  readonly maxHp: number
+  readonly shield: number
+  readonly atk: number
+  readonly def: number
+  readonly speed: number
+  readonly ct: number
+  readonly move: number
+  readonly jump: number
+  readonly range: number
+  readonly crit: number
+  readonly lifesteal: number
+  readonly moved: boolean
+  readonly acted: boolean
+  readonly alive: boolean
+  readonly burnTurns: number
+  readonly slowTurns: number
+  readonly stunTurns: number
+  readonly empowerTurns: number
+  readonly cooldowns: readonly [number, number, number]
+}
+
+export interface BattleSaveSnapshot {
+  readonly version: 1
+  readonly stageId: string
+  readonly chapterIndex: number
+  readonly endlessWave: number
+  readonly difficulty: DifficultyLevel
+  readonly cols: number
+  readonly rows: number
+  readonly biome: BiomeId
+  readonly cells: readonly (readonly BattleCellSnapshot[])[]
+  readonly units: readonly BattleUnitSnapshot[]
+  readonly turn: number
+  readonly phase: 'player' | 'enemy'
+  readonly activeUnitUid: string | null
+  readonly selectedUnitUid: string | null
+  readonly ap: number
+  readonly maxAp: number
+  readonly drawPile: readonly string[]
+  readonly hand: readonly string[]
+  readonly discardPile: readonly string[]
+  readonly tacticsPlayed: number
+  readonly enemyDelay: number
+  readonly enemyActedThisTurn: boolean
+  readonly rngSeed?: number
 }
 
 export interface CampaignState {
@@ -531,6 +601,7 @@ export interface GameState {
 export interface SaveData {
   version: 1
   campaign: CampaignState
+  activeBattle?: BattleSaveSnapshot | null
 }
 
 export function gridToWorld(
