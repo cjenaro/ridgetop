@@ -92,6 +92,23 @@ export {
 } from './inventory-ops.ts'
 export type { BulkSalvagePreview, BulkSalvageResult } from './inventory-ops.ts'
 import type { BulkSalvageResult } from './inventory-ops.ts'
+import {
+  DISCOVERY_TIPS, DISCOVERY_TIP_BY_ID, DISCOVERY_TIP_IDS,
+  areDiscoveryTipsEnabled, checkDiscoveryTipForBattle, detectBattleDiscoveryTips,
+  dismissDiscoveryTip, enqueueDiscoveryTip, getActiveDiscoveryTip, getDiscoveryTipSpec,
+  hasSeenDiscoveryTip, isDiscoveryTipId, normalizeSeenTips, resetDiscoveryTips,
+  setDiscoveryTipsEnabled, skipAllDiscoveryTips, triggerDiscoveryTip
+} from './discovery-tips.ts'
+export {
+  DISCOVERY_TIPS, DISCOVERY_TIP_BY_ID, DISCOVERY_TIP_IDS,
+  areDiscoveryTipsEnabled, checkDiscoveryTipForBattle, detectBattleDiscoveryTips,
+  dismissDiscoveryTip, enqueueDiscoveryTip, getActiveDiscoveryTip, getDiscoveryTipSpec,
+  hasSeenDiscoveryTip, isDiscoveryTipId, normalizeSeenTips, resetDiscoveryTips,
+  setDiscoveryTipsEnabled, skipAllDiscoveryTips, triggerDiscoveryTip
+}
+export type {
+  DiscoveryTipCategory, DiscoveryTipIcon, DiscoveryTipSpec, DiscoveryTipTriggerContext
+} from './discovery-tips.ts'
 import type {
   AttackArc, BattleCellSnapshot, BattleHeroXpGain, BattleObjectiveEvaluation, BattleObjectiveKind,
   BattleObjectiveSnapshot, BattleObjectiveState, BattleReward, BattleSaveSnapshot, BattleState, BattleUnit,
@@ -775,7 +792,9 @@ export function createInitialCampaign(seed = 1337): CampaignState {
     tactics: [],
     squadUids: [],
     selectedCampHeroUid: null,
-    lastPackReveal: []
+    lastPackReveal: [],
+    seenTips: [],
+    tipsDisabled: false
   }
 
   const starterKnight: OwnedHeroCard = {
@@ -924,7 +943,9 @@ function cloneCampaignFromSave(c: SavedCampaignState, fallbackSeed: number): Cam
       : {}),
     squadUids: Array.isArray(c.squadUids) && c.squadUids.length ? c.squadUids.slice() : [c.heroes[0].uid],
     selectedCampHeroUid: c.selectedCampHeroUid ?? c.heroes[0].uid,
-    lastPackReveal: []
+    lastPackReveal: [],
+    seenTips: normalizeSeenTips(c.seenTips),
+    tipsDisabled: c.tipsDisabled === true
   }
   if (!isStageUnlocked(cloned, cloned.selectedStageId)) {
     cloned.selectedStageId = getNextRecommendedStage(cloned).id
@@ -1607,13 +1628,16 @@ export function restoreBattleState(state: GameState, snapshot: unknown): boolean
     heroStartLevelByUid: valid.heroStartLevelByUid
       ? { ...valid.heroStartLevelByUid }
       : Object.fromEntries(units.filter(u => u.team === 'ally').map(u => [u.uid, normalizeHeroLevel(u.level)])),
-    reward: null
+    reward: null,
+    activeTipId: null,
+    tipQueue: []
   }
 
   state.battle = battle
   state.sounds = []
   state.vfx = []
   refreshHighlights(battle, state.campaign)
+  checkDiscoveryTipForBattle(state)
   return true
 }
 
@@ -1734,7 +1758,9 @@ export function serializeSave(state: GameState): SaveData {
         ? { activeTacticDeckUids: state.campaign.activeTacticDeckUids.slice() }
         : {}),
       squadUids: state.campaign.squadUids.slice(),
-      lastPackReveal: []
+      lastPackReveal: [],
+      seenTips: normalizeSeenTips(state.campaign.seenTips),
+      tipsDisabled: state.campaign.tipsDisabled === true
     },
     activeBattle
   }
@@ -1799,7 +1825,9 @@ export function loadSave(storage: StorageLike | null | undefined): SaveData | nu
         selectedCampHeroUid: 'selectedCampHeroUid' in camp && typeof camp.selectedCampHeroUid === 'string'
           ? camp.selectedCampHeroUid
           : null,
-        lastPackReveal: []
+        lastPackReveal: [],
+        seenTips: 'seenTips' in camp ? normalizeSeenTips(camp.seenTips) : [],
+        tipsDisabled: 'tipsDisabled' in camp ? camp.tipsDisabled === true : false
       },
       activeBattle
     }
@@ -2359,6 +2387,7 @@ export function confirmDeployment(state: GameState): boolean {
   battle.bannerText = 'BATTLE START!'
   battle.bannerTimer = 1.4
   advanceToNextUnitTurn(state, true)
+  checkDiscoveryTipForBattle(state)
   return true
 }
 
@@ -2576,7 +2605,9 @@ export function startChapterBattle(
     heroStartLevelByUid: Object.fromEntries(
       squad.map(h => [h.uid, normalizeHeroLevel(h.level)])
     ),
-    reward: null
+    reward: null,
+    activeTipId: null,
+    tipQueue: []
   }
 
   drawTacticCards(battle, campaign, 3)
@@ -2586,6 +2617,7 @@ export function startChapterBattle(
   } else {
     advanceToNextUnitTurn(state, true)
   }
+  checkDiscoveryTipForBattle(state)
   return battle
 }
 

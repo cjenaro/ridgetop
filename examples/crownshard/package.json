@@ -23,6 +23,7 @@
     "assetsModule": "dist/crownshard/package-assets.js",
     "godotEntries": [
       "crownshard/armory-diff.ts",
+      "crownshard/discovery-tips.ts",
       "crownshard/simulation.ts",
       "crownshard/forge.ts",
       "crownshard/passives.ts",

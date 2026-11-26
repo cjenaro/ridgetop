@@ -17,22 +17,22 @@ import {
 import { cameraAlignedFacing, cameraCardinalHeading, createCrownshardScene, facingPickerAnchor } from './scene.ts'
 import {
   MAX_TACTIC_DECK, MIN_TACTIC_DECK,
-  abandonBattle, armSkill, armTacticCard, autoBuildTacticDeck, autoEquipBestFit, beginWaitFacingPicker,
+  abandonBattle, areDiscoveryTipsEnabled, armSkill, armTacticCard, autoBuildTacticDeck, autoEquipBestFit, beginWaitFacingPicker,
   bulkSalvageCommonDupes, buyPack, canBuyPack, canCraftEquipment, canCraftHero, canMergeHero, canUndoMove,
-  cancelWaitFacingPicker, clearSave, computeCombatForecast, computeDangerZone, computeDeckValue,
+  cancelWaitFacingPicker, checkDiscoveryTipForBattle, clearSave, computeCombatForecast, computeDangerZone, computeDeckValue,
   computeEnemyThreat, computeHeroStats, computeSquadPower, computeTacticDeckCurve, computeZocPerimeterTiles,
   confirmDeployment, confirmWaitFacingPicker, craftEquipment, craftHero, createInitialState,
-  createTurnBoundaryTracker, effectiveSpeed, equipItem, evaluateAllFacingExposures, evaluateFacingExposure,
-  findBestFitUpgrades, findEquipOwner, findGridPath, formatOpportunityWarning, getActiveTacticDeckUids,
+  createTurnBoundaryTracker, dismissDiscoveryTip, effectiveSpeed, equipItem, evaluateAllFacingExposures, evaluateFacingExposure,
+  findBestFitUpgrades, findEquipOwner, findGridPath, formatOpportunityWarning, getActiveDiscoveryTip, getActiveTacticDeckUids,
   getChapterObjectiveSummary, getCraftableEquipment, getCraftableHeroes, getEquipCraftCost, getEquipEffect,
   getEquipSalvageDust, getEquipmentByUid, getHeroByUid, getHeroCraftCost, getHeroPassive, getHeroSalvageShards,
   getHeroSkill, getMergeCandidates, getNextRecommendedStage, getObjectiveProgressText, getPackPityStatus,
   getStageUnlockHint, getTacticByUid, getUnitByUid, hasMaxedHero, heroLevelProgress, isChestClaimed,
   isDeployTile, isEndlessUnlocked, isStageCleared, isStageUnlocked, loadSave, maxSquadSize, mergeHero,
   moveDeployUnit, persistSave, previewBulkSalvageCommonDupes, previewPathOpportunityAttacks,
-  previewTurnOrderAfterAction, previewWaitFacing, restoreBattleState, rotateDeployUnit, salvageEquipCard,
-  salvageHeroCard, selectHeroByUid, selectTile, serializeBattleState, shouldAutoSaveOnTurnBoundary,
-  startChapterBattle, stepGame, swapDeployUnit, syncTurnBoundaryTracker, toggleEquipLock, toggleHeroLock,
+  previewTurnOrderAfterAction, previewWaitFacing, resetDiscoveryTips, restoreBattleState, rotateDeployUnit, salvageEquipCard,
+  salvageHeroCard, selectHeroByUid, selectTile, serializeBattleState, setDiscoveryTipsEnabled, shouldAutoSaveOnTurnBoundary,
+  skipAllDiscoveryTips, startChapterBattle, stepGame, swapDeployUnit, syncTurnBoundaryTracker, toggleEquipLock, toggleHeroLock,
   toggleSquadMember, toggleTacticInDeck, undoMove, unequipItem, unitAt
 } from './simulation.ts'
 import { FACING_DIRS, cellHeightLevel, gridToWorld, isUnitDowned } from './types.ts'
@@ -45,7 +45,7 @@ import {
   COLOR, RADIUS, TIER_COLOR, TYPE, UI_THEME_PALETTE, WORLD_MAP_H, WORLD_MAP_W,
   drawAnimatedRevealCard, drawApMeter, drawArmoryStatDiffPanel, drawBattleInfo, drawBoosterPack, drawButton, drawCameraCompassButton, drawCampHeader,
   drawChapterPicker, drawChip, drawCombatForecast, drawControlHints, drawDefeatBackdrop, drawDeployHeroChip,
-  drawDifficultyBadge, drawEmptyNote, drawEndTurnButton, drawEquipCard, drawForecastAltChip,
+  drawDifficultyBadge, drawDiscoveryTipCard, drawEmptyNote, drawEndTurnButton, drawEquipCard, drawForecastAltChip,
   drawForgeBalanceBanner, drawForgeRecipeCard, drawHeroHeader, drawHeroRosterCard, drawHeroXpSummaryAnimated, drawHintPill, drawIconButton, drawLabel, drawLetterbox,
   drawLootRow, drawModal, drawObjectiveBadge, drawOverline, drawPackCeremonyBackdrop, drawPanel, drawPassiveBanner, drawPityBanner, drawPortraitTile,
   drawResultHeadlineAnimated, drawRevealCard, drawRewardRowAnimated, drawSegmentTrack,
@@ -685,6 +685,7 @@ async function start() {
         clearBattleHoverFeedback()
         scene.setHoveredCell(null)
         scene.setForecast(null)
+        refreshBattleDiscoveryTips(false)
         uiDirty = true
         hudRev++
       }
@@ -734,6 +735,62 @@ async function start() {
 
   function togglePerfOverlay() {
     showPerfPanel = !showPerfPanel
+    uiDirty = true
+    hudRev++
+  }
+
+  function refreshBattleDiscoveryTips(includeHover = true) {
+    if (!state.battle) return
+    const prev = state.battle.activeTipId
+    const fc = includeHover ? resolveActiveForecast() : null
+    const hoveredCell = includeHover ? scene.getHoveredCell() : null
+    const pathOa = includeHover ? resolveHoveredMoveOa(fc) : null
+    checkDiscoveryTipForBattle(state, { hoveredCell, forecast: fc, pathOa })
+    if (state.battle.activeTipId !== prev) {
+      uiDirty = true
+      hudRev++
+    }
+  }
+
+  function dismissCurrentDiscoveryTip(): boolean {
+    const dismissed = dismissDiscoveryTip(state)
+    if (!dismissed) return false
+    state.sounds.push({ kind: 'card', pitch: 1.06 })
+    saveNow()
+    uiDirty = true
+    hudRev++
+    return true
+  }
+
+  function skipAllTipsNow() {
+    skipAllDiscoveryTips(state)
+    state.sounds.push({ kind: 'card', pitch: 0.9 })
+    saveNow()
+    uiDirty = true
+    hudRev++
+  }
+
+  function toggleDiscoveryTipsSetting() {
+    audio.unlock()
+    const nextEnabled = !areDiscoveryTipsEnabled(state.campaign)
+    setDiscoveryTipsEnabled(state, nextEnabled)
+    if (nextEnabled && state.battle) {
+      checkDiscoveryTipForBattle(state)
+    }
+    state.sounds.push({ kind: 'card', pitch: nextEnabled ? 1.12 : 0.92 })
+    saveNow()
+    uiDirty = true
+    hudRev++
+  }
+
+  function resetDiscoveryTipsNow() {
+    audio.unlock()
+    resetDiscoveryTips(state)
+    if (state.battle) {
+      checkDiscoveryTipForBattle(state)
+    }
+    state.sounds.push({ kind: 'card', pitch: 1.18 })
+    saveNow()
     uiDirty = true
     hudRev++
   }
@@ -947,6 +1004,7 @@ async function start() {
     const prev = scene.getHoveredCell()
     if (prev?.col !== cell?.col || prev?.row !== cell?.row) {
       scene.setHoveredCell(cell)
+      refreshBattleDiscoveryTips(true)
       uiDirty = true
       hudRev++
     }
@@ -1046,6 +1104,7 @@ async function start() {
     lockedForecastCell = null
     mobileHandOpen = false
     if (selectTile(state, cell.col, cell.row)) {
+      refreshBattleDiscoveryTips(false)
       uiDirty = true
       hudRev++
     }
@@ -1133,6 +1192,7 @@ async function start() {
     lockedForecastCell = null
     mobileHandOpen = false
     if (selectTile(state, cell.col, cell.row)) {
+      refreshBattleDiscoveryTips(false)
       uiDirty = true
       hudRev++
     }
@@ -1208,11 +1268,6 @@ async function start() {
         return
       }
       if (event.code === 'Enter' && !event.repeat) {
-        if (state.battle.phase === 'deploy') {
-          event.preventDefault()
-          confirmDeployAndStart()
-          return
-        }
         if (state.battle.facingPicker && state.battle.phase === 'player') {
           event.preventDefault()
           audio.unlock()
@@ -1222,6 +1277,17 @@ async function start() {
         if (lockedForecastCell) {
           event.preventDefault()
           confirmLockedForecast()
+          return
+        }
+        if (getActiveDiscoveryTip(state)) {
+          event.preventDefault()
+          audio.unlock()
+          dismissCurrentDiscoveryTip()
+          return
+        }
+        if (state.battle.phase === 'deploy') {
+          event.preventDefault()
+          confirmDeployAndStart()
           return
         }
       }
@@ -1245,6 +1311,7 @@ async function start() {
           clearBattleHoverFeedback()
           scene.setHoveredCell(null)
           scene.setForecast(null)
+          refreshBattleDiscoveryTips(false)
           uiDirty = true
           hudRev++
         }
@@ -2383,6 +2450,7 @@ async function start() {
               lockedForecastCell = null
               armTacticCard(state, uid)
               if (isPhone) mobileHandOpen = false
+              refreshBattleDiscoveryTips(false)
               uiDirty = true
               hudRev++
             },
@@ -3175,6 +3243,84 @@ async function start() {
           })
         }
       }),
+
+      // Compact non-blocking First-Time Discovery Tip callout banner (below objective badge, never blocks tiles/deploy)
+      ...(() => {
+        const activeTip = getActiveDiscoveryTip(state)
+        if (!activeTip || (isPhone && mobileHandOpen)) return []
+        const tipBtnH = isPhone ? 24 : 26
+        const tipH = isPhone ? 112 : 126
+        const tipW = mobilePortrait
+          ? Math.min(w - 16, 336)
+          : mobileLandscape
+            ? Math.min(w - 16, 286)
+            : Math.min(w - 20, 326)
+        const tipAnchor = mobilePortrait ? 'top' : 'top-left'
+        const tipInset: [number, number] = mobilePortrait
+          ? [8, timelineInset[1] + tokenH + 16]
+          : [isPhone ? 6 : 8, (isPhone ? 6 : 8) + topBarH + 6 + objBadgeH + (isPhone ? 6 : 8)]
+        return [
+          column({
+            id: 'discovery-tip-card',
+            style: {
+              anchor: tipAnchor,
+              width: tipW,
+              height: tipH,
+              inset: tipInset,
+              padding: isPhone ? [6, 10] : [6, 12],
+              gap: 0,
+              respectSafeArea: true
+            },
+            widget: {
+              type: 'panel',
+              blocksPointer: true,
+              draw: (ctx: CanvasRenderingContext2D, rect: LayoutRect) => drawDiscoveryTipCard(ctx, rect, activeTip, {
+                compact: isPhone,
+                queuedCount: battle.tipQueue.length
+              })
+            }
+          }, [
+            spacerNode(1),
+            row({
+              id: 'discovery-tip-actions',
+              style: { height: tipBtnH, gap: 6, align: 'center' }
+            }, [
+              boxNode({
+                id: 'cs-tip-skip-all',
+                style: { width: isPhone ? 82 : 90, height: tipBtnH },
+                widget: {
+                  type: 'button',
+                  label: 'Skip Tips',
+                  onPress: () => {
+                    audio.unlock()
+                    skipAllTipsNow()
+                  },
+                  draw: (ctx: CanvasRenderingContext2D, rect: LayoutRect, st: CanvasWidgetDrawState) => drawButton(
+                    ctx, rect, 'Skip Tips', st, { variant: 'ghost', size: isPhone ? 10.5 : 11 }
+                  )
+                }
+              }),
+              spacerNode(1),
+              boxNode({
+                id: 'cs-tip-dismiss',
+                style: { width: isPhone ? 78 : 96, height: tipBtnH },
+                widget: {
+                  type: 'button',
+                  label: 'Got it',
+                  primary: true,
+                  onPress: () => {
+                    audio.unlock()
+                    dismissCurrentDiscoveryTip()
+                  },
+                  draw: (ctx: CanvasRenderingContext2D, rect: LayoutRect, st: CanvasWidgetDrawState) => drawButton(
+                    ctx, rect, isPhone ? 'Got it' : 'Got it (↵)', st, { variant: 'primary', size: isPhone ? 10.5 : 11.5 }
+                  )
+                }
+              })
+            ])
+          ])
+        ]
+      })(),
 
       // Top-right toolbar (aligned on top row for phone portrait & landscape too!)
       row({
@@ -5435,6 +5581,26 @@ async function start() {
             )
           }
         }),
+        row({ id: 'p-tips-row', style: { height: rowH, gap: 6 } }, [
+          boxNode({
+            id: 'cs-tips-toggle', style: { grow: 1, height: rowH },
+            widget: {
+              type: 'button', label: 'Discovery Tips', onPress: toggleDiscoveryTipsSetting,
+              draw: (ctx: CanvasRenderingContext2D, rect: LayoutRect, st: CanvasWidgetDrawState) => drawSettingRow(
+                ctx, rect, 'Discovery Tips', 'sparkle', areDiscoveryTipsEnabled(state.campaign), st
+              )
+            }
+          }),
+          boxNode({
+            id: 'cs-tips-reset', style: { width: 72, height: rowH },
+            widget: {
+              type: 'button', label: 'Reset Tips', onPress: resetDiscoveryTipsNow,
+              draw: (ctx: CanvasRenderingContext2D, rect: LayoutRect, st: CanvasWidgetDrawState) => drawButton(
+                ctx, rect, 'Reset', st, { variant: 'secondary', size: 11.5 }
+              )
+            }
+          })
+        ]),
         boxNode({
           id: 'cs-retreat', style: { height: rowH },
           widget: {
@@ -5922,6 +6088,9 @@ async function start() {
       battleAlliesAlive: state.battle ? state.battle.units.filter(u => u.alive && u.team === 'ally').length : 0,
       battleAlliesDowned: state.battle ? state.battle.units.filter(u => isUnitDowned(u)).length : 0,
       battleEnemiesAlive: state.battle ? state.battle.units.filter(u => u.alive && u.team === 'enemy').length : 0,
+      activeTipId: getActiveDiscoveryTip(state)?.id ?? null,
+      seenTips: state.campaign.seenTips.slice(),
+      tipsDisabled: state.campaign.tipsDisabled === true,
       hasResumableBattle: Boolean(resumableBattle),
       resumableBattleTurn: resumableBattle?.turn ?? 0,
       resumableBattleStageId: resumableBattle?.stageId ?? null,
@@ -6081,6 +6250,19 @@ async function start() {
       },
       saveNow: () => {
         saveNow()
+      },
+      dismissTip: () => {
+        const ok = dismissCurrentDiscoveryTip()
+        renderUiNow()
+        return ok
+      },
+      skipAllTips: () => {
+        skipAllTipsNow()
+        renderUiNow()
+      },
+      resetTips: () => {
+        resetDiscoveryTipsNow()
+        renderUiNow()
       }
     }
   })
@@ -6088,6 +6270,7 @@ async function start() {
   let lastRenderAt: number | undefined
   let perfUiTick = 0
   let lastCompassSig = 0
+  let lastDownedCount = 0
 
   const stop = fixedLoop({
     update(dt) {
@@ -6103,13 +6286,16 @@ async function start() {
       const bPhase = state.battle?.phase ?? null
       const activeUid = state.battle?.activeUnitUid ?? null
       const bTurn = state.battle?.turn ?? 0
-      if (bPhase !== lastBattlePhase || activeUid !== lastActiveUid || bTurn !== lastBattleTurn) {
+      const downedCount = state.battle ? state.battle.units.filter(u => isUnitDowned(u)).length : 0
+      if (bPhase !== lastBattlePhase || activeUid !== lastActiveUid || bTurn !== lastBattleTurn || downedCount !== lastDownedCount) {
         lastBattlePhase = bPhase
         lastActiveUid = activeUid
         lastBattleTurn = bTurn
+        lastDownedCount = downedCount
         lockedForecastCell = null
         mobileHandOpen = false
         clearBattleHoverFeedback()
+        refreshBattleDiscoveryTips(false)
         uiDirty = true
         hudRev++
         if (bPhase === 'victory' && screen === 'battle') {
