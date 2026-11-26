@@ -6,7 +6,8 @@ import {
 import type { Color, InstanceBatch, JointPose, LowPolyRenderer, Matrix, PointLight, RenderStats, Vec3 } from 'ridgetop'
 import {
   BIOME_STYLES, ENEMY_RIGS,
-  buildCampDioramaBatches, buildStaticBoardBatches, crownMesh, crystalMesh, flatRing, resolveHeroRig, roundPebble, tileQuad
+  buildCampDioramaBatches, buildStaticBoardBatches, crispBevel, crownMesh, crystalMesh, flatRing,
+  resolveHeroRig, roundPebble, smoothCone, softBevel, taperTrunk, tileQuad
 } from './art.ts'
 import {
   CAMP_FIDGETS, CLIP_IMPACT, LEAP_TUCK, UNIT_CLIPS,
@@ -18,10 +19,10 @@ import { VFX_COLORS, arrowMesh, createBattleVfx } from './vfx.ts'
 import type { StrikeShape } from './vfx.ts'
 import {
   computeDangerZone, computeEnemyThreat, evaluateAllFacingExposures, getEquipmentByUid,
-  getHeroByUid, getHeroSkill, getPatternCells, getTacticByUid, getUnitByUid, unitAt
+  getHeroByUid, getHeroSkill, getPatternCells, getTacticByUid, getUnitByUid, isIntactBarricade, unitAt
 } from './simulation.ts'
 import { TACTIC_BY_ID } from './data.ts'
-import { FACING_DIRS, TILE_SIZE, facingToYaw, facingVector, gridToWorld, vectorToFacing } from './types.ts'
+import { BARRICADE_DEFAULT_HP, FACING_DIRS, TILE_SIZE, facingToYaw, facingVector, gridToWorld, vectorToFacing } from './types.ts'
 import type {
   AttackArc, BattleState, BattleUnit, CombatForecast, DangerZoneMap, EnemyThreatMap,
   EquipSlot, FacingDir, FacingExposureLevel, FlankThreatTile, GameState, OwnedHeroCard
@@ -96,6 +97,16 @@ const C_ALLY_MOTE = color('ffe58a')
 const C_ENEMY_MOTE = color('ff8a6e')
 const C_ALLY_SOUL = color('9fe8ff')
 const C_ENEMY_SOUL = color('d58cff')
+const C_WOOD_TIMBER = color('9e5f38')
+const C_WOOD_TIMBER_DARK = color('6e4026')
+const C_IRON_BAND = color('48546b')
+const C_GRASS_BLADE = color('49a354')
+const C_GRASS_TIP = color('72c96b')
+const C_CURSE_DIM = color('4a3c5e')
+const C_ICE_SHEEN: Color = [0.82, 0.97, 1.0, 0.42]
+const C_GEYSER_RING: Color = [1.0, 0.44, 0.16, 0.85]
+const C_GEYSER_WARN: Color = [1.0, 0.52, 0.18, 0.45]
+const C_ALTAR_RING: Color = [0.80, 0.36, 1.0, 0.78]
 
 /** Death timing: topple clip, then sink + shrink into a soul-mote burst. */
 const DEATH_SINK_START = 1.0
@@ -568,6 +579,7 @@ export function createCrownshardScene(renderer: LowPolyRenderer) {
   let lastActiveUid: string | null = null
   let hitStop = 0
   let moteTimer = 0
+  let hazardParticleTimer = 0
   /** Presentation-only camera shake (gait stomps, VFX slams) layered on the sim's battle.shake. */
   let localShake = 0
   const vfx = createBattleVfx(pool, particles, amount => { localShake = Math.max(localShake, amount) })
@@ -1510,6 +1522,126 @@ export function createCrownshardScene(renderer: LowPolyRenderer) {
     ]
     lastMatrix = multiply(perspective(Math.PI / 3.9, aspect, 0.5, 220), view(eye, target))
 
+    // -1. Dynamic interactive tactical hazards (Barricades, Lava Geysers, Cursed Altars, Ice Sheen, Swaying Tall Grass)
+    hazardParticleTimer += dt
+    const emitHazardSparks = hazardParticleTimer >= 0.16
+    if (emitHazardSparks) hazardParticleTimer = 0
+    for (let row = 0; row < battle.rows; row++) {
+      for (let col = 0; col < battle.cols; col++) {
+        const cell = battle.cells[row][col]
+        if (cell.terrain === 'void') continue
+        const [wx, wy, wz] = gridToWorld(col, row, cell.elevation, battle.cols, battle.rows)
+        const phase = col * 1.7 + row * 2.3
+
+        if (isIntactBarricade(cell)) {
+          const maxHp = cell.barricadeMaxHp ?? BARRICADE_DEFAULT_HP
+          const hp = cell.barricadeHp ?? maxHp
+          const dmgFrac = Math.max(0, Math.min(1, 1 - hp / Math.max(1, maxHp)))
+          const hScale = 1 - dmgFrac * 0.24
+          const tilt = dmgFrac * 0.26
+          // 4 sharpened palisade stakes + diagonal timber braces + iron band
+          for (let i = 0; i < 4; i++) {
+            const ox = (i - 1.5) * 0.34
+            const oz = (i % 2 === 0 ? -0.10 : 0.10)
+            const sTilt = (i % 2 === 0 ? 1 : -1) * (0.06 + tilt)
+            pool.add(
+              taperTrunk,
+              [wx + ox, wy + 0.50 * hScale, wz + oz],
+              [0.18, 1.02 * hScale, 0.18],
+              quaternionFromEuler(sTilt, i * 0.4, sTilt * 0.5),
+              i % 2 === 0 ? C_WOOD_TIMBER : C_WOOD_TIMBER_DARK
+            )
+          }
+          pool.add(softBevel, [wx, wy + 0.42 * hScale, wz], [1.32, 0.16, 0.22], quaternionFromEuler(0, 0, 0.22 + tilt * 0.4), C_WOOD_TIMBER)
+          pool.add(softBevel, [wx, wy + 0.68 * hScale, wz], [1.26, 0.14, 0.20], quaternionFromEuler(0, 0, -0.22 - tilt * 0.4), C_WOOD_TIMBER_DARK)
+          pool.add(crispBevel, [wx, wy + 0.54 * hScale, wz], [1.34, 0.10, 0.26], 0, C_IRON_BAND)
+          pool.add(roundPebble, [wx - 0.44, wy + 0.08, wz + 0.26], [0.22, 0.16, 0.20], phase, C_IRON_BAND)
+          pool.add(roundPebble, [wx + 0.44, wy + 0.08, wz - 0.24], [0.20, 0.14, 0.22], phase + 1.1, C_IRON_BAND)
+        } else if (cell.terrain === 'lava_geyser') {
+          const pulse = 0.5 + 0.5 * Math.sin(state.time * 5.2 + phase)
+          if (cell.geyserActive) {
+            const jetH = 1.05 + Math.sin(state.time * 14 + phase) * 0.18
+            const jetR = 0.34 + pulse * 0.08
+            pool.add(smoothCone, [wx, wy + jetH * 0.46, wz], [jetR, jetH, jetR], state.time * 2.4, C_FIRE_CORE, 0.98)
+            pool.add(crystalMesh, [wx, wy + jetH * 0.62, wz], [jetR * 0.72, jetH * 0.78, jetR * 0.72], -state.time * 3.8, C_FIRE_TIP, 1.0, 'additive')
+            pool.add(flatRing, [wx, wy + 0.06, wz], [0.66 + pulse * 0.08, 1, 0.66 + pulse * 0.08], state.time * 2.2, C_GEYSER_RING, 1.0, 'additive')
+            if (emitHazardSparks) {
+              const a = state.time * 4.5 + phase
+              particles.spawn({
+                mesh: crystalMesh,
+                blend: 'additive',
+                position: [wx + Math.cos(a) * 0.22, wy + 0.35, wz + Math.sin(a) * 0.22],
+                velocity: [Math.cos(a) * 0.5, 2.2 + pulse * 0.8, Math.sin(a) * 0.5],
+                gravity: 2.2,
+                spin: 9,
+                scale: [0.11, 0.15, 0.11],
+                endScale: 0.1,
+                color: C_FIRE_TIP,
+                unlit: 1,
+                life: 0.58
+              })
+            }
+          } else {
+            // Simmering telegraph before eruption!
+            const glowS = 0.22 + pulse * 0.07
+            pool.add(crystalMesh, [wx, wy + 0.11, wz], [glowS * 1.4, glowS * 0.7, glowS * 1.4], state.time * 0.9, C_FIRE_CORE, 0.85)
+            pool.add(flatRing, [wx, wy + 0.045, wz], [0.50 + pulse * 0.06, 1, 0.50 + pulse * 0.06], -state.time * 0.8, C_GEYSER_WARN, 0.92, 'alpha')
+          }
+        } else if (cell.terrain === 'cursed_altar') {
+          if (!cell.altarUsed) {
+            const hover = 0.74 + Math.sin(state.time * 3.6 + phase) * 0.09
+            const rPulse = 0.58 + Math.sin(state.time * 4.4 + phase) * 0.06
+            pool.add(crystalMesh, [wx, wy + hover, wz - 0.54], [0.22, 0.38, 0.22], state.time * 2.1 + phase, C_SHADOW, 1.0)
+            pool.add(crystalMesh, [wx, wy + hover, wz - 0.54], [0.32, 0.48, 0.32], -state.time * 1.6, C_SHADOW, 0.92, 'additive')
+            pool.add(flatRing, [wx, wy + 0.06, wz], [rPulse, 1, rPulse], -state.time * 1.5, C_ALTAR_RING, 0.98, 'additive')
+            if (emitHazardSparks) {
+              const a = state.time * 3.1 + phase
+              particles.spawn({
+                mesh: crystalMesh,
+                blend: 'additive',
+                position: [wx + Math.cos(a) * 0.36, wy + 0.14, wz + Math.sin(a) * 0.36],
+                velocity: [-Math.sin(a) * 0.25, 1.15, Math.cos(a) * 0.25],
+                spin: 7,
+                scale: [0.08, 0.12, 0.08],
+                endScale: 0.1,
+                color: C_SHADOW,
+                unlit: 1,
+                life: 0.72
+              })
+            }
+          } else {
+            // Spent altar: dull dark shard resting low
+            pool.add(crystalMesh, [wx, wy + 0.34, wz - 0.54], [0.16, 0.22, 0.16], phase, C_CURSE_DIM, 0.12)
+          }
+        } else if (cell.terrain === 'ice') {
+          const shimmer = 0.5 + 0.5 * Math.sin(state.time * 2.8 + phase)
+          const glint = 0.14 + shimmer * 0.09
+          pool.add(tileQuad, [wx, wy + 0.022, wz], [TILE_SIZE * 0.68, 1, TILE_SIZE * 0.16], 0.78, C_ICE_SHEEN, 0.95, 'alpha')
+          pool.add(crystalMesh, [wx - 0.42, wy + 0.05, wz + 0.38], [glint, glint * 0.55, glint], state.time * 0.8 + phase, C_FROST, 0.92, 'additive')
+        } else if (cell.terrain === 'tall_grass') {
+          const sway = Math.sin(state.time * 2.5 + phase) * 0.14
+          const tufts: readonly (readonly [number, number, number])[] = [
+            [-0.46, -0.42, 0.52],
+            [0.44, -0.38, 0.48],
+            [-0.44, 0.42, 0.50],
+            [0.46, 0.40, 0.54],
+            [0.02, -0.48, 0.46]
+          ]
+          for (let i = 0; i < tufts.length; i++) {
+            const [ox, oz, h] = tufts[i]
+            const lean = sway + Math.sin(state.time * 3.1 + phase + i) * 0.05
+            pool.add(
+              smoothCone,
+              [wx + ox, wy + h * 0.48, wz + oz],
+              [0.16, h, 0.16],
+              quaternionFromEuler(lean, phase + i * 1.2, lean * 0.7),
+              i % 2 === 0 ? C_GRASS_BLADE : C_GRASS_TIP
+            )
+          }
+        }
+      }
+    }
+
     // 0. Enemy Danger Zone & Individual Enemy Threat overlays (layered cleanly below Move/Target/AoE!)
     const isBattleActive = battle.phase === 'player' || battle.phase === 'enemy'
     let dangerZone: DangerZoneMap | null = null
@@ -1603,7 +1735,7 @@ export function createCrownshardScene(renderer: LowPolyRenderer) {
       if (armedSkill) {
         const recommended = isAllyTarget
           ? Boolean(occupant && occupant.team === 'ally')
-          : Boolean(occupant && occupant.team === 'enemy')
+          : Boolean((occupant && occupant.team === 'enemy') || isIntactBarricade(cell))
         if (!recommended) {
           // Quiet free-space skill range footprint (subtle corner ticks so we never encourage clicking empty air or allies)
           pool.add(tileQuad, [wx, wy + 0.028, wz], [TILE_SIZE * 0.86, 1, TILE_SIZE * 0.86], 0, C_FREE_RANGE_TILE, 0.92, 'alpha')

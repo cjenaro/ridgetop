@@ -81,7 +81,12 @@ const TERRAIN_LABEL: Record<string, string> = {
   snow: 'Deep Snow (2 Move)',
   darkstone: 'Obsidian Floor (+2 DEF)',
   stairs: 'Stone Stairs (Climb)',
-  void: 'Chasm'
+  void: 'Chasm',
+  lava_geyser: 'Lava Geyser (12 Fire DMG + Burn)',
+  ice: 'Ice Sheet (+1 Glide Move)',
+  cursed_altar: 'Cursed Altar (-10 HP · +Empower & +1 AP)',
+  tall_grass: 'Tall Grass (+3 Ranged Cover · -12% Crit)',
+  barricade: 'Timber Barricade (Destructible · Blocks LoS)'
 }
 
 const SPEAKER_PORTRAIT: Record<string, string> = {
@@ -4703,7 +4708,15 @@ async function start() {
     if (hovered && !battle.facingPicker && g.width >= 660) {
       const cell = battle.cells[hovered.row]?.[hovered.col]
       if (cell && cell.terrain !== 'void') {
-        const desc = TERRAIN_LABEL[cell.terrain] ?? cell.terrain
+        const baseDesc = TERRAIN_LABEL[cell.terrain] ?? cell.terrain
+        const stateSuffix = cell.terrain === 'lava_geyser'
+          ? (cell.geyserActive ? ' [ERUPTING!]' : ' [Dormant]')
+          : cell.terrain === 'cursed_altar'
+            ? (cell.altarUsed ? ' [Spent]' : ' [Active Pact]')
+            : cell.terrain === 'barricade' && (cell.barricadeHp ?? 0) > 0
+              ? ` [${cell.barricadeHp}/${cell.barricadeMaxHp ?? 25} HP]`
+              : ''
+        const desc = `${baseDesc}${stateSuffix}`
         const hLvl = cellHeightLevel(cell)
         const dzTile = dangerMap?.tiles.find(t => t.col === hovered.col && t.row === hovered.row)
         const threatTag = dzTile
@@ -4714,7 +4727,7 @@ async function start() {
               : ` · Threat x${dzTile.threatCount}`
           : ''
         const text = `${desc} · H${hLvl} (${hovered.col + 1},${hovered.row + 1})${threatTag}`
-        const pw = Math.min(390, Math.max(148, text.length * 7 + 24))
+        const pw = Math.min(460, Math.max(148, text.length * 6.8 + 24))
         const py = g.height < 480 ? 48 : 58
         g.panel(10, py, pw, 28, {
           fill: dzTile ? '#3d1e2e' : '#253357',

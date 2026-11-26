@@ -6,6 +6,13 @@ export const TILE_SIZE = 1.65
 export const HEIGHT_STEP = 0.45
 export const MAX_HEIGHT_LEVEL = 4
 
+export const BARRICADE_DEFAULT_HP = 25
+export const LAVA_GEYSER_DAMAGE = 12
+export const LAVA_GEYSER_PERIOD = 2
+export const CURSED_ALTAR_HP_COST = 10
+export const TALL_GRASS_RANGED_COVER = 3
+export const TALL_GRASS_RANGED_CRIT_REDUCTION = 0.12
+
 export type Rarity = 'common' | 'uncommon' | 'rare' | 'epic' | 'legendary'
 
 export type HeroClassId =
@@ -46,6 +53,11 @@ export type TileTerrain =
   | 'darkstone'
   | 'stairs'
   | 'void'
+  | 'lava_geyser'
+  | 'ice'
+  | 'cursed_altar'
+  | 'tall_grass'
+  | 'barricade'
 
 export type BiomeId = 'meadow' | 'river' | 'crypt' | 'frost' | 'volcano' | 'throne'
 
@@ -295,11 +307,15 @@ export interface PackRevealItem {
 export interface GridCell {
   readonly col: number
   readonly row: number
-  readonly terrain: TileTerrain
-  readonly elevation: number
-  readonly walkable: boolean
+  terrain: TileTerrain
+  elevation: number
+  walkable: boolean
   readonly heightLevel?: number
   shrineUsed?: boolean
+  barricadeHp?: number
+  barricadeMaxHp?: number
+  geyserActive?: boolean
+  altarUsed?: boolean
 }
 
 export interface BattleUnit {
@@ -606,6 +622,10 @@ export interface BattleCellSnapshot {
   readonly terrain: TileTerrain
   readonly heightLevel: number
   readonly shrineUsed?: boolean
+  readonly barricadeHp?: number
+  readonly barricadeMaxHp?: number
+  readonly geyserActive?: boolean
+  readonly altarUsed?: boolean
 }
 
 export interface BattleUnitSnapshot {
@@ -742,11 +762,12 @@ export function terrainElevation(t: TileTerrain, heightLevel?: number): number {
   if (t === 'water' || t === 'lava') return base - 0.22
   if (t === 'bridge') return base + 0.08
   if (t === 'shrine') return base + 0.16
+  if (t === 'cursed_altar') return base + 0.12
   return base
 }
 
 export function terrainWalkable(t: TileTerrain): boolean {
-  return t !== 'water' && t !== 'lava' && t !== 'pillar' && t !== 'void'
+  return t !== 'water' && t !== 'lava' && t !== 'pillar' && t !== 'void' && t !== 'barricade'
 }
 
 export function terrainMoveCost(t: TileTerrain): number {
@@ -776,6 +797,9 @@ export function cellHeightLevel(cell: Pick<GridCell, 'terrain' | 'elevation' | '
   }
   if (cell.terrain === 'shrine') {
     return Math.max(0, Math.round((cell.elevation - 0.16) / HEIGHT_STEP))
+  }
+  if (cell.terrain === 'cursed_altar') {
+    return Math.max(0, Math.round((cell.elevation - 0.12) / HEIGHT_STEP))
   }
   return Math.max(0, Math.round(cell.elevation / HEIGHT_STEP))
 }
