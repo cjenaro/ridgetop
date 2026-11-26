@@ -118,9 +118,44 @@ export interface TacticCardSpec {
   readonly vfx: 'fire' | 'frost' | 'holy' | 'arcane' | 'slash' | 'shadow'
 }
 
-export type StageKind = 'story' | 'special' | 'treasure' | 'elite' | 'boss'
+export type StageKind = 'story' | 'special' | 'treasure' | 'elite' | 'boss' | 'town'
 
-export type DifficultyLevel = 1 | 2 | 3 | 4 | 5
+export type LandmarkKind =
+  | 'watchtower'
+  | 'bridge'
+  | 'shrine'
+  | 'crypt'
+  | 'vault'
+  | 'pass'
+  | 'citadel'
+  | 'gate'
+  | 'throne'
+  | 'forest'
+  | 'lake'
+  | 'foundry'
+  | 'town'
+  | 'ruins'
+  | 'peak'
+  | 'arena'
+  | 'atoll'
+  | 'abyss'
+
+export type WorldRegionId =
+  | 'solis_vale'
+  | 'silverfen'
+  | 'ashen_catacombs'
+  | 'frostspire'
+  | 'emberwaste'
+  | 'eclipse_dominion'
+  | 'sunbleached_dunes'
+  | 'aether_isles'
+  | 'shattered_expanse'
+
+export type DifficultyLevel = 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8
+
+export type FacingDir = 'n' | 's' | 'e' | 'w'
+
+export type AttackArc = 'front' | 'flank' | 'back'
 
 export interface PackSpec {
   readonly id: PackId
@@ -157,6 +192,8 @@ export interface ChapterEnemySpawn {
 export interface ChapterSpec {
   readonly id: string
   readonly index: number
+  readonly region: WorldRegionId
+  readonly landmark: LandmarkKind
   readonly kind: StageKind
   readonly difficulty: DifficultyLevel
   readonly recommendedPower: number
@@ -164,6 +201,9 @@ export interface ChapterSpec {
   readonly mapY: number
   readonly requires: readonly string[]
   readonly unlockMode?: 'all' | 'any'
+  readonly seaRoute?: boolean
+  readonly comingSoon?: boolean
+  readonly soonNote?: string
   readonly specialTag?: string
   readonly modifierDesc?: string
   readonly unlocksSlot4?: boolean
@@ -242,6 +282,7 @@ export interface BattleUnit {
   z: number
   y: number
   yaw: number
+  facing: FacingDir
   path: { col: number; row: number }[]
   moveProgress: number
   hp: number
@@ -357,6 +398,7 @@ export interface CombatForecastAlt {
   readonly status?: 'burn' | 'slow' | 'stun' | 'empower'
   readonly lethalNormal: boolean
   readonly requiresMove: boolean
+  readonly attackArc: AttackArc
   readonly active: boolean
 }
 
@@ -370,7 +412,7 @@ export interface CombatForecast {
   readonly attackerStars: 1 | 2 | 3
   readonly targetUid: string | null
   readonly targetName: string
-  readonly targetTeam: 'ally' | 'enemy'
+  readonly targetTeam: 'ally' | 'enemy' | 'none'
   readonly targetHeroId?: HeroClassId
   readonly targetEnemyId?: EnemyArchetypeId
   readonly targetCol: number
@@ -388,6 +430,11 @@ export interface CombatForecast {
   readonly status?: 'burn' | 'slow' | 'stun' | 'empower'
   readonly highGround: boolean
   readonly empowered: boolean
+  readonly attackArc: AttackArc
+  readonly isOffensive: boolean
+  readonly friendlyFire: boolean
+  readonly friendlyFireCount: number
+  readonly emptyTileTarget: boolean
   readonly ignoreArmor: number
   readonly aoeTargets: number
   readonly targetHpBefore: number
@@ -502,4 +549,24 @@ export function terrainElevation(t: TileTerrain): number {
 
 export function terrainWalkable(t: TileTerrain): boolean {
   return t !== 'water' && t !== 'lava' && t !== 'pillar'
+}
+
+export function facingVector(dir: FacingDir): readonly [number, number] {
+  if (dir === 'e') return [1, 0]
+  if (dir === 'w') return [-1, 0]
+  if (dir === 's') return [0, 1]
+  return [0, -1]
+}
+
+export function facingToYaw(dir: FacingDir): number {
+  if (dir === 'e') return Math.PI / 2
+  if (dir === 'w') return -Math.PI / 2
+  if (dir === 's') return 0
+  return Math.PI
+}
+
+export function vectorToFacing(dc: number, dr: number, fallback: FacingDir = 'e'): FacingDir {
+  if (dc === 0 && dr === 0) return fallback
+  if (Math.abs(dc) >= Math.abs(dr)) return dc > 0 ? 'e' : 'w'
+  return dr > 0 ? 's' : 'n'
 }

@@ -1,15 +1,15 @@
 import { nextRandom } from 'ridgetop'
 import {
   CHAPTERS, CHAPTER_BY_ID, ENEMY_SPECS, EQUIPMENT_BY_ID, EQUIPMENT_LIST, HERO_LIST, HERO_SPECS,
-  MERGE_COPIES_REQUIRED, PACK_BY_ID, RARITY_META, RARITY_ORDER, TACTIC_BY_ID, TACTIC_LIST
+  MERGE_COPIES_REQUIRED, PACK_BY_ID, PLAYABLE_CHAPTERS, RARITY_META, RARITY_ORDER, TACTIC_BY_ID, TACTIC_LIST
 } from './data.ts'
 import {
-  GRID_COLS, GRID_ROWS, gridToWorld, terrainElevation, terrainWalkable
+  GRID_COLS, GRID_ROWS, facingToYaw, facingVector, gridToWorld, terrainElevation, terrainWalkable, vectorToFacing
 } from './types.ts'
 import type {
-  BattleReward, BattleState, BattleUnit, BiomeId, CampaignState, ChapterSpec, CombatForecast, CombatForecastAlt,
-  DifficultyLevel, EquipSlot, EquipmentSpec, GameState, GridCell, HeroClassId, MoveAttackTile, OwnedEquipCard,
-  OwnedHeroCard, OwnedTacticCard, PackId, PackRevealItem, Rarity, SaveData,
+  AttackArc, BattleReward, BattleState, BattleUnit, BiomeId, CampaignState, ChapterSpec, CombatForecast,
+  CombatForecastAlt, DifficultyLevel, EquipSlot, EquipmentSpec, FacingDir, GameState, GridCell, HeroClassId,
+  MoveAttackTile, OwnedEquipCard, OwnedHeroCard, OwnedTacticCard, PackId, PackRevealItem, Rarity, SaveData,
   SkillSpec, TacticCardSpec, TileTerrain, TurnPreviewEntry
 } from './types.ts'
 
@@ -64,7 +64,7 @@ export function isStageCleared(campaign: CampaignState, stageId: string): boolea
 
 export function isStageUnlocked(campaign: CampaignState, stageOrId: string | ChapterSpec): boolean {
   const stage = typeof stageOrId === 'string' ? CHAPTER_BY_ID[stageOrId] : stageOrId
-  if (!stage) return false
+  if (!stage || stage.comingSoon) return false
   if (stage.requires.length === 0) return true
   if (stage.unlockMode === 'any') {
     return stage.requires.some(reqId => isStageCleared(campaign, reqId))
@@ -73,10 +73,11 @@ export function isStageUnlocked(campaign: CampaignState, stageOrId: string | Cha
 }
 
 export function isEndlessUnlocked(campaign: CampaignState): boolean {
-  return CHAPTERS.some(ch => ch.unlocksEndless && isStageCleared(campaign, ch.id))
+  return PLAYABLE_CHAPTERS.some(ch => ch.unlocksEndless && isStageCleared(campaign, ch.id))
 }
 
 export function getStageUnlockHint(stage: ChapterSpec): string {
+  if (stage.comingSoon) return stage.soonNote ?? 'Coming Soon...'
   if (stage.requires.length === 0) return 'Available'
   const names = stage.requires.map(id => CHAPTER_BY_ID[id]?.title ?? id)
   if (names.length === 1) return `Clear ${names[0]} to unlock`
@@ -85,11 +86,11 @@ export function getStageUnlockHint(stage: ChapterSpec): string {
 }
 
 export function getNextRecommendedStage(campaign: CampaignState): ChapterSpec {
-  const unlockedUnclear = CHAPTERS.filter(ch => isStageUnlocked(campaign, ch) && !isStageCleared(campaign, ch.id))
+  const unlockedUnclear = PLAYABLE_CHAPTERS.filter(ch => isStageUnlocked(campaign, ch) && !isStageCleared(campaign, ch.id))
   const storyNext = unlockedUnclear.find(ch => ch.kind === 'story' || ch.kind === 'boss')
   if (storyNext) return storyNext
   if (unlockedUnclear.length > 0) return unlockedUnclear[0]
-  return CHAPTERS[CHAPTERS.length - 1]
+  return PLAYABLE_CHAPTERS[PLAYABLE_CHAPTERS.length - 1]
 }
 
 export function computeSquadPower(campaign: CampaignState): number {
@@ -624,10 +625,10 @@ export function createInitialCampaign(seed = 1337): CampaignState {
 export function createInitialState(seed = 1337, save?: SaveData | null): GameState {
   if (save && save.version === 1 && save.campaign && Array.isArray(save.campaign.heroes) && save.campaign.heroes.length > 0) {
     const c = save.campaign
-    const rawCount = Number.isFinite(c.chaptersCleared) ? clamp(Math.floor(c.chaptersCleared), 0, CHAPTERS.length) : 0
+    const rawCount = Number.isFinite(c.chaptersCleared) ? clamp(Math.floor(c.chaptersCleared), 0, PLAYABLE_CHAPTERS.length) : 0
     const clearedStageIds: string[] = Array.isArray(c.clearedStageIds)
-      ? c.clearedStageIds.filter((id): id is string => typeof id === 'string' && Boolean(CHAPTER_BY_ID[id]))
-      : CHAPTERS.slice(0, rawCount).map(ch => ch.id)
+      ? c.clearedStageIds.filter((id): id is string => typeof id === 'string' && Boolean(CHAPTER_BY_ID[id]) && !CHAPTER_BY_ID[id].comingSoon)
+      : PLAYABLE_CHAPTERS.slice(0, rawCount).map(ch => ch.id)
     const dedupCleared = Array.from(new Set(clearedStageIds))
     const cloned: CampaignState = {
       seed: Number.isFinite(c.seed) ? (c.seed >>> 0) || 1337 : seed,
@@ -690,8 +691,8 @@ export function loadSave(storage: StorageLike | null | undefined): SaveData | nu
     if (!('heroes' in camp) || !Array.isArray(camp.heroes) || camp.heroes.length === 0) return null
     const chaptersCleared = 'chaptersCleared' in camp && typeof camp.chaptersCleared === 'number' ? camp.chaptersCleared : 0
     const clearedStageIds = 'clearedStageIds' in camp && Array.isArray(camp.clearedStageIds)
-      ? camp.clearedStageIds.filter((id): id is string => typeof id === 'string' && Boolean(CHAPTER_BY_ID[id]))
-      : CHAPTERS.slice(0, clamp(Math.floor(chaptersCleared), 0, CHAPTERS.length)).map(ch => ch.id)
+      ? camp.clearedStageIds.filter((id): id is string => typeof id === 'string' && Boolean(CHAPTER_BY_ID[id]) && !CHAPTER_BY_ID[id].comingSoon)
+      : PLAYABLE_CHAPTERS.slice(0, clamp(Math.floor(chaptersCleared), 0, PLAYABLE_CHAPTERS.length)).map(ch => ch.id)
     const selectedStageId = 'selectedStageId' in camp && typeof camp.selectedStageId === 'string' && CHAPTER_BY_ID[camp.selectedStageId]
       ? camp.selectedStageId
       : CHAPTERS[0].id
@@ -857,7 +858,8 @@ export function startChapterBattle(state: GameState, chapterIndex: number, endle
       x: wx,
       y: wy,
       z: wz,
-      yaw: Math.PI / 2,
+      yaw: facingToYaw('e'),
+      facing: 'e',
       path: [],
       moveProgress: 0,
       hp: stats.maxHp,
@@ -906,7 +908,8 @@ export function startChapterBattle(state: GameState, chapterIndex: number, endle
       x: wx,
       y: wy,
       z: wz,
-      yaw: -Math.PI / 2,
+      yaw: facingToYaw('w'),
+      facing: 'w',
       path: [],
       moveProgress: 0,
       hp: Math.round(spec.maxHp * scale),
@@ -1137,6 +1140,48 @@ export function getHeroSkill(unit: BattleUnit, skillIndex: number): SkillSpec | 
   return skill
 }
 
+export function computeAttackArc(
+  fromCol: number,
+  fromRow: number,
+  targetCol: number,
+  targetRow: number,
+  targetFacing: FacingDir
+): AttackArc {
+  const vc = fromCol - targetCol
+  const vr = fromRow - targetRow
+  if (vc === 0 && vr === 0) return 'front'
+  const [fc, fr] = facingVector(targetFacing)
+  const dot = vc * fc + vr * fr
+  const cross = Math.abs(vc * fr - vr * fc)
+  if (dot > 0 && dot >= cross) return 'front'
+  if (dot < 0 && -dot >= cross) return 'back'
+  return 'flank'
+}
+
+export function attackArcModifiers(arc: AttackArc): { readonly dmgMul: number; readonly critBonus: number } {
+  if (arc === 'back') return { dmgMul: 1.30, critBonus: 0.20 }
+  if (arc === 'flank') return { dmgMul: 1.15, critBonus: 0.10 }
+  return { dmgMul: 1.0, critBonus: 0 }
+}
+
+export function setUnitFacing(unit: BattleUnit, dir: FacingDir): void {
+  unit.facing = dir
+  unit.yaw = facingToYaw(dir)
+}
+
+export function rotateActiveUnitFacing(state: GameState, dir?: FacingDir): boolean {
+  const battle = state.battle
+  if (!battle || battle.phase !== 'player') return false
+  if (battle.units.some(u => u.path.length > 0)) return false
+  const active = getUnitByUid(battle, battle.activeUnitUid)
+  if (!active || active.team !== 'ally') return false
+  const order: readonly FacingDir[] = ['n', 'e', 's', 'w']
+  const nextDir = dir ?? order[(order.indexOf(active.facing) + 1) % order.length]
+  setUnitFacing(active, nextDir)
+  state.sounds.push({ kind: 'card', pitch: 1.12 })
+  return true
+}
+
 export function computeTargetTiles(
   battle: BattleState,
   unit: BattleUnit,
@@ -1162,28 +1207,15 @@ export function computeTargetTiles(
   if (skill.target === 'self') {
     return [{ col: unit.col, row: unit.row }]
   }
-  if (skill.target === 'ally') {
-    for (const other of battle.units) {
-      if (!other.alive || other.team !== unit.team) continue
-      if (manhattan(unit.col, unit.row, other.col, other.row) <= skill.range) {
-        targets.push({ col: other.col, row: other.row })
-      }
-    }
-    return targets
-  }
-  if (skill.target === 'enemy') {
-    for (const other of battle.units) {
-      if (!other.alive || other.team === unit.team) continue
-      if (manhattan(unit.col, unit.row, other.col, other.row) <= skill.range) {
-        targets.push({ col: other.col, row: other.row })
-      }
-    }
-    return targets
-  }
-  // 'tile': any walkable or occupied tile in range
+
+  // Free-tile & friendly-fire skill targeting:
+  // Any non-pillar tile within skill.range can be targeted (empty spaces, enemies, or allies!).
+  // Offensive skills start at distance 1 so clicking your own tile doesn't accidentally self-hit.
+  const minDist = skill.target === 'ally' ? 0 : 1
   for (let row = 0; row < battle.rows; row++) {
     for (let col = 0; col < battle.cols; col++) {
-      if (manhattan(unit.col, unit.row, col, row) <= skill.range && battle.cells[row][col].terrain !== 'pillar') {
+      const d = manhattan(unit.col, unit.row, col, row)
+      if (d >= minDist && d <= skill.range && battle.cells[row][col].terrain !== 'pillar') {
         targets.push({ col, row })
       }
     }
@@ -1262,6 +1294,8 @@ function pickBestApproachTile(
   range: number
 ): { col: number; row: number } | null {
   const targetElev = battle.cells[targetRow][targetCol].elevation
+  const targetUnit = unitAt(battle, targetCol, targetRow)
+  const offensive = Boolean(targetUnit && targetUnit.team !== unit.team)
   let best: { col: number; row: number } | null = null
   let bestScore = -1e9
   for (const m of moveTiles) {
@@ -1271,6 +1305,11 @@ function pickBestApproachTile(
     let score = 0
     if (cell.elevation > targetElev + 0.1) score += 1000
     if (cell.terrain === 'shrine') score += 250
+    if (offensive && targetUnit) {
+      const arc = computeAttackArc(m.col, m.row, targetCol, targetRow, targetUnit.facing)
+      if (arc === 'back') score += 850
+      else if (arc === 'flank') score += 420
+    }
     const walkDist = manhattan(unit.col, unit.row, m.col, m.row)
     // Ranged heroes prefer staying at max safe distance; melee prefers shortest approach
     score += range > 1 ? d * 25 - walkDist * 6 : -walkDist * 20
@@ -1358,12 +1397,15 @@ function previewDamageMath(
   critChance: number
   highGround: boolean
   empowered: boolean
+  attackArc: AttackArc
   hpAfterNormal: number
   hpAfterCrit: number
 } {
   let dmg = rawDamage
   let highGround = false
   let empowered = false
+  let attackArc: AttackArc = 'front'
+  let arcCritBonus = 0
   if (attacker) {
     const aElev = battle.cells[fromRow][fromCol].elevation
     const dElev = battle.cells[defender.row][defender.col].elevation
@@ -1371,6 +1413,10 @@ function previewDamageMath(
       dmg *= 1.2
       highGround = true
     }
+    attackArc = computeAttackArc(fromCol, fromRow, defender.col, defender.row, defender.facing)
+    const arcMod = attackArcModifiers(attackArc)
+    dmg *= arcMod.dmgMul
+    arcCritBonus = arcMod.critBonus
     if (attacker.empowerTurns > 0) {
       dmg *= 1.35
       empowered = true
@@ -1378,7 +1424,7 @@ function previewDamageMath(
   }
   const effDef = Math.max(0, defender.def * (1 - clamp(ignoreArmor, 0, 1)))
   const baseDmg = Math.max(4, Math.round(dmg - effDef * 0.72))
-  const critChance = canCrit && attacker ? clamp(attacker.crit, 0, 1) : 0
+  const critChance = canCrit && attacker ? clamp(attacker.crit + arcCritBonus, 0, 0.95) : 0
   const critRaw = critChance > 0 ? Math.round(baseDmg * 1.55) : baseDmg
   const normalAfterShield = Math.max(0, baseDmg - defender.shield)
   const critAfterShield = Math.max(0, critRaw - defender.shield)
@@ -1388,6 +1434,7 @@ function previewDamageMath(
     critChance,
     highGround,
     empowered,
+    attackArc,
     hpAfterNormal: Math.max(0, defender.hp - normalAfterShield),
     hpAfterCrit: Math.max(0, defender.hp - critAfterShield)
   }
@@ -1395,7 +1442,8 @@ function previewDamageMath(
 
 /**
  * Pure deterministic Combat Forecast for hovering or tapping a target tile.
- * Computes projected damage/crit/heal/shield/KO and compares Strike vs every usable Skill.
+ * Computes projected damage/crit/heal/shield/KO, flanking/backstab arcs, friendly fire warnings,
+ * empty-tile skill casts, and compares Strike vs every usable Skill.
  */
 export function computeCombatForecast(state: GameState, col: number, row: number): CombatForecast | null {
   const battle = state.battle
@@ -1457,6 +1505,11 @@ export function computeCombatForecast(state: GameState, col: number, row: number
       status: spec.status,
       highGround: false,
       empowered: false,
+      attackArc: 'front',
+      isOffensive: spec.damage > 0,
+      friendlyFire: false,
+      friendlyFireCount: 0,
+      emptyTileTarget: false,
       ignoreArmor: spec.damage > 0 ? 0.6 : 0,
       aoeTargets: Math.max(1, aoeTargets),
       targetHpBefore: primary.hp,
@@ -1484,8 +1537,79 @@ export function computeCombatForecast(state: GameState, col: number, row: number
   const armedSkill = armedIdx !== null ? getHeroSkill(active, armedIdx) : null
 
   const affected = armedSkill ? getPatternCells(col, row, armedSkill.pattern, battle.cols, battle.rows) : [{ col, row }]
-  const primary = unitAt(battle, col, row) ?? affected.map(c => unitAt(battle, c.col, c.row)).find((u): u is BattleUnit => Boolean(u))
-  if (!primary) return null
+  const directUnit = unitAt(battle, col, row)
+  const isOffensive = armedSkill ? armedSkill.powerMul > 0 : true
+  const isSupportOnly = Boolean(armedSkill && armedSkill.powerMul === 0)
+  const isDawnsJudgmentSafe = Boolean(
+    armedSkill && armedSkill.id === 'dawns_judgment' && (!directUnit || directUnit.team !== active.team)
+  )
+
+  const affectedUnits: BattleUnit[] = []
+  for (const c of affected) {
+    const u = unitAt(battle, c.col, c.row)
+    if (!u) continue
+    if (isOffensive && u.uid === active.uid && !(col === active.col && row === active.row)) continue
+    affectedUnits.push(u)
+  }
+
+  const friendlyFireUnits = isOffensive && !isDawnsJudgmentSafe
+    ? affectedUnits.filter(u => u.team === active.team)
+    : []
+  const friendlyFireCount = friendlyFireUnits.length
+  const friendlyFire = friendlyFireCount > 0
+
+  // Prefer the directly clicked unit; otherwise first affected enemy (or ally if friendly fire / support)
+  const primary = directUnit
+    ?? affectedUnits.find(u => (isSupportOnly ? u.team === active.team : u.team !== active.team))
+    ?? affectedUnits[0]
+    ?? null
+
+  // If hovering an empty ground space with an armed skill and no units in the pattern:
+  if (!primary) {
+    if (!armedSkill) return null
+    return {
+      mode: 'skill',
+      actionName: armedSkill.name,
+      skillIndex: armedIdx,
+      attackerUid: active.uid,
+      attackerName: active.name,
+      attackerHeroId: active.heroId,
+      attackerStars: active.stars,
+      targetUid: null,
+      targetName: 'Empty Space',
+      targetTeam: 'none',
+      targetCol: col,
+      targetRow: row,
+      approachCol,
+      approachRow,
+      requiresMove: false,
+      path: [],
+      normalDmg: 0,
+      critDmg: 0,
+      critChance: 0,
+      healAmount: 0,
+      shieldAmount: 0,
+      selfShield: armedSkill.shieldAmount > 0 && armedSkill.pattern !== 'aura' ? armedSkill.shieldAmount : 0,
+      status: armedSkill.status,
+      highGround: false,
+      empowered: active.empowerTurns > 0,
+      attackArc: 'front',
+      isOffensive,
+      friendlyFire: false,
+      friendlyFireCount: 0,
+      emptyTileTarget: true,
+      ignoreArmor: armedSkill.ignoreArmor,
+      aoeTargets: 0,
+      targetHpBefore: 0,
+      targetMaxHp: 1,
+      targetShieldBefore: 0,
+      targetHpAfterNormal: 0,
+      targetHpAfterCrit: 0,
+      lethalNormal: false,
+      lethalCrit: false,
+      alternatives: []
+    }
+  }
 
   // Compute primary preview
   let normalDmg = 0
@@ -1493,6 +1617,7 @@ export function computeCombatForecast(state: GameState, col: number, row: number
   let critChance = 0
   let highGround = false
   let empowered = false
+  let attackArc: AttackArc = 'front'
   let ignoreArmor = 0
   let healAmount = 0
   let shieldAmount = 0
@@ -1511,7 +1636,13 @@ export function computeCombatForecast(state: GameState, col: number, row: number
       hpAfterCrit = hpAfterNormal
     } else {
       selfShield = armedSkill.shieldAmount
-      if (armedSkill.powerMul > 0 && primary.team !== active.team) {
+      const healsAlly = isDawnsJudgmentSafe && primary.team === active.team
+      if (healsAlly) {
+        healAmount = armedSkill.healAmount
+        shieldAmount = armedSkill.shieldAmount
+        hpAfterNormal = Math.min(primary.maxHp, primary.hp + healAmount)
+        hpAfterCrit = hpAfterNormal
+      } else if (armedSkill.powerMul > 0) {
         const raw = active.atk * armedSkill.powerMul + armedSkill.flatBonus
         const m = previewDamageMath(battle, active, primary, approachCol, approachRow, raw, armedSkill.ignoreArmor, true)
         normalDmg = m.normalDmg
@@ -1519,6 +1650,7 @@ export function computeCombatForecast(state: GameState, col: number, row: number
         critChance = m.critChance
         highGround = m.highGround
         empowered = m.empowered
+        attackArc = m.attackArc
         hpAfterNormal = m.hpAfterNormal
         hpAfterCrit = m.hpAfterCrit
       }
@@ -1530,15 +1662,15 @@ export function computeCombatForecast(state: GameState, col: number, row: number
     critChance = m.critChance
     highGround = m.highGround
     empowered = m.empowered
+    attackArc = m.attackArc
     hpAfterNormal = m.hpAfterNormal
     hpAfterCrit = m.hpAfterCrit
   }
 
-  const aoeTargets = affected.filter(c => {
-    const u = unitAt(battle, c.col, c.row)
-    if (!u) return false
-    if (armedSkill && (armedSkill.target === 'ally' || armedSkill.target === 'self')) return u.team === active.team
-    return u.team !== active.team
+  const aoeTargets = affectedUnits.filter(u => {
+    if (isSupportOnly) return true
+    if (isDawnsJudgmentSafe) return u.team !== active.team
+    return true
   }).length
 
   // Build Strike vs Skill comparison alternatives against this same target
@@ -1565,12 +1697,13 @@ export function computeCombatForecast(state: GameState, col: number, row: number
         selfShield: 0,
         lethalNormal: m.hpAfterNormal <= 0,
         requiresMove: !strikeDirect,
+        attackArc: m.attackArc,
         active: armedIdx === null
       })
     }
   }
 
-  // Unlocked, off-cooldown skills that can target this unit
+  // Unlocked, off-cooldown skills that can target this unit (only suggest aligned skills so we don't encourage friendly fire!)
   for (let i = 0; i < 3; i++) {
     const sk = getHeroSkill(active, i)
     if (!sk || active.cooldowns[i] > 0 || sk.target === 'self') continue
@@ -1594,6 +1727,7 @@ export function computeCombatForecast(state: GameState, col: number, row: number
         status: sk.status,
         lethalNormal: false,
         requiresMove: !skDirect,
+        attackArc: 'front',
         active: armedIdx === i
       })
     } else {
@@ -1611,6 +1745,7 @@ export function computeCombatForecast(state: GameState, col: number, row: number
         status: sk.status,
         lethalNormal: m.hpAfterNormal <= 0,
         requiresMove: !skDirect,
+        attackArc: m.attackArc,
         active: armedIdx === i
       })
     }
@@ -1644,6 +1779,11 @@ export function computeCombatForecast(state: GameState, col: number, row: number
     status,
     highGround,
     empowered,
+    attackArc,
+    isOffensive,
+    friendlyFire,
+    friendlyFireCount,
+    emptyTileTarget: false,
     ignoreArmor,
     aoeTargets: Math.max(1, aoeTargets),
     targetHpBefore: primary.hp,
@@ -1682,10 +1822,16 @@ function applyDamage(
   if (!battle || !defender.alive) return 0
 
   let dmg = rawDamage
+  let attackArc: AttackArc = 'front'
+  let arcCritBonus = 0
   if (attacker) {
     const aElev = battle.cells[attacker.row][attacker.col].elevation
     const dElev = battle.cells[defender.row][defender.col].elevation
     if (aElev > dElev + 0.1) dmg *= 1.2 // High ground advantage!
+    attackArc = computeAttackArc(attacker.col, attacker.row, defender.col, defender.row, defender.facing)
+    const arcMod = attackArcModifiers(attackArc)
+    dmg *= arcMod.dmgMul
+    arcCritBonus = arcMod.critBonus
     if (attacker.empowerTurns > 0) dmg *= 1.35
   }
 
@@ -1693,7 +1839,7 @@ function applyDamage(
   let finalDmg = Math.max(4, Math.round(dmg - effDef * 0.72))
 
   let isCrit = false
-  if (canCrit && attacker && randFloat(state.campaign) < attacker.crit) {
+  if (canCrit && attacker && randFloat(state.campaign) < clamp(attacker.crit + arcCritBonus, 0, 0.95)) {
     isCrit = true
     finalDmg = Math.round(finalDmg * 1.55)
   }
@@ -1709,7 +1855,7 @@ function applyDamage(
   defender.hitFlash = 0.28
   defender.animState = 'hit'
   defender.animTimer = 0.30
-  battle.shake = Math.max(battle.shake, isCrit ? 0.36 : 0.18)
+  battle.shake = Math.max(battle.shake, isCrit || attackArc === 'back' ? 0.36 : 0.18)
 
   if (finalDmg > 0) {
     addFloat(
@@ -1720,6 +1866,14 @@ function applyDamage(
       isCrit ? `CRIT -${finalDmg}!` : `-${finalDmg}`,
       isCrit ? '#ffe16b' : '#ff7b6b'
     )
+    if (attackArc === 'back') {
+      addFloat(battle, defender.x, defender.y + 0.42, defender.z, 'BACKSTAB +30%!', '#ff9cf0')
+    } else if (attackArc === 'flank') {
+      addFloat(battle, defender.x, defender.y + 0.42, defender.z, 'FLANK +15%', '#ffd166')
+    }
+    if (attacker && attacker.team === defender.team) {
+      addFloat(battle, defender.x, defender.y + 0.76, defender.z, 'ALLY HIT!', '#ff66a8')
+    }
     state.sounds.push({ kind: isCrit ? 'crit' : 'hit' })
   } else if (absorbed > 0) {
     addFloat(battle, defender.x, defender.y, defender.z, `BLOCK ${absorbed}`, '#7ed9ff')
@@ -1790,6 +1944,7 @@ function faceToward(unit: BattleUnit, tx: number, tz: number): void {
   const dz = tz - unit.z
   if (Math.hypot(dx, dz) > 0.05) {
     unit.yaw = Math.atan2(dx, dz)
+    unit.facing = vectorToFacing(dx, dz, unit.facing)
   }
 }
 
@@ -2032,16 +2187,29 @@ function executeHeroSkill(
   })
 
   const affected = getPatternCells(col, row, skill.pattern, battle.cols, battle.rows)
+  let hitAny = false
 
-  if (skill.target === 'self' || skill.target === 'ally') {
+  if (skill.target === 'self') {
     for (const c of affected) {
       const ally = unitAt(battle, c.col, c.row)
       if (!ally || ally.team !== caster.team) continue
       applyHealAndShield(state, ally, skill.healAmount, skill.shieldAmount)
       if (skill.status === 'empower') applyStatus(battle, ally, 'empower')
+      hitAny = true
+    }
+  } else if (skill.target === 'ally') {
+    // Support skill can be cast on any tile in range (heals/shields whoever sits there, or whiffs on empty space!)
+    for (const c of affected) {
+      const unit = unitAt(battle, c.col, c.row)
+      if (!unit) continue
+      applyHealAndShield(state, unit, skill.healAmount, skill.shieldAmount)
+      if (skill.status === 'empower') applyStatus(battle, unit, 'empower')
+      hitAny = true
     }
   } else {
-    // Offensive (and optional self-shield/heal)
+    // Offensive skill: can target empty spaces AND allies (friendly fire!)
+    const directTarget = unitAt(battle, col, row)
+    const isDawnsJudgmentSafe = skill.id === 'dawns_judgment' && (!directTarget || directTarget.team !== caster.team)
     if (skill.shieldAmount > 0 && skill.pattern !== 'aura') {
       applyHealAndShield(state, caster, 0, skill.shieldAmount)
     }
@@ -2051,17 +2219,27 @@ function executeHeroSkill(
     for (const c of affected) {
       const target = unitAt(battle, c.col, c.row)
       if (!target) continue
-      if (target.team !== caster.team && skill.powerMul > 0) {
+      // Don't self-hit from splash around an adjacent tile unless caster directly targeted own space
+      if (target.uid === caster.uid && !(col === caster.col && row === caster.row)) continue
+      if (isDawnsJudgmentSafe && target.team === caster.team) {
+        applyHealAndShield(state, target, skill.healAmount, skill.shieldAmount)
+        hitAny = true
+        continue
+      }
+      if (skill.powerMul > 0) {
         const raw = caster.atk * skill.powerMul + skill.flatBonus
         applyDamage(state, caster, target, raw, skill.ignoreArmor, true)
         if (skill.status && skill.status !== 'empower' && target.alive) {
           applyStatus(battle, target, skill.status)
         }
-      } else if (target.team === caster.team && skill.healAmount > 0 && skill.pattern !== 'single') {
-        applyHealAndShield(state, target, skill.healAmount, skill.shieldAmount)
+        hitAny = true
       }
     }
     if (skill.status === 'empower') applyStatus(battle, caster, 'empower')
+  }
+
+  if (!hitAny) {
+    addFloat(battle, tx, ty + 0.1, tz, 'NO TARGET', '#b8c7e6')
   }
 
   checkBattleOutcome(state)
@@ -2470,6 +2648,11 @@ function executeEnemyUnitTurn(state: GameState, enemy: BattleUnit): void {
       const d = manhattan(tile.col, tile.row, target.col, target.row)
       const elev = battle.cells[tile.row][tile.col].elevation
       let score = -d * 10 + elev * 4
+      if (d <= enemy.range) {
+        const arc = computeAttackArc(tile.col, tile.row, target.col, target.row, target.facing)
+        if (arc === 'back') score += 18
+        else if (arc === 'flank') score += 9
+      }
       if (spec.ai === 'ranged') {
         score = d <= enemy.range && d >= 2 ? 40 - d * 2 + elev * 8 : -Math.abs(d - enemy.range) * 10
       }
@@ -2593,7 +2776,10 @@ export function stepGame(state: GameState, dt: number): void {
             const nearest = allies.sort(
               (a, b) => manhattan(u.col, u.row, a.col, a.row) - manhattan(u.col, u.row, b.col, b.row)
             )[0]
-            if (nearest) performEnemyAttack(state, u, nearest)
+            if (nearest) {
+              faceToward(u, nearest.x, nearest.z)
+              performEnemyAttack(state, u, nearest)
+            }
           }
         }
       } else {

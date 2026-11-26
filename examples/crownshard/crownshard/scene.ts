@@ -13,21 +13,35 @@ import {
   aimClipFor, attackClipFor, castClipFor, celebrateClipFor, idleClipFor, idleRateFor, stanceOffsetFor, uidHash
 } from './animations.ts'
 import type { UnitClipName } from './animations.ts'
-import { getEquipmentByUid, getHeroByUid, getPatternCells, getHeroSkill, getUnitByUid, getTacticByUid } from './simulation.ts'
+import { getEquipmentByUid, getHeroByUid, getPatternCells, getHeroSkill, getUnitByUid, getTacticByUid, unitAt } from './simulation.ts'
 import { TACTIC_BY_ID } from './data.ts'
-import { TILE_SIZE, gridToWorld, worldToGrid } from './types.ts'
+import { TILE_SIZE, facingToYaw, gridToWorld, worldToGrid } from './types.ts'
 import type { BattleState, BattleUnit, CombatForecast, GameState, OwnedHeroCard } from './types.ts'
 
-const C_MOVE_TILE: Color = [0.28, 0.76, 1.0, 0.42]
-const C_ATTACK_TILE: Color = [1.0, 0.34, 0.28, 0.50]
-const C_MOVE_ATTACK_TILE: Color = [1.0, 0.56, 0.16, 0.50]
-const C_ALLY_TARGET: Color = [0.34, 0.94, 0.64, 0.48]
-const C_AOE_PREVIEW: Color = [1.0, 0.80, 0.28, 0.56]
-const C_HOVER_TILE: Color = [1.0, 0.96, 0.82, 0.38]
+const C_MOVE_TILE: Color = [0.22, 0.80, 1.0, 0.34]
+const C_MOVE_BORDER: Color = [0.84, 0.97, 1.0, 0.94]
+const C_ATTACK_TILE: Color = [1.0, 0.32, 0.14, 0.42]
+const C_ATTACK_MARK: Color = [1.0, 0.94, 0.80, 0.98]
+const C_FREE_RANGE_TILE: Color = [0.76, 0.86, 1.0, 0.12]
+const C_FREE_RANGE_MARK: Color = [0.86, 0.92, 1.0, 0.42]
+const C_FRIENDLY_FIRE_TILE: Color = [0.98, 0.18, 0.58, 0.56]
+const C_FRIENDLY_FIRE_MARK: Color = [1.0, 0.92, 0.97, 0.98]
+const C_MOVE_ATTACK_TILE: Color = [1.0, 0.68, 0.10, 0.42]
+const C_MOVE_ATTACK_MARK: Color = [1.0, 0.96, 0.72, 0.98]
+const C_ALLY_TARGET: Color = [0.24, 0.92, 0.74, 0.38]
+const C_ALLY_MARK: Color = [0.94, 1.0, 0.97, 0.98]
+const C_AOE_PREVIEW: Color = [1.0, 0.84, 0.24, 0.42]
+const C_AOE_MARK: Color = [1.0, 0.97, 0.78, 0.98]
+const C_HOVER_TILE: Color = [1.0, 0.98, 0.90, 0.28]
+const C_HOVER_BORDER: Color = [1.0, 1.0, 1.0, 0.98]
 const C_APPROACH_RING: Color = [0.42, 0.95, 1.0, 0.96]
 const C_TARGET_RETICLE: Color = [1.0, 0.32, 0.22, 0.96]
+const C_EMPTY_RETICLE: Color = [0.76, 0.84, 0.98, 0.78]
 const C_FORECAST_ARC: Color = [1.0, 0.80, 0.26, 0.94]
 const C_FORECAST_ALLY_ARC: Color = [0.44, 0.98, 0.68, 0.94]
+const C_FORECAST_FF_ARC: Color = [1.0, 0.34, 0.68, 0.96]
+const C_FACING_ALLY: Color = [0.64, 0.95, 1.0, 0.96]
+const C_FACING_ENEMY: Color = [1.0, 0.48, 0.22, 0.96]
 const C_ACTIVE_RING: Color = [1.0, 0.85, 0.32, 0.96]
 const C_SELECT_RING: Color = [0.70, 0.94, 1.0, 0.82]
 const C_ENEMY_RING: Color = [0.98, 0.32, 0.30, 0.78]
@@ -89,6 +103,91 @@ const arrowMesh = (() => {
   quad([0, -0.11, -0.50], [0, 0.11, -0.50], [0, 0.05, -0.30], [0, -0.05, -0.30])
   return mesh(pos, idx)
 })()
+
+/** Flat ground-hugging directional facing chevron pointing down +Z outside the unit ring. */
+const facingChevronMesh = (() => {
+  const pos: number[] = []
+  const idx: number[] = []
+  function tri(a: Vec3, b: Vec3, c: Vec3) {
+    const n = pos.length / 3
+    pos.push(...a, ...b, ...c, ...a, ...c, ...b)
+    idx.push(n, n + 1, n + 2, n + 3, n + 4, n + 5)
+  }
+  const y = 0.0
+  // Crisp forward chevron arrowhead placed at z = 0.56..0.84
+  tri([0, y, 0.86], [-0.20, y, 0.56], [0, y, 0.64])
+  tri([0, y, 0.86], [0, y, 0.64], [0.20, y, 0.56])
+  return mesh(pos, idx)
+})()
+
+/** Build a flat ground-plane mesh from a list of 2D XZ quads (double-sided, unit tile scale [-0.5..0.5]). */
+function flatOverlayMesh(rects: readonly (readonly [number, number, number, number])[]) {
+  const pos: number[] = []
+  const idx: number[] = []
+  function quadXZ(x0: number, z0: number, x1: number, z1: number) {
+    const n = pos.length / 3
+    pos.push(x0, 0, z0, x1, 0, z0, x1, 0, z1, x0, 0, z1)
+    idx.push(n, n + 1, n + 2, n, n + 2, n + 3, n, n + 2, n + 1, n, n + 3, n + 2)
+  }
+  for (const [x0, z0, x1, z1] of rects) quadXZ(x0, z0, x1, z1)
+  return mesh(pos, idx)
+}
+
+/** Build a flat ground-plane mesh from arbitrary 2D XZ line segments with given half-width. */
+function flatSegmentsMesh(segs: readonly (readonly [number, number, number, number])[], halfW: number) {
+  const pos: number[] = []
+  const idx: number[] = []
+  for (const [x0, z0, x1, z1] of segs) {
+    const dx = x1 - x0
+    const dz = z1 - z0
+    const len = Math.hypot(dx, dz) || 1
+    const nx = (-dz / len) * halfW
+    const nz = (dx / len) * halfW
+    const n = pos.length / 3
+    pos.push(
+      x0 - nx, 0, z0 - nz,
+      x0 + nx, 0, z0 + nz,
+      x1 + nx, 0, z1 + nz,
+      x1 - nx, 0, z1 - nz
+    )
+    idx.push(n, n + 1, n + 2, n, n + 2, n + 3, n, n + 2, n + 1, n, n + 3, n + 2)
+  }
+  return mesh(pos, idx)
+}
+
+/** Colorblind-safe tile shape overlays (distinct silhouettes readable even in pure grayscale!). */
+// 1. Hollow Square Frame + small center dot -> MOVE tile / Hover cursor
+const tileFrameMesh = flatOverlayMesh([
+  [-0.47, -0.47, 0.47, -0.39],
+  [-0.47, 0.39, 0.47, 0.47],
+  [-0.47, -0.39, -0.39, 0.39],
+  [0.39, -0.39, 0.47, 0.39]
+])
+const tileDotMesh = flatOverlayMesh([[-0.08, -0.08, 0.08, 0.08]])
+// 2. Bold Diagonal X Crosshair -> DIRECT ATTACK / FRIENDLY FIRE target
+const tileCrossMesh = flatSegmentsMesh([
+  [-0.30, -0.30, 0.30, 0.30],
+  [0.30, -0.30, -0.30, 0.30]
+], 0.055)
+// 3. Four Corner L-Brackets [ ] -> Attack lock-on / Free skill range footprint
+const tileCornersMesh = flatOverlayMesh([
+  [-0.46, -0.46, -0.22, -0.39], [-0.46, -0.46, -0.39, -0.22],
+  [0.22, -0.46, 0.46, -0.39], [0.39, -0.46, 0.46, -0.22],
+  [-0.46, 0.39, -0.22, 0.46], [-0.46, 0.22, -0.39, 0.46],
+  [0.22, 0.39, 0.46, 0.46], [0.39, 0.22, 0.46, 0.46]
+])
+// 4. Bold Medical/Support Plus (+) -> ALLY HEAL / SHIELD target
+const tilePlusMesh = flatOverlayMesh([
+  [-0.075, -0.28, 0.075, 0.28],
+  [-0.28, -0.075, 0.28, 0.075]
+])
+// 5. Bold Hollow Diamond -> MOVE+ATTACK / AoE Blast Preview / Enemy Ground Ring!
+const tileDiamondMesh = flatSegmentsMesh([
+  [0, -0.42, 0.42, 0],
+  [0.42, 0, 0, 0.42],
+  [0, 0.42, -0.42, 0],
+  [-0.42, 0, 0, -0.42]
+], 0.045)
 
 function vfxColor(style: 'slash' | 'arrow' | 'arcane' | 'fire' | 'frost' | 'holy' | 'shadow' | 'gold'): Color {
   if (style === 'fire') return C_FIRE_CORE
@@ -169,6 +268,11 @@ export function createCrownshardScene(renderer: LowPolyRenderer) {
   let hoveredCell: { col: number; row: number } | null = null
   let activeForecast: CombatForecast | null = null
   let cameraYawOffset = 0
+  const DEFAULT_CAMERA_PITCH = 0.72
+  const MIN_CAMERA_PITCH = 0.28
+  const MAX_CAMERA_PITCH = 1.38
+  let cameraPitch = DEFAULT_CAMERA_PITCH
+  let cameraPitchActual = DEFAULT_CAMERA_PITCH
   let cameraZoom = 1.0
   let cameraZoomActual = 1.0
   let cameraPanX = 0
@@ -725,10 +829,17 @@ export function createCrownshardScene(renderer: LowPolyRenderer) {
     const groundY = unit.y
     shadows.add([px, groundY + 0.02, pz], { groundY, radius: 0.58 * scale * (1 - Math.min(0.35, extraY * 0.5)), opacity: 0.30 })
 
-    // Distinct active-turn golden pulsing ring vs team/inspect ring
+    // Colorblind-safe unit rings: Allies use smooth Circle ring, Enemies use Diamond ring + directional facing chevron!
     const ringColor = isActive ? C_ACTIVE_RING : isSelected ? C_SELECT_RING : unit.team === 'ally' ? C_ALLY_RING : C_ENEMY_RING
     const ringScale = (isActive ? 0.68 + Math.sin(time * 6) * 0.045 : 0.54) * scale
-    pool.add(flatRing, [px, groundY + 0.038, pz], [ringScale, 1, ringScale], time * (isActive ? 1.1 : 0), ringColor, 0.95, 'alpha')
+    if (unit.team === 'enemy') {
+      pool.add(tileDiamondMesh, [px, groundY + 0.040, pz], [ringScale * 2.5, 1, ringScale * 2.5], 0, ringColor, 0.96, 'alpha')
+    } else {
+      pool.add(flatRing, [px, groundY + 0.038, pz], [ringScale, 1, ringScale], time * (isActive ? 1.1 : 0), ringColor, 0.95, 'alpha')
+    }
+    const facingCol = isActive ? C_ACTIVE_RING : unit.team === 'ally' ? C_FACING_ALLY : C_FACING_ENEMY
+    const chevronS = (isActive ? 1.16 : 0.96) * scale
+    pool.add(facingChevronMesh, [px, groundY + 0.046, pz], [chevronS, 1, chevronS], facingToYaw(unit.facing), facingCol, 0.98, 'alpha')
 
     if (unit.team === 'ally' && unit.stars >= 2) {
       const crownY = py + (1.72 + Math.sin(time * 3.4) * 0.05) * scale
@@ -773,6 +884,8 @@ export function createCrownshardScene(renderer: LowPolyRenderer) {
       hitStop = 0
       cameraZoom = 1.0
       cameraZoomActual = 1.0
+      cameraPitch = DEFAULT_CAMERA_PITCH
+      cameraPitchActual = DEFAULT_CAMERA_PITCH
       cameraPanX = 0
       cameraPanZ = 0
       for (const fn of battle.floatingNumbers) lastFloatId = Math.max(lastFloatId, fn.id)
@@ -811,6 +924,7 @@ export function createCrownshardScene(renderer: LowPolyRenderer) {
     const shakeY = battle.shake > 0 ? Math.cos(state.time * 54) * battle.shake * 0.12 : 0
 
     cameraZoomActual += (cameraZoom - cameraZoomActual) * Math.min(1, dt * 14)
+    cameraPitchActual += (cameraPitch - cameraPitchActual) * Math.min(1, dt * 14)
     const maxPan = Math.max(0, (1.02 - cameraZoomActual) * 8.0)
     cameraPanX = Math.max(-maxPan, Math.min(maxPan, cameraPanX))
     cameraPanZ = Math.max(-maxPan, Math.min(maxPan, cameraPanZ))
@@ -823,23 +937,28 @@ export function createCrownshardScene(renderer: LowPolyRenderer) {
       ? 14.4 / Math.max(0.40, aspect)
       : isPhoneLandscape ? 15.0
       : aspect < 1.15 ? 16.5 : 14.2) * boardScale
-    const camDist = baseDist * cameraZoomActual
     const baseEyeY = (isPhonePortrait ? baseDist * 0.78 : (isPhoneLandscape ? 12.2 : 11.8) * boardScale)
-    const eyeY = baseEyeY * cameraZoomActual
+    const baseHoriz = baseDist * 0.92 + (isPhonePortrait ? 2.0 : 1.2)
+    const orbitRadius = Math.hypot(baseHoriz, baseEyeY) * cameraZoomActual
+    const horizDist = Math.cos(cameraPitchActual) * orbitRadius
+    const eyeY = Math.sin(cameraPitchActual) * orbitRadius
     const camYaw = cameraYawOffset
     const baseTargetZ = isPhonePortrait ? 0.9 : isPhoneLandscape ? 0.72 : 0.35
     const eye: Vec3 = [
-      cameraPanX + Math.sin(camYaw) * camDist * 0.8 + shakeX,
+      cameraPanX + Math.sin(camYaw) * horizDist * 0.88 + shakeX,
       eyeY + shakeY,
-      cameraPanZ + Math.cos(camYaw) * camDist * 0.92 + (isPhonePortrait ? 2.0 : 1.2) * cameraZoomActual
+      cameraPanZ + Math.cos(camYaw) * horizDist + baseTargetZ
     ]
     const target: Vec3 = [cameraPanX, -0.2, cameraPanZ + baseTargetZ]
     lastMatrix = multiply(perspective(Math.PI / 3.9, aspect, 0.5, 220), view(eye, target))
 
+    // 1. Move tiles: Hollow Square Frame + center dot (unmistakable vs Attack [X] even in grayscale!)
     for (const tile of battle.moveTiles) {
       const cell = battle.cells[tile.row][tile.col]
       const [wx, wy, wz] = gridToWorld(tile.col, tile.row, cell.elevation, battle.cols, battle.rows)
-      pool.add(tileQuad, [wx, wy + 0.025, wz], [TILE_SIZE * 0.84, 1, TILE_SIZE * 0.84], 0, C_MOVE_TILE, 0.92, 'alpha')
+      pool.add(tileQuad, [wx, wy + 0.024, wz], [TILE_SIZE * 0.84, 1, TILE_SIZE * 0.84], 0, C_MOVE_TILE, 0.92, 'alpha')
+      pool.add(tileFrameMesh, [wx, wy + 0.032, wz], [TILE_SIZE * 0.88, 1, TILE_SIZE * 0.88], 0, C_MOVE_BORDER, 0.96, 'alpha')
+      pool.add(tileDotMesh, [wx, wy + 0.034, wz], [TILE_SIZE * 0.84, 1, TILE_SIZE * 0.84], 0, C_MOVE_BORDER, 0.96, 'alpha')
     }
 
     const activeUnit = getUnitByUid(battle, battle.activeUnitUid)
@@ -857,21 +976,35 @@ export function createCrownshardScene(renderer: LowPolyRenderer) {
       (armedTactic && (armedTactic.target === 'ally' || armedTactic.target === 'any'))
     )
 
+    // 2. Direct target tiles: distinct geometric icons (+ for Support/Heal, bold X + brackets for Attack, faint corners for free space)
+    const bracketPulse = 1 + Math.sin(state.time * 6.0) * 0.045
     for (const tile of battle.targetTiles) {
       const cell = battle.cells[tile.row][tile.col]
       const [wx, wy, wz] = gridToWorld(tile.col, tile.row, cell.elevation, battle.cols, battle.rows)
-      pool.add(
-        tileQuad,
-        [wx, wy + 0.032, wz],
-        [TILE_SIZE * 0.86, 1, TILE_SIZE * 0.86],
-        0,
-        isAllyTarget ? C_ALLY_TARGET : C_ATTACK_TILE,
-        0.95,
-        'alpha'
-      )
+      const occupant = unitAt(battle, tile.col, tile.row)
+      if (armedSkill) {
+        const recommended = isAllyTarget
+          ? Boolean(occupant && occupant.team === 'ally')
+          : Boolean(occupant && occupant.team === 'enemy')
+        if (!recommended) {
+          // Quiet free-space skill range footprint (subtle corner ticks so we never encourage clicking empty air or allies)
+          pool.add(tileQuad, [wx, wy + 0.028, wz], [TILE_SIZE * 0.86, 1, TILE_SIZE * 0.86], 0, C_FREE_RANGE_TILE, 0.92, 'alpha')
+          pool.add(tileCornersMesh, [wx, wy + 0.036, wz], [TILE_SIZE * 0.86, 1, TILE_SIZE * 0.86], 0, C_FREE_RANGE_MARK, 0.95, 'alpha')
+          continue
+        }
+      }
+      if (isAllyTarget) {
+        pool.add(tileQuad, [wx, wy + 0.032, wz], [TILE_SIZE * 0.86, 1, TILE_SIZE * 0.86], 0, C_ALLY_TARGET, 0.95, 'alpha')
+        pool.add(tilePlusMesh, [wx, wy + 0.042, wz], [TILE_SIZE * 0.86, 1, TILE_SIZE * 0.86], 0, C_ALLY_MARK, 0.98, 'alpha')
+        pool.add(tileCornersMesh, [wx, wy + 0.040, wz], [TILE_SIZE * 0.88, 1, TILE_SIZE * 0.88], 0, C_ALLY_MARK, 0.96, 'alpha')
+      } else {
+        pool.add(tileQuad, [wx, wy + 0.032, wz], [TILE_SIZE * 0.86, 1, TILE_SIZE * 0.86], 0, C_ATTACK_TILE, 0.95, 'alpha')
+        pool.add(tileCrossMesh, [wx, wy + 0.044, wz], [TILE_SIZE * 0.88, 1, TILE_SIZE * 0.88], 0, C_ATTACK_MARK, 0.98, 'alpha')
+        pool.add(tileCornersMesh, [wx, wy + 0.042, wz], [TILE_SIZE * 0.90 * bracketPulse, 1, TILE_SIZE * 0.90 * bracketPulse], 0, C_ATTACK_MARK, 0.98, 'alpha')
+      }
     }
 
-    // Move+Attack reachable targets: distinct amber-orange tile + pulsing outer ring
+    // 3. Move+Attack reachable targets: distinct bold Diamond + Corner Brackets + rotating ring!
     for (const tile of battle.moveAttackTiles) {
       const cell = battle.cells[tile.row][tile.col]
       const [wx, wy, wz] = gridToWorld(tile.col, tile.row, cell.elevation, battle.cols, battle.rows)
@@ -884,6 +1017,16 @@ export function createCrownshardScene(renderer: LowPolyRenderer) {
         0.95,
         'alpha'
       )
+      pool.add(
+        isAllyTarget ? tilePlusMesh : tileDiamondMesh,
+        [wx, wy + 0.042, wz],
+        [TILE_SIZE * 0.86, 1, TILE_SIZE * 0.86],
+        0,
+        isAllyTarget ? C_ALLY_MARK : C_MOVE_ATTACK_MARK,
+        0.98,
+        'alpha'
+      )
+      pool.add(tileCornersMesh, [wx, wy + 0.040, wz], [TILE_SIZE * 0.88, 1, TILE_SIZE * 0.88], 0, isAllyTarget ? C_ALLY_MARK : C_MOVE_ATTACK_MARK, 0.96, 'alpha')
       const pulse = 0.60 + Math.sin(state.time * 5.5) * 0.05
       pool.add(flatRing, [wx, wy + 0.044, wz], [pulse, 1, pulse], state.time * 1.4, C_FORECAST_ARC, 0.96, 'alpha')
     }
@@ -896,17 +1039,32 @@ export function createCrownshardScene(renderer: LowPolyRenderer) {
       const hCell = battle.cells[previewCell.row][previewCell.col]
       const [hx, hy, hz] = gridToWorld(previewCell.col, previewCell.row, hCell.elevation, battle.cols, battle.rows)
       pool.add(tileQuad, [hx, hy + 0.042, hz], [TILE_SIZE * 0.90, 1, TILE_SIZE * 0.90], 0, C_HOVER_TILE, 0.95, 'alpha')
+      pool.add(tileFrameMesh, [hx, hy + 0.054, hz], [TILE_SIZE * 0.94, 1, TILE_SIZE * 0.94], 0, C_HOVER_BORDER, 0.98, 'alpha')
 
       const isValidPreviewTarget =
         battle.targetTiles.some(t => t.col === previewCell.col && t.row === previewCell.row) ||
         battle.moveAttackTiles.some(t => t.col === previewCell.col && t.row === previewCell.row)
       if (isValidPreviewTarget && (armedSkill || armedTactic)) {
         const pattern = armedSkill ? armedSkill.pattern : armedTactic ? armedTactic.pattern : 'single'
-        if (pattern === 'cross' || pattern === 'area3' || pattern === 'aura') {
-          for (const pc of getPatternCells(previewCell.col, previewCell.row, pattern, battle.cols, battle.rows)) {
-            const c = battle.cells[pc.row][pc.col]
-            const [px, py, pz] = gridToWorld(pc.col, pc.row, c.elevation, battle.cols, battle.rows)
-            pool.add(tileQuad, [px, py + 0.048, pz], [TILE_SIZE * 0.88, 1, TILE_SIZE * 0.88], 0, C_AOE_PREVIEW, 0.98, 'additive')
+        const previewCells = (pattern === 'cross' || pattern === 'area3' || pattern === 'aura')
+          ? getPatternCells(previewCell.col, previewCell.row, pattern, battle.cols, battle.rows)
+          : [previewCell]
+        const isOffensiveSkill = Boolean(armedSkill && armedSkill.powerMul > 0)
+        for (const pc of previewCells) {
+          const c = battle.cells[pc.row][pc.col]
+          const [px, py, pz] = gridToWorld(pc.col, pc.row, c.elevation, battle.cols, battle.rows)
+          const occ = unitAt(battle, pc.col, pc.row)
+          const isFriendlyHit = isOffensiveSkill && Boolean(
+            occ && occ.team === 'ally' &&
+            !(activeUnit && occ.uid === activeUnit.uid && !(previewCell.col === activeUnit.col && previewCell.row === activeUnit.row))
+          )
+          if (isFriendlyHit) {
+            pool.add(tileQuad, [px, py + 0.052, pz], [TILE_SIZE * 0.88, 1, TILE_SIZE * 0.88], 0, C_FRIENDLY_FIRE_TILE, 0.98, 'alpha')
+            pool.add(tileCrossMesh, [px, py + 0.058, pz], [TILE_SIZE * 0.92, 1, TILE_SIZE * 0.92], 0, C_FRIENDLY_FIRE_MARK, 0.98, 'alpha')
+            pool.add(tileFrameMesh, [px, py + 0.056, pz], [TILE_SIZE * 0.92, 1, TILE_SIZE * 0.92], 0, C_FRIENDLY_FIRE_MARK, 0.98, 'alpha')
+          } else if (pattern === 'cross' || pattern === 'area3' || pattern === 'aura') {
+            pool.add(tileQuad, [px, py + 0.046, pz], [TILE_SIZE * 0.88, 1, TILE_SIZE * 0.88], 0, C_AOE_PREVIEW, 0.96, 'alpha')
+            pool.add(tileDiamondMesh, [px, py + 0.052, pz], [TILE_SIZE * 0.88, 1, TILE_SIZE * 0.88], 0, C_AOE_MARK, 0.98, 'alpha')
           }
         }
       }
@@ -915,9 +1073,9 @@ export function createCrownshardScene(renderer: LowPolyRenderer) {
     // Pre-attack 3D tactical preview: Move+Attack path, landing ring, pulsing lock-on reticle & targeting arc
     if (activeForecast && battle.phase === 'player' && !battle.units.some(u => u.path.length > 0)) {
       const fc = activeForecast
-      const isFriendly = fc.targetTeam === 'ally'
-      const arcCol = isFriendly ? C_FORECAST_ALLY_ARC : C_FORECAST_ARC
-      const reticleCol = isFriendly ? C_ALLY_TARGET : C_TARGET_RETICLE
+      const isHelpful = !fc.isOffensive && fc.targetTeam === 'ally'
+      const arcCol = fc.friendlyFire ? C_FORECAST_FF_ARC : isHelpful ? C_FORECAST_ALLY_ARC : fc.emptyTileTarget ? C_EMPTY_RETICLE : C_FORECAST_ARC
+      const reticleCol = fc.friendlyFire ? C_FRIENDLY_FIRE_TILE : isHelpful ? C_ALLY_TARGET : fc.emptyTileTarget ? C_EMPTY_RETICLE : C_TARGET_RETICLE
       const tCell = battle.cells[fc.targetRow][fc.targetCol]
       const [tx, ty, tz] = gridToWorld(fc.targetCol, fc.targetRow, tCell.elevation, battle.cols, battle.rows)
 
@@ -1155,7 +1313,19 @@ export function createCrownshardScene(renderer: LowPolyRenderer) {
       activeForecast = forecast
     },
     rotateCamera(delta: number) {
-      cameraYawOffset = Math.max(-0.55, Math.min(0.55, cameraYawOffset + delta))
+      cameraYawOffset = Math.max(-0.85, Math.min(0.85, cameraYawOffset + delta))
+    },
+    tiltCamera(delta: number) {
+      cameraPitch = Math.max(MIN_CAMERA_PITCH, Math.min(MAX_CAMERA_PITCH, cameraPitch + delta))
+    },
+    setCameraPitch(p: number) {
+      cameraPitch = Math.max(MIN_CAMERA_PITCH, Math.min(MAX_CAMERA_PITCH, p))
+    },
+    getCameraPitch() {
+      return cameraPitch
+    },
+    getCameraPitchBounds() {
+      return { min: MIN_CAMERA_PITCH, max: MAX_CAMERA_PITCH }
     },
     zoomCamera(factor: number) {
       cameraZoom = Math.max(MIN_CAMERA_ZOOM, Math.min(MAX_CAMERA_ZOOM, cameraZoom * factor))
@@ -1183,6 +1353,7 @@ export function createCrownshardScene(renderer: LowPolyRenderer) {
     },
     resetCamera() {
       cameraYawOffset = 0
+      cameraPitch = DEFAULT_CAMERA_PITCH
       cameraZoom = 1.0
       cameraPanX = 0
       cameraPanZ = 0

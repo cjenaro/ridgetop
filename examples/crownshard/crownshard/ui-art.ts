@@ -2,7 +2,8 @@ import type { LayoutRect } from 'ridgetop/ui-layout'
 import type { CanvasWidgetDrawState } from 'ridgetop/ui-canvas'
 import type {
   BattleUnit, ChapterSpec, CombatForecast, CombatForecastAlt, DifficultyLevel, EquipSlot, EquipmentSpec,
-  HeroSpec, OwnedHeroCard, PackRevealItem, PackSpec, Rarity, SkillSpec, TacticCardSpec, TurnPreviewEntry
+  HeroSpec, LandmarkKind, OwnedHeroCard, PackRevealItem, PackSpec, Rarity, SkillSpec, TacticCardSpec,
+  TurnPreviewEntry
 } from './types.ts'
 import { DIFFICULTY_META, RARITY_META, RARITY_ORDER } from './data.ts'
 
@@ -77,7 +78,7 @@ export const UI_THEME_PALETTE = {
 } as const
 
 export type IconName =
-  | 'chevron-left' | 'chevron-right' | 'pause' | 'play' | 'music' | 'volume' | 'mute' | 'gauge'
+  | 'chevron-left' | 'chevron-right' | 'chevron-up' | 'chevron-down' | 'pause' | 'play' | 'music' | 'volume' | 'mute' | 'gauge'
   | 'rotate-left' | 'rotate-right' | 'sword' | 'shield' | 'heart' | 'boot' | 'bolt' | 'target'
   | 'crit' | 'star' | 'coin' | 'gem' | 'hourglass' | 'lock' | 'check' | 'plus' | 'minus' | 'sparkle' | 'flag'
   | 'users' | 'bag' | 'cards' | 'camp' | 'arrow-right' | 'up' | 'sell' | 'retreat'
@@ -717,6 +718,10 @@ export function drawIcon(ctx: CanvasRenderingContext2D, name: IconName, cx: numb
       ctx.moveTo(cx + s * 0.32, cy - s * 0.62); ctx.lineTo(cx - s * 0.34, cy); ctx.lineTo(cx + s * 0.32, cy + s * 0.62); ctx.stroke(); break
     case 'chevron-right':
       ctx.moveTo(cx - s * 0.32, cy - s * 0.62); ctx.lineTo(cx + s * 0.34, cy); ctx.lineTo(cx - s * 0.32, cy + s * 0.62); ctx.stroke(); break
+    case 'chevron-up':
+      ctx.moveTo(cx - s * 0.62, cy + s * 0.32); ctx.lineTo(cx, cy - s * 0.34); ctx.lineTo(cx + s * 0.62, cy + s * 0.32); ctx.stroke(); break
+    case 'chevron-down':
+      ctx.moveTo(cx - s * 0.62, cy - s * 0.32); ctx.lineTo(cx, cy + s * 0.34); ctx.lineTo(cx + s * 0.62, cy - s * 0.32); ctx.stroke(); break
     case 'arrow-right':
       ctx.moveTo(cx - s * 0.7, cy); ctx.lineTo(cx + s * 0.6, cy); ctx.moveTo(cx + s * 0.1, cy - s * 0.5); ctx.lineTo(cx + s * 0.65, cy); ctx.lineTo(cx + s * 0.1, cy + s * 0.5); ctx.stroke(); break
     case 'up':
@@ -2082,13 +2087,22 @@ export function drawCombatForecast(
     locked?: boolean
   } = {}
 ) {
-  const isHeal = fc.targetTeam === 'ally'
-  const accent = fc.lethalNormal ? '#ff5768' : isHeal ? COLOR.good : fc.requiresMove ? '#ff9f38' : COLOR.accent
+  const isHeal = !fc.isOffensive && fc.targetTeam === 'ally'
+  const isEmpty = fc.emptyTileTarget || fc.targetTeam === 'none'
+  const accent = fc.friendlyFire
+    ? '#ff4588'
+    : fc.lethalNormal
+      ? '#ff5768'
+      : isHeal
+        ? COLOR.good
+        : isEmpty
+          ? COLOR.muted
+          : fc.requiresMove ? '#ff9f38' : COLOR.accent
   drawSurface(ctx, rect, {
     r: RADIUS.lg,
     lipH: 4,
-    fill: '#2b3961',
-    fillBot: '#18223d',
+    fill: fc.friendlyFire ? '#47223d' : '#2b3961',
+    fillBot: fc.friendlyFire ? '#261224' : '#18223d',
     rim: accent + 'aa'
   })
 
@@ -2105,13 +2119,24 @@ export function drawCombatForecast(
     bg: '#365f99'
   })
 
-  // Right: Target portrait
-  drawPortraitTile(ctx, x + w - pad - ps, topY, ps, o.targetPortrait, {
-    ring: isHeal ? COLOR.good : COLOR.enemy,
-    ringW: 2.2,
-    r: 8,
-    bg: isHeal ? '#235e46' : '#7a3040'
-  })
+  // Right: Target portrait or Empty Ground crosshair tile
+  const rpx = x + w - pad - ps
+  if (isEmpty) {
+    rr(ctx, rpx, topY, ps, ps, 8)
+    ctx.fillStyle = '#1b243d'
+    ctx.fill()
+    ctx.strokeStyle = '#6c7ea8'
+    ctx.lineWidth = 2
+    ctx.stroke()
+    drawIcon(ctx, 'target', rpx + ps / 2, topY + ps / 2, ps * 0.56, COLOR.muted)
+  } else {
+    drawPortraitTile(ctx, rpx, topY, ps, o.targetPortrait, {
+      ring: fc.friendlyFire ? '#ff5ca8' : isHeal ? COLOR.good : COLOR.enemy,
+      ringW: 2.2,
+      r: 8,
+      bg: fc.friendlyFire ? '#6e2249' : isHeal ? '#235e46' : '#7a3040'
+    })
+  }
 
   // Center header: "Attacker -> Target" + action pill
   const midX = x + pad + ps + 8
@@ -2122,7 +2147,7 @@ export function drawCombatForecast(
   drawText(ctx, `${attShort}  >  ${tgtShort}`, cx, topY + 9, {
     size: o.compact ? 11.5 : 12.5,
     weight: 900,
-    color: '#ffffff',
+    color: fc.friendlyFire ? '#ffc2dd' : '#ffffff',
     align: 'center',
     maxW: midW,
     display: true,
@@ -2130,14 +2155,24 @@ export function drawCombatForecast(
     strokeWidth: 2.2
   })
 
-  // Action + tactical modifier chips
-  const tags: { text: string; bg: string; color: string }[] = [
-    {
-      text: fc.actionName.toUpperCase(),
-      bg: fc.mode === 'strike' ? '#3d4f80' : fc.mode === 'tactic' ? '#633487' : '#1b558a',
-      color: '#ffffff'
-    }
-  ]
+  // Action + tactical modifier chips (priority: Friendly Fire / Backstab / Flank first!)
+  const tags: { text: string; bg: string; color: string }[] = []
+  if (fc.friendlyFire) {
+    tags.push({
+      text: fc.friendlyFireCount > 1 ? `ALLY HIT x${fc.friendlyFireCount}!` : 'FRIENDLY FIRE!',
+      bg: '#8a1647',
+      color: '#ffd4e6'
+    })
+  }
+  if (fc.isOffensive && !isEmpty) {
+    if (fc.attackArc === 'back') tags.push({ text: 'BACKSTAB +30%', bg: '#5e1a6e', color: '#ffbaff' })
+    else if (fc.attackArc === 'flank') tags.push({ text: 'FLANK +15%', bg: '#6e450a', color: '#ffe078' })
+  }
+  tags.push({
+    text: fc.actionName.toUpperCase(),
+    bg: fc.mode === 'strike' ? '#3d4f80' : fc.mode === 'tactic' ? '#633487' : '#1b558a',
+    color: '#ffffff'
+  })
   if (fc.requiresMove) tags.push({ text: 'MOVE+HIT', bg: '#7d4408', color: '#ffd98a' })
   if (fc.highGround) tags.push({ text: 'HIGH +20%', bg: '#6e5208', color: COLOR.accentHi })
   if (fc.empowered) tags.push({ text: 'BUFF +35%', bg: '#6e5208', color: COLOR.accentHi })
@@ -2172,6 +2207,31 @@ export function drawCombatForecast(
 
   const innerX = x + pad + 8
   const innerW = w - pad * 2 - 16
+
+  if (isEmpty) {
+    drawText(ctx, 'NO TARGETS IN AREA', innerX, wellY + 15, {
+      size: o.compact ? 12 : 13,
+      weight: 900,
+      color: COLOR.muted,
+      maxW: innerW * 0.65,
+      display: true
+    })
+    drawText(ctx, fc.selfShield > 0 ? `+${fc.selfShield} SELF SHD` : 'FREE TARGET', innerX + innerW, wellY + 15, {
+      size: 10,
+      weight: 800,
+      color: fc.selfShield > 0 ? COLOR.ap : COLOR.faint,
+      align: 'right',
+      display: true
+    })
+    drawText(ctx, 'Click to cast on empty ground anyway (spends action & cooldown)', innerX, wellY + wellH - 11, {
+      size: 9.5,
+      weight: 700,
+      color: COLOR.faint,
+      maxW: innerW,
+      display: true
+    })
+    return
+  }
 
   if (isHeal) {
     const parts: string[] = []
@@ -3718,8 +3778,9 @@ export function drawDifficultyBadge(
   const pipCount = 5
   const pipR = h * 0.19
   const pipGap = pipR * 2.5
-  const pipsW = pipCount * pipGap + 2
-  const labelText = opts.showLabel ? `${meta.label} (${meta.short})` : `DIFF ${meta.short}`
+  const isBeyond = difficulty > 5
+  const pipsW = isBeyond ? h * 0.72 : pipCount * pipGap + 2
+  const labelText = opts.showLabel ? `${meta.label} (${meta.short})` : `TIER ${meta.short}`
   const textW = measureText(ctx, labelText, Math.round(h * 0.48), 900, true)
   const w = Math.round(textW + pipsW + 22)
   const left = opts.align === 'right' ? x - w : opts.align === 'center' ? x - w / 2 : x
@@ -3737,15 +3798,19 @@ export function drawDifficultyBadge(
   ctx.stroke()
 
   const cy = y + h / 2
-  for (let i = 0; i < pipCount; i++) {
-    const px = left + 10 + i * pipGap + pipR
-    ctx.beginPath()
-    ctx.arc(px, cy, pipR, 0, Math.PI * 2)
-    ctx.fillStyle = i < difficulty ? meta.hex : '#131a2e'
-    ctx.fill()
-    ctx.strokeStyle = COLOR.outline
-    ctx.lineWidth = 1.2
-    ctx.stroke()
+  if (isBeyond) {
+    drawIcon(ctx, difficulty >= 8 ? 'crown' : 'skull', left + 10 + pipsW * 0.4, cy, h * 0.58, meta.hex)
+  } else {
+    for (let i = 0; i < pipCount; i++) {
+      const px = left + 10 + i * pipGap + pipR
+      ctx.beginPath()
+      ctx.arc(px, cy, pipR, 0, Math.PI * 2)
+      ctx.fillStyle = i < difficulty ? meta.hex : '#131a2e'
+      ctx.fill()
+      ctx.strokeStyle = COLOR.outline
+      ctx.lineWidth = 1.2
+      ctx.stroke()
+    }
   }
   drawText(ctx, labelText, left + 14 + pipsW, cy + 0.5, {
     size: Math.round(h * 0.48),
@@ -3757,202 +3822,971 @@ export function drawDifficultyBadge(
   return w
 }
 
-/** Illustrated fantasy tactical map of Solis with biome territories, animated trails & compass rose. */
-export function drawWorldMapBackdrop(
-  ctx: CanvasRenderingContext2D,
-  rect: LayoutRect,
-  time: number,
-  chapters: readonly ChapterSpec[],
-  clearedSet: ReadonlySet<string>,
-  unlockedSet: ReadonlySet<string>,
-  padX: number,
-  padY: number
-) {
-  const { x, y, width: w, height: h } = rect
-  drawSurface(ctx, rect, { r: RADIUS.xl, lipH: 6, fill: '#223154', fillBot: '#141d36' })
+export const WORLD_MAP_W = 2200
+export const WORLD_MAP_H = 1360
 
-  const ix = x + 6
-  const iy = y + 6
-  const iw = w - 12
-  const ih = h - 16
+export interface WorldMapViewport {
+  readonly panX: number // normalized center X (0..1)
+  readonly panY: number // normalized center Y (0..1)
+  readonly zoom: number // 0.62..1.75 (1 = fit width nicely)
+}
+
+export function worldMapScale(rect: LayoutRect, zoom: number): number {
+  const base = Math.max(rect.width / WORLD_MAP_W, rect.height / WORLD_MAP_H)
+  return base * zoom
+}
+
+export function worldMapToScreen(
+  mapX: number,
+  mapY: number,
+  rect: LayoutRect,
+  vp: WorldMapViewport
+): { x: number; y: number } {
+  const scale = worldMapScale(rect, vp.zoom)
+  const cx = rect.x + rect.width * 0.5
+  const cy = rect.y + rect.height * 0.5
+  return {
+    x: cx + (mapX - vp.panX) * WORLD_MAP_W * scale,
+    y: cy + (mapY - vp.panY) * WORLD_MAP_H * scale
+  }
+}
+
+// Sculpted Solis Mainland + 3 outer future-frontier landmasses/archipelagos!
+const SOLIS_MAINLAND: readonly (readonly [number, number])[] = [
+  [0.048, 0.34], [0.072, 0.24], [0.115, 0.18], [0.165, 0.13], [0.225, 0.11],
+  [0.295, 0.12], [0.355, 0.16], [0.415, 0.13], [0.455, 0.08], [0.525, 0.07],
+  [0.605, 0.08], [0.685, 0.08], [0.735, 0.13], [0.715, 0.21], [0.685, 0.28],
+  [0.735, 0.35], [0.745, 0.43], [0.715, 0.50], [0.760, 0.57], [0.745, 0.66],
+  [0.685, 0.70], [0.615, 0.72], [0.545, 0.75], [0.475, 0.79], [0.415, 0.81],
+  [0.345, 0.77], [0.275, 0.75], [0.205, 0.77], [0.145, 0.74], [0.125, 0.66],
+  [0.145, 0.59], [0.095, 0.54], [0.058, 0.46]
+]
+
+const SUNBLEACHED_DUNES_LAND: readonly (readonly [number, number])[] = [
+  [0.065, 0.83], [0.135, 0.80], [0.215, 0.82], [0.295, 0.83], [0.385, 0.85],
+  [0.435, 0.89], [0.415, 0.95], [0.325, 0.96], [0.225, 0.96], [0.125, 0.94],
+  [0.062, 0.90]
+]
+
+const AETHER_ISLES_MAIN: readonly (readonly [number, number])[] = [
+  [0.775, 0.23], [0.835, 0.14], [0.905, 0.10], [0.955, 0.15], [0.945, 0.23],
+  [0.970, 0.30], [0.955, 0.39], [0.885, 0.40], [0.825, 0.36], [0.768, 0.31]
+]
+
+const ABYSSAL_ISLE: readonly (readonly [number, number])[] = [
+  [0.585, 0.82], [0.645, 0.79], [0.705, 0.82], [0.715, 0.90], [0.655, 0.94], [0.595, 0.91]
+]
+
+const SHATTERED_EXPANSE_LAND: readonly (readonly [number, number])[] = [
+  [0.765, 0.69], [0.835, 0.67], [0.895, 0.72], [0.955, 0.78], [0.965, 0.89],
+  [0.915, 0.95], [0.835, 0.93], [0.785, 0.86], [0.755, 0.78]
+]
+
+const WEST_ISLET: readonly (readonly [number, number])[] = [
+  [0.032, 0.62], [0.068, 0.60], [0.084, 0.66], [0.062, 0.71], [0.028, 0.68]
+]
+
+// 9 Tinted Political & Biome Provinces (6 Core Solis + 3 Future Frontier Regions!)
+const REGION_POLYS: readonly {
+  readonly pts: readonly (readonly [number, number])[]
+  readonly fill: string
+  readonly stroke: string
+  readonly labelX: number
+  readonly labelY: number
+  readonly label: string
+  readonly subLabel: string
+  readonly textCol: string
+  readonly bannerBg: string
+  readonly future?: boolean
+}[] = [
+  {
+    pts: [[0.03, 0.11], [0.25, 0.09], [0.27, 0.34], [0.21, 0.60], [0.03, 0.60]],
+    fill: 'rgba(138, 184, 86, 0.44)', stroke: 'rgba(66, 98, 40, 0.62)',
+    labelX: 0.125, labelY: 0.175, label: 'SOLIS VALE', subLabel: 'TIER I–II',
+    textCol: '#293f16', bannerBg: 'rgba(244, 232, 198, 0.90)'
+  },
+  {
+    pts: [[0.23, 0.11], [0.43, 0.11], [0.42, 0.48], [0.20, 0.66], [0.21, 0.45]],
+    fill: 'rgba(94, 178, 152, 0.40)', stroke: 'rgba(38, 96, 82, 0.62)',
+    labelX: 0.335, labelY: 0.175, label: 'THE SILVERFEN', subLabel: 'TIER II–III',
+    textCol: '#17453a', bannerBg: 'rgba(232, 245, 238, 0.90)'
+  },
+  {
+    pts: [[0.12, 0.59], [0.49, 0.49], [0.51, 0.83], [0.12, 0.81]],
+    fill: 'rgba(130, 108, 172, 0.44)', stroke: 'rgba(68, 50, 106, 0.62)',
+    labelX: 0.355, labelY: 0.63, label: 'ASHEN CATACOMBS', subLabel: 'TIER II–IV',
+    textCol: '#312052', bannerBg: 'rgba(235, 226, 248, 0.90)'
+  },
+  {
+    pts: [[0.42, 0.05], [0.75, 0.05], [0.73, 0.34], [0.43, 0.37]],
+    fill: 'rgba(178, 224, 246, 0.56)', stroke: 'rgba(68, 118, 152, 0.62)',
+    labelX: 0.575, labelY: 0.105, label: 'FROSTSPIRE', subLabel: 'TIER III–V',
+    textCol: '#1b4361', bannerBg: 'rgba(232, 246, 255, 0.92)'
+  },
+  {
+    pts: [[0.49, 0.42], [0.77, 0.46], [0.77, 0.76], [0.48, 0.76]],
+    fill: 'rgba(206, 108, 74, 0.46)', stroke: 'rgba(128, 46, 26, 0.62)',
+    labelX: 0.615, labelY: 0.725, label: 'EMBERWASTE', subLabel: 'TIER IV–V',
+    textCol: '#591c10', bannerBg: 'rgba(250, 226, 210, 0.90)'
+  },
+  {
+    pts: [[0.62, 0.30], [0.76, 0.30], [0.76, 0.51], [0.62, 0.49]],
+    fill: 'rgba(146, 78, 178, 0.46)', stroke: 'rgba(78, 28, 108, 0.66)',
+    labelX: 0.695, labelY: 0.325, label: 'ECLIPSE DOMINION', subLabel: 'TIER V',
+    textCol: '#3b1252', bannerBg: 'rgba(242, 222, 250, 0.92)'
+  },
+  {
+    pts: [[0.05, 0.79], [0.45, 0.82], [0.45, 0.97], [0.05, 0.97]],
+    fill: 'rgba(232, 188, 102, 0.56)', stroke: 'rgba(148, 98, 32, 0.68)',
+    labelX: 0.255, labelY: 0.822, label: 'SUNBLEACHED DUNES', subLabel: 'FUTURE · V–VI',
+    textCol: '#5c380c', bannerBg: 'rgba(252, 236, 194, 0.94)', future: true
+  },
+  {
+    pts: [[0.76, 0.09], [0.98, 0.09], [0.98, 0.42], [0.76, 0.40]],
+    fill: 'rgba(112, 166, 226, 0.52)', stroke: 'rgba(52, 92, 166, 0.68)',
+    labelX: 0.885, labelY: 0.425, label: 'AETHER ISLES', subLabel: 'FUTURE · VI–VII',
+    textCol: '#1b356b', bannerBg: 'rgba(222, 238, 255, 0.94)', future: true
+  },
+  {
+    pts: [[0.57, 0.66], [0.98, 0.66], [0.98, 0.97], [0.57, 0.97]],
+    fill: 'rgba(136, 62, 118, 0.52)', stroke: 'rgba(96, 26, 78, 0.72)',
+    labelX: 0.835, labelY: 0.655, label: 'SHATTERED EXPANSE', subLabel: 'FUTURE · VI–VIII',
+    textCol: '#470f38', bannerBg: 'rgba(248, 218, 238, 0.94)', future: true
+  }
+]
+
+function traceSmoothPolygon(ctx: CanvasRenderingContext2D, pts: readonly (readonly [number, number])[], w: number, h: number) {
+  const n = pts.length
+  if (n < 3) return
+  const px = (i: number) => pts[((i % n) + n) % n][0] * w
+  const py = (i: number) => pts[((i % n) + n) % n][1] * h
+  ctx.beginPath()
+  const mx0 = (px(n - 1) + px(0)) * 0.5
+  const my0 = (py(n - 1) + py(0)) * 0.5
+  ctx.moveTo(mx0, my0)
+  for (let i = 0; i < n; i++) {
+    const cx = px(i)
+    const cy = py(i)
+    const nx = (px(i) + px(i + 1)) * 0.5
+    const ny = (py(i) + py(i + 1)) * 0.5
+    ctx.quadraticCurveTo(cx, cy, nx, ny)
+  }
+  ctx.closePath()
+}
+
+function drawInkedTree(
+  ctx: CanvasRenderingContext2D,
+  x: number,
+  y: number,
+  size: number,
+  style: 'oak' | 'autumn' | 'pine' | 'snow' | 'dead'
+) {
   ctx.save()
-  rr(ctx, ix, iy, iw, ih, RADIUS.lg)
+  // Soft ground shadow
+  ctx.beginPath()
+  ctx.ellipse(x + 2, y + 2, size * 0.75, size * 0.35, 0, 0, Math.PI * 2)
+  ctx.fillStyle = 'rgba(32, 24, 14, 0.22)'
+  ctx.fill()
+
+  // Trunk
+  ctx.fillStyle = '#5c4028'
+  ctx.fillRect(x - size * 0.14, y - size * 0.45, size * 0.28, size * 0.55)
+
+  if (style === 'pine' || style === 'snow') {
+    const c1 = style === 'snow' ? '#4f7d8a' : '#35594a'
+    const c2 = style === 'snow' ? '#e8f5fc' : '#4a7a60'
+    for (let tier = 0; tier < 2; tier++) {
+      const ty = y - size * (0.45 + tier * 0.55)
+      const tw = size * (0.78 - tier * 0.2)
+      const th = size * 0.85
+      ctx.beginPath()
+      ctx.moveTo(x, ty - th)
+      ctx.lineTo(x + tw, ty)
+      ctx.lineTo(x - tw, ty)
+      ctx.closePath()
+      ctx.fillStyle = tier === 1 ? c2 : c1
+      ctx.fill()
+      ctx.strokeStyle = '#241b12'
+      ctx.lineWidth = 1.3
+      ctx.stroke()
+    }
+  } else if (style === 'dead') {
+    ctx.strokeStyle = '#33293d'
+    ctx.lineWidth = 1.6
+    ctx.lineCap = 'round'
+    ctx.beginPath()
+    ctx.moveTo(x, y); ctx.lineTo(x, y - size * 1.1)
+    ctx.moveTo(x, y - size * 0.65); ctx.lineTo(x - size * 0.55, y - size * 1.05)
+    ctx.moveTo(x, y - size * 0.78); ctx.lineTo(x + size * 0.5, y - size * 1.18)
+    ctx.stroke()
+  } else {
+    // Hand-inked broadleaf canopy (Summerlands style!)
+    const colHi = style === 'autumn' ? '#d98a45' : '#6ea352'
+    const colLo = style === 'autumn' ? '#a6572b' : '#4a7a3a'
+    ctx.beginPath()
+    ctx.arc(x - size * 0.34, y - size * 0.62, size * 0.48, 0, Math.PI * 2)
+    ctx.arc(x + size * 0.34, y - size * 0.58, size * 0.45, 0, Math.PI * 2)
+    ctx.arc(x, y - size * 0.92, size * 0.56, 0, Math.PI * 2)
+    const g = ctx.createLinearGradient(x, y - size * 1.45, x, y - size * 0.2)
+    g.addColorStop(0, colHi)
+    g.addColorStop(1, colLo)
+    ctx.fillStyle = g
+    ctx.fill()
+    ctx.strokeStyle = '#261e14'
+    ctx.lineWidth = 1.4
+    ctx.stroke()
+  }
+  ctx.restore()
+}
+
+function drawInkedMountain(
+  ctx: CanvasRenderingContext2D,
+  x: number,
+  y: number,
+  w: number,
+  h: number,
+  style: 'snow' | 'volcano' | 'hill'
+) {
+  ctx.save()
+  const peakX = x
+  const peakY = y - h
+  const leftX = x - w * 0.52
+  const rightX = x + w * 0.52
+
+  // Sunlit left slope
+  ctx.beginPath()
+  ctx.moveTo(leftX, y)
+  ctx.lineTo(peakX, peakY)
+  ctx.lineTo(peakX + w * 0.06, y)
+  ctx.closePath()
+  ctx.fillStyle = style === 'snow' ? '#8eaabf' : style === 'volcano' ? '#63434a' : '#8a8268'
+  ctx.fill()
+
+  // Shaded right slope
+  ctx.beginPath()
+  ctx.moveTo(peakX, peakY)
+  ctx.lineTo(rightX, y)
+  ctx.lineTo(peakX + w * 0.06, y)
+  ctx.closePath()
+  ctx.fillStyle = style === 'snow' ? '#5c7891' : style === 'volcano' ? '#3d2830' : '#635c47'
+  ctx.fill()
+
+  if (style === 'snow') {
+    // Crisp snow cap
+    ctx.beginPath()
+    ctx.moveTo(peakX, peakY)
+    ctx.lineTo(peakX - w * 0.22, peakY + h * 0.42)
+    ctx.lineTo(peakX - w * 0.06, peakY + h * 0.34)
+    ctx.lineTo(peakX + w * 0.06, peakY + h * 0.44)
+    ctx.lineTo(peakX + w * 0.22, peakY + h * 0.38)
+    ctx.closePath()
+    ctx.fillStyle = '#eff8ff'
+    ctx.fill()
+  } else if (style === 'volcano') {
+    // Glowing lava fissure & crater rim
+    ctx.beginPath()
+    ctx.moveTo(peakX - w * 0.1, peakY + h * 0.16)
+    ctx.lineTo(peakX + w * 0.1, peakY + h * 0.16)
+    ctx.lineTo(peakX + w * 0.04, peakY + h * 0.55)
+    ctx.lineTo(peakX - w * 0.03, peakY + h * 0.42)
+    ctx.closePath()
+    ctx.fillStyle = '#ff7b38'
+    ctx.fill()
+  }
+
+  // Hand-inked mountain silhouette & ridge crest
+  ctx.beginPath()
+  ctx.moveTo(leftX, y)
+  ctx.lineTo(peakX, peakY)
+  ctx.lineTo(rightX, y)
+  ctx.moveTo(peakX, peakY)
+  ctx.lineTo(peakX + w * 0.05, y - h * 0.08)
+  ctx.strokeStyle = '#241b13'
+  ctx.lineWidth = 2
+  ctx.lineJoin = 'round'
+  ctx.stroke()
+  ctx.restore()
+}
+
+let cachedSolisMapCanvas: HTMLCanvasElement | null = null
+
+function getBakedSolisMap(chapters: readonly ChapterSpec[]): HTMLCanvasElement | null {
+  if (typeof document === 'undefined') return null
+  if (cachedSolisMapCanvas) return cachedSolisMapCanvas
+
+  const canvas = document.createElement('canvas')
+  canvas.width = WORLD_MAP_W
+  canvas.height = WORLD_MAP_H
+  const ctx = canvas.getContext('2d')
+  if (!ctx) return null
+
+  const W = WORLD_MAP_W
+  const H = WORLD_MAP_H
+
+  // 1. Aged cartographic parchment-teal ocean gradient
+  const sea = ctx.createRadialGradient(W * 0.48, H * 0.48, W * 0.08, W * 0.5, H * 0.5, W * 0.72)
+  sea.addColorStop(0, '#366f85')
+  sea.addColorStop(0.65, '#255066')
+  sea.addColorStop(1, '#173245')
+  ctx.fillStyle = sea
+  ctx.fillRect(0, 0, W, H)
+
+  // Subtle parchment navigation grid + rhumb lines radiating from two sea compass points (FFT style!)
+  ctx.save()
+  ctx.strokeStyle = 'rgba(232, 214, 174, 0.11)'
+  ctx.lineWidth = 1
+  for (let gx = 90; gx < W; gx += 120) {
+    ctx.beginPath(); ctx.moveTo(gx, 0); ctx.lineTo(gx, H); ctx.stroke()
+  }
+  for (let gy = 80; gy < H; gy += 120) {
+    ctx.beginPath(); ctx.moveTo(0, gy); ctx.lineTo(W, gy); ctx.stroke()
+  }
+  for (const [rx, ry] of [[W * 0.08, H * 0.88], [W * 0.93, H * 0.12]] as const) {
+    for (let i = 0; i < 16; i++) {
+      const a = (i / 16) * Math.PI * 2
+      ctx.beginPath()
+      ctx.moveTo(rx, ry)
+      ctx.lineTo(rx + Math.cos(a) * W, ry + Math.sin(a) * W)
+      ctx.stroke()
+    }
+  }
+  // Tiny horizontal wave ripples across open ocean
+  ctx.strokeStyle = 'rgba(186, 232, 245, 0.18)'
+  ctx.lineWidth = 1.5
+  for (let i = 0; i < 85; i++) {
+    const wx = hash1(i * 4.1) * W
+    const wy = hash1(i * 8.7) * H
+    const wl = 14 + (i % 4) * 7
+    ctx.beginPath()
+    ctx.moveTo(wx, wy)
+    ctx.quadraticCurveTo(wx + wl * 0.5, wy - 3.5, wx + wl, wy)
+    ctx.stroke()
+  }
+  ctx.restore()
+
+  const islands: readonly (readonly (readonly [number, number])[])[] = [
+    SOLIS_MAINLAND, SUNBLEACHED_DUNES_LAND, AETHER_ISLES_MAIN, ABYSSAL_ISLE, SHATTERED_EXPANSE_LAND, WEST_ISLET
+  ]
+
+  // 2. Multi-ring turquoise shallow-water coastal shelves + subtle drop-shadow around every landmass!
+  for (const poly of islands) {
+    ctx.save()
+    ctx.translate(6, 8)
+    traceSmoothPolygon(ctx, poly, W, H)
+    ctx.fillStyle = 'rgba(10, 22, 34, 0.42)'
+    ctx.fill()
+    ctx.restore()
+
+    traceSmoothPolygon(ctx, poly, W, H)
+    ctx.save()
+    ctx.lineJoin = 'round'
+    ctx.strokeStyle = 'rgba(92, 194, 214, 0.22)'
+    ctx.lineWidth = 42
+    ctx.stroke()
+    ctx.strokeStyle = 'rgba(142, 224, 238, 0.30)'
+    ctx.lineWidth = 22
+    ctx.stroke()
+    ctx.strokeStyle = 'rgba(222, 248, 252, 0.40)'
+    ctx.lineWidth = 7
+    ctx.stroke()
+    ctx.restore()
+  }
+
+  // 3. Aged parchment continent base fill + watercolor region washes + topographic contours!
+  for (const poly of islands) {
+    ctx.save()
+    traceSmoothPolygon(ctx, poly, W, H)
+    const landGrad = ctx.createLinearGradient(0, 0, W, H)
+    landGrad.addColorStop(0, '#e6d19e')
+    landGrad.addColorStop(0.5, '#d8be85')
+    landGrad.addColorStop(1, '#c2a36b')
+    ctx.fillStyle = landGrad
+    ctx.fill()
+    ctx.clip()
+
+    // Subtle parchment grain speckles
+    for (let i = 0; i < 520; i++) {
+      const sx = hash1(i * 11.7) * W
+      const sy = hash1(i * 19.1) * H
+      ctx.fillStyle = i % 2 === 0 ? 'rgba(92, 68, 36, 0.06)' : 'rgba(255, 248, 224, 0.09)'
+      ctx.fillRect(sx, sy, 3 + (i % 4), 2 + (i % 3))
+    }
+
+    // Paint the 9 tinted political/biome provinces (6 core Solis + 3 outer frontiers!)
+    for (const reg of REGION_POLYS) {
+      traceSmoothPolygon(ctx, reg.pts, W, H)
+      ctx.fillStyle = reg.fill
+      ctx.fill()
+      ctx.save()
+      ctx.setLineDash([9, 7])
+      ctx.strokeStyle = reg.stroke
+      ctx.lineWidth = 2.6
+      ctx.stroke()
+      ctx.restore()
+    }
+
+    // Stepped topographic contour hills (Triangle Strategy inspired!)
+    const hillContours: readonly [number, number, number, number][] = [
+      [0.12, 0.38, 130, 78], [0.36, 0.24, 145, 86], [0.55, 0.22, 195, 100],
+      [0.37, 0.65, 175, 92], [0.62, 0.56, 185, 105], [0.69, 0.39, 130, 88],
+      [0.24, 0.89, 180, 68], [0.87, 0.25, 150, 92], [0.86, 0.82, 155, 94]
+    ]
+    ctx.strokeStyle = 'rgba(72, 54, 30, 0.19)'
+    ctx.lineWidth = 1.8
+    for (const [hx, hy, rx, ry] of hillContours) {
+      for (let ring = 0; ring < 2; ring++) {
+        ctx.beginPath()
+        ctx.ellipse(hx * W, hy * H, rx * (1 - ring * 0.35), ry * (1 - ring * 0.35), -0.14, 0, Math.PI * 2)
+        ctx.stroke()
+      }
+    }
+
+    // Sweeping desert sand-dune crests in Sunbleached Dunes
+    if (poly === SUNBLEACHED_DUNES_LAND) {
+      ctx.strokeStyle = 'rgba(148, 92, 24, 0.34)'
+      ctx.lineWidth = 2.6
+      for (let i = 0; i < 14; i++) {
+        const dx = (0.09 + (i % 5) * 0.068 + (i % 2) * 0.015) * W
+        const dy = (0.84 + Math.floor(i / 5) * 0.038) * H
+        ctx.beginPath()
+        ctx.moveTo(dx - 34, dy + 4)
+        ctx.quadraticCurveTo(dx, dy - 12, dx + 36, dy + 6)
+        ctx.stroke()
+      }
+    }
+
+    // Ethereal glowing starlight rifts across Aether Isles
+    if (poly === AETHER_ISLES_MAIN) {
+      ctx.strokeStyle = 'rgba(130, 224, 255, 0.45)'
+      ctx.lineWidth = 3.2
+      ctx.beginPath()
+      ctx.moveTo(0.80 * W, 0.26 * H)
+      ctx.quadraticCurveTo(0.86 * W, 0.24 * H, 0.92 * W, 0.19 * H)
+      ctx.moveTo(0.85 * W, 0.25 * H)
+      ctx.quadraticCurveTo(0.90 * W, 0.29 * H, 0.94 * W, 0.35 * H)
+      ctx.stroke()
+    }
+
+    // Obsidian crimson-violet void cracks across Shattered Expanse
+    if (poly === SHATTERED_EXPANSE_LAND) {
+      ctx.strokeStyle = 'rgba(255, 92, 174, 0.44)'
+      ctx.lineWidth = 3.2
+      ctx.beginPath()
+      ctx.moveTo(0.79 * W, 0.72 * H)
+      ctx.lineTo(0.85 * W, 0.78 * H)
+      ctx.lineTo(0.83 * W, 0.85 * H)
+      ctx.lineTo(0.92 * W, 0.89 * H)
+      ctx.stroke()
+    }
+
+    // Inner coastal warm cliff drop-shadow bevel
+    traceSmoothPolygon(ctx, poly, W, H)
+    ctx.strokeStyle = 'rgba(72, 48, 22, 0.34)'
+    ctx.lineWidth = 14
+    ctx.stroke()
+    ctx.restore()
+  }
+
+  // 4. Winding rivers, lakes & volcanic magma fissures carved across the mainland!
+  ctx.save()
+  traceSmoothPolygon(ctx, SOLIS_MAINLAND, W, H)
   ctx.clip()
 
-  // Deep ocean / parchment tactical chart base
-  const sea = ctx.createLinearGradient(ix, iy, ix + iw, iy + ih)
-  sea.addColorStop(0, '#1a2f4d')
-  sea.addColorStop(0.5, '#192945')
-  sea.addColorStop(1, '#1d1c38')
-  ctx.fillStyle = sea
-  ctx.fillRect(ix, iy, iw, ih)
-
-  // Subtle cartographic grid lines
-  ctx.strokeStyle = '#ffffff0d'
-  ctx.lineWidth = 1
-  const gridStep = Math.max(36, Math.round(iw / 12))
-  for (let gx = ix + gridStep; gx < ix + iw; gx += gridStep) {
-    ctx.beginPath(); ctx.moveTo(gx, iy); ctx.lineTo(gx, iy + ih); ctx.stroke()
-  }
-  for (let gy = iy + gridStep; gy < iy + ih; gy += gridStep) {
-    ctx.beginPath(); ctx.moveTo(ix, gy); ctx.lineTo(ix + iw, gy); ctx.stroke()
-  }
-
-  // Sculpted island continent silhouettes per biome region
-  const drawBlob = (rx: number, ry: number, radX: number, radY: number, fillA: string, fillB: string, stroke: string) => {
-    const cx = ix + iw * rx
-    const cy = iy + ih * ry
-    const gx = iw * radX
-    const gy = ih * radY
-    const gr = ctx.createRadialGradient(cx - gx * 0.15, cy - gy * 0.2, Math.min(gx, gy) * 0.1, cx, cy, Math.max(gx, gy))
-    gr.addColorStop(0, fillA)
-    gr.addColorStop(1, fillB)
+  const drawRiver = (pts: readonly (readonly [number, number])[], width: number, col: string, edgeCol: string) => {
     ctx.beginPath()
-    ctx.ellipse(cx, cy, gx, gy, 0, 0, Math.PI * 2)
-    ctx.fillStyle = gr
-    ctx.fill()
-    ctx.strokeStyle = stroke
-    ctx.lineWidth = 2
+    ctx.moveTo(pts[0][0] * W, pts[0][1] * H)
+    for (let i = 1; i < pts.length; i++) {
+      const prev = pts[i - 1]
+      const cur = pts[i]
+      ctx.quadraticCurveTo(prev[0] * W, prev[1] * H, ((prev[0] + cur[0]) * 0.5) * W, ((prev[1] + cur[1]) * 0.5) * H)
+    }
+    const last = pts[pts.length - 1]
+    ctx.lineTo(last[0] * W, last[1] * H)
+    ctx.lineCap = 'round'
+    ctx.lineJoin = 'round'
+    ctx.strokeStyle = edgeCol
+    ctx.lineWidth = width + 5
+    ctx.stroke()
+    ctx.strokeStyle = col
+    ctx.lineWidth = width
+    ctx.stroke()
+    ctx.strokeStyle = 'rgba(255, 255, 255, 0.32)'
+    ctx.lineWidth = Math.max(2, width * 0.24)
     ctx.stroke()
   }
 
-  // Western Solis Meadows & Sunwell Glade
-  drawBlob(0.24, 0.44, 0.24, 0.36, '#397349cc', '#254a34cc', '#5da66b66')
-  // Northern Frostspire Highlands & Glacial Citadel
-  drawBlob(0.64, 0.30, 0.20, 0.24, '#5a8ab5cc', '#325375cc', '#a8e4ff66')
-  // Southern Lantern Crypt & Cursed Vault
-  drawBlob(0.50, 0.76, 0.20, 0.20, '#463b6ecc', '#282145cc', '#8b73d666')
-  // Eastern Obsidian Volcano & Eclipse Throne
-  drawBlob(0.84, 0.56, 0.17, 0.34, '#6e2e36cc', '#381938cc', '#ff7b5266')
-
-  // Winding turquoise river separating West Meadow from East routes
-  ctx.save()
+  // Silverfen twin-branch river flowing from Frostspire peaks through Sunken Bridge to the southern strait
+  drawRiver([[0.48, 0.12], [0.37, 0.18], [0.28, 0.31], [0.26, 0.43], [0.24, 0.59], [0.22, 0.77]], 16, '#3996ba', '#1f394a')
+  // Western Millers' Creek tributary
+  drawRiver([[0.12, 0.46], [0.17, 0.55], [0.24, 0.60]], 10, '#45a6c9', '#234154')
+  // Mirror Tarn frozen alpine lake
   ctx.beginPath()
-  ctx.moveTo(ix + iw * 0.28, iy)
-  ctx.bezierCurveTo(ix + iw * 0.22, iy + ih * 0.36, ix + iw * 0.31, iy + ih * 0.64, ix + iw * 0.24, iy + ih)
-  ctx.strokeStyle = '#3897bd88'
-  ctx.lineWidth = Math.max(10, iw * 0.022)
-  ctx.lineCap = 'round'
-  ctx.stroke()
-  ctx.strokeStyle = '#7de2ff55'
-  ctx.lineWidth = 2.5
-  ctx.stroke()
-  ctx.restore()
-
-  // Region watermark labels
-  const regionLabels: readonly [number, number, string, string][] = [
-    [0.14, 0.16, 'SOLIS MEADOWS', '#9be6a088'],
-    [0.58, 0.10, 'FROSTSPIRE RIDGE', '#b8ecff88'],
-    [0.48, 0.93, 'ASHEN CATACOMBS', '#bba8ff88'],
-    [0.86, 0.16, 'ECLIPSE REALM', '#ff9ea888']
-  ]
-  for (const [rx, ry, lbl, col] of regionLabels) {
-    drawText(ctx, lbl, ix + iw * rx, iy + ih * ry, {
-      size: 10,
-      weight: 900,
-      color: col,
-      align: 'center',
-      spacing: 1.5,
-      display: true
-    })
-  }
-
-  // Compass rose in bottom-left corner
-  const crx = ix + 34
-  const cry = iy + ih - 32
-  ctx.save()
-  ctx.globalAlpha = 0.45
-  ctx.beginPath()
-  ctx.arc(crx, cry, 16, 0, Math.PI * 2)
-  ctx.strokeStyle = COLOR.accentHi
-  ctx.lineWidth = 1.4
-  ctx.stroke()
-  drawStarShape(ctx, crx, cry, 14, 4, 4)
-  ctx.fillStyle = COLOR.accentHi
+  ctx.ellipse(0.55 * W, 0.19 * H, 52, 29, 0.12, 0, Math.PI * 2)
+  ctx.fillStyle = '#74c8e6'
   ctx.fill()
-  drawText(ctx, 'N', crx, cry - 20, { size: 8, weight: 900, color: COLOR.accentHi, align: 'center', display: true })
+  ctx.strokeStyle = '#213d52'
+  ctx.lineWidth = 2.8
+  ctx.stroke()
+
+  // Emberwaste glowing magma channels
+  drawRiver([[0.61, 0.45], [0.60, 0.55], [0.66, 0.64], [0.74, 0.62]], 9, '#ff7333', '#3b1814')
   ctx.restore()
 
-  // Compute node center positions matching the layout overlay
-  const innerX = x + padX
-  const innerY = y + padY
-  const innerW = Math.max(1, w - padX * 2)
-  const innerH = Math.max(1, h - padY * 2)
-  const posById = new Map<string, { cx: number; cy: number }>()
-  for (const ch of chapters) {
-    posById.set(ch.id, { cx: innerX + ch.mapX * innerW, cy: innerY + ch.mapY * innerH })
+  // 5. Crisp hand-inked outer coastlines on all islands
+  for (const poly of islands) {
+    traceSmoothPolygon(ctx, poly, W, H)
+    ctx.strokeStyle = '#22170e'
+    ctx.lineWidth = 4.2
+    ctx.lineJoin = 'round'
+    ctx.stroke()
   }
 
-  // Draw branching roads connecting prerequisites -> stage
+  // 6. Illustrated mountain ranges across Frostspire, Emberwaste, Western Hills, and Outer Frontiers!
+  const mountains: readonly [number, number, number, number, 'snow' | 'volcano' | 'hill'][] = [
+    // Frostspire northern alpine range
+    [0.42, 0.13, 68, 52, 'snow'], [0.47, 0.10, 82, 64, 'snow'], [0.51, 0.14, 72, 56, 'snow'],
+    [0.58, 0.12, 86, 68, 'snow'], [0.63, 0.15, 76, 58, 'snow'], [0.68, 0.11, 88, 70, 'snow'],
+    [0.71, 0.19, 72, 54, 'snow'], [0.60, 0.25, 62, 46, 'snow'], [0.51, 0.26, 58, 42, 'snow'],
+    // Emberwaste volcanic ridges
+    [0.54, 0.46, 62, 46, 'volcano'], [0.65, 0.50, 74, 58, 'volcano'], [0.71, 0.56, 78, 62, 'volcano'],
+    [0.60, 0.66, 62, 46, 'volcano'], [0.70, 0.66, 66, 50, 'volcano'],
+    // Western & central foothills
+    [0.08, 0.30, 52, 34, 'hill'], [0.19, 0.23, 50, 32, 'hill'], [0.28, 0.18, 56, 36, 'hill'],
+    [0.43, 0.49, 52, 34, 'hill'], [0.49, 0.56, 56, 36, 'hill'],
+    // Sunbleached Dunes sandstone mesas
+    [0.19, 0.87, 62, 38, 'hill'], [0.31, 0.88, 68, 44, 'hill'],
+    // Aether Isles glacial crystal peaks
+    [0.84, 0.18, 74, 58, 'snow'], [0.91, 0.21, 78, 62, 'snow'],
+    // Shattered Expanse obsidian volcanic peaks
+    [0.84, 0.76, 76, 62, 'volcano'], [0.91, 0.80, 82, 68, 'volcano']
+  ]
+  for (const [mx, my, mw, mh, st] of mountains) {
+    drawInkedMountain(ctx, mx * W, my * H, mw, mh, st)
+  }
+
+  // 7. Hand-inked miniature forest groves (carefully avoiding every location node!)
+  const nodePts = chapters.map(c => ({ x: c.mapX * W, y: c.mapY * H }))
+  const isNearNode = (tx: number, ty: number) => nodePts.some(p => Math.hypot(p.x - tx, p.y - ty) < 64)
+
+  const forestClusters: readonly [number, number, number, number, 'oak' | 'autumn' | 'pine' | 'snow' | 'dead'][] = [
+    [0.08, 0.45, 85, 16, 'oak'],
+    [0.16, 0.32, 78, 15, 'oak'],
+    [0.21, 0.40, 70, 12, 'oak'],
+    [0.28, 0.32, 75, 14, 'autumn'],
+    [0.37, 0.30, 70, 12, 'autumn'],
+    [0.30, 0.50, 70, 13, 'autumn'],
+    [0.22, 0.68, 92, 18, 'dead'],
+    [0.37, 0.64, 85, 16, 'dead'],
+    [0.47, 0.72, 75, 12, 'dead'],
+    [0.46, 0.22, 82, 15, 'snow'],
+    [0.60, 0.29, 80, 14, 'snow'],
+    [0.67, 0.27, 65, 10, 'snow'],
+    [0.53, 0.40, 72, 12, 'pine']
+  ]
+
+  // Clip trees strictly to mainland so none spill into the sea!
+  ctx.save()
+  traceSmoothPolygon(ctx, SOLIS_MAINLAND, W, H)
+  ctx.clip()
+  let seedIdx = 1
+  for (const [fx, fy, radius, count, style] of forestClusters) {
+    for (let i = 0; i < count; i++) {
+      seedIdx++
+      const ang = hash1(seedIdx * 3.7) * Math.PI * 2
+      const dist = Math.sqrt(hash1(seedIdx * 7.9)) * radius
+      const tx = fx * W + Math.cos(ang) * dist * 1.25
+      const ty = fy * H + Math.sin(ang) * dist * 0.85
+      if (isNearNode(tx, ty)) continue
+      drawInkedTree(ctx, tx, ty, 11 + (seedIdx % 5) * 1.6, style)
+    }
+  }
+  ctx.restore()
+
+  // 8. Ornate cartographic compass rose in bottom-left sea (region banners draw live above roads!)
+  const crx = W * 0.048
+  const cry = H * 0.80
+  ctx.save()
+  ctx.beginPath()
+  ctx.arc(crx, cry, 42, 0, Math.PI * 2)
+  ctx.fillStyle = 'rgba(20, 38, 56, 0.72)'
+  ctx.fill()
+  ctx.strokeStyle = '#e8cf94'
+  ctx.lineWidth = 2.6
+  ctx.stroke()
+  drawStarShape(ctx, crx, cry, 36, 10, 4)
+  ctx.fillStyle = '#e8cf94'
+  ctx.fill()
+  ctx.strokeStyle = '#241a10'
+  ctx.lineWidth = 1.8
+  ctx.stroke()
+  drawText(ctx, 'N', crx, cry - 50, { size: 16, weight: 900, color: '#f5e2b3', align: 'center', display: true, stroke: true })
+  ctx.restore()
+
+  // 10. Classic double-lined parchment atlas border frame
+  ctx.save()
+  ctx.strokeStyle = 'rgba(232, 206, 148, 0.42)'
+  ctx.lineWidth = 4
+  ctx.strokeRect(14, 14, W - 28, H - 28)
+  ctx.strokeStyle = 'rgba(232, 206, 148, 0.22)'
+  ctx.lineWidth = 1.5
+  ctx.strokeRect(24, 24, W - 48, H - 48)
+  ctx.restore()
+
+  // Warm antique vignette around the edges of the chart
+  const vig = ctx.createRadialGradient(W * 0.5, H * 0.5, W * 0.36, W * 0.5, H * 0.5, W * 0.68)
+  vig.addColorStop(0, 'rgba(20, 14, 8, 0)')
+  vig.addColorStop(1, 'rgba(14, 10, 8, 0.40)')
+  ctx.fillStyle = vig
+  ctx.fillRect(0, 0, W, H)
+
+  cachedSolisMapCanvas = canvas
+  return canvas
+}
+
+/** Draw the baked high-res Solis world atlas + crisp high-contrast roads, sea lanes & drifting clouds. */
+export function drawWorldMapCanvas(
+  ctx: CanvasRenderingContext2D,
+  rect: LayoutRect,
+  vp: WorldMapViewport,
+  time: number,
+  chapters: readonly ChapterSpec[],
+  clearedSet: ReadonlySet<string>,
+  unlockedSet: ReadonlySet<string>
+) {
+  const { x, y, width: w, height: h } = rect
+  const scale = worldMapScale(rect, vp.zoom)
+  const mapDrawW = WORLD_MAP_W * scale
+  const mapDrawH = WORLD_MAP_H * scale
+  const mapLeft = x + w * 0.5 - vp.panX * mapDrawW
+  const mapTop = y + h * 0.5 - vp.panY * mapDrawH
+
+  ctx.save()
+  ctx.beginPath()
+  ctx.rect(x, y, w, h)
+  ctx.clip()
+
+  ctx.fillStyle = '#152e40'
+  ctx.fillRect(x, y, w, h)
+
+  const baked = getBakedSolisMap(chapters)
+  if (baked) {
+    ctx.drawImage(baked, mapLeft, mapTop, mapDrawW, mapDrawH)
+  }
+
+  // Draw unmistakably bold, high-contrast roads & maritime sea lanes connecting prerequisites -> stage
+  const posById = new Map<string, { cx: number; cy: number; stage: ChapterSpec }>()
+  for (const ch of chapters) {
+    const pt = worldMapToScreen(ch.mapX, ch.mapY, rect, vp)
+    posById.set(ch.id, { cx: pt.x, cy: pt.y, stage: ch })
+  }
+
+  const quadPoint = (
+    x0: number, y0: number, cx: number, cy: number, x1: number, y1: number, t: number
+  ) => {
+    const it = 1 - t
+    const px = it * it * x0 + 2 * it * t * cx + t * t * x1
+    const py = it * it * y0 + 2 * it * t * cy + t * t * y1
+    const tx = 2 * it * (cx - x0) + 2 * t * (x1 - cx)
+    const ty = 2 * it * (cy - y0) + 2 * t * (y1 - cy)
+    return { x: px, y: py, ang: Math.atan2(ty, tx) }
+  }
+
+  const drawRoadChevron = (px: number, py: number, ang: number, sz: number, fill: string) => {
+    ctx.save()
+    ctx.translate(px, py)
+    ctx.rotate(ang)
+    ctx.beginPath()
+    ctx.moveTo(sz, 0)
+    ctx.lineTo(-sz * 0.72, -sz * 0.72)
+    ctx.lineTo(-sz * 0.28, 0)
+    ctx.lineTo(-sz * 0.72, sz * 0.72)
+    ctx.closePath()
+    ctx.fillStyle = fill
+    ctx.fill()
+    ctx.strokeStyle = '#1e1209'
+    ctx.lineWidth = Math.max(1.2, sz * 0.25)
+    ctx.stroke()
+    ctx.restore()
+  }
+
   for (const ch of chapters) {
     const to = posById.get(ch.id)
     if (!to) continue
     const toCleared = clearedSet.has(ch.id)
     const toUnlocked = unlockedSet.has(ch.id)
+    const isSoon = Boolean(ch.comingSoon)
 
-    for (const reqId of ch.requires) {
+    for (let rIdx = 0; rIdx < ch.requires.length; rIdx++) {
+      const reqId = ch.requires[rIdx]
       const from = posById.get(reqId)
       if (!from) continue
       const fromCleared = clearedSet.has(reqId)
-      const activeRoad = fromCleared && toUnlocked
-      const completedRoad = fromCleared && toCleared
+      const activeRoad = !isSoon && fromCleared && toUnlocked
+      const completedRoad = !isSoon && fromCleared && toCleared
+      const isSea = Boolean(ch.seaRoute || from.stage.seaRoute) && (
+        ch.region !== from.stage.region || ch.id === 'first_sun_sanctum' || ch.id === 'tempest_spire'
+      )
 
-      const mx = (from.cx + to.cx) * 0.5
-      const my = (from.cy + to.cy) * 0.5 + (to.cy - from.cy) * 0.14
+      const dx = to.cx - from.cx
+      const dy = to.cy - from.cy
+      const len = Math.max(1, Math.hypot(dx, dy))
+      // Gentle perpendicular curve offset so parallel routes & forks separate cleanly!
+      const bendSign = ((ch.index + rIdx) % 2 === 0 ? 1 : -1)
+      const curveOffset = Math.min(28 * vp.zoom, len * 0.14) * bendSign
+      const mx = (from.cx + to.cx) * 0.5 + (-dy / len) * curveOffset
+      const my = (from.cy + to.cy) * 0.5 + (dx / len) * curveOffset
+
+      const z = Math.max(0.72, vp.zoom)
 
       ctx.save()
-      // Dark road casing
-      ctx.beginPath()
-      ctx.moveTo(from.cx, from.cy)
-      ctx.quadraticCurveTo(mx, my, to.cx, to.cy)
-      ctx.strokeStyle = '#090d1acc'
-      ctx.lineWidth = completedRoad ? 8 : activeRoad ? 7 : 5
       ctx.lineCap = 'round'
-      ctx.stroke()
-
-      // Road core
+      ctx.lineJoin = 'round'
       ctx.beginPath()
       ctx.moveTo(from.cx, from.cy)
       ctx.quadraticCurveTo(mx, my, to.cx, to.cy)
-      if (completedRoad) {
-        ctx.strokeStyle = COLOR.accent
-        ctx.lineWidth = 4
+
+      if (isSea) {
+        // Distinct nautical maritime shipping lane (dark sea halo + bright ivory-gold dashes!)
+        ctx.setLineDash([10 * z, 9 * z])
+        ctx.strokeStyle = 'rgba(11, 24, 38, 0.85)'
+        ctx.lineWidth = 6.2 * z
+        ctx.stroke()
+        ctx.strokeStyle = activeRoad || completedRoad ? '#ffe484' : '#e8d7a8'
+        ctx.lineWidth = 3.2 * z
+        ctx.stroke()
+        ctx.setLineDash([])
+        const mid = quadPoint(from.cx, from.cy, mx, my, to.cx, to.cy, 0.5)
+        drawRoadChevron(mid.x, mid.y, mid.ang, 5.2 * z, activeRoad ? '#ffe878' : '#f2dfb0')
+      } else if (completedRoad) {
+        // Cleared Imperial Highway: thick dark ink border + radiant gold core + bright cream highlight!
+        ctx.strokeStyle = 'rgba(18, 10, 4, 0.36)'
+        ctx.lineWidth = 12 * z
+        ctx.stroke()
+        ctx.strokeStyle = '#1f1208'
+        ctx.lineWidth = 9.2 * z
+        ctx.stroke()
+        ctx.strokeStyle = '#f5be2e'
+        ctx.lineWidth = 5.4 * z
+        ctx.stroke()
+        ctx.strokeStyle = '#fff5bd'
+        ctx.lineWidth = 2.0 * z
         ctx.stroke()
       } else if (activeRoad) {
-        ctx.strokeStyle = '#ffc83b55'
-        ctx.lineWidth = 4
+        // Active Frontier Road: glowing vermilion-gold highway + marching animated chevrons!
+        ctx.strokeStyle = 'rgba(20, 10, 4, 0.42)'
+        ctx.lineWidth = 12.5 * z
         ctx.stroke()
-        ctx.setLineDash([8, 8])
-        ctx.lineDashOffset = -time * 26
-        ctx.strokeStyle = COLOR.accentHi
-        ctx.lineWidth = 3.2
+        ctx.strokeStyle = '#1f1208'
+        ctx.lineWidth = 9.6 * z
+        ctx.stroke()
+        ctx.strokeStyle = '#e05024'
+        ctx.lineWidth = 5.8 * z
+        ctx.stroke()
+        ctx.setLineDash([10 * z, 9 * z])
+        ctx.lineDashOffset = -time * 32
+        ctx.strokeStyle = '#fff094'
+        ctx.lineWidth = 3.2 * z
+        ctx.stroke()
+        ctx.setLineDash([])
+        const animT = 0.28 + ((time * 0.38) % 0.48)
+        const chev = quadPoint(from.cx, from.cy, mx, my, to.cx, to.cy, animT)
+        drawRoadChevron(chev.x, chev.y, chev.ang, 6.2 * z, '#fff29e')
+      } else if (isSoon) {
+        // Future Expansion Land Road: clearly visible warm ochre-rust bordered trail!
+        ctx.strokeStyle = '#24160b'
+        ctx.lineWidth = 7.0 * z
+        ctx.stroke()
+        ctx.strokeStyle = '#9c5f38'
+        ctx.lineWidth = 4.0 * z
+        ctx.stroke()
+        ctx.setLineDash([6 * z, 7 * z])
+        ctx.strokeStyle = '#edd2a4'
+        ctx.lineWidth = 1.9 * z
         ctx.stroke()
       } else {
-        ctx.setLineDash([5, 7])
-        ctx.strokeStyle = '#5f709966'
-        ctx.lineWidth = 2.5
+        // Locked Playable Land Road: bold classic FFTA crimson-terracotta bordered highway!
+        ctx.strokeStyle = 'rgba(20, 11, 5, 0.32)'
+        ctx.lineWidth = 10.5 * z
+        ctx.stroke()
+        ctx.strokeStyle = '#211309'
+        ctx.lineWidth = 8.4 * z
+        ctx.stroke()
+        ctx.strokeStyle = '#c43f31'
+        ctx.lineWidth = 4.8 * z
+        ctx.stroke()
+        ctx.setLineDash([7 * z, 7 * z])
+        ctx.strokeStyle = '#f5d8a6'
+        ctx.lineWidth = 2.0 * z
         ctx.stroke()
       }
       ctx.restore()
     }
   }
 
-  // Gentle drifting atmospheric map motes
-  for (let i = 0; i < 14; i++) {
-    const px = ix + ((hash1(i * 3.1) + time * (0.012 + hash1(i * 7.2) * 0.015)) % 1) * iw
-    const py = iy + hash1(i * 5.7) * ih + Math.sin(time * 1.4 + i) * 6
-    const a = 0.18 + Math.sin(time * 2.2 + i * 1.7) * 0.12
-    ctx.beginPath()
-    ctx.arc(px, py, 1.8 + (i % 3) * 0.6, 0, Math.PI * 2)
-    ctx.fillStyle = `rgba(255, 232, 160, ${Math.max(0.05, a)})`
+  // Grand Engraved Scrollwork Region Banners rendered cleanly ABOVE roads & BELOW landmark pins!
+  const bannerScale = Math.max(0.76, Math.min(1.18, vp.zoom * 0.92))
+  for (const reg of REGION_POLYS) {
+    const pt = worldMapToScreen(reg.labelX, reg.labelY, rect, vp)
+    const titleSz = Math.round(11.5 * bannerScale)
+    const subSz = Math.round(7.5 * bannerScale)
+    const titleW = measureText(ctx, reg.label, titleSz, 900, true) + reg.label.length * 1.1
+    const subW = measureText(ctx, reg.subLabel, subSz, 900, true) + reg.subLabel.length * 0.8
+    const pillW = Math.max(titleW, subW) + 20 * bannerScale
+    const pillH = Math.round(28 * bannerScale)
+    ctx.save()
+    rr(ctx, pt.x - pillW / 2, pt.y - pillH / 2, pillW, pillH, 6)
+    ctx.fillStyle = reg.bannerBg
     ctx.fill()
+    ctx.strokeStyle = reg.future ? '#7a2c48' : '#3a2918'
+    ctx.lineWidth = reg.future ? 2.0 : 1.6
+    ctx.stroke()
+    drawText(ctx, reg.label, pt.x, pt.y - pillH * 0.16, {
+      size: titleSz,
+      weight: 900,
+      color: reg.textCol,
+      align: 'center',
+      spacing: 1.1,
+      display: true
+    })
+    drawText(ctx, reg.subLabel, pt.x, pt.y + pillH * 0.27, {
+      size: subSz,
+      weight: 900,
+      color: reg.future ? '#8c2046' : '#57422a',
+      align: 'center',
+      spacing: 0.8,
+      display: true
+    })
+    ctx.restore()
   }
 
-  // Inner carved border
-  rr(ctx, ix + 1, iy + 1, iw - 2, ih - 2, RADIUS.lg - 1)
+  // Gentle drifting atmospheric cloud shadows over the map (Triangle Strategy touch!)
+  for (let i = 0; i < 6; i++) {
+    const cx = x + (((hash1(i * 6.3) + time * (0.008 + i * 0.002)) % 1.25) - 0.12) * w
+    const cy = y + hash1(i * 9.1) * h
+    ctx.save()
+    ctx.globalAlpha = 0.06
+    ctx.beginPath()
+    ctx.ellipse(cx, cy, 110 * vp.zoom, 36 * vp.zoom, -0.1, 0, Math.PI * 2)
+    ctx.fillStyle = '#ffffff'
+    ctx.fill()
+    ctx.restore()
+  }
+
+  ctx.restore()
+}
+
+/** Miniature FFTA / Summerlands hand-inked landmark silhouette drawn inside each World Map medallion! */
+function drawLandmarkArt(ctx: CanvasRenderingContext2D, kind: LandmarkKind, cx: number, cy: number, r: number, color: string) {
+  ctx.save()
+  ctx.fillStyle = color
   ctx.strokeStyle = COLOR.outline
-  ctx.lineWidth = 2.4
-  ctx.stroke()
+  ctx.lineWidth = 1.6
+  ctx.lineJoin = 'round'
+  ctx.lineCap = 'round'
+
+  if (kind === 'watchtower' || kind === 'citadel' || kind === 'town') {
+    // Battlement keep / tower silhouette
+    const tw = kind === 'watchtower' ? r * 0.66 : r * 1.15
+    const th = r * 0.92
+    ctx.beginPath()
+    ctx.rect(cx - tw * 0.5, cy - th * 0.35, tw, th * 0.88)
+    ctx.fill(); ctx.stroke()
+    // Crenellations
+    const merlons = kind === 'watchtower' ? 2 : 3
+    const mw = tw / (merlons * 2 - 1)
+    for (let i = 0; i < merlons; i++) {
+      ctx.fillRect(cx - tw * 0.5 + i * mw * 2, cy - th * 0.62, mw, th * 0.3)
+      ctx.strokeRect(cx - tw * 0.5 + i * mw * 2, cy - th * 0.62, mw, th * 0.3)
+    }
+    // Arched gate
+    ctx.fillStyle = '#141a2b'
+    ctx.beginPath()
+    ctx.arc(cx, cy + th * 0.52, tw * 0.2, Math.PI, 0)
+    ctx.fill()
+  } else if (kind === 'bridge') {
+    // Stone twin-arch bridge
+    ctx.beginPath()
+    ctx.moveTo(cx - r * 0.72, cy - r * 0.16)
+    ctx.lineTo(cx + r * 0.72, cy - r * 0.16)
+    ctx.lineTo(cx + r * 0.72, cy + r * 0.45)
+    ctx.lineTo(cx + r * 0.44, cy + r * 0.45)
+    ctx.arc(cx + r * 0.22, cy + r * 0.45, r * 0.22, 0, Math.PI, true)
+    ctx.arc(cx - r * 0.22, cy + r * 0.45, r * 0.22, 0, Math.PI, true)
+    ctx.lineTo(cx - r * 0.72, cy + r * 0.45)
+    ctx.closePath()
+    ctx.fill(); ctx.stroke()
+  } else if (kind === 'shrine') {
+    // Radiant Torii / Sun Temple arch + glowing crystal
+    ctx.fillRect(cx - r * 0.52, cy - r * 0.35, r * 0.2, r * 0.85)
+    ctx.fillRect(cx + r * 0.32, cy - r * 0.35, r * 0.2, r * 0.85)
+    ctx.beginPath()
+    ctx.moveTo(cx - r * 0.75, cy - r * 0.32)
+    ctx.lineTo(cx, cy - r * 0.72)
+    ctx.lineTo(cx + r * 0.75, cy - r * 0.32)
+    ctx.closePath()
+    ctx.fill(); ctx.stroke()
+    drawStarShape(ctx, cx, cy + r * 0.08, r * 0.26, r * 0.11, 4)
+    ctx.fillStyle = '#fff5b8'; ctx.fill()
+  } else if (kind === 'crypt' || kind === 'ruins') {
+    drawIcon(ctx, 'skull', cx, cy, r * 1.15, color)
+  } else if (kind === 'vault' || kind === 'foundry') {
+    drawIcon(ctx, 'chest', cx, cy, r * 1.12, color)
+  } else if (kind === 'pass' || kind === 'peak') {
+    // Jagged twin mountain peak emblem
+    ctx.beginPath()
+    ctx.moveTo(cx - r * 0.74, cy + r * 0.5)
+    ctx.lineTo(cx - r * 0.16, cy - r * 0.62)
+    ctx.lineTo(cx + r * 0.18, cy + r * 0.04)
+    ctx.lineTo(cx + r * 0.42, cy - r * 0.38)
+    ctx.lineTo(cx + r * 0.78, cy + r * 0.5)
+    ctx.closePath()
+    ctx.fill(); ctx.stroke()
+  } else if (kind === 'forest') {
+    // Twin miniature trees
+    ctx.beginPath()
+    ctx.arc(cx - r * 0.24, cy - r * 0.12, r * 0.38, 0, Math.PI * 2)
+    ctx.arc(cx + r * 0.26, cy - r * 0.04, r * 0.34, 0, Math.PI * 2)
+    ctx.arc(cx, cy - r * 0.36, r * 0.36, 0, Math.PI * 2)
+    ctx.fill(); ctx.stroke()
+    ctx.fillStyle = '#5c3c24'
+    ctx.fillRect(cx - r * 0.1, cy + r * 0.16, r * 0.2, r * 0.36)
+  } else if (kind === 'lake' || kind === 'atoll') {
+    // Crystal island over wave ripple
+    drawFacetedGem(ctx, cx, cy - r * 0.12, r * 0.44, '#ffffff', color)
+    ctx.beginPath()
+    ctx.moveTo(cx - r * 0.62, cy + r * 0.44)
+    ctx.quadraticCurveTo(cx, cy + r * 0.24, cx + r * 0.62, cy + r * 0.44)
+    ctx.strokeStyle = '#a8f2ff'; ctx.lineWidth = 2.2; ctx.stroke()
+  } else if (kind === 'gate' || kind === 'arena') {
+    // Obsidian spiked arch
+    ctx.beginPath()
+    ctx.moveTo(cx - r * 0.66, cy + r * 0.52)
+    ctx.lineTo(cx - r * 0.52, cy - r * 0.56)
+    ctx.lineTo(cx, cy - r * 0.28)
+    ctx.lineTo(cx + r * 0.52, cy - r * 0.56)
+    ctx.lineTo(cx + r * 0.66, cy + r * 0.52)
+    ctx.closePath()
+    ctx.fill(); ctx.stroke()
+    ctx.fillStyle = '#ff8040'
+    ctx.beginPath()
+    ctx.arc(cx, cy + r * 0.2, r * 0.24, Math.PI, 0)
+    ctx.fill()
+  } else if (kind === 'throne') {
+    drawIcon(ctx, 'crown', cx, cy, r * 1.22, color)
+  } else {
+    // Abyssal whirlpool spiral
+    ctx.strokeStyle = color
+    ctx.lineWidth = 2.2
+    ctx.beginPath()
+    ctx.arc(cx, cy, r * 0.58, 0, Math.PI * 1.65)
+    ctx.stroke()
+    ctx.beginPath()
+    ctx.arc(cx, cy, r * 0.3, Math.PI * 0.6, Math.PI * 2.15)
+    ctx.stroke()
+    ctx.beginPath()
+    ctx.arc(cx, cy, r * 0.12, 0, Math.PI * 2)
+    ctx.fill()
+  }
   ctx.restore()
 }
 
@@ -3971,11 +4805,12 @@ export function drawWorldMapNode(
 ) {
   const { x, y, width: w } = rect
   const cx = x + w / 2
-  const r = opts.compact ? 17 : stage.kind === 'boss' ? 24 : stage.kind !== 'story' ? 21 : 19
+  const isSoon = Boolean(stage.comingSoon)
+  const r = opts.compact ? 16 : stage.kind === 'boss' ? 23 : stage.kind !== 'story' ? 20 : 18
   const cy = y + r + 5
   const biomeCol = BIOME_MAP_COLOR[stage.biome]
   const diffMeta = DIFFICULTY_META[stage.difficulty]
-  const frontier = opts.unlocked && !opts.cleared
+  const frontier = !isSoon && opts.unlocked && !opts.cleared
   const hot = st.hovered || st.focused || opts.selected
 
   ctx.save()
@@ -3984,23 +4819,25 @@ export function drawWorldMapNode(
   if (frontier || opts.selected) {
     const pulse = 1 + Math.sin(opts.time * 4.5 + stage.index) * 0.12
     ctx.beginPath()
-    ctx.arc(cx, cy, (r + 8) * pulse, 0, Math.PI * 2)
-    ctx.fillStyle = opts.selected ? '#ffe6803d' : stage.kind === 'boss' ? '#ff526638' : '#ffc83b2e'
+    ctx.arc(cx, cy, (r + 7.5) * pulse, 0, Math.PI * 2)
+    ctx.fillStyle = opts.selected
+      ? 'rgba(255, 232, 128, 0.36)'
+      : stage.kind === 'boss' ? 'rgba(255, 82, 102, 0.28)' : 'rgba(255, 200, 59, 0.26)'
     ctx.fill()
     ctx.strokeStyle = opts.selected ? COLOR.accentHi : frontier ? COLOR.accent : biomeCol.ring
     ctx.lineWidth = opts.selected ? 2.6 : 1.8
     ctx.stroke()
   }
 
-  // Drop shadow
+  // Ground pedestal shadow (FFTA medallion feel!)
   ctx.beginPath()
-  ctx.arc(cx, cy + 3, r, 0, Math.PI * 2)
-  ctx.fillStyle = '#050814aa'
+  ctx.ellipse(cx, cy + r * 0.85, r * 0.92, r * 0.34, 0, 0, Math.PI * 2)
+  ctx.fillStyle = 'rgba(18, 12, 8, 0.44)'
   ctx.fill()
 
-  // Distinctive node frame shape: diamond/octagon for special/treasure, shield circle for story/boss
+  // Medallion shape: octagon for treasure/vault, hex for special/town, shield-circle for story/boss
   ctx.beginPath()
-  if (stage.kind === 'special' || stage.kind === 'treasure') {
+  if (stage.kind === 'special' || stage.kind === 'treasure' || stage.kind === 'town') {
     const sides = stage.kind === 'treasure' ? 8 : 6
     for (let i = 0; i < sides; i++) {
       const a = (i / sides) * Math.PI * 2 - Math.PI / 2
@@ -4015,9 +4852,12 @@ export function drawWorldMapNode(
   }
 
   const grad = ctx.createLinearGradient(cx, cy - r, cx, cy + r)
-  if (!opts.unlocked) {
-    grad.addColorStop(0, '#363f57')
-    grad.addColorStop(1, '#1d2233')
+  if (isSoon) {
+    grad.addColorStop(0, hot ? '#6b5a4a' : '#4f4238')
+    grad.addColorStop(1, '#29211c')
+  } else if (!opts.unlocked) {
+    grad.addColorStop(0, '#3e465c')
+    grad.addColorStop(1, '#1e2333')
   } else {
     grad.addColorStop(0, hot ? biomeCol.ring : biomeCol.fill)
     grad.addColorStop(1, '#172038')
@@ -4025,36 +4865,41 @@ export function drawWorldMapNode(
   ctx.fillStyle = grad
   ctx.fill()
 
-  // Outer thick ink border + inner colored rim
   ctx.lineWidth = 2.6
   ctx.strokeStyle = COLOR.outline
   ctx.stroke()
 
   ctx.beginPath()
   ctx.arc(cx, cy, r - 3.2, 0, Math.PI * 2)
-  ctx.strokeStyle = !opts.unlocked
-    ? '#5b6785'
-    : opts.selected ? COLOR.accentHi : opts.cleared ? COLOR.good : diffMeta.hex
-  ctx.lineWidth = opts.selected ? 2.4 : 1.8
+  ctx.strokeStyle = isSoon
+    ? '#a68c6d'
+    : !opts.unlocked
+      ? '#626f8c'
+      : opts.selected ? COLOR.accentHi : opts.cleared ? COLOR.good : diffMeta.hex
+  ctx.lineWidth = opts.selected ? 2.4 : 1.7
   ctx.stroke()
 
-  // Center node icon
-  const nodeIcon: IconName = !opts.unlocked
-    ? 'lock'
-    : stage.kind === 'boss' ? 'crown'
-    : stage.kind === 'treasure' ? 'chest'
-    : stage.kind === 'elite' ? 'skull'
-    : stage.kind === 'special' ? 'sparkle'
-    : 'sword'
-  const iconCol = !opts.unlocked
-    ? '#8e9bb8'
-    : stage.kind === 'boss' ? '#ff9ea8'
-    : stage.kind === 'treasure' || stage.kind === 'special' ? COLOR.accentHi
-    : '#ffffff'
-  drawIcon(ctx, nodeIcon, cx, cy, r * 0.92, iconCol)
+  // Miniature landmark artwork inside medallion
+  const artCol = isSoon
+    ? '#d9c3a3'
+    : !opts.unlocked
+      ? '#8e9bb8'
+      : stage.kind === 'boss' ? '#ff9ea8'
+      : stage.kind === 'treasure' || stage.kind === 'special' ? COLOR.accentHi
+      : '#f7f2e4'
+  drawLandmarkArt(ctx, stage.landmark, cx, cy, r * 0.78, artCol)
 
-  // Cleared checkmark badge in top-right of pin
-  if (opts.cleared) {
+  // Top-right status badge: Cleared Check / Unclaimed Special Star / Locked Padlock / SOON Wax Seal!
+  if (isSoon) {
+    drawChip(ctx, cx + r + 10, cy - r - 3, 'SOON', {
+      h: 14,
+      size: 7.5,
+      color: '#fff4d6',
+      bg: '#6e3226',
+      border: COLOR.outline,
+      align: 'right'
+    })
+  } else if (opts.cleared) {
     const bx = cx + r * 0.72
     const by = cy - r * 0.68
     ctx.beginPath()
@@ -4065,8 +4910,18 @@ export function drawWorldMapNode(
     ctx.lineWidth = 1.8
     ctx.stroke()
     drawIcon(ctx, 'check', bx, by, 8.5, '#072b16')
-  } else if (opts.unlocked && stage.kind !== 'story') {
-    // Unclaimed special reward sparkle badge!
+  } else if (!opts.unlocked) {
+    const bx = cx + r * 0.72
+    const by = cy - r * 0.68
+    ctx.beginPath()
+    ctx.arc(bx, by, 7.5, 0, Math.PI * 2)
+    ctx.fillStyle = '#232a3d'
+    ctx.fill()
+    ctx.strokeStyle = COLOR.outline
+    ctx.lineWidth = 1.6
+    ctx.stroke()
+    drawIcon(ctx, 'lock', bx, by, 8, '#a0aec9')
+  } else if (stage.kind !== 'story') {
     const bx = cx + r * 0.72
     const by = cy - r * 0.68
     ctx.beginPath()
@@ -4079,39 +4934,43 @@ export function drawWorldMapNode(
     drawIcon(ctx, 'star', bx, by, 8.5, COLOR.accentText)
   }
 
-  // Difficulty numeral pip on top-left of pin
-  const dx = cx - r * 0.74
-  const dy = cy - r * 0.68
-  ctx.beginPath()
-  ctx.arc(dx, dy, 7.5, 0, Math.PI * 2)
-  ctx.fillStyle = opts.unlocked ? diffMeta.bgHex : '#1b2133'
-  ctx.fill()
-  ctx.strokeStyle = COLOR.outline
-  ctx.lineWidth = 1.6
-  ctx.stroke()
-  drawText(ctx, `${stage.difficulty}`, dx, dy + 0.5, {
-    size: 9,
-    weight: 900,
-    color: opts.unlocked ? diffMeta.hex : '#7886a6',
-    align: 'center',
-    display: true
-  })
+  // Top-left difficulty pip (hidden on peaceful town hubs)
+  if (stage.kind !== 'town') {
+    const dx = cx - r * 0.74
+    const dy = cy - r * 0.68
+    const pipW = stage.difficulty >= 6 ? 18 : 14.5
+    rr(ctx, dx - pipW / 2, dy - 7.4, pipW, 14.8, 7.4)
+    ctx.fillStyle = isSoon ? (stage.difficulty >= 6 ? diffMeta.bgHex : '#3b2e24') : opts.unlocked ? diffMeta.bgHex : '#1b2133'
+    ctx.fill()
+    ctx.strokeStyle = COLOR.outline
+    ctx.lineWidth = 1.6
+    ctx.stroke()
+    drawText(ctx, `${stage.difficulty}`, dx, dy + 0.5, {
+      size: 8.8,
+      weight: 900,
+      color: isSoon ? (stage.difficulty >= 6 ? diffMeta.hex : '#d9be98') : opts.unlocked ? diffMeta.hex : '#7886a6',
+      align: 'center',
+      display: true
+    })
+  }
 
-  // Name plaque below the pin
-  const plaqueY = cy + r + 4
-  const plaqueH = opts.compact ? 17 : 19
-  const plaqueW = Math.min(w, Math.max(76, measureText(ctx, stage.title, opts.compact ? 9.5 : 10.5, 900, true) + 14))
+  // Crisp parchment/slate name ribbon below the medallion
+  const plaqueY = cy + r + 3
+  const plaqueH = opts.compact ? 16 : 18
+  const plaqueW = Math.min(w, Math.max(70, measureText(ctx, stage.title, opts.compact ? 9 : 10, 900, true) + 12))
   const plaqueX = cx - plaqueW / 2
-  rr(ctx, plaqueX, plaqueY, plaqueW, plaqueH, 6)
-  ctx.fillStyle = opts.selected ? '#35497a' : !opts.unlocked ? '#141a2be0' : '#1b2642eb'
+  rr(ctx, plaqueX, plaqueY, plaqueW, plaqueH, 5)
+  ctx.fillStyle = opts.selected
+    ? '#35497a'
+    : isSoon ? 'rgba(42, 32, 24, 0.88)' : !opts.unlocked ? 'rgba(20, 26, 43, 0.88)' : 'rgba(24, 34, 58, 0.92)'
   ctx.fill()
-  ctx.strokeStyle = opts.selected ? COLOR.accentHi : COLOR.outline
-  ctx.lineWidth = opts.selected ? 2 : 1.6
+  ctx.strokeStyle = opts.selected ? COLOR.accentHi : isSoon ? '#8f7454' : COLOR.outline
+  ctx.lineWidth = opts.selected ? 2 : 1.5
   ctx.stroke()
   drawText(ctx, stage.title, cx, plaqueY + plaqueH / 2 + 0.5, {
-    size: opts.compact ? 9.5 : 10.5,
+    size: opts.compact ? 9 : 10,
     weight: 900,
-    color: !opts.unlocked ? '#8a97b5' : opts.selected ? COLOR.accentHi : '#ffffff',
+    color: isSoon ? '#e0cca8' : !opts.unlocked ? '#9aa7c4' : opts.selected ? COLOR.accentHi : '#ffffff',
     align: 'center',
     maxW: plaqueW - 8,
     display: true

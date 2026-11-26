@@ -1,13 +1,13 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import { STEP, createPerfMonitor, verifyTrace } from '../packages/ridgetop/framework/index.ts'
-import { CHAPTERS, CHAPTER_BY_ID, EQUIPMENT_BY_ID, HERO_SPECS, RARITY_META, RARITY_ORDER } from '../examples/crownshard/crownshard/data.ts'
+import { CHAPTERS, CHAPTER_BY_ID, EQUIPMENT_BY_ID, HERO_SPECS, PLAYABLE_CHAPTERS, RARITY_META, RARITY_ORDER } from '../examples/crownshard/crownshard/data.ts'
 import {
-  armSkill, armTacticCard, autoEquipBestFit, buyPack, canMergeHero, computeCombatForecast,
+  armSkill, armTacticCard, autoEquipBestFit, buyPack, canMergeHero, computeAttackArc, computeCombatForecast,
   computeDeckValue, computeHeroStats, createInitialState, effectiveSpeed, endPlayerTurn, equipItem,
   findBestFitUpgrades, getHeroSkill, getUnitByUid, isEndlessUnlocked, isStageCleared, isStageUnlocked,
-  maxSquadSize, mergeHero, salvageEquipCard, selectHeroByUid, selectTile, serializeSave,
-  startChapterBattle, startStageBattle, stepGame, unequipItem
+  maxSquadSize, mergeHero, rotateActiveUnitFacing, salvageEquipCard, selectHeroByUid, selectTile, serializeSave,
+  setUnitFacing, startChapterBattle, startStageBattle, stepGame, unequipItem
 } from '../examples/crownshard/crownshard/simulation.ts'
 import { terrainWalkable } from '../examples/crownshard/crownshard/types.ts'
 import type { GameState } from '../examples/crownshard/crownshard/types.ts'
@@ -285,19 +285,25 @@ test('Crownshard battle simulation passes Ridgetop verifyTrace determinism & bou
   assert.equal(report.status, 'pass')
 })
 
-test('World Map has branching stages, special levels, difficulty tiers, and valid variable-size grids', () => {
-  assert.ok(CHAPTERS.length >= 9, 'World Map should include branching story, special, treasure, elite, and boss stages')
+test('World Map has branching stages, special levels, upcoming Soon nodes, difficulty tiers, and valid variable-size grids', () => {
+  assert.ok(CHAPTERS.length >= 24, 'World Map should span a full multi-region continent')
+  assert.ok(PLAYABLE_CHAPTERS.length >= 14, 'Should have 14+ playable tactical stages')
+  const soonStages = CHAPTERS.filter(ch => ch.comingSoon)
+  assert.ok(soonStages.length >= 10, 'Should include upcoming Soon... expansion locations across the continent')
+
   const gridSizes = new Set<string>()
   const kinds = new Set<string>()
   const diffs = new Set<number>()
+  const regions = new Set<string>()
 
   for (const ch of CHAPTERS) {
+    regions.add(ch.region)
     const rows = ch.grid.length
     const cols = ch.grid[0]?.length ?? 0
     assert.ok(rows >= 5 && rows <= 8, `${ch.id} rows out of expected range: ${rows}`)
     assert.ok(cols >= 6 && cols <= 10, `${ch.id} cols out of expected range: ${cols}`)
     for (const row of ch.grid) assert.equal(row.length, cols, `${ch.id} grid must be rectangular`)
-    gridSizes.add(`${cols}x${rows}`)
+    if (!ch.comingSoon) gridSizes.add(`${cols}x${rows}`)
     kinds.add(ch.kind)
     diffs.add(ch.difficulty)
 
@@ -322,19 +328,23 @@ test('World Map has branching stages, special levels, difficulty tiers, and vali
     }
   }
 
-  assert.ok(gridSizes.size >= 5, `Expected varied map sizes across stages, got ${[...gridSizes].join(', ')}`)
-  assert.ok(kinds.has('story') && kinds.has('special') && kinds.has('treasure') && kinds.has('elite') && kinds.has('boss'))
-  assert.equal(diffs.size, 5, 'Should span difficulty levels 1 through 5')
+  assert.ok(gridSizes.size >= 7, `Expected varied playable map sizes across stages, got ${[...gridSizes].join(', ')}`)
+  assert.equal(regions.size, 9, 'Should span all 6 core Solis regions + 3 outer future frontier regions')
+  assert.ok(kinds.has('story') && kinds.has('special') && kinds.has('treasure') && kinds.has('elite') && kinds.has('boss') && kinds.has('town'))
+  assert.equal(diffs.size, 8, 'Should span difficulty tiers I through VIII so future regions scale beyond today\'s endgame')
+  const maxPlayableDiff = Math.max(...PLAYABLE_CHAPTERS.map(ch => ch.difficulty))
+  const maxWorldDiff = Math.max(...CHAPTERS.map(ch => ch.difficulty))
+  assert.ok(maxWorldDiff > maxPlayableDiff, 'Future expansion regions must exceed today\'s highest playable tier')
   assert.equal(Object.keys(HERO_SPECS).length, 8)
 })
 
-test('World Map enforces prerequisite locks, bifurcations, and one-time special rewards on replay', () => {
+test('World Map enforces prerequisite locks, bifurcations, coming-soon gating, and one-time special rewards on replay', () => {
   const state = createInitialState(4040)
-  // Initially only Border Watch is unlocked
+  // Initially only Border Watch is unlocked; Soon... nodes remain unlaunchable even if prereqs are met
   assert.equal(isStageUnlocked(state.campaign, 'border_watch'), true)
+  assert.equal(isStageUnlocked(state.campaign, 'miller_ford'), false)
   assert.equal(isStageUnlocked(state.campaign, 'sunken_bridge'), false)
-  assert.equal(isStageUnlocked(state.campaign, 'sunwell_glade'), false)
-  assert.equal(isStageUnlocked(state.campaign, 'lantern_crypt'), false)
+  assert.equal(isStageUnlocked(state.campaign, 'oakhaven_market'), false)
   assert.equal(isEndlessUnlocked(state.campaign), false)
 
   const winStage = (stageId: string) => {
@@ -370,6 +380,8 @@ test('World Map enforces prerequisite locks, bifurcations, and one-time special 
   assert.equal(firstReward.heroCard?.heroId, 'knight')
   assert.equal(isStageCleared(state.campaign, 'border_watch'), true)
   assert.equal(isStageUnlocked(state.campaign, 'sunken_bridge'), true)
+  assert.equal(isStageUnlocked(state.campaign, 'miller_ford'), true)
+  assert.equal(isStageUnlocked(state.campaign, 'oakhaven_market'), false, 'Coming-soon town hub must stay unlaunchable')
 
   // Replaying Border Watch awards replayGold and does NOT re-award both one-time specials!
   const replayReward = winStage('border_watch')
@@ -503,4 +515,111 @@ test('Best Fit auto-equip picks best unequipped upgrades and NEVER steals from o
   const secondRun = autoEquipBestFit(state, mage.uid)
   assert.equal(secondRun.length, 0, 'Must not swap when already wearing best unequipped gear')
   assert.equal(mage.weaponUid, 'eq_bag_rare_wep')
+})
+
+test('Skills can target empty spaces and allies (friendly fire) without being encouraged', () => {
+  const state = createInitialState(3030)
+  const battle = startChapterBattle(state, 0)
+  const active = getUnitByUid(battle, battle.activeUnitUid)!
+  const ally = battle.units.find(u => u.alive && u.team === 'ally' && u.uid !== active.uid)!
+
+  // Position active archer near both an empty ground tile and an ally
+  active.col = 1
+  active.row = 2
+  ally.col = 2
+  ally.row = 2
+  ally.shield = 0
+  const emptyCol = 1
+  const emptyRow = 1
+  // Ensure empty tile has no occupant
+  for (const u of battle.units) {
+    if (u.col === emptyCol && u.row === emptyRow) { u.col = 0; u.row = 0 }
+  }
+  battle.cells[emptyRow][emptyCol] = { col: emptyCol, row: emptyRow, terrain: 'grass', elevation: 0, walkable: true }
+
+  // Arm Skill 0 (Piercing Shot, single-target enemy skill) -> empty ground & ally tile are BOTH targetable!
+  assert.equal(armSkill(state, 0), true)
+  assert.ok(battle.targetTiles.some(t => t.col === emptyCol && t.row === emptyRow), 'Empty space in range must be targetable by skill')
+  assert.ok(battle.targetTiles.some(t => t.col === ally.col && t.row === ally.row), 'Ally tile in range must be targetable by skill')
+
+  // Forecast on empty ground reports emptyTileTarget cleanly
+  const fcEmpty = computeCombatForecast(state, emptyCol, emptyRow)
+  assert.ok(fcEmpty)
+  assert.equal(fcEmpty.emptyTileTarget, true)
+  assert.equal(fcEmpty.targetTeam, 'none')
+  assert.equal(fcEmpty.friendlyFire, false)
+
+  // Forecast on ally warns friendlyFire while still showing projected damage
+  const fcAlly = computeCombatForecast(state, ally.col, ally.row)
+  assert.ok(fcAlly)
+  assert.equal(fcAlly.friendlyFire, true)
+  assert.equal(fcAlly.friendlyFireCount, 1)
+  assert.equal(fcAlly.isOffensive, true)
+  assert.ok(fcAlly.normalDmg >= 4)
+
+  // Firing at an empty space consumes action & cooldown and emits NO TARGET float
+  assert.equal(selectTile(state, emptyCol, emptyRow), true)
+  assert.equal(active.acted, true)
+  assert.ok(active.cooldowns[0] > 0)
+  assert.ok(battle.floatingNumbers.some(fn => fn.text === 'NO TARGET'))
+
+  // Reset action & cooldown, then explicitly click ally tile -> ally actually takes damage!
+  active.acted = false
+  active.cooldowns[0] = 0
+  const allyHpBefore = ally.hp
+  assert.equal(armSkill(state, 0), true)
+  assert.equal(selectTile(state, ally.col, ally.row), true)
+  assert.ok(ally.hp < allyHpBefore, 'Targeting an ally with an offensive skill must deal friendly-fire damage')
+  assert.ok(battle.floatingNumbers.some(fn => fn.text === 'ALLY HIT!'))
+})
+
+test('Directional facing computes Front, Flank (+15%), and Backstab (+30%) positioning advantages', () => {
+  assert.equal(computeAttackArc(4, 2, 3, 2, 'e'), 'front')
+  assert.equal(computeAttackArc(3, 1, 3, 2, 'e'), 'flank')
+  assert.equal(computeAttackArc(3, 3, 3, 2, 'e'), 'flank')
+  assert.equal(computeAttackArc(2, 2, 3, 2, 'e'), 'back')
+
+  const state = createInitialState(3031)
+  const battle = startChapterBattle(state, 0)
+  const active = getUnitByUid(battle, battle.activeUnitUid)!
+  const enemy = battle.units.find(u => u.alive && u.team === 'enemy')!
+
+  // Flat identical elevation so ONLY facing differs
+  for (let r = 1; r <= 3; r++) {
+    for (let c = 2; c <= 4; c++) {
+      battle.cells[r][c] = { col: c, row: r, terrain: 'grass', elevation: 0, walkable: true }
+    }
+  }
+  active.col = 2
+  active.row = 2
+  enemy.col = 3
+  enemy.row = 2
+  enemy.hp = 80
+  enemy.maxHp = 80
+  enemy.shield = 0
+  selectHeroByUid(state, active.uid)
+
+  // Enemy faces West (toward attacker) -> FRONT
+  setUnitFacing(enemy, 'w')
+  const fcFront = computeCombatForecast(state, enemy.col, enemy.row)!
+  assert.equal(fcFront.attackArc, 'front')
+
+  // Enemy faces North (side exposed) -> FLANK (+15% DMG, +10% Crit)
+  setUnitFacing(enemy, 'n')
+  const fcFlank = computeCombatForecast(state, enemy.col, enemy.row)!
+  assert.equal(fcFlank.attackArc, 'flank')
+  assert.ok(fcFlank.normalDmg > fcFront.normalDmg, `Flank (${fcFlank.normalDmg}) must exceed Front (${fcFront.normalDmg})`)
+  assert.ok(fcFlank.critChance > fcFront.critChance, 'Flank must boost crit chance')
+
+  // Enemy faces East (back exposed!) -> BACKSTAB (+30% DMG, +20% Crit)
+  setUnitFacing(enemy, 'e')
+  const fcBack = computeCombatForecast(state, enemy.col, enemy.row)!
+  assert.equal(fcBack.attackArc, 'back')
+  assert.ok(fcBack.normalDmg > fcFlank.normalDmg, `Backstab (${fcBack.normalDmg}) must exceed Flank (${fcFlank.normalDmg})`)
+  assert.ok(fcBack.critChance > fcFlank.critChance, 'Backstab must boost crit chance above Flank')
+
+  // Player can manually rotate active unit's facing during their turn
+  const beforeFacing = active.facing
+  assert.equal(rotateActiveUnitFacing(state), true)
+  assert.notEqual(active.facing, beforeFacing)
 })

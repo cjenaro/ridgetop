@@ -12,7 +12,8 @@ import { bakePortraitCanvases } from './art.ts'
 import { createCrownshardAudio } from './audio.ts'
 import {
   CHAPTERS, CHAPTER_BY_ID, DIFFICULTY_META, ENEMY_SPECS, EQUIPMENT_BY_ID, HERO_SPECS,
-  MERGE_COPIES_REQUIRED, PACK_BY_ID, PACK_LIST, RARITY_META, RARITY_ORDER, TACTIC_BY_ID
+  MERGE_COPIES_REQUIRED, PACK_BY_ID, PACK_LIST, PLAYABLE_CHAPTERS, RARITY_META, RARITY_ORDER,
+  TACTIC_BY_ID, WORLD_REGIONS
 } from './data.ts'
 import { createCrownshardScene } from './scene.ts'
 import {
@@ -21,7 +22,7 @@ import {
   effectiveSpeed, endPlayerTurn, equipItem, findBestFitUpgrades, findEquipOwner, getEquipmentByUid,
   getHeroByUid, getHeroSkill, getMergeCandidates, getNextRecommendedStage, getStageUnlockHint,
   getTacticByUid, getUnitByUid, isEndlessUnlocked, isStageCleared, isStageUnlocked, loadSave,
-  maxSquadSize, mergeHero, persistSave, salvageEquipCard, salvageHeroCard,
+  maxSquadSize, mergeHero, persistSave, rotateActiveUnitFacing, salvageEquipCard, salvageHeroCard,
   selectHeroByUid, selectTile, startChapterBattle, stepGame,
   toggleSquadMember, unequipItem
 } from './simulation.ts'
@@ -30,7 +31,7 @@ import type {
   PackId, PackRevealItem, Rarity
 } from './types.ts'
 import {
-  COLOR, RADIUS, TIER_COLOR, TYPE, UI_THEME_PALETTE,
+  COLOR, RADIUS, TIER_COLOR, TYPE, UI_THEME_PALETTE, WORLD_MAP_H, WORLD_MAP_W,
   drawAnimatedRevealCard, drawApMeter, drawBattleInfo, drawBoosterPack, drawButton, drawCampHeader,
   drawChapterPicker, drawChip, drawCombatForecast, drawControlHints, drawDefeatBackdrop,
   drawDifficultyBadge, drawEmptyNote, drawEndTurnButton, drawEquipCard, drawForecastAltChip,
@@ -40,9 +41,9 @@ import {
   drawSettingRow, drawSheet, drawSkillRow, drawSkillTile, drawSpeakerPortrait, drawStatStrip,
   drawStoryHeading, drawTab, drawTacticCard, drawText, drawTimelineBg, drawTitleCard,
   drawTitleLogo, drawToast, drawToolbarBg, drawTopFade, drawTurnToken, drawUnitCard,
-  drawVictoryBackdrop, drawWell, drawWorldMapBackdrop, drawWorldMapNode
+  drawVictoryBackdrop, drawWell, drawWorldMapCanvas, drawWorldMapNode, worldMapScale, worldMapToScreen
 } from './ui-art.ts'
-import type { IconName } from './ui-art.ts'
+import type { IconName, WorldMapViewport } from './ui-art.ts'
 
 type Screen = 'title' | 'world' | 'camp' | 'story' | 'battle' | 'victory' | 'defeat' | 'paused'
 type CampTab = 'squad' | 'armory' | 'decks'
@@ -156,7 +157,56 @@ async function start() {
   let forecastPulseTick = 0
   let resultAnimTime = 0
   let worldMapTime = 0
+  let worldMapPanX = 0.44
+  let worldMapPanY = 0.50
+  let worldMapZoom = 0.98
+  let worldMapTargetPanX = 0.44
+  let worldMapTargetPanY = 0.50
+  let worldMapTargetZoom = 0.98
+  let worldMapDrag: { pointerId: number; lastX: number; lastY: number; dragged: boolean } | null = null
   let packAnim: PackAnimState | null = null
+
+  function clampWorldMapView() {
+    worldMapTargetZoom = Math.max(0.62, Math.min(1.75, worldMapTargetZoom))
+    worldMapZoom = Math.max(0.62, Math.min(1.75, worldMapZoom))
+    const padX = Math.max(0.08, 0.36 / worldMapTargetZoom)
+    const padY = Math.max(0.10, 0.36 / worldMapTargetZoom)
+    const minX = Math.min(0.5, padX * 0.45)
+    const maxX = Math.max(0.5, 1 - padX * 0.45)
+    const minY = Math.min(0.5, padY * 0.45)
+    const maxY = Math.max(0.5, 1 - padY * 0.45)
+    worldMapTargetPanX = Math.max(minX, Math.min(maxX, worldMapTargetPanX))
+    worldMapTargetPanY = Math.max(minY, Math.min(maxY, worldMapTargetPanY))
+    worldMapPanX = Math.max(minX, Math.min(maxX, worldMapPanX))
+    worldMapPanY = Math.max(minY, Math.min(maxY, worldMapPanY))
+  }
+
+  function focusWorldMapOn(stage: ChapterSpec, instant = false) {
+    // Bias slightly right so the floating right-hand inspector never covers the selected landmark!
+    const mobile = renderer.canvas.clientWidth < 780
+    worldMapTargetPanX = stage.mapX + (mobile ? 0 : 0.11 / worldMapTargetZoom)
+    worldMapTargetPanY = stage.mapY + (mobile ? 0.10 / worldMapTargetZoom : 0)
+    clampWorldMapView()
+    if (instant) {
+      worldMapPanX = worldMapTargetPanX
+      worldMapPanY = worldMapTargetPanY
+      worldMapZoom = worldMapTargetZoom
+    }
+  }
+
+  function resetWorldMapOverview(instant = false) {
+    // Frame the full 9-region atlas cleanly to the left of the floating stage inspector!
+    const mobile = renderer.canvas.clientWidth < 780
+    worldMapTargetPanX = mobile ? 0.50 : 0.66
+    worldMapTargetPanY = 0.51
+    worldMapTargetZoom = mobile ? 0.70 : 0.70
+    clampWorldMapView()
+    if (instant) {
+      worldMapPanX = worldMapTargetPanX
+      worldMapPanY = worldMapTargetPanY
+      worldMapZoom = worldMapTargetZoom
+    }
+  }
 
   function getSelectedStage(): ChapterSpec {
     return CHAPTER_BY_ID[state.campaign.selectedStageId] ?? CHAPTERS[pendingChapter] ?? CHAPTERS[0]
@@ -288,6 +338,7 @@ async function start() {
       pendingChapter = CHAPTER_BY_ID[state.campaign.selectedStageId].index
     }
     pendingEndless = 0
+    resetWorldMapOverview(true)
     setScreen('world')
   }
 
@@ -394,7 +445,7 @@ async function start() {
     label: 'Next Stage',
     onPress: () => {
       if (isEndlessUnlocked(state.campaign) && (state.battle?.endlessWave ?? 0) > 0) {
-        openStory(CHAPTERS.length - 1, (state.battle?.endlessWave ?? 0) + 1)
+        openStory(CHAPTER_BY_ID.eclipse_throne.index, (state.battle?.endlessWave ?? 0) + 1)
       } else {
         const nextStage = getNextRecommendedStage(state.campaign)
         openWorldMap(nextStage.id)
@@ -435,8 +486,10 @@ async function start() {
     startX: number
     startY: number
     lastX: number
+    lastY: number
     dragged: boolean
     pointerType: string
+    button: number
   }
   interface PinchState {
     dist: number
@@ -466,11 +519,29 @@ async function start() {
   }
 
   uiCanvas.addEventListener('pointermove', event => {
-    if (isTestingPaused() || screen !== 'battle' || !state.battle) {
+    if (isTestingPaused()) return
+    const { x, y, w, h } = pointerToCss(event)
+    if (screen === 'world') {
+      if (worldMapDrag && worldMapDrag.pointerId === event.pointerId) {
+        const dx = x - worldMapDrag.lastX
+        const dy = y - worldMapDrag.lastY
+        if (Math.hypot(dx, dy) > 2) worldMapDrag.dragged = true
+        const scale = worldMapScale({ x: 0, y: 0, width: w, height: h }, worldMapZoom)
+        worldMapTargetPanX -= dx / (WORLD_MAP_W * scale)
+        worldMapTargetPanY -= dy / (WORLD_MAP_H * scale)
+        worldMapPanX = worldMapTargetPanX
+        worldMapPanY = worldMapTargetPanY
+        clampWorldMapView()
+        worldMapDrag.lastX = x
+        worldMapDrag.lastY = y
+        uiDirty = true
+      }
+      return
+    }
+    if (screen !== 'battle' || !state.battle) {
       scene.setHoveredCell(null)
       return
     }
-    const { x, y, w, h } = pointerToCss(event)
     if (event.pointerType === 'touch' && activeTouches.has(event.pointerId)) {
       activeTouches.set(event.pointerId, { x, y })
       if (activeTouches.size >= 2) {
@@ -494,13 +565,15 @@ async function start() {
     }
     if (boardDrag && boardDrag.pointerId === event.pointerId) {
       const dist = Math.hypot(x - boardDrag.startX, y - boardDrag.startY)
-      if (!boardDrag.dragged && dist > 12) {
+      if (!boardDrag.dragged && dist > (boardDrag.pointerType === 'mouse' ? 6 : 12)) {
         boardDrag.dragged = true
         scene.setHoveredCell(null)
       }
       if (boardDrag.dragged) {
         scene.rotateCamera((x - boardDrag.lastX) * 0.0055)
+        scene.tiltCamera((y - boardDrag.lastY) * 0.0055)
         boardDrag.lastX = x
+        boardDrag.lastY = y
         hudRev++
         return
       }
@@ -524,23 +597,37 @@ async function start() {
   }, sig)
 
   uiCanvas.addEventListener('pointerdown', event => {
-    if (isTestingPaused() || screen !== 'battle' || !state.battle) return
+    if (isTestingPaused()) return
     const { x, y, w, h } = pointerToCss(event)
+    if (screen === 'world') {
+      if (event.button !== 0 && event.pointerType === 'mouse') return
+      if (ui.blocksPoint(x, y)) return
+      audio.unlock()
+      worldMapDrag = { pointerId: event.pointerId, lastX: x, lastY: y, dragged: false }
+      return
+    }
+    if (screen !== 'battle' || !state.battle) return
     if (ui.blocksPoint(x, y)) return
     audio.unlock()
 
-    // Right-click cancels locked forecast or armed skill/tactic
-    if (event.pointerType === 'mouse' && event.button === 2) {
-      if (lockedForecastCell) {
-        lockedForecastCell = null
-        uiDirty = true
-        hudRev++
+    // Right-mouse or middle-mouse drag orbits horizontally & tilts camera angle up/down!
+    // Quick right-click (without drag) still cancels locked forecast or armed skill/tactic on pointerup.
+    if (event.pointerType === 'mouse' && (event.button === 2 || event.button === 1)) {
+      boardDrag = {
+        pointerId: event.pointerId,
+        startX: x,
+        startY: y,
+        lastX: x,
+        lastY: y,
+        dragged: false,
+        pointerType: event.pointerType,
+        button: event.button
       }
       return
     }
     if (event.button !== 0 && event.pointerType === 'mouse') return
 
-    // Touch supports 2-finger pinch-to-zoom/pan, 1-finger drag-to-orbit, and tap-to-preview
+    // Touch supports 2-finger pinch-to-zoom/pan, 1-finger drag-to-orbit/tilt, and tap-to-preview
     if (event.pointerType === 'touch') {
       activeTouches.set(event.pointerId, { x, y })
       if (activeTouches.size >= 2) {
@@ -555,8 +642,10 @@ async function start() {
         startX: x,
         startY: y,
         lastX: x,
+        lastY: y,
         dragged: false,
-        pointerType: event.pointerType
+        pointerType: event.pointerType,
+        button: 0
       }
       return
     }
@@ -580,6 +669,10 @@ async function start() {
   }, sig)
 
   uiCanvas.addEventListener('pointerup', event => {
+    if (worldMapDrag && worldMapDrag.pointerId === event.pointerId) {
+      worldMapDrag = null
+      return
+    }
     if (event.pointerType === 'touch') {
       activeTouches.delete(event.pointerId)
       if (activeTouches.size < 2) pinchState = null
@@ -592,6 +685,21 @@ async function start() {
     if (!boardDrag || boardDrag.pointerId !== event.pointerId) return
     const drag = boardDrag
     boardDrag = null
+    if (drag.pointerType === 'mouse') {
+      if (!drag.dragged && drag.button === 2 && screen === 'battle' && state.battle) {
+        if (lockedForecastCell) {
+          lockedForecastCell = null
+          uiDirty = true
+          hudRev++
+        } else if (state.battle.armedSkillIndex !== null || state.battle.armedTacticUid) {
+          armSkill(state, null)
+          armTacticCard(state, null)
+          uiDirty = true
+          hudRev++
+        }
+      }
+      return
+    }
     if (drag.dragged || isTestingPaused() || screen !== 'battle' || !state.battle) return
     const { x, y, w, h } = pointerToCss(event)
     if (ui.blocksPoint(x, y)) return
@@ -628,7 +736,12 @@ async function start() {
     }
   }, sig)
 
+  uiCanvas.addEventListener('contextmenu', event => {
+    if (screen === 'battle') event.preventDefault()
+  }, sig)
+
   uiCanvas.addEventListener('pointercancel', event => {
+    if (worldMapDrag && worldMapDrag.pointerId === event.pointerId) worldMapDrag = null
     activeTouches.delete(event.pointerId)
     if (activeTouches.size === 0) {
       pinchState = null
@@ -638,8 +751,17 @@ async function start() {
   }, sig)
 
   uiCanvas.addEventListener('wheel', event => {
-    if (isTestingPaused() || screen !== 'battle' || !state.battle) return
+    if (isTestingPaused()) return
     const box = uiCanvas.getBoundingClientRect()
+    if (screen === 'world') {
+      if (ui.blocksPoint(event.clientX - box.left, event.clientY - box.top)) return
+      event.preventDefault()
+      worldMapTargetZoom *= event.deltaY > 0 ? 1 / 1.12 : 1.12
+      clampWorldMapView()
+      uiDirty = true
+      return
+    }
+    if (screen !== 'battle' || !state.battle) return
     if (ui.blocksPoint(event.clientX - box.left, event.clientY - box.top)) return
     event.preventDefault()
     scene.zoomCamera(event.deltaY > 0 ? 1.09 : 1 / 1.09)
@@ -681,6 +803,14 @@ async function start() {
         confirmLockedForecast()
         return
       }
+      if (event.code === 'KeyF' && !event.repeat && state.battle.phase === 'player') {
+        audio.unlock()
+        if (rotateActiveUnitFacing(state)) {
+          uiDirty = true
+          hudRev++
+        }
+        return
+      }
       if (event.code === 'Space' && !event.repeat && state.battle.phase === 'player') {
         event.preventDefault()
         audio.unlock()
@@ -698,6 +828,18 @@ async function start() {
       }
       if (event.code === 'KeyD' || event.code === 'ArrowRight') {
         scene.rotateCamera(0.12)
+        hudRev++
+        return
+      }
+      if (event.code === 'ArrowUp' || event.code === 'PageUp') {
+        event.preventDefault()
+        scene.tiltCamera(0.14)
+        hudRev++
+        return
+      }
+      if (event.code === 'ArrowDown' || event.code === 'PageDown') {
+        event.preventDefault()
+        scene.tiltCamera(-0.14)
         hudRev++
         return
       }
@@ -744,7 +886,7 @@ async function start() {
     const shortH = h < 480
     const hasSave = Boolean(existingSave && (existingSave.campaign.battlesWon > 0 || existingSave.campaign.packsOpened > 0))
     const playLabel = hasSave
-      ? `Continue (${state.campaign.clearedStageIds.length}/${CHAPTERS.length})`
+      ? `Continue (${state.campaign.clearedStageIds.length}/${PLAYABLE_CHAPTERS.length})`
       : 'Begin Campaign'
 
     const logoH = shortH ? Math.min(108, Math.round(h * 0.30)) : Math.min(138, Math.round(h * 0.22))
@@ -820,7 +962,7 @@ async function start() {
   }
 
   // =========================================================================
-  // WORLD MAP OVERWORLD (BRANCHING STAGES, DIFFICULTY, REWARDS & SPECIALS)
+  // WORLD MAP OVERWORLD (FULL-VIEWPORT PANNABLE CONTINENT + 26 LOCATIONS)
   // =========================================================================
 
   function buildWorldMapTree(w: number, h: number): LayoutNode {
@@ -829,41 +971,35 @@ async function start() {
     const shortH = !mobile && h < 500
     const isCompact = mobile || shortH
     const selected = getSelectedStage()
-    const selectedUnlocked = isStageUnlocked(camp, selected)
+    const selectedSoon = Boolean(selected.comingSoon)
+    const selectedUnlocked = !selectedSoon && isStageUnlocked(camp, selected)
     const selectedCleared = isStageCleared(camp, selected.id)
     const endlessReady = isEndlessUnlocked(camp)
     const squadPower = computeSquadPower(camp)
     const clearedSet = new Set(camp.clearedStageIds)
     const unlockedSet = new Set(CHAPTERS.filter(ch => isStageUnlocked(camp, ch)).map(ch => ch.id))
+    const regionMeta = WORLD_REGIONS[selected.region]
 
-    const outerPad = isCompact ? 8 : 14
-    const topH = shortH ? 40 : 48
-    const gap = isCompact ? 8 : 12
-    const contentW = Math.min(w - outerPad * 2, 1220)
-    const contentH = Math.max(240, h - topH - outerPad * 3 - gap)
+    const outerPad = isCompact ? 8 : 12
+    const topH = shortH ? 38 : 44
+    const vp: WorldMapViewport = { panX: worldMapPanX, panY: worldMapPanY, zoom: worldMapZoom }
+    const mapRect: LayoutRect = { x: 0, y: 0, width: w, height: h }
 
-    const inspW = mobile ? contentW : Math.min(354, Math.max(288, Math.round(contentW * 0.31)))
-    const mapW = mobile ? contentW : contentW - inspW - gap
-    const mapH = mobile ? Math.max(190, Math.round(contentH * 0.48)) : contentH
-    const inspH = mobile ? Math.max(190, contentH - mapH - gap) : contentH
+    const nodeW = mobile ? 88 : 118
+    const nodeH = mobile ? 64 : 72
+    const pinCenterY = mobile ? 21 : 25
 
-    const mapPadX = mobile ? 44 : 58
-    const mapPadY = mobile ? 38 : 48
-    const nodeW = mobile ? 84 : 104
-    const nodeH = mobile ? 66 : 74
-    const pinCenterY = mobile ? 22 : 26
-    const innerW = Math.max(1, mapW - mapPadX * 2)
-    const innerH = Math.max(1, mapH - mapPadY * 2)
-
-    const mapNodes: LayoutNode[] = CHAPTERS.map(stage => {
-      const cx = mapPadX + stage.mapX * innerW
-      const cy = mapPadY + stage.mapY * innerH
-      const left = Math.max(4, Math.min(mapW - nodeW - 4, Math.round(cx - nodeW / 2)))
-      const top = Math.max(4, Math.min(mapH - nodeH - 4, Math.round(cy - pinCenterY)))
+    // Position all visible continent landmarks directly onto the full-viewport map canvas!
+    const mapNodes: LayoutNode[] = []
+    for (const stage of CHAPTERS) {
+      const pt = worldMapToScreen(stage.mapX, stage.mapY, mapRect, vp)
+      const left = Math.round(pt.x - nodeW / 2)
+      const top = Math.round(pt.y - pinCenterY)
+      if (left + nodeW < -20 || left > w + 20 || top + nodeH < -20 || top > h + 20) continue
       const unlocked = unlockedSet.has(stage.id)
       const cleared = clearedSet.has(stage.id)
       const isSel = selected.id === stage.id
-      return boxNode({
+      mapNodes.push(boxNode({
         id: `map-node-${stage.id}`,
         style: { anchor: 'top-left', inset: [left, top], width: nodeW, height: nodeH },
         widget: {
@@ -873,9 +1009,10 @@ async function start() {
           onPress: () => {
             audio.unlock()
             camp.selectedStageId = stage.id
-            pendingChapter = stage.index
+            if (!stage.comingSoon) pendingChapter = stage.index
             pendingEndless = 0
-            state.sounds.push({ kind: 'card', pitch: unlocked ? 1.15 : 0.8 })
+            focusWorldMapOn(stage)
+            state.sounds.push({ kind: 'card', pitch: stage.comingSoon ? 0.9 : unlocked ? 1.15 : 0.8 })
             uiDirty = true
           },
           draw: (ctx: CanvasRenderingContext2D, rect: LayoutRect, st: CanvasWidgetDrawState) => drawWorldMapNode(
@@ -886,8 +1023,8 @@ async function start() {
             st
           )
         }
-      })
-    })
+      }))
+    }
 
     // Aggregate unique enemy roster for the selected stage
     const enemyCounts = new Map<EnemyArchetypeId, number>()
@@ -937,45 +1074,47 @@ async function start() {
 
     const powerRatio = squadPower / Math.max(1, selected.recommendedPower)
     const powerColor = powerRatio >= 1.0 ? COLOR.good : powerRatio >= 0.8 ? COLOR.accentHi : COLOR.danger
-    const deployLabel = !selectedUnlocked
-      ? 'Locked'
-      : selectedCleared ? 'Replay Battle' : 'Deploy to Battle'
+    const deployLabel = selectedSoon
+      ? 'Coming Soon...'
+      : !selectedUnlocked
+        ? 'Locked'
+        : selectedCleared ? 'Replay Battle' : 'Deploy to Battle'
 
-    const mapArea = overlay({
-      id: 'wm-map-box',
-      style: { width: mapW, height: mapH },
-      widget: {
-        type: 'panel',
-        blocksPointer: true,
-        draw: (ctx: CanvasRenderingContext2D, rect: LayoutRect) => drawWorldMapBackdrop(
-          ctx, rect, worldMapTime, CHAPTERS, clearedSet, unlockedSet, mapPadX, mapPadY
-        )
-      }
-    }, mapNodes)
+    const inspW = mobile ? Math.min(w - 16, 460) : 332
+    const inspH = mobile ? Math.min(Math.round(h * 0.42), 258) : Math.min(h - topH - outerPad * 3 - 8, 512)
 
     const inspectorPanel = column({
       id: 'wm-inspector',
-      style: { width: inspW, height: inspH, padding: isCompact ? [10, 12] : [14, 14], gap: isCompact ? 6 : 9 },
+      style: mobile
+        ? { anchor: 'bottom', width: inspW, height: inspH, inset: [8, 8], padding: [10, 12], gap: 6, respectSafeArea: true }
+        : { anchor: 'top-right', width: inspW, height: inspH, inset: [outerPad, topH + outerPad + 10], padding: [13, 14], gap: 8, respectSafeArea: true },
       widget: {
         type: 'panel',
         blocksPointer: true,
-        draw: (ctx: CanvasRenderingContext2D, rect: LayoutRect) => drawPanel(ctx, rect, { r: RADIUS.xl, lipH: 5 })
+        draw: (ctx: CanvasRenderingContext2D, rect: LayoutRect) => drawPanel(ctx, rect, {
+          r: RADIUS.xl,
+          lipH: 5,
+          fill: selectedSoon ? '#332b29f2' : '#253354f0',
+          fillBot: selectedSoon ? '#1c1718f5' : '#141d36f5'
+        })
       }
     }, [
-      // Header: Title + Special/Story Badge
+      // Header: Region + Special/Soon Badge + Stage Title
       boxNode({
         id: 'wm-st-head',
         style: { height: isCompact ? 42 : 52 },
         widget: {
           type: 'panel',
           draw: (ctx: CanvasRenderingContext2D, rect: LayoutRect) => {
-            const tag = selected.specialTag ?? 'Story Stage'
-            const tagBg = selected.kind === 'boss' ? '#5e1a2a'
+            const tag = selectedSoon ? 'COMING SOON' : (selected.specialTag ?? regionMeta.name)
+            const tagBg = selectedSoon ? '#6e3226'
+              : selected.kind === 'boss' ? '#5e1a2a'
               : selected.kind === 'elite' ? '#4a2417'
               : selected.kind === 'treasure' ? '#4a3610'
               : selected.kind === 'special' ? '#1c4236'
               : '#1e2c4f'
-            const tagCol = selected.kind === 'boss' ? '#ff9ea8'
+            const tagCol = selectedSoon ? '#ffe6b8'
+              : selected.kind === 'boss' ? '#ff9ea8'
               : selected.kind === 'elite' ? '#ffa266'
               : selected.kind === 'treasure' || selected.kind === 'special' ? COLOR.accentHi
               : COLOR.ally
@@ -984,13 +1123,17 @@ async function start() {
               drawChip(ctx, rect.x + rect.width, rect.y, 'CLEARED', {
                 h: 18, size: 9, color: '#072b16', bg: COLOR.good, icon: 'check', align: 'right'
               })
-            } else if (!selectedUnlocked) {
+            } else if (!selectedSoon && !selectedUnlocked) {
               drawChip(ctx, rect.x + rect.width, rect.y, 'LOCKED', {
                 h: 18, size: 9, color: COLOR.muted, bg: '#222b42', icon: 'lock', align: 'right'
               })
+            } else {
+              drawChip(ctx, rect.x + rect.width, rect.y, regionMeta.name.toUpperCase(), {
+                h: 18, size: 8.5, color: '#d8e3ff', bg: '#161f38', align: 'right'
+              })
             }
             drawText(ctx, selected.title, rect.x, rect.y + (isCompact ? 32 : 38), {
-              size: isCompact ? 16 : 20,
+              size: isCompact ? 15.5 : 19,
               weight: 900,
               color: '#ffffff',
               maxW: rect.width,
@@ -1005,37 +1148,49 @@ async function start() {
       // Difficulty + Arena Size + Recommended Power strip
       boxNode({
         id: 'wm-st-meta',
-        style: { height: isCompact ? 44 : 52 },
+        style: { height: isCompact ? 42 : 50 },
         widget: {
           type: 'panel',
           draw: (ctx: CanvasRenderingContext2D, rect: LayoutRect) => {
             drawWell(ctx, rect, RADIUS.md)
             const bw = drawDifficultyBadge(ctx, rect.x + 8, rect.y + 6, selected.difficulty, { h: 20, showLabel: true })
-            drawChip(ctx, rect.x + 14 + bw, rect.y + 6, `${gridCols}x${gridRows} ${biomeName}`, {
+            drawChip(ctx, rect.x + 14 + bw, rect.y + 6, selectedSoon ? biomeName : `${gridCols}x${gridRows} ${biomeName}`, {
               h: 20, size: 9.5, color: '#dce8ff', bg: '#1e2b4a'
             })
             drawText(
               ctx,
-              `Squad Power ${squadPower} / Rec ${selected.recommendedPower}`,
+              selectedSoon
+                ? `${selected.subtitle} · In Development`
+                : `Squad Power ${squadPower} / Rec ${selected.recommendedPower}`,
               rect.x + 10,
               rect.y + rect.height - 11,
-              { size: 10.5, weight: 800, color: powerColor, maxW: rect.width - 20, display: true }
+              { size: 10.5, weight: 800, color: selectedSoon ? '#f0cf99' : powerColor, maxW: rect.width - 20, display: true }
             )
           }
         }
       }),
 
-      // Enemy Forces preview with 3D-baked portraits
+      // Hostile Forces OR Expansion Feature Teaser
       ...(isCompact ? [] : [boxNode({
         id: 'wm-st-foes',
-        style: { height: 74 },
+        style: { height: 72 },
         widget: {
           type: 'panel',
           draw: (ctx: CanvasRenderingContext2D, rect: LayoutRect) => {
             drawWell(ctx, rect, RADIUS.md)
+            if (selectedSoon) {
+              drawOverline(ctx, 'Upcoming Expansion Preview', rect.x + 10, rect.y + 12, rect.width - 20, '#f5d193')
+              drawLabel(
+                ctx,
+                { x: rect.x + 10, y: rect.y + 22, width: rect.width - 20, height: 44 },
+                selected.soonNote ?? selected.introText,
+                { size: 11.5, weight: 600, color: '#f2e6d0', wrap: true, lineHeight: 15 }
+              )
+              return
+            }
             drawOverline(ctx, `Hostile Forces (${selected.enemies.length})`, rect.x + 10, rect.y + 12, rect.width - 20)
             let ex = rect.x + 10
-            const ey = rect.y + 24
+            const ey = rect.y + 23
             const ps = 40
             for (const [eid, count] of enemyList) {
               if (ex + ps > rect.x + rect.width - 8) break
@@ -1057,7 +1212,7 @@ async function start() {
       // Possible Rewards: One-Time First-Clear vs Replayable
       boxNode({
         id: 'wm-st-rewards',
-        style: { grow: 1, minHeight: isCompact ? 76 : 112 },
+        style: { grow: 1, minHeight: isCompact ? 70 : 108 },
         widget: {
           type: 'panel',
           draw: (ctx: CanvasRenderingContext2D, rect: LayoutRect) => {
@@ -1066,13 +1221,14 @@ async function start() {
             const pw = rect.width - 20
             drawOverline(
               ctx,
-              selectedCleared ? 'First-Clear Special (Claimed)' : 'First-Clear Special (One-Time)',
+              selectedSoon
+                ? 'Planned First-Clear Spoils'
+                : selectedCleared ? 'First-Clear Special (Claimed)' : 'First-Clear Special (One-Time)',
               px,
               rect.y + 13,
               pw,
               selectedCleared ? COLOR.faint : COLOR.accentHi
             )
-            // Wrap chips cleanly so every one-time reward (gold, gear, hero, slot unlock) is always visible!
             let cx = px
             let cy = rect.y + 24
             const chipH = 22
@@ -1093,7 +1249,7 @@ async function start() {
               cx += cw + 6
             }
 
-            const repTop = Math.max(cy + chipH + 12, rect.y + rect.height * 0.56)
+            const repTop = Math.max(cy + chipH + 11, rect.y + rect.height * 0.56)
             drawOverline(ctx, 'Replay Spoils (Repeatable)', px, repTop, pw, '#8fd4ff')
             let rx = px
             const ry = repTop + 10
@@ -1121,23 +1277,25 @@ async function start() {
           draw: (ctx: CanvasRenderingContext2D, rect: LayoutRect) => drawLabel(
             ctx,
             rect,
-            !selectedUnlocked
-              ? getStageUnlockHint(selected)
-              : selected.modifierDesc ?? `${selected.subtitle} · ${selected.enemies.length} foes`,
+            selectedSoon
+              ? `${regionMeta.name} · ${regionMeta.tierRange} · Planned Expansion`
+              : !selectedUnlocked
+                ? getStageUnlockHint(selected)
+                : selected.modifierDesc ?? `${selected.subtitle} · ${selected.enemies.length} foes`,
             {
-              size: 11,
+              size: 10.5,
               weight: 700,
-              color: !selectedUnlocked ? '#ff9ea8' : COLOR.muted,
+              color: selectedSoon ? '#f0cf99' : !selectedUnlocked ? '#ff9ea8' : COLOR.muted,
               align: 'center'
             }
           )
         }
       }),
 
-      // Deploy / Replay CTA
+      // Deploy / Replay / Coming Soon CTA
       boxNode({
         id: 'cs-world-deploy',
-        style: { height: isCompact ? 38 : 44 },
+        style: { height: isCompact ? 36 : 42 },
         widget: {
           type: 'button',
           label: deployLabel,
@@ -1155,96 +1313,168 @@ async function start() {
             st,
             {
               variant: !selectedUnlocked ? 'secondary' : selectedCleared ? 'success' : 'primary',
-              icon: !selectedUnlocked ? 'lock' : 'sword',
-              size: isCompact ? 13 : 14.5
+              icon: selectedSoon ? 'hourglass' : !selectedUnlocked ? 'lock' : 'sword',
+              size: isCompact ? 13 : 14
             }
           )
         }
       })
     ])
 
-    const mainBody = mobile
-      ? column({ id: 'wm-body', style: { width: contentW, height: contentH, gap } }, [mapArea, inspectorPanel])
-      : row({ id: 'wm-body', style: { width: contentW, height: contentH, gap } }, [mapArea, inspectorPanel])
+    const soonCount = CHAPTERS.length - PLAYABLE_CHAPTERS.length
+    const zoomCtrlW = mobile ? 96 : 138
 
     return overlay({ id: 'root', style: { anchor: 'fill' } }, [
+      // Full-viewport illustrated continent canvas (does NOT block pointer so drag-to-pan works anywhere!)
       boxNode({
-        id: 'wm-scrim',
+        id: 'wm-canvas-bg',
         style: { anchor: 'fill' },
         widget: {
           type: 'panel',
+          draw: (ctx: CanvasRenderingContext2D, rect: LayoutRect) => drawWorldMapCanvas(
+            ctx, rect, vp, worldMapTime, CHAPTERS, clearedSet, unlockedSet
+          )
+        }
+      }),
+
+      // Interactive landmark medallions floating directly over the illustrated continent!
+      ...mapNodes,
+
+      // Floating Top-Left Realm Title + Progress + Gold Pill
+      boxNode({
+        id: 'wm-header',
+        style: {
+          anchor: 'top-left',
+          width: mobile ? Math.min(w - 118, 250) : 410,
+          height: topH,
+          inset: [outerPad, outerPad],
+          respectSafeArea: true
+        },
+        widget: {
+          type: 'panel',
+          blocksPointer: true,
           draw: (ctx: CanvasRenderingContext2D, rect: LayoutRect) => {
-            ctx.fillStyle = 'rgba(7, 10, 22, 0.72)'
-            ctx.fillRect(rect.x, rect.y, rect.width, rect.height)
+            drawPanel(ctx, rect, { r: RADIUS.lg, lipH: 4, fill: '#263459eb', fillBot: '#151e38f0' })
+            const cy = rect.y + (rect.height - 4) / 2
+            drawText(ctx, mobile ? 'SOLIS MAP' : 'REALM OF SOLIS', rect.x + 14, cy + 0.5, {
+              size: isCompact ? 13 : 15.5,
+              weight: 900,
+              color: COLOR.accentHi,
+              display: true,
+              stroke: true,
+              strokeWidth: 2.6
+            })
+            const prog = `${camp.clearedStageIds.length}/${PLAYABLE_CHAPTERS.length}`
+            drawChip(ctx, rect.x + rect.width - 10, cy - 10, `${camp.gold}g · ${prog}`, {
+              icon: 'coin',
+              h: 21,
+              size: 10.5,
+              color: COLOR.accentHi,
+              bg: COLOR.wellDeep,
+              align: 'right'
+            })
           }
         }
       }),
-      column({
-        id: 'wm-shell',
-        style: { anchor: 'center', width: contentW, height: h - outerPad * 2, gap, respectSafeArea: true }
+
+      // Floating Top-Right Toolbar: Zoom (- / Fit / +) + Endless + Vanguard Camp
+      row({
+        id: 'wm-top-actions',
+        style: {
+          anchor: 'top-right',
+          width: (mobile ? 92 : 164) + zoomCtrlW + (endlessReady ? (mobile ? 88 : 134) : 0) + (endlessReady ? 16 : 8),
+          height: topH,
+          inset: [outerPad, outerPad],
+          gap: 8,
+          align: 'center',
+          respectSafeArea: true
+        }
       }, [
-        row({ id: 'wm-top', style: { height: topH, gap: 8, align: 'center' } }, [
+        row({
+          id: 'wm-zoom-bar',
+          style: { width: zoomCtrlW, height: topH, padding: [5, 6], gap: 5, align: 'center' },
+          widget: {
+            type: 'panel',
+            blocksPointer: true,
+            draw: (ctx: CanvasRenderingContext2D, rect: LayoutRect) => drawToolbarBg(ctx, rect)
+          }
+        }, [
           boxNode({
-            id: 'wm-header',
-            style: { grow: 1, height: topH },
+            id: 'wm-zoom-out',
+            style: { width: 28, height: 30 },
             widget: {
-              type: 'panel',
-              draw: (ctx: CanvasRenderingContext2D, rect: LayoutRect) => {
-                drawPanel(ctx, rect, { r: RADIUS.lg, lipH: 4 })
-                const cy = rect.y + (rect.height - 4) / 2
-                drawText(ctx, 'SOLIS WORLD MAP', rect.x + 14, cy + 0.5, {
-                  size: isCompact ? 13 : 16,
-                  weight: 900,
-                  color: COLOR.accentHi,
-                  display: true,
-                  stroke: true,
-                  strokeWidth: 2.6
-                })
-                const prog = `${camp.clearedStageIds.length}/${CHAPTERS.length} Cleared`
-                drawChip(ctx, rect.x + rect.width - 12, cy - 10, `${camp.gold}g  ·  ${prog}`, {
-                  icon: 'coin',
-                  h: 21,
-                  size: 10.5,
-                  color: COLOR.accentHi,
-                  bg: COLOR.wellDeep,
-                  align: 'right'
-                })
-              }
+              type: 'button', label: 'Zoom Out',
+              onPress: () => { worldMapTargetZoom /= 1.18; clampWorldMapView(); uiDirty = true },
+              draw: (ctx: CanvasRenderingContext2D, rect: LayoutRect, st: CanvasWidgetDrawState) => drawIconButton(ctx, rect, 'minus', st)
             }
           }),
-          ...(endlessReady ? [boxNode({
-            id: 'cs-world-endless',
-            style: { width: mobile ? 96 : 138, height: topH },
+          ...(mobile ? [] : [boxNode({
+            id: 'wm-zoom-fit',
+            style: { grow: 1, height: 30 },
             widget: {
-              type: 'button',
-              label: `Endless W${camp.endlessBest + 1}`,
-              onPress: () => {
-                audio.unlock()
-                openStory(CHAPTERS.length - 1, camp.endlessBest + 1)
-              },
-              draw: (ctx: CanvasRenderingContext2D, rect: LayoutRect, st: CanvasWidgetDrawState) => drawButton(
-                ctx, rect, mobile ? `Wave ${camp.endlessBest + 1}` : `Endless W${camp.endlessBest + 1}`, st, { variant: 'danger', icon: 'skull', size: 12 }
-              )
+              type: 'button', label: 'Fit Map',
+              onPress: () => { resetWorldMapOverview(); uiDirty = true },
+              draw: (ctx: CanvasRenderingContext2D, rect: LayoutRect, st: CanvasWidgetDrawState) => drawButton(ctx, rect, 'Fit', st, { variant: 'ghost', size: 11 })
             }
-          })] : []),
+          })]),
           boxNode({
-            id: 'cs-world-camp',
-            style: { width: mobile ? 92 : 168, height: topH },
+            id: 'wm-zoom-in',
+            style: { width: 28, height: 30 },
             widget: {
-              type: 'button',
-              label: 'Vanguard Camp',
-              onPress: () => {
-                audio.unlock()
-                openCamp('squad')
-              },
-              draw: (ctx: CanvasRenderingContext2D, rect: LayoutRect, st: CanvasWidgetDrawState) => drawButton(
-                ctx, rect, mobile ? 'Camp' : 'Vanguard Camp', st, { variant: 'secondary', icon: 'camp', size: 13 }
-              )
+              type: 'button', label: 'Zoom In',
+              onPress: () => { worldMapTargetZoom *= 1.18; clampWorldMapView(); uiDirty = true },
+              draw: (ctx: CanvasRenderingContext2D, rect: LayoutRect, st: CanvasWidgetDrawState) => drawIconButton(ctx, rect, 'plus', st)
             }
           })
         ]),
-        mainBody
-      ])
+        ...(endlessReady ? [boxNode({
+          id: 'cs-world-endless',
+          style: { width: mobile ? 88 : 134, height: topH },
+          widget: {
+            type: 'button',
+            label: `Endless W${camp.endlessBest + 1}`,
+            onPress: () => {
+              audio.unlock()
+              openStory(CHAPTER_BY_ID.eclipse_throne.index, camp.endlessBest + 1)
+            },
+            draw: (ctx: CanvasRenderingContext2D, rect: LayoutRect, st: CanvasWidgetDrawState) => drawButton(
+              ctx, rect, mobile ? `Wave ${camp.endlessBest + 1}` : `Endless W${camp.endlessBest + 1}`, st, { variant: 'danger', icon: 'skull', size: 12 }
+            )
+          }
+        })] : []),
+        boxNode({
+          id: 'cs-world-camp',
+          style: { width: mobile ? 92 : 164, height: topH },
+          widget: {
+            type: 'button',
+            label: 'Vanguard Camp',
+            onPress: () => {
+              audio.unlock()
+              openCamp('squad')
+            },
+            draw: (ctx: CanvasRenderingContext2D, rect: LayoutRect, st: CanvasWidgetDrawState) => drawButton(
+              ctx, rect, mobile ? 'Camp' : 'Vanguard Camp', st, { variant: 'secondary', icon: 'camp', size: 13 }
+            )
+          }
+        })
+      ]),
+
+      // Bottom-left subtle cartography legend pill (desktop)
+      ...(mobile ? [] : [boxNode({
+        id: 'wm-legend',
+        style: { anchor: 'bottom-left', width: 512, height: 28, inset: [outerPad, outerPad], respectSafeArea: true },
+        widget: {
+          type: 'panel',
+          draw: (ctx: CanvasRenderingContext2D, rect: LayoutRect) => drawHintPill(
+            ctx,
+            rect,
+            `Drag to Pan · Scroll to Zoom · 9 Regions · ${PLAYABLE_CHAPTERS.length} Playable · ${soonCount} Future (Tier VI–VIII)`,
+            COLOR.accentHi
+          )
+        }
+      })]),
+
+      inspectorPanel
     ])
   }
 
@@ -1553,7 +1783,7 @@ async function start() {
       ? (active.moved && active.acted ? 0 : (active.moved || active.acted) ? 20 : 40)
       : 0
 
-    let statusLine = 'Select a blue tile to move, a red/amber enemy to strike, or arm a tactic card.'
+    let statusLine = 'Click [.] frame to move, [X] crosshair to strike, or arm a skill. Arrows/right-drag tilt.'
     let statusAccent: string = COLOR.accent
     let statusImportant = false
     if (!isPlayerTurn && active) {
@@ -1590,8 +1820,41 @@ async function start() {
 
     // Top-right toolbar (compact on phone: Music + Pause only, touch drags to orbit!)
     const tbIconS = isPhone ? 28 : 32
+    const facingLabel = active ? active.facing.toUpperCase() : 'E'
     const toolbarItems: LayoutNode[] = [
+      ...(isPlayerTurn && active && active.team === 'ally' ? [
+        boxNode({
+          id: 'tb-face-turn', style: { width: isPhone ? 46 : 56, height: tbIconS },
+          widget: {
+            type: 'button', label: `Face ${facingLabel} (F)`,
+            onPress: () => {
+              audio.unlock()
+              if (rotateActiveUnitFacing(state)) { uiDirty = true; hudRev++ }
+            },
+            draw: (ctx: CanvasRenderingContext2D, rect: LayoutRect, st: CanvasWidgetDrawState) => drawIconButton(ctx, rect, 'rotate-right', st, {
+              label: facingLabel,
+              color: COLOR.accentHi
+            })
+          }
+        })
+      ] : []),
       ...(isPhone ? [] : [
+        boxNode({
+          id: 'tb-cam-up', style: { width: tbIconS, height: tbIconS },
+          widget: {
+            type: 'button', label: 'Tilt Camera Up (ArrowUp)',
+            onPress: () => { scene.tiltCamera(0.16); hudRev++ },
+            draw: (ctx: CanvasRenderingContext2D, rect: LayoutRect, st: CanvasWidgetDrawState) => drawIconButton(ctx, rect, 'chevron-up', st)
+          }
+        }),
+        boxNode({
+          id: 'tb-cam-dn', style: { width: tbIconS, height: tbIconS },
+          widget: {
+            type: 'button', label: 'Tilt Camera Down (ArrowDown)',
+            onPress: () => { scene.tiltCamera(-0.16); hudRev++ },
+            draw: (ctx: CanvasRenderingContext2D, rect: LayoutRect, st: CanvasWidgetDrawState) => drawIconButton(ctx, rect, 'chevron-down', st)
+          }
+        }),
         boxNode({
           id: 'tb-cam-l', style: { width: tbIconS, height: tbIconS },
           widget: {
@@ -1637,7 +1900,8 @@ async function start() {
         }
       })
     ]
-    const toolbarW = isPhone ? 74 : 212
+    const hasFaceBtn = isPlayerTurn && active && active.team === 'ally'
+    const toolbarW = (isPhone ? 74 : 284) + (hasFaceBtn ? (isPhone ? 52 : 62) : 0)
     const topBarH = isPhone ? 36 : 42
 
     // Mobile Tactic Hand Toggle Button (keeps battlefield spacious on phones!)
@@ -1925,7 +2189,9 @@ async function start() {
       const fcCompact = isPhone
       const fcW = mobilePortrait ? w - 12 : mobileLandscape ? 316 : 332
       const attPortrait = fc.attackerHeroId ? portraits[fc.attackerHeroId] : undefined
-      const tgtPortrait = portraits[fc.targetHeroId ?? fc.targetEnemyId ?? 'goblin']
+      const tgtPortrait = fc.targetTeam === 'none'
+        ? undefined
+        : portraits[fc.targetHeroId ?? fc.targetEnemyId ?? 'goblin']
       const mainH = fcCompact ? 96 : 104
 
       const altRows: LayoutNode[] = []
@@ -1955,11 +2221,16 @@ async function start() {
         }
       }
 
-      const confirmLabel = fc.targetTeam === 'ally'
-        ? (fc.mode === 'tactic' ? 'Use Card' : 'Cast')
-        : fc.requiresMove
-          ? (fc.mode === 'skill' ? 'Move & Cast!' : 'Move & Strike!')
-          : (fc.mode === 'skill' ? 'Cast Skill!' : fc.mode === 'tactic' ? 'Cast Card!' : 'Strike!')
+      const isHelpful = !fc.isOffensive && fc.targetTeam === 'ally'
+      const confirmLabel = fc.friendlyFire
+        ? 'Friendly Fire!'
+        : fc.emptyTileTarget
+          ? 'Cast on Space'
+          : isHelpful
+            ? (fc.mode === 'tactic' ? 'Use Card' : 'Cast')
+            : fc.requiresMove
+              ? (fc.mode === 'skill' ? 'Move & Cast!' : 'Move & Strike!')
+              : (fc.mode === 'skill' ? 'Cast Skill!' : fc.mode === 'tactic' ? 'Cast Card!' : 'Strike!')
 
       const fcChildren: LayoutNode[] = [
         boxNode({
@@ -2010,8 +2281,8 @@ async function start() {
                   confirmLabel,
                   st,
                   {
-                    variant: fc.targetTeam === 'ally' ? 'success' : fc.lethalNormal ? 'danger' : 'primary',
-                    icon: fc.targetTeam === 'ally' ? 'heart' : 'sword',
+                    variant: fc.friendlyFire ? 'danger' : isHelpful ? 'success' : fc.lethalNormal ? 'danger' : 'primary',
+                    icon: isHelpful ? 'heart' : fc.emptyTileTarget ? 'target' : 'sword',
                     size: 13
                   }
                 )
@@ -3670,6 +3941,17 @@ async function start() {
       openWorldMap(stageId)
       renderUiNow()
     },
+    setWorldMapView: (panX: number, panY: number, zoom: number) => {
+      worldMapTargetPanX = panX
+      worldMapTargetPanY = panY
+      worldMapTargetZoom = zoom
+      clampWorldMapView()
+      worldMapPanX = worldMapTargetPanX
+      worldMapPanY = worldMapTargetPanY
+      worldMapZoom = worldMapTargetZoom
+      uiDirty = true
+      renderUiNow()
+    },
     openCamp: (tab: CampTab = 'squad') => {
       openCamp(tab)
       renderUiNow()
@@ -3769,9 +4051,13 @@ async function start() {
       lastRenderAt = now
       const renderDt = screen === 'paused' ? 0 : rawDt
 
-      // Advance animated UI scenes (World Map trails, Victory/Defeat FX, Pack Lottery Ceremony)
+      // Advance animated UI scenes (World Map pan/zoom/trails, Victory/Defeat FX, Pack Lottery Ceremony)
       if (screen === 'world') {
         worldMapTime += renderDt
+        const smooth = Math.min(1, renderDt * 10)
+        worldMapPanX += (worldMapTargetPanX - worldMapPanX) * smooth
+        worldMapPanY += (worldMapTargetPanY - worldMapPanY) * smooth
+        worldMapZoom += (worldMapTargetZoom - worldMapZoom) * smooth
         uiDirty = true
       } else if (screen === 'victory' || screen === 'defeat') {
         resultAnimTime += renderDt
