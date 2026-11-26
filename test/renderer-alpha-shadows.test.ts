@@ -1,7 +1,8 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
+import * as frameworkIndex from '../packages/ridgetop/framework/index.ts'
 import {
-  box, cameraDepth, createLowPolyRenderer, createShadowBatch, cylinder, instances, mesh, multiply,
+  box, cameraDepth, color, computeShadowMatrix, createLowPolyRenderer, createShadowBatch, cylinder, instances, mesh, multiply,
   octahedron, orthographic, perspective, projectShadow, projectShadowMesh, renderMeshPixels,
   shadowDisc, view
 } from '../packages/ridgetop/framework/index.ts'
@@ -16,21 +17,26 @@ import type { Matrix } from '../packages/ridgetop/framework/types.ts'
 function createMockWebGPU() {
   const pipelines: { entryPoint: string; depthStencil: Record<string, unknown> }[] = []
   const draws: { buffer: object; vertexCount: number; instanceCount: number; pipeline: string }[] = []
-  const writes: { buffer: object; data: Float32Array }[] = []
-  let activePipeline = ''
-  let activeInstanceBuffer: object | null = null
+  const shadowPasses: { draws: { buffer: object; vertexCount: number; instanceCount: number; pipeline: string }[] }[] = []
+  const writes: { buffer: object; dstOffset: number; data: Float32Array }[] = []
+  const textures: { width: number; height: number; format: string; usage: number; destroyed: boolean }[] = []
+  const samplers: Record<string, unknown>[] = []
+  const shaders: string[] = []
   const fakeDevice = {
     lost: new Promise(() => {}),
     limits: { maxTextureDimension2D: 4096, maxBufferSize: 1024 * 1024 },
-    createShaderModule: () => ({}),
+    createShaderModule: ({ code }: { code: string }) => { shaders.push(code); return {} },
     createBindGroupLayout: () => ({}),
     createPipelineLayout: () => ({}),
+    createSampler: (desc: Record<string, unknown>) => { samplers.push(desc); return { id: Symbol('sampler') } },
     createRenderPipelineAsync: async (desc: {
-      fragment: { entryPoint: string }
+      vertex?: { entryPoint: string }
+      fragment?: { entryPoint: string }
       depthStencil: Record<string, unknown>
     }) => {
-      pipelines.push({ entryPoint: desc.fragment.entryPoint, depthStencil: desc.depthStencil })
-      return { name: desc.fragment.entryPoint, getBindGroupLayout: () => ({}) }
+      const entryPoint = desc.fragment?.entryPoint ?? desc.vertex?.entryPoint ?? 'unknown'
+      pipelines.push({ entryPoint, depthStencil: desc.depthStencil })
+      return { name: entryPoint, getBindGroupLayout: () => ({}) }
     },
     createBuffer: ({ size }: { size: number }) => ({
       id: Symbol('gpuBuf'),
@@ -40,48 +46,74 @@ function createMockWebGPU() {
       destroy() {}
     }),
     createBindGroup: () => ({}),
-    createTexture: ({ size: [w, h] }: { size: [number, number] }) => ({
-      width: w, height: h, createView: () => ({}), destroy() {}
-    }),
+    createTexture: ({ size: [w, h], format = 'depth24plus', usage = 0 }: { size: [number, number]; format?: string; usage?: number }) => {
+      const rec = { width: w, height: h, format, usage, destroyed: false }
+      textures.push(rec)
+      return { width: w, height: h, createView: () => ({}), destroy() { rec.destroyed = true } }
+    },
     createCommandEncoder: () => ({
-      beginRenderPass: () => ({
-        setPipeline(pipe: { name: string }) { activePipeline = pipe.name },
-        setBindGroup() {},
-        setVertexBuffer(slot: number, buf: object) {
-          if (slot === 1) activeInstanceBuffer = buf
-        },
-        draw(vertexCount: number, instanceCount: number) {
-          draws.push({
-            buffer: activeInstanceBuffer!,
-            vertexCount,
-            instanceCount,
-            pipeline: activePipeline
-          })
-        },
-        end() {}
-      }),
+      beginRenderPass: (desc?: { colorAttachments?: unknown[] }) => {
+        const isShadowPass = (desc?.colorAttachments?.length ?? 1) === 0
+        const passDraws: { buffer: object; vertexCount: number; instanceCount: number; pipeline: string }[] = []
+        if (isShadowPass) shadowPasses.push({ draws: passDraws })
+        let activePipeline = ''
+        let activeInstanceBuffer: object | null = null
+        return {
+          setPipeline(pipe: { name: string }) { activePipeline = pipe.name },
+          setBindGroup() {},
+          setVertexBuffer(slot: number, buf: object) {
+            if (slot === 1) activeInstanceBuffer = buf
+          },
+          draw(vertexCount: number, instanceCount: number) {
+            const rec = {
+              buffer: activeInstanceBuffer!,
+              vertexCount,
+              instanceCount,
+              pipeline: activePipeline
+            }
+            if (isShadowPass) passDraws.push(rec)
+            else draws.push(rec)
+          },
+          end() {}
+        }
+      },
       finish: () => ({})
     }),
     queue: {
-      writeBuffer(buffer: object, _dstOffset: number, src: Float32Array, srcOffset = 0, size?: number) {
+      writeBuffer(buffer: object, dstOffset: number, src: Float32Array, srcOffset = 0, size?: number) {
         if (src instanceof Float32Array) {
           const end = size !== undefined ? srcOffset + size : src.length
-          writes.push({ buffer, data: new Float32Array(src.subarray(srcOffset, end)) })
+          writes.push({ buffer, dstOffset, data: new Float32Array(src.subarray(srcOffset, end)) })
         }
       },
       submit() {}
     },
     destroy() {}
   }
-  return { fakeDevice, pipelines, draws, writes }
+  return { fakeDevice, pipelines, draws, shadowPasses, writes, textures, samplers, shaders }
 }
 
 function createMockWebGL2() {
   const draws: { vao: object; instanceCount: number; blendMode: number; polygonOffset: boolean }[] = []
+  const shadowPasses: {
+    viewport: [number, number, number, number]
+    lightMatrix: Float32Array | null
+    polygonOffset: [number, number] | null
+    draws: { vao: object; instanceCount: number }[]
+  }[] = []
   const uploads: { buffer: object; data: Float32Array }[] = []
   const polygonOffsetCalls: [number, number][] = []
+  const shaderSources: string[] = []
+  const shadowTextures: { width: number; height: number; internalFormat: number; params: Record<number, number>; destroyed: boolean }[] = []
+  const mainUniforms: Record<string, Float32Array | number> = {}
+  const vaoToInstanceBuffer = new Map<object, object>()
   let boundBuffer: object | null = null
   let boundVao: object | null = null
+  let boundFbo: object | null = null
+  let boundTex: { width: number; height: number; internalFormat: number; params: Record<number, number>; destroyed: boolean } | null = null
+  let currentViewport: [number, number, number, number] = [0, 0, 0, 0]
+  let currentPolygonOffset: [number, number] | null = null
+  let activeShadowPass: (typeof shadowPasses)[number] | null = null
   let blendMode = 0
   let polygonOffsetEnabled = false
 
@@ -105,9 +137,28 @@ function createMockWebGL2() {
     FLOAT: 17,
     TRIANGLES: 18,
     POLYGON_OFFSET_FILL: 19,
-    createProgram: () => ({}),
+    TEXTURE0: 100,
+    TEXTURE_2D: 101,
+    DEPTH_COMPONENT24: 102,
+    DEPTH_COMPONENT: 103,
+    UNSIGNED_INT: 104,
+    TEXTURE_MIN_FILTER: 105,
+    TEXTURE_MAG_FILTER: 106,
+    LINEAR: 107,
+    TEXTURE_WRAP_S: 108,
+    TEXTURE_WRAP_T: 109,
+    CLAMP_TO_EDGE: 110,
+    TEXTURE_COMPARE_MODE: 111,
+    COMPARE_REF_TO_TEXTURE: 112,
+    TEXTURE_COMPARE_FUNC: 113,
+    LEQUAL: 114,
+    FRAMEBUFFER: 115,
+    DEPTH_ATTACHMENT: 116,
+    NONE: 117,
+    RENDERER: 118,
+    createProgram: () => ({ id: Symbol('program') }),
     createShader: () => ({}),
-    shaderSource() {},
+    shaderSource(_shader: object, src: string) { shaderSources.push(src) },
     compileShader() {},
     getShaderParameter: () => true,
     getShaderInfoLog: () => '',
@@ -118,15 +169,60 @@ function createMockWebGL2() {
     getProgramInfoLog: () => '',
     deleteProgram() {},
     useProgram() {},
+    getExtension: () => null,
+    createTexture: () => {
+      const rec = { width: 0, height: 0, internalFormat: 0, params: {} as Record<number, number>, destroyed: false }
+      shadowTextures.push(rec)
+      return rec
+    },
+    deleteTexture(tex: { destroyed: boolean }) { tex.destroyed = true },
+    activeTexture() {},
+    bindTexture(_target: number, tex: (typeof shadowTextures)[number] | null) { boundTex = tex },
+    texImage2D(_target: number, _level: number, internalFormat: number, width: number, height: number) {
+      if (boundTex) {
+        boundTex.internalFormat = internalFormat
+        boundTex.width = width
+        boundTex.height = height
+      }
+    },
+    texParameteri(_target: number, pname: number, param: number) {
+      if (boundTex) boundTex.params[pname] = param
+    },
+    createFramebuffer: () => ({ id: Symbol('fbo') }),
+    deleteFramebuffer() {},
+    bindFramebuffer(_target: number, fbo: object | null) {
+      boundFbo = fbo
+      if (!fbo) activeShadowPass = null
+    },
+    framebufferTexture2D() {},
+    drawBuffers() {},
+    readBuffer() {},
     enable(cap: number) { if (cap === 19) polygonOffsetEnabled = true },
-    disable(cap: number) { if (cap === 19) polygonOffsetEnabled = false },
-    polygonOffset(factor: number, units: number) { polygonOffsetCalls.push([factor, units]) },
+    disable(cap: number) { if (cap === 19) { polygonOffsetEnabled = false; currentPolygonOffset = null } },
+    polygonOffset(factor: number, units: number) {
+      polygonOffsetCalls.push([factor, units])
+      currentPolygonOffset = [factor, units]
+      if (activeShadowPass) activeShadowPass.polygonOffset = [factor, units]
+    },
     getUniformLocation: (_p: object, name: string) => name,
-    uniform4fv() {},
-    uniformMatrix4fv() {},
-    uniform1i(loc: string, val: number) { if (loc === 'blendMode') blendMode = val },
-    getParameter: () => 4096,
-    viewport() {},
+    uniform4fv(loc: string, val: Float32Array) { mainUniforms[loc] = new Float32Array(val) },
+    uniformMatrix4fv(loc: string, _transpose: boolean, val: Float32Array) {
+      const copy = new Float32Array(val)
+      if (boundFbo && activeShadowPass) activeShadowPass.lightMatrix = copy
+      else mainUniforms[loc] = copy
+    },
+    uniform1i(loc: string, val: number) {
+      mainUniforms[loc] = val
+      if (loc === 'blendMode') blendMode = val
+    },
+    getParameter: (pname: number) => pname === 118 ? 'Mock WebGL 2' : 4096,
+    viewport(x: number, y: number, w: number, h: number) {
+      currentViewport = [x, y, w, h]
+      if (boundFbo) {
+        activeShadowPass = { viewport: currentViewport, lightMatrix: null, polygonOffset: currentPolygonOffset, draws: [] }
+        shadowPasses.push(activeShadowPass)
+      }
+    },
     depthMask() {},
     clearColor() {},
     clear() {},
@@ -143,13 +239,19 @@ function createMockWebGL2() {
       uploads.push({ buffer: boundBuffer!, data: new Float32Array(src.subarray(srcOffset, end)) })
     },
     enableVertexAttribArray() {},
-    vertexAttribPointer() {},
+    vertexAttribPointer(index: number) {
+      if (index === 2 && boundVao && boundBuffer) vaoToInstanceBuffer.set(boundVao, boundBuffer)
+    },
     vertexAttribDivisor() {},
     drawArraysInstanced(_mode: number, _first: number, _count: number, instanceCount: number) {
-      draws.push({ vao: boundVao!, instanceCount, blendMode, polygonOffset: polygonOffsetEnabled })
+      if (boundFbo && activeShadowPass) {
+        activeShadowPass.draws.push({ vao: boundVao!, instanceCount })
+      } else {
+        draws.push({ vao: boundVao!, instanceCount, blendMode, polygonOffset: polygonOffsetEnabled })
+      }
     }
   }
-  return { gl, draws, uploads, polygonOffsetCalls }
+  return { gl, draws, shadowPasses, uploads, polygonOffsetCalls, shaderSources, shadowTextures, mainUniforms, vaoToInstanceBuffer }
 }
 
 test('cameraDepth and AlphaSorter order batches and instances back-to-front for perspective and orthographic cameras', () => {
@@ -214,7 +316,7 @@ test('WebGPU backend sorts alpha batches and multi-instance alpha data back-to-f
   const { fakeDevice, pipelines, draws, writes } = createMockWebGPU()
 
   Object.defineProperty(globalThis, 'GPUBufferUsage', { value: { UNIFORM: 1, COPY_DST: 2, VERTEX: 4 }, configurable: true })
-  Object.defineProperty(globalThis, 'GPUTextureUsage', { value: { RENDER_ATTACHMENT: 1 }, configurable: true })
+  Object.defineProperty(globalThis, 'GPUTextureUsage', { value: { RENDER_ATTACHMENT: 1, TEXTURE_BINDING: 2 }, configurable: true })
   Object.defineProperty(globalThis, 'GPUShaderStage', { value: { VERTEX: 1, FRAGMENT: 2 }, configurable: true })
   Object.defineProperty(globalThis, 'navigator', {
     value: {
@@ -592,7 +694,7 @@ test('createLowPolyRenderer orders opaque -> back-to-front alpha -> additive and
   const { fakeDevice, draws, writes } = createMockWebGPU()
 
   Object.defineProperty(globalThis, 'GPUBufferUsage', { value: { UNIFORM: 1, COPY_DST: 2, VERTEX: 4 }, configurable: true })
-  Object.defineProperty(globalThis, 'GPUTextureUsage', { value: { RENDER_ATTACHMENT: 1 }, configurable: true })
+  Object.defineProperty(globalThis, 'GPUTextureUsage', { value: { RENDER_ATTACHMENT: 1, TEXTURE_BINDING: 2 }, configurable: true })
   Object.defineProperty(globalThis, 'GPUShaderStage', { value: { VERTEX: 1, FRAGMENT: 2 }, configurable: true })
   Object.defineProperty(globalThis, 'navigator', {
     value: {
@@ -697,4 +799,186 @@ test('packLighting preserves fogFar on fogNear-only update, canvasMeshes.setLigh
   assert.equal(sorted.inOrder, true)
   const packed = sorter.packInstances(b1.data, 1)
   assert.ok(packed.length >= INSTANCE_SIZE)
+})
+
+test('Tier 2 GPU directional shadow pass works with parity on WebGPU and WebGL 2 through createLowPolyRenderer', async t => {
+  const prevGpu = Object.getOwnPropertyDescriptor(globalThis, 'navigator')
+  const prevUsage = globalThis.GPUBufferUsage
+  const prevTexUsage = globalThis.GPUTextureUsage
+  const prevStage = globalThis.GPUShaderStage
+
+  const gpuMock = createMockWebGPU()
+  const glMock = createMockWebGL2()
+
+  Object.defineProperty(globalThis, 'GPUBufferUsage', { value: { UNIFORM: 1, COPY_DST: 2, VERTEX: 4 }, configurable: true })
+  Object.defineProperty(globalThis, 'GPUTextureUsage', { value: { RENDER_ATTACHMENT: 1, TEXTURE_BINDING: 2 }, configurable: true })
+  Object.defineProperty(globalThis, 'GPUShaderStage', { value: { VERTEX: 1, FRAGMENT: 2 }, configurable: true })
+  Object.defineProperty(globalThis, 'navigator', {
+    value: {
+      gpu: {
+        requestAdapter: async () => ({ requestDevice: async () => gpuMock.fakeDevice }),
+        getPreferredCanvasFormat: () => 'bgra8unorm'
+      }
+    },
+    configurable: true
+  })
+  t.after(() => {
+    if (prevGpu) Object.defineProperty(globalThis, 'navigator', prevGpu)
+    Object.defineProperty(globalThis, 'GPUBufferUsage', { value: prevUsage, configurable: true })
+    Object.defineProperty(globalThis, 'GPUTextureUsage', { value: prevTexUsage, configurable: true })
+    Object.defineProperty(globalThis, 'GPUShaderStage', { value: prevStage, configurable: true })
+  })
+
+  const initialLighting = {
+    direction: [-0.4, 0.85, 0.3] as const,
+    ambient: 0.45,
+    shadows: { enabled: true, center: [0, 0, 0] as const, extent: 10, bias: 0.003, strength: 0.5, color: [0.2, 0.25, 0.4] as const }
+  }
+  const expectedLightMatrix1 = computeShadowMatrix(packLighting(initialLighting))
+
+  const gpuCanvas = {
+    width: 64, height: 64, clientWidth: 64, clientHeight: 64,
+    getContext: () => ({ configure() {}, unconfigure() {}, getCurrentTexture: () => ({ createView: () => ({}) }) })
+  } as unknown as HTMLCanvasElement
+  const glCanvas = {
+    width: 64, height: 64, clientWidth: 64, clientHeight: 64,
+    getContext: () => glMock.gl,
+    addEventListener() {},
+    removeEventListener() {}
+  } as unknown as HTMLCanvasElement
+
+  const gpuRenderer = await createLowPolyRenderer(gpuCanvas, { backend: 'webgpu', lighting: initialLighting })
+  const glRenderer = await createLowPolyRenderer(glCanvas, { backend: 'webgl2', lighting: initialLighting })
+
+  // Verify shadow pipelines, textures, and samplers/compare modes
+  const shadowPipe = gpuMock.pipelines.find(p => p.entryPoint === 'shadowVertex')
+  assert.ok(shadowPipe, 'WebGPU created shadowVertex pipeline')
+  assert.equal(shadowPipe.depthStencil.depthBias, 2)
+  assert.equal(shadowPipe.depthStencil.depthBiasSlopeScale, 2)
+  assert.ok(gpuMock.samplers.some(s => s.compare === 'less'), 'WebGPU created comparison shadow sampler')
+  assert.ok(gpuMock.textures.some(tex => tex.width === 1024 && tex.height === 1024 && tex.format === 'depth24plus'), 'WebGPU allocated 1024x1024 shadow depth texture')
+
+  const glShadowTex = glMock.shadowTextures.find(tex => tex.width === 1024 && tex.height === 1024)
+  assert.ok(glShadowTex, 'WebGL 2 allocated 1024x1024 shadow depth texture')
+  assert.equal(glShadowTex.internalFormat, glMock.gl.DEPTH_COMPONENT24)
+  assert.equal(glShadowTex.params[glMock.gl.TEXTURE_COMPARE_MODE], glMock.gl.COMPARE_REF_TO_TEXTURE)
+  assert.equal(glShadowTex.params[glMock.gl.TEXTURE_COMPARE_FUNC], glMock.gl.LEQUAL)
+
+  // Verify WebGPU & WebGL 2 fragment shaders agree on shadow depth clamping and bounds
+  const wgsl = gpuMock.shaders.join('\n')
+  const glsl = glMock.shaderSources.join('\n')
+  assert.match(wgsl, /clamp\(sc\.z - camera\.shadowParams\.y, 0\.0, 1\.0\)/)
+  assert.match(wgsl, /edge > 0\.0 && sc\.z > 0\.0 && sc\.z < 1\.0/)
+  assert.match(glsl, /clamp\(sc\.z - shadowParams\.y, 0\.0, 1\.0\)/)
+  assert.match(glsl, /edge > 0\.0 && sc\.z > 0\.0 && sc\.z < 1\.0/)
+
+  // Verify initial uploaded lightMatrix matches computeShadowMatrix identically on both backends
+  const gpuInitLightWrite = gpuMock.writes.find(w => w.dstOffset === 64 && w.data.length === 88)
+  assert.ok(gpuInitLightWrite, 'WebGPU uploaded 88-float lighting+lightMatrix uniform block')
+  const gpuLightMatrix1 = gpuInitLightWrite.data.subarray(72, 88)
+  const glLightMatrix1 = glMock.mainUniforms.lightMatrix
+  assert.ok(glLightMatrix1 instanceof Float32Array)
+  assert.deepEqual(Array.from(gpuLightMatrix1), Array.from(expectedLightMatrix1))
+  assert.deepEqual(Array.from(glLightMatrix1), Array.from(expectedLightMatrix1))
+
+  // Camera sits at z=5 looking toward -Z; offscreenCaster at z=8 is BEHIND camera but INSIDE shadow frustum (extent=10).
+  const cam1 = multiply(perspective(Math.PI / 3, 1, 0.5, 50), view([0, 0, 5], [0, 0, -5]))
+  const cam2 = multiply(perspective(Math.PI / 3, 1, 0.5, 50), view([1, 0.5, 5.2], [0, 0, -5]))
+
+  const inCaster = instances(box, { capacity: 1, blend: 'opaque' })
+  inCaster.add([0, 0, 0])
+
+  const offscreenCaster = instances(box, { capacity: 1, blend: 'opaque' })
+  offscreenCaster.add([0, 0, 8]) // Behind camera (culled from main pass), inside shadow extent=10!
+
+  const farOpaque = instances(box, { capacity: 1, blend: 'opaque' })
+  farOpaque.add([200, 0, 0]) // Outside both camera and shadow frustums
+
+  const alphaBatch = instances(box, { capacity: 1, blend: 'alpha' })
+  alphaBatch.add([0, 0, -1], [1, 1, 1], 0, [0, 0.5, 1, 0.5]) // Inside both, excluded from shadows
+
+  const scene = [inCaster, offscreenCaster, farOpaque, alphaBatch]
+
+  // Frame 1: shadow pass runs once on both backends with [inCaster, offscreenCaster] only
+  gpuMock.draws.length = 0
+  glMock.draws.length = 0
+  gpuRenderer.render(cam1, scene)
+  glRenderer.render(cam1, scene)
+
+  assert.equal(gpuMock.shadowPasses.length, 1, 'WebGPU ran 1 shadow pass on frame 1')
+  assert.equal(gpuMock.shadowPasses[0].draws.length, 2, 'WebGPU shadow pass drew inCaster + offscreenCaster only')
+  assert.equal(gpuMock.draws.length, 2, 'WebGPU main pass drew inCaster + alphaBatch only')
+
+  assert.equal(glMock.shadowPasses.length, 1, 'WebGL 2 ran 1 shadow pass on frame 1')
+  assert.deepEqual(glMock.shadowPasses[0].viewport, [0, 0, 1024, 1024])
+  assert.deepEqual(glMock.shadowPasses[0].polygonOffset, [2, 2])
+  assert.deepEqual(Array.from(glMock.shadowPasses[0].lightMatrix!), Array.from(expectedLightMatrix1))
+  assert.equal(glMock.shadowPasses[0].draws.length, 2, 'WebGL 2 shadow pass drew inCaster + offscreenCaster only')
+  assert.equal(glMock.draws.length, 2, 'WebGL 2 main pass drew inCaster + alphaBatch only')
+
+  // Frame 2: camera moves while casters stay static -> shadow dirty skip on BOTH backends!
+  gpuRenderer.render(cam2, scene)
+  glRenderer.render(cam2, scene)
+  assert.equal(gpuMock.shadowPasses.length, 1, 'WebGPU skipped shadow pass when static casters unchanged')
+  assert.equal(glMock.shadowPasses.length, 1, 'WebGL 2 skipped shadow pass when static casters unchanged')
+
+  // Frame 3: mutating an opaque caster bumps its revision -> triggers shadow pass re-render!
+  inCaster.clear()
+  inCaster.add([0.5, 0, 0])
+  gpuRenderer.render(cam2, scene)
+  glRenderer.render(cam2, scene)
+  assert.equal(gpuMock.shadowPasses.length, 2, 'WebGPU re-rendered shadow pass after caster revision changed')
+  assert.equal(glMock.shadowPasses.length, 2, 'WebGL 2 re-rendered shadow pass after caster revision changed')
+
+  // Frame 4: updating shadow center via setLighting marks shadow dirty and uploads matching lightMatrix
+  const movedLighting = packLighting({ shadows: { center: [2, 0, 0] } }, packLighting(initialLighting))
+  const expectedLightMatrix2 = computeShadowMatrix(movedLighting)
+  gpuMock.writes.length = 0
+  gpuRenderer.setLighting({ shadows: { center: [2, 0, 0] } })
+  glRenderer.setLighting({ shadows: { center: [2, 0, 0] } })
+  gpuRenderer.render(cam2, scene)
+  glRenderer.render(cam2, scene)
+
+  assert.equal(gpuMock.shadowPasses.length, 3, 'WebGPU re-rendered shadow pass after setLighting')
+  assert.equal(glMock.shadowPasses.length, 3, 'WebGL 2 re-rendered shadow pass after setLighting')
+  const gpuUpdatedLightWrite = gpuMock.writes.find(w => w.dstOffset === 64 && w.data.length === 88)
+  assert.ok(gpuUpdatedLightWrite)
+  assert.deepEqual(Array.from(gpuUpdatedLightWrite.data.subarray(72, 88)), Array.from(expectedLightMatrix2))
+  assert.deepEqual(Array.from(glMock.shadowPasses[2].lightMatrix!), Array.from(expectedLightMatrix2))
+
+  // Frame 5: disabling shadows stops shadow passes on both backends
+  gpuRenderer.setLighting({ shadows: { enabled: false } })
+  glRenderer.setLighting({ shadows: { enabled: false } })
+  gpuRenderer.render(cam2, scene)
+  glRenderer.render(cam2, scene)
+  assert.equal(gpuMock.shadowPasses.length, 3, 'WebGPU skipped shadow pass once shadows disabled')
+  assert.equal(glMock.shadowPasses.length, 3, 'WebGL 2 skipped shadow pass once shadows disabled')
+
+  gpuRenderer.dispose()
+  glRenderer.dispose()
+})
+
+test('Canvas 2D skips GPU shadows cleanly and dead createRenderer is retired while color() stays exported', async () => {
+  assert.equal('createRenderer' in frameworkIndex, false, 'dead createRenderer must not be exported from framework/index.ts')
+  assert.deepEqual(color('#ff8000').map(v => Math.round(v * 255)), [255, 128, 0, 255])
+
+  const canvas = {
+    width: 32, height: 32, clientWidth: 32, clientHeight: 32,
+    getContext: () => ({
+      fillStyle: '',
+      globalAlpha: 1,
+      globalCompositeOperation: 'source-over',
+      fillRect() {}, clearRect() {}, beginPath() {}, moveTo() {}, lineTo() {}, closePath() {}, fill() {}
+    })
+  } as unknown as HTMLCanvasElement
+  const renderer = await createLowPolyRenderer(canvas, {
+    backend: 'canvas',
+    lighting: { shadows: { enabled: true, center: [0, 0, 0], extent: 10 } }
+  })
+  const b = instances(box, 1)
+  b.add([0, 0, 0])
+  const cam = multiply(orthographic(6, 6, 0.5, 50), view([0, 0, 10], [0, 0, 0]))
+  const stats = renderer.render(cam, [b])
+  assert.ok(stats.drawCalls > 0)
+  renderer.dispose()
 })

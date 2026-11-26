@@ -4,11 +4,12 @@ import type {
   ShadowProjection, Vec3
 } from './types.ts'
 import type { SpriteClip } from './sprites.ts'
-import { createAlphaSorter, multiply, normalTiltQuaternion, orthographic, projectShadow, shadowDisc, view } from './geometry.ts'
+import { multiply, normalTiltQuaternion, orthographic, projectShadow, shadowDisc, view } from './geometry.ts'
 import { canvasMeshes, meshViewPixels } from './mesh-canvas.ts'
 import { glMeshes } from './mesh-gl.ts'
 import { gpuMeshes } from './mesh-gpu.ts'
-import { frustum, instances, visible } from './instances.ts'
+import { instances } from './instances.ts'
+import { createFramePreparer, createLightingState, prepareLighting } from './renderer.ts'
 import { isTestingActive, recordFrame } from './testing-runtime.ts'
 
 export {
@@ -16,134 +17,9 @@ export {
   cameraDepth, projectShadow, projectShadowMesh
 } from './geometry.ts'
 export { instances } from './instances.ts'
-export { color } from './renderer.ts'
+export { color, computeShadowMatrix, LIGHT_FLOATS, packLighting } from './renderer.ts'
 
-export const LIGHT_FLOATS = 72
 const defaultClear: Color = [0.05, 0.08, 0.12, 1]
-
-export function packLighting(
-  options: LightingOptions = {},
-  prev?: Float32Array<ArrayBuffer>,
-  dest?: Float32Array<ArrayBuffer>
-): Float32Array<ArrayBuffer> {
-  const out = dest && dest.length >= LIGHT_FLOATS ? dest : new Float32Array(LIGHT_FLOATS)
-  if (prev && prev !== out) {
-    out.fill(0)
-    if (prev.length >= 48) out.set(prev.subarray(0, Math.min(prev.length, LIGHT_FLOATS)))
-    else {
-      out[0] = -.48; out[1] = .8; out[2] = .36; out[3] = .52
-      out[4] = 1; out[5] = 1; out[6] = 1; out[7] = 0
-    }
-  } else if (!prev) {
-    out.fill(0)
-    out[0] = -.48; out[1] = .8; out[2] = .36; out[3] = .52
-    out[4] = 1; out[5] = 1; out[6] = 1; out[7] = 0
-  }
-  const direction = options.direction ?? [out[0], out[1], out[2]]
-  const ambient = options.ambient ?? out[3]
-  const [x, y, z] = direction
-  const length = Math.hypot(x, y, z)
-  if (!length || !Number.isFinite(length) || !(ambient >= 0 && ambient <= 1)) {
-    throw new RangeError('Expected a nonzero light direction and ambient in the range 0–1')
-  }
-  out[0] = x / length
-  out[1] = y / length
-  out[2] = z / length
-  out[3] = ambient
-
-  if (options.color) {
-    out[4] = options.color[0]
-    out[5] = options.color[1]
-    out[6] = options.color[2]
-  }
-  if (options.fogColor) {
-    out[8] = options.fogColor[0]
-    out[9] = options.fogColor[1]
-    out[10] = options.fogColor[2]
-  }
-  if (options.fogNear !== undefined || options.fogFar !== undefined) {
-    const prevNear = out[11]
-    const near = options.fogNear ?? prevNear
-    const far = options.fogFar ?? (out[12] > 0 ? prevNear + 1 / out[12] : near)
-    out[11] = Number.isFinite(near) ? near : 0
-    out[12] = Number.isFinite(far) && far > near ? 1 / (far - near) : 0
-  }
-  if (options.points !== undefined) {
-    const count = Math.min(4, options.points.length)
-    out[7] = count
-    for (let i = 0; i < 4; i++) {
-      const pBase = 16 + i * 4
-      const cBase = 32 + i * 4
-      if (i < count) {
-        const pt = options.points[i]
-        const rad = Math.max(0.05, pt.radius)
-        out[pBase] = pt.position[0]
-        out[pBase + 1] = pt.position[1]
-        out[pBase + 2] = pt.position[2]
-        out[pBase + 3] = 1 / (rad * rad)
-        out[cBase] = pt.color[0]
-        out[cBase + 1] = pt.color[1]
-        out[cBase + 2] = pt.color[2]
-        out[cBase + 3] = pt.intensity ?? 1
-      } else {
-        out[pBase] = out[pBase + 1] = out[pBase + 2] = out[pBase + 3] = 0
-        out[cBase] = out[cBase + 1] = out[cBase + 2] = out[cBase + 3] = 0
-      }
-    }
-  }
-  if (options.skyColor || options.groundColor) {
-    const hadHemi = out[51] > 0
-    const sky = options.skyColor ?? (hadHemi ? [out[48], out[49], out[50]] : [0.72, 0.84, 0.98])
-    const ground = options.groundColor ?? (hadHemi ? [out[52], out[53], out[54]] : [0.36, 0.30, 0.28])
-    out[48] = sky[0]; out[49] = sky[1]; out[50] = sky[2]; out[51] = 1
-    out[52] = ground[0]; out[53] = ground[1]; out[54] = ground[2]
-  }
-  if (options.toonSteps !== undefined) {
-    out[55] = Number.isFinite(options.toonSteps) && options.toonSteps >= 2 ? Math.floor(options.toonSteps) : 0
-  }
-  if (options.rimColor !== undefined) {
-    out[56] = options.rimColor[0]; out[57] = options.rimColor[1]; out[58] = options.rimColor[2]
-  }
-  if (options.rimStrength !== undefined) {
-    out[59] = Number.isFinite(options.rimStrength) ? Math.max(0, Math.min(1, options.rimStrength)) : 0
-    if (out[59] > 0 && out[56] === 0 && out[57] === 0 && out[58] === 0) {
-      out[56] = 1; out[57] = 1; out[58] = 1
-    }
-  }
-  if (options.shadows !== undefined) {
-    const sh = options.shadows
-    const hadShadow = out[67] > 0.5
-    const enabled = sh.enabled !== undefined ? (sh.enabled ? 1 : 0) : out[64]
-    const prevExt = out[63] > 0 ? out[63] : 24
-    out[60] = sh.center ? sh.center[0] : out[60]
-    out[61] = sh.center ? sh.center[1] : out[61]
-    out[62] = sh.center ? sh.center[2] : out[62]
-    out[63] = sh.extent !== undefined && Number.isFinite(sh.extent) && sh.extent > 1 ? sh.extent : prevExt
-    out[64] = enabled
-    out[65] = sh.bias !== undefined && Number.isFinite(sh.bias) ? Math.max(0.0001, sh.bias) : (hadShadow ? out[65] : 0.0028)
-    out[66] = sh.strength !== undefined && Number.isFinite(sh.strength) ? Math.max(0, Math.min(1, sh.strength)) : (hadShadow ? out[66] : 0.46)
-    out[67] = 1
-    if (sh.color) {
-      out[68] = sh.color[0]; out[69] = sh.color[1]; out[70] = sh.color[2]; out[71] = 0
-    } else if (!hadShadow) {
-      out[68] = 0.22; out[69] = 0.28; out[70] = 0.42; out[71] = 0
-    }
-  }
-  return out
-}
-
-/** Build an orthographic directional sun view-projection matrix for shadow mapping. */
-export function computeShadowMatrix(light: Float32Array): Matrix {
-  const lx = light[0], ly = Math.max(0.22, light[1]), lz = light[2]
-  const len = Math.hypot(lx, ly, lz) || 1
-  const dx = lx / len, dy = ly / len, dz = lz / len
-  const cx = light[60] || 0, cy = light[61] || 0, cz = light[62] || 0
-  const extent = light[63] > 1 ? light[63] : 24
-  const dist = extent * 2.2
-  const eye: Vec3 = [cx + dx * dist, cy + dy * dist, cz + dz * dist]
-  const up: Vec3 = Math.abs(dy) > 0.96 ? [0, 0, 1] : [0, 1, 0]
-  return multiply(orthographic(extent * 2, extent * 2, 0.5, extent * 4.6), view(eye, [cx, cy, cz], up))
-}
 
 export async function createLowPolyRenderer(canvas: HTMLCanvasElement,
   { backend = 'auto', pixelRatio = 2, lighting, canvasDepth = false }:
@@ -151,17 +27,10 @@ export async function createLowPolyRenderer(canvas: HTMLCanvasElement,
 ): Promise<LowPolyRenderer> {
   if (!['auto', 'webgpu', 'webgl2', 'canvas'].includes(backend)) throw new RangeError('Unknown rendering backend')
   if (!Number.isFinite(pixelRatio) || pixelRatio <= 0) throw new RangeError('Invalid maximum pixel ratio')
-  const light = packLighting(lighting)
+  const lightingState = createLightingState(lighting)
   let initial: MeshBackend | null = null
   let disposed = false
-  const selected: InstanceBatch[] = []
-  const alphaBatches: InstanceBatch[] = []
-  const additiveBatches: InstanceBatch[] = []
-  const shadowCasters: InstanceBatch[] = []
-  const alphaSorter = createAlphaSorter(16)
-  const planes = new Float32Array(24)
-  const lightPlanes = new Float32Array(24)
-  let lightPlanesDirty = true
+  const framePreparer = createFramePreparer()
   const stats = { drawCalls: 0, triangles: 0, instances: 0, uploadBytes: 0, culledBatches: 0 }
 
   function replaceCanvas() {
@@ -172,7 +41,7 @@ export async function createLowPolyRenderer(canvas: HTMLCanvasElement,
   }
 
   if (backend === 'auto' || backend === 'webgpu') {
-    try { initial = await gpuMeshes(canvas, light, { allowFallback: backend === 'webgpu' }) }
+    try { initial = await gpuMeshes(canvas, lightingState, { allowFallback: backend === 'webgpu' }) }
     catch (error) {
       if (backend === 'webgpu') throw error
       console.warn('WebGPU initialization failed', error)
@@ -181,14 +50,14 @@ export async function createLowPolyRenderer(canvas: HTMLCanvasElement,
     if (!initial && backend === 'webgpu') throw new Error('WebGPU is unavailable')
   }
   if (!initial && (backend === 'auto' || backend === 'webgl2')) {
-    try { initial = glMeshes(canvas, light) }
+    try { initial = glMeshes(canvas, lightingState) }
     catch (error) {
       if (backend === 'webgl2') throw error
       replaceCanvas()
     }
     if (!initial && backend === 'webgl2') throw new Error('WebGL 2 is unavailable')
   }
-  let active: MeshBackend = initial ?? canvasMeshes(canvas, light, { depthTest: canvasDepth })
+  let active: MeshBackend = initial ?? canvasMeshes(canvas, lightingState, { depthTest: canvasDepth })
 
   function watch(current: MeshBackend) {
     current.lost?.then(() => {
@@ -197,10 +66,10 @@ export async function createLowPolyRenderer(canvas: HTMLCanvasElement,
       replaceCanvas()
       let next: MeshBackend | null = null
       if (current.name === 'WebGPU') {
-        try { next = glMeshes(canvas, light) }
+        try { next = glMeshes(canvas, lightingState) }
         catch { replaceCanvas() }
       }
-      active = next ?? canvasMeshes(canvas, light, { depthTest: canvasDepth })
+      active = next ?? canvasMeshes(canvas, lightingState, { depthTest: canvasDepth })
       watch(active)
     })
   }
@@ -220,42 +89,14 @@ export async function createLowPolyRenderer(canvas: HTMLCanvasElement,
       const height = Math.max(1, Math.round(h * ratio))
       if (canvas.width !== width) canvas.width = width
       if (canvas.height !== height) canvas.height = height
-      frustum(matrix, planes)
-      const useShadows = light[64] > 0.5 && active.name !== 'Canvas 2D'
-      if (useShadows && lightPlanesDirty) {
-        frustum(computeShadowMatrix(light), lightPlanes)
-        lightPlanesDirty = false
-      }
-      selected.length = 0
-      alphaBatches.length = 0
-      additiveBatches.length = 0
-      shadowCasters.length = 0
-      stats.triangles = stats.instances = stats.uploadBytes = stats.culledBatches = 0
-      for (const batch of batches) {
-        if (visible(batch, planes)) {
-          if (batch.blend === 'opaque') selected.push(batch)
-          else if (batch.blend === 'alpha') alphaBatches.push(batch)
-          else additiveBatches.push(batch)
-          stats.triangles += batch.mesh.vertexCount / 3 * batch.count
-          stats.instances += batch.count
-        } else if (batch.count) stats.culledBatches++
-        if (useShadows && batch.blend === 'opaque' && visible(batch, lightPlanes)) {
-          shadowCasters.push(batch)
-        }
-      }
-      if (alphaBatches.length > 1) {
-        alphaSorter.sortBatches(matrix, alphaBatches, selected)
-      } else if (alphaBatches.length === 1) {
-        selected.push(alphaBatches[0])
-      }
-      for (let i = 0; i < additiveBatches.length; i++) selected.push(additiveBatches[i])
-      stats.drawCalls = selected.length
-      active.draw(matrix, clear, selected, stats, useShadows ? shadowCasters : undefined)
+      const useShadows = lightingState.shadowsEnabled && active.name !== 'Canvas 2D'
+      const frame = framePreparer.prepare(matrix, batches, lightingState, useShadows, stats)
+      active.draw(matrix, clear, frame.visible, stats, frame.shadowCasters, true)
       if (isTestingActive()) {
         recordFrame({
           canvas,
           viewProjection: new Float32Array(matrix),
-          batches: selected.slice(),
+          batches: frame.visible.slice(),
           clear,
           width,
           height,
@@ -268,9 +109,8 @@ export async function createLowPolyRenderer(canvas: HTMLCanvasElement,
     },
     setLighting(next: LightingOptions) {
       if (disposed) return
-      packLighting(next, light, light)
-      lightPlanesDirty = true
-      active.setLighting?.(light)
+      lightingState.update(next)
+      active.setLighting?.(lightingState)
     },
     release(batch) { active.release(batch) },
     releaseMesh(mesh) { active.releaseMesh(mesh) },
@@ -482,7 +322,7 @@ export function createShadowBatch(options: ShadowBatchOptions = {}): ShadowBatch
 
 /** Draw a transparent, depth-tested still at the supplied camera, including offscreen authoring passes. */
 export function renderMeshFrame(canvas: HTMLCanvasElement, camera: Matrix, batches: readonly InstanceBatch[], lighting?: LightingOptions) {
-  const renderer = canvasMeshes(canvas, packLighting(lighting), { transparent: true, depthTest: true })
+  const renderer = canvasMeshes(canvas, prepareLighting(lighting), { transparent: true, depthTest: true })
   try { renderer.draw(camera, defaultClear, batches, { drawCalls: 0, triangles: 0, instances: 0, uploadBytes: 0, culledBatches: 0 }) }
   finally { renderer.dispose() }
 }
@@ -490,7 +330,7 @@ export function renderMeshFrame(canvas: HTMLCanvasElement, camera: Matrix, batch
 /** Render a single transparent, depth-tested RGBA frame without a DOM canvas. */
 export function renderMeshPixels(camera: Matrix, batches: readonly InstanceBatch[], size: number, lighting?: LightingOptions) {
   if (!Number.isInteger(size) || size < 1 || size > 2048) throw new RangeError('Render size must be 1–2048 pixels')
-  return meshViewPixels([camera], batches, size, packLighting(lighting))
+  return meshViewPixels([camera], batches, size, prepareLighting(lighting))
 }
 
 type SpriteCamera = { span: number; center?: Vec3; frameSize?: number; elevation?: number; lighting?: LightingOptions; outline?: string }
@@ -563,7 +403,7 @@ export function bakeSpritePixels(batches: readonly InstanceBatch[], {
     return multiply(projection, view([center[0] + horizontal * Math.sin(angle), center[1] + radius * Math.sin(elevation),
       center[2] + horizontal * Math.cos(angle)], center))
   })
-  const out = meshViewPixels(cameras, batches, frameSize, packLighting(lighting))
+  const out = meshViewPixels(cameras, batches, frameSize, prepareLighting(lighting))
   if (outline) applySpriteOutline(out.pixels, out.width, out.height, frameSize, outline)
   return out
 }
