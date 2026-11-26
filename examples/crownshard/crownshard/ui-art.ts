@@ -2844,6 +2844,38 @@ export function drawCombatForecast(
     if (fc.attackArc === 'back') tags.push({ text: 'BACKSTAB +30%', bg: '#5e1a6e', color: '#ffbaff' })
     else if (fc.attackArc === 'flank') tags.push({ text: 'FLANK +15%', bg: '#6e450a', color: '#ffe078' })
   }
+  if (fc.displacementPreview) {
+    const dp = fc.displacementPreview
+    if (dp.kind === 'swap') {
+      tags.push({
+        text: dp.moved ? 'SWAP' : 'SWAP BLOCKED',
+        bg: dp.moved ? '#4e2778' : '#3a2d4a',
+        color: dp.moved ? '#e8c4ff' : '#b8aec9'
+      })
+    } else {
+      const verb = dp.kind === 'pull' ? 'PULL' : 'PUSH'
+      const isLedge = dp.collidedWith === 'void' || dp.collidedWith === 'water' || dp.collidedWith === 'lava'
+      const pushLabel = dp.collidedWith !== 'none' && dp.collisionDmg > 0
+        ? `${verb} ${dp.distance} → ${isLedge ? 'LEDGE' : 'COLLIDE'} +${dp.collisionDmg}`
+        : `${verb} ${dp.distance}${dp.iceSlid ? ' +ICE' : ''}`
+      tags.push({
+        text: pushLabel,
+        bg: dp.collisionDmg > 0 ? '#7d3012' : '#16586b',
+        color: dp.collisionDmg > 0 ? '#ffd08a' : '#9ef7ff'
+      })
+      if (dp.fallDmg > 0) {
+        tags.push({ text: `FALL +${dp.fallDmg}`, bg: '#7a2514', color: '#ffc285' })
+      }
+      if (dp.hazardKind === 'lava_geyser') {
+        tags.push({ text: 'GEYSER!', bg: '#8a230e', color: '#ffbd7a' })
+      } else if (dp.hazardKind === 'cursed_altar') {
+        tags.push({ text: 'ALTAR!', bg: '#5a1e78', color: '#ebb8ff' })
+      }
+      if (dp.causesStun) {
+        tags.push({ text: '+STUN', bg: '#6e5208', color: '#ffe88a' })
+      }
+    }
+  }
   tags.push({
     text: fc.actionName.toUpperCase(),
     bg: fc.mode === 'strike' ? '#3d4f80' : fc.mode === 'tactic' ? '#633487' : '#1b558a',
@@ -2950,9 +2982,11 @@ export function drawCombatForecast(
       display: true
     })
   } else {
+    const bonusDmg = fc.displacementPreview?.totalBonusDmg ?? 0
+    const bonusSuffix = bonusDmg > 0 ? ` (+${bonusDmg})` : ''
     const dmgStr = fc.critChance > 0 && fc.critDmg > fc.normalDmg
-      ? `${fc.normalDmg}-${fc.critDmg} DMG`
-      : `${fc.normalDmg} DMG`
+      ? `${fc.normalDmg}-${fc.critDmg}${bonusSuffix} DMG`
+      : `${fc.normalDmg}${bonusSuffix} DMG`
     drawText(ctx, dmgStr, innerX, wellY + 14, {
       size: o.compact ? 14 : 16.5,
       weight: 900,
@@ -3864,6 +3898,9 @@ function drawTacticIllustration(
   } else if (tacticId === 'wind_step') {
     bg.addColorStop(0, '#1e6e73')
     bg.addColorStop(1, '#0c232b')
+  } else if (tacticId === 'gale_gust') {
+    bg.addColorStop(0, '#1c7c85')
+    bg.addColorStop(1, '#0a202c')
   } else if (tacticId === 'frost_nova_scroll') {
     bg.addColorStop(0, '#22598a')
     bg.addColorStop(1, '#0c1c33')
@@ -4065,6 +4102,51 @@ function drawTacticIllustration(
     ctx.strokeStyle = '#0d474a'
     ctx.lineWidth = 1.2
     ctx.stroke()
+  } else if (tacticId === 'gale_gust') {
+    // Roaring cyan-white cyclone vortex + surging horizontal knockback chevrons
+    ctx.beginPath()
+    ctx.arc(cx, cy, s * 0.78, 0, Math.PI * 2)
+    ctx.fillStyle = 'rgba(72, 236, 224, 0.18)'
+    ctx.fill()
+
+    // Sweeping gale streams
+    ctx.lineCap = 'round'
+    for (let i = -1; i <= 1; i++) {
+      const yOff = i * s * 0.34
+      ctx.strokeStyle = i === 0 ? '#e6ffff' : '#6ef5ea'
+      ctx.lineWidth = i === 0 ? 2.6 : 1.9
+      ctx.beginPath()
+      ctx.moveTo(cx - s * 0.88, cy + yOff + s * 0.1)
+      ctx.bezierCurveTo(
+        cx - s * 0.28,
+        cy + yOff - s * 0.28,
+        cx + s * 0.15,
+        cy + yOff + s * 0.24,
+        cx + s * 0.62,
+        cy + yOff - s * 0.04
+      )
+      ctx.stroke()
+    }
+
+    // Twin forward-push wind chevrons (conveying 2-tile knockback!)
+    for (let k = 0; k < 2; k++) {
+      const ax = cx + s * (0.28 + k * 0.32)
+      ctx.strokeStyle = k === 1 ? '#ffffff' : '#9cfcf2'
+      ctx.lineWidth = 2.4
+      ctx.beginPath()
+      ctx.moveTo(ax - s * 0.2, cy - s * 0.32)
+      ctx.lineTo(ax + s * 0.12, cy)
+      ctx.lineTo(ax - s * 0.2, cy + s * 0.32)
+      ctx.stroke()
+    }
+
+    // Swirling breeze motes
+    for (const [mx, my, mr] of [[-0.56, -0.44, 2.2], [0.05, -0.52, 2.5], [-0.42, 0.48, 2.0], [0.46, 0.46, 1.9]]) {
+      ctx.beginPath()
+      ctx.arc(cx + mx * s, cy + my * s, mr, 0, Math.PI * 2)
+      ctx.fillStyle = '#c8fffb'
+      ctx.fill()
+    }
   } else if (tacticId === 'frost_nova_scroll') {
     // Ornate 6-point crystal snowflake
     ctx.strokeStyle = '#b5eeff'

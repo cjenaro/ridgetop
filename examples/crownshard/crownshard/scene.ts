@@ -24,7 +24,7 @@ import {
 import { TACTIC_BY_ID } from './data.ts'
 import { BARRICADE_DEFAULT_HP, FACING_DIRS, TILE_SIZE, facingToYaw, facingVector, gridToWorld, isUnitDowned, vectorToFacing } from './types.ts'
 import type {
-  AttackArc, BattleState, BattleUnit, CombatForecast, DangerZoneMap, EnemyThreatMap,
+  AttackArc, BattleState, BattleUnit, CombatForecast, DangerZoneMap, DisplacementKind, EnemyThreatMap,
   EquipSlot, FacingDir, FacingExposureLevel, FlankThreatTile, GameState, OwnedHeroCard
 } from './types.ts'
 
@@ -74,6 +74,9 @@ const C_EMPTY_RETICLE: Color = [0.76, 0.84, 0.98, 0.78]
 const C_FORECAST_ARC: Color = [1.0, 0.80, 0.26, 0.94]
 const C_FORECAST_ALLY_ARC: Color = [0.44, 0.98, 0.68, 0.94]
 const C_FORECAST_FF_ARC: Color = [1.0, 0.34, 0.68, 0.96]
+const C_DISPLACE_PUSH: Color = [0.34, 0.96, 1.0, 0.96]
+const C_DISPLACE_HAZARD: Color = [1.0, 0.42, 0.16, 0.98]
+const C_DISPLACE_SWAP: Color = [0.80, 0.50, 1.0, 0.96]
 const C_FACING_ALLY: Color = [0.64, 0.95, 1.0, 0.96]
 const C_FACING_ENEMY: Color = [1.0, 0.48, 0.22, 0.96]
 const C_PICKER_SAFE: Color = [0.30, 0.96, 0.74, 0.96]
@@ -472,6 +475,13 @@ interface UnitFx {
   deathT: number
   kbX: number
   kbZ: number
+  slideFromX: number
+  slideFromY: number
+  slideFromZ: number
+  slideT: number
+  slideDur: number
+  slideArc: number
+  slideKind: DisplacementKind | null
   lastCol: number
   lastRow: number
   lastElev: number
@@ -665,6 +675,13 @@ export function createCrownshardScene(renderer: LowPolyRenderer) {
         deathT: initialDowned ? DEATH_SINK_START - 0.08 : -1,
         kbX: 0,
         kbZ: 0,
+        slideFromX: 0,
+        slideFromY: 0,
+        slideFromZ: 0,
+        slideT: 0,
+        slideDur: 0,
+        slideArc: 0,
+        slideKind: null,
         lastCol: unit?.col ?? 0,
         lastRow: unit?.row ?? 0,
         lastElev: unit?.y ?? 0,
@@ -1024,6 +1041,41 @@ export function createCrownshardScene(renderer: LowPolyRenderer) {
             unlit: 0.98,
             life: 0.80
           })
+        }
+      } else if (ev.kind === 'displace') {
+        const u = battle ? getUnitByUid(battle, ev.uid) : null
+        if (u) {
+          const ufx = getFx(u.uid, u)
+          ufx.slideFromX = ev.from[0] - ev.to[0]
+          ufx.slideFromY = ev.from[1] - ev.to[1]
+          ufx.slideFromZ = ev.from[2] - ev.to[2]
+          ufx.slideT = 0
+          ufx.slideDur = ev.displacementKind === 'swap' ? 0.30 : 0.24
+          ufx.slideArc = ev.displacementKind === 'swap' ? 0.82 : (ev.fallDrop && ev.fallDrop >= 2 ? 0.44 : 0.18)
+          ufx.slideKind = ev.displacementKind
+          ufx.lastCol = u.col
+          ufx.lastRow = u.row
+          ufx.lastElev = u.y
+        }
+        spawnDust(ev.from[0], ev.from[1], ev.from[2], 6, 1.05)
+        if (ev.displacementKind === 'swap') {
+          vfx.groundRing(ev.from, C_DISPLACE_SWAP, 0, 0.45, 0.2, 1.15, 2.8)
+          vfx.groundRing(ev.to, C_DISPLACE_SWAP, 0.04, 0.5, 0.2, 1.25, -2.8)
+          spawnSparks([ev.to[0], ev.to[1] + 0.55, ev.to[2]], C_SHADOW, 10, 2.0)
+        } else {
+          if (ev.iceSlid) {
+            spawnSparks([ev.to[0], ev.to[1] + 0.2, ev.to[2]], C_FROST, 9, 1.8)
+          }
+          if (ev.collided && ev.collided !== 'none') {
+            vfx.groundRing(ev.to, C_DISPLACE_HAZARD, 0.06, 0.48, 0.22, 1.35, 3.2)
+            spawnSparks([ev.to[0], ev.to[1] + 0.6, ev.to[2]], C_FIRE_TIP, 12, 2.4)
+            localShake = Math.max(localShake, 0.26)
+          }
+          if (ev.fallDrop && ev.fallDrop >= 2) {
+            spawnDust(ev.to[0], ev.to[1], ev.to[2], 12, 1.45)
+            vfx.groundRing(ev.to, C_DISPLACE_HAZARD, 0.08, 0.55, 0.25, 1.5, -2.4)
+            localShake = Math.max(localShake, 0.30)
+          }
         }
       }
     }
@@ -1582,9 +1634,27 @@ export function createCrownshardScene(renderer: LowPolyRenderer) {
     const additive = fillAdditive(fx, stanceOffsetFor(unit.heroId, unit.enemyId), fx.stanceW, leapK)
     const pose = anim.evaluate(additive)
 
-    const px = unit.x + unit.lungeX + fx.kbX
-    const pz = unit.z + unit.lungeZ + fx.kbZ
-    const py = unit.y + extraY
+    let slideOffX = 0
+    let slideOffY = 0
+    let slideOffZ = 0
+    if (fx.slideDur > 0 && fx.slideT < fx.slideDur) {
+      fx.slideT = Math.min(fx.slideDur, fx.slideT + dt)
+      const u = fx.slideT / fx.slideDur
+      const rem = Math.pow(1 - u, 3)
+      slideOffX = fx.slideFromX * rem
+      slideOffY = fx.slideFromY * rem + Math.sin(u * Math.PI) * fx.slideArc
+      slideOffZ = fx.slideFromZ * rem
+      if (fx.slideT >= fx.slideDur) {
+        fx.slideDur = 0
+        fx.slideKind = null
+        fx.landT = 0
+        fx.landAmp = 0.16
+      }
+    }
+
+    const px = unit.x + unit.lungeX + fx.kbX + slideOffX
+    const pz = unit.z + unit.lungeZ + fx.kbZ + slideOffZ
+    const py = unit.y + extraY + slideOffY
     const flash = fx.flashT > 0
     fx.pos[0] = px
     fx.pos[1] = py
@@ -2306,6 +2376,62 @@ export function createCrownshardScene(renderer: LowPolyRenderer) {
           const by = (fy + 0.92) + ((ty + 0.85) - (fy + 0.92)) * u + Math.sin(u * Math.PI) * peak
           const sz = 0.09 + Math.sin(u * Math.PI) * 0.06
           pool.add(crystalMesh, [bx, by, bz], [sz, sz, sz], state.time * 4 + i, arcCol, 1.0, 'additive')
+        }
+      }
+
+      // Projected forced-displacement slide arrow, landing ring & collision/hazard marker
+      if (fc.displacementPreview) {
+        const dp = fc.displacementPreview
+        const dFromCell = battle.cells[dp.fromRow]?.[dp.fromCol]
+        const dToCell = battle.cells[dp.toRow]?.[dp.toCol]
+        if (dFromCell && dToCell) {
+          const [dsx, dsy, dsz] = gridToWorld(dp.fromCol, dp.fromRow, dFromCell.elevation, battle.cols, battle.rows)
+          const [dex, dey, dez] = gridToWorld(dp.toCol, dp.toRow, dToCell.elevation, battle.cols, battle.rows)
+          const hasCombo = dp.collisionDmg > 0 || dp.fallDmg > 0 || dp.hazardKind === 'lava_geyser' || dp.hazardKind === 'cursed_altar'
+          const dispCol = dp.kind === 'swap'
+            ? C_DISPLACE_SWAP
+            : hasCombo
+              ? C_DISPLACE_HAZARD
+              : C_DISPLACE_PUSH
+
+          const ddx = dex - dsx
+          const ddz = dez - dsz
+          const dDist = Math.hypot(ddx, ddz)
+          if (dp.moved && dDist > 0.15) {
+            const slideYaw = Math.atan2(ddx, ddz)
+            const stepBeads = Math.max(4, Math.min(10, Math.round(dDist * 3)))
+            const flow = (state.time * 1.9) % 1
+            const arcPeak = dp.kind === 'swap' ? 0.78 : (dp.fallDrop >= 2 ? 0.42 : 0.18)
+            for (let i = 0; i < stepBeads; i++) {
+              const u = (i + flow) / stepBeads
+              if (u < 0.08 || u > 0.96) continue
+              const bx = dsx + ddx * u
+              const bz = dsz + ddz * u
+              const by = (dsy + 0.24) + ((dey + 0.24) - (dsy + 0.24)) * u + Math.sin(u * Math.PI) * arcPeak
+              pool.add(facingChevronMesh, [bx, by, bz], [0.58, 1, 0.58], slideYaw, dispCol, 1.0, 'additive')
+            }
+            // Pulsing landing ring + directional arrowhead at destination tile
+            const landR = 0.66 + Math.sin(state.time * 7.0) * 0.07
+            pool.add(flatRing, [dex, dey + 0.062, dez], [landR, 1, landR], state.time * 2.2, dispCol, 1.0, 'additive')
+            pool.add(facingChevronMesh, [dex, dey + 0.068, dez], [0.95, 1, 0.95], slideYaw, dispCol, 1.0, 'additive')
+
+            // For Swap, also draw a matching violet landing ring on the target's tile for the caster!
+            if (dp.kind === 'swap') {
+              pool.add(flatRing, [dsx, dsy + 0.064, dsz], [landR * 0.92, 1, landR * 0.92], -state.time * 2.2, C_DISPLACE_SWAP, 1.0, 'additive')
+            }
+          }
+
+          // Impact cross / warning ring on collided obstacle, unit, or chasm ledge
+          if (dp.collidedWith !== 'none' && dp.collidedCell) {
+            const cCell = battle.cells[dp.collidedCell.row]?.[dp.collidedCell.col]
+            if (cCell) {
+              const cElev = cCell.terrain === 'void' ? dToCell.elevation : cCell.elevation
+              const [cx, cy, cz] = gridToWorld(dp.collidedCell.col, dp.collidedCell.row, cElev, battle.cols, battle.rows)
+              const warnPulse = 0.72 + Math.sin(state.time * 9.0) * 0.09
+              pool.add(flatRing, [cx, cy + 0.07, cz], [warnPulse, 1, warnPulse], -state.time * 3.0, C_DISPLACE_HAZARD, 1.0, 'additive')
+              pool.add(tileCrossMesh, [cx, cy + 0.074, cz], [TILE_SIZE * 0.76, 1, TILE_SIZE * 0.76], 0, C_DISPLACE_HAZARD, 0.98, 'additive')
+            }
+          }
         }
       }
     }

@@ -5,6 +5,9 @@ import {
   MERGE_COPIES_REQUIRED, PACK_BY_ID, PLAYABLE_CHAPTERS, RARITY_META, RARITY_ORDER, TACTIC_BY_ID, TACTIC_LIST
 } from './data.ts'
 import {
+  applyDisplacement, orderDisplacementTargets, resolveDisplacementPreview
+} from './forced-movement.ts'
+import {
   BARRICADE_DEFAULT_HP, CURSED_ALTAR_HP_COST, FACING_DIRS, GRID_COLS, GRID_ROWS, KO_COUNTDOWN_TURNS,
   LAVA_GEYSER_DAMAGE, LAVA_GEYSER_PERIOD, MAX_HEIGHT_LEVEL, MAX_POISON_STACKS,
   TALL_GRASS_RANGED_COVER, TALL_GRASS_RANGED_CRIT_REDUCTION, TAUNT_RADIUS,
@@ -16,12 +19,14 @@ import type {
   AttackArc, BattleCellSnapshot, BattleObjectiveEvaluation, BattleObjectiveKind, BattleObjectiveSnapshot,
   BattleObjectiveState, BattleReward, BattleSaveSnapshot, BattleState, BattleUnit,
   BattleUnitSnapshot, BiomeId, CampaignState, ChapterSpec, CombatForecast, CombatForecastAlt,
-  DangerZoneMap, DangerZoneTile, DifficultyLevel, EnemyArchetypeId, EnemyThreatMap, EquipSlot,
+  DangerZoneMap, DangerZoneTile, DifficultyLevel, DisplacementPreview, EnemyArchetypeId, EnemyThreatMap, EquipSlot,
   EquipmentSpec, FacingDir, FacingExposureLevel, FacingExposureReport, FacingThreatEntry,
   FlankThreatTile, GameState, GridCell, GridCoord, HeroClassId, MoveAttackTile, OwnedEquipCard,
   OwnedHeroCard, OwnedTacticCard, PackId, PackRevealItem, Rarity, SaveData, SkillSpec, StatusKind,
   TacticCardSpec, TileTerrain, TurnActionKind, TurnOrderActionPreview, TurnPreviewEntry
 } from './types.ts'
+
+export { applyDisplacement, resolveDisplacementPreview } from './forced-movement.ts'
 
 export const SAVE_KEY = 'ridgetop.crownshard.save.v1'
 
@@ -3834,6 +3839,18 @@ export function computeCombatForecast(state: GameState, col: number, row: number
       hpAfterNormal = Math.min(primary.maxHp, primary.hp + spec.heal)
     }
 
+    let displacementPreview: DisplacementPreview | undefined
+    if (spec.displacement && primary.alive && primary.team === 'enemy') {
+      displacementPreview = resolveDisplacementPreview(battle, active ?? null, primary, spec.displacement)
+      if (hpAfterNormal > 0 && displacementPreview.totalBonusDmg > 0) {
+        const shieldAfterPrimary = Math.max(0, primary.shield - normalDmg)
+        const bonusHpDmg = Math.max(0, displacementPreview.totalBonusDmg - shieldAfterPrimary)
+        hpAfterNormal = Math.max(0, hpAfterNormal - bonusHpDmg)
+      }
+    }
+    const tacticOffensive = spec.damage > 0 || Boolean(spec.displacement && primary.team === 'enemy')
+    const tacticTotalDmg = normalDmg + (displacementPreview?.totalBonusDmg ?? 0)
+
     return {
       mode: 'tactic',
       actionName: spec.name,
@@ -3867,7 +3884,7 @@ export function computeCombatForecast(state: GameState, col: number, row: number
       terrainDefBonus: primary.team === 'enemy' ? terrainDefBonus(battle.cells[primary.row][primary.col].terrain) : 0,
       empowered: false,
       attackArc: 'front',
-      isOffensive: spec.damage > 0,
+      isOffensive: tacticOffensive,
       isRevive,
       ...(isRevive ? { reviveKoCountdown: primary.koCountdown } : {}),
       friendlyFire: false,
@@ -3880,8 +3897,9 @@ export function computeCombatForecast(state: GameState, col: number, row: number
       targetShieldBefore: primary.shield,
       targetHpAfterNormal: hpAfterNormal,
       targetHpAfterCrit: hpAfterNormal,
-      lethalNormal: normalDmg > 0 && hpAfterNormal <= 0,
-      lethalCrit: normalDmg > 0 && hpAfterNormal <= 0,
+      lethalNormal: tacticTotalDmg > 0 && hpAfterNormal <= 0,
+      lethalCrit: tacticTotalDmg > 0 && hpAfterNormal <= 0,
+      ...(displacementPreview ? { displacementPreview } : {}),
       alternatives: []
     }
   }
@@ -4121,6 +4139,29 @@ export function computeCombatForecast(state: GameState, col: number, row: number
     return true
   }).length
 
+  let displacementPreview: DisplacementPreview | undefined
+  if (armedSkill?.displacement && primary.alive && !primaryDowned && effectiveIsOffensive) {
+    displacementPreview = resolveDisplacementPreview(
+      battle,
+      active,
+      primary,
+      armedSkill.displacement,
+      { col: approachCol, row: approachRow }
+    )
+    if (displacementPreview.totalBonusDmg > 0) {
+      if (hpAfterNormal > 0) {
+        const shieldAfterNormal = Math.max(0, primary.shield - normalDmg)
+        const bonusHpNormal = Math.max(0, displacementPreview.totalBonusDmg - shieldAfterNormal)
+        hpAfterNormal = Math.max(0, hpAfterNormal - bonusHpNormal)
+      }
+      if (hpAfterCrit > 0) {
+        const shieldAfterCrit = Math.max(0, primary.shield - critDmg)
+        const bonusHpCrit = Math.max(0, displacementPreview.totalBonusDmg - shieldAfterCrit)
+        hpAfterCrit = Math.max(0, hpAfterCrit - bonusHpCrit)
+      }
+    }
+  }
+
   // Build Strike vs Skill comparison alternatives against this same target
   const alternatives: CombatForecastAlt[] = []
   const keycaps: readonly string[] = ['2', '3', '4']
@@ -4272,8 +4313,9 @@ export function computeCombatForecast(state: GameState, col: number, row: number
     targetShieldBefore: primary.shield,
     targetHpAfterNormal: hpAfterNormal,
     targetHpAfterCrit: hpAfterCrit,
-    lethalNormal: normalDmg > 0 && hpAfterNormal <= 0,
-    lethalCrit: critDmg > 0 && hpAfterCrit <= 0,
+    lethalNormal: (normalDmg + (displacementPreview?.totalBonusDmg ?? 0)) > 0 && hpAfterNormal <= 0,
+    lethalCrit: (critDmg + (displacementPreview?.totalBonusDmg ?? 0)) > 0 && hpAfterCrit <= 0,
+    ...(displacementPreview ? { displacementPreview } : {}),
     alternatives
   }
 }
@@ -4995,6 +5037,7 @@ function executeHeroSkill(
     if (skill.healAmount > 0 && skill.pattern === 'single') {
       applyHealAndShield(state, caster, skill.healAmount, 0)
     }
+    const displaceTargets: BattleUnit[] = []
     for (const c of affected) {
       if (isDawnsJudgmentSafe && skill.canRevive) {
         const downed = downedHeroAt(battle, c.col, c.row)
@@ -5030,8 +5073,25 @@ function executeHeroSkill(
           if (caster.team === 'ally') {
             applyEquipmentOnHitStatus(battle, caster, target)
           }
+          if (skill.displacement && target.uid !== caster.uid) {
+            if (skill.displacement.kind !== 'swap' || (c.col === col && c.row === row)) {
+              displaceTargets.push(target)
+            }
+          }
         }
         hitAny = true
+      }
+    }
+    if (skill.displacement && displaceTargets.length > 0) {
+      const ordered = orderDisplacementTargets(displaceTargets, caster.col, caster.row, skill.displacement.kind)
+      for (const dt of ordered) {
+        if (!dt.alive) continue
+        applyDisplacement(state, caster, dt, skill.displacement)
+        if (dt.alive) checkTileObjectiveInteractions(state, dt)
+        if (skill.displacement.kind === 'swap') {
+          if (caster.alive) checkTileObjectiveInteractions(state, caster)
+          break
+        }
       }
     }
     if (skill.status && isBeneficialStatus(skill.status)) applyStatus(battle, caster, skill.status, skill.statusStacks)
@@ -5097,6 +5157,8 @@ function executeTacticCard(state: GameState, tacticUid: string, col: number, row
       cells: cellCentres(battle, cells),
       casterUid: tacticCasterUid(battle)
     })
+    const tacticActor = getUnitByUid(battle, battle.activeUnitUid) ?? null
+    const displaceTargets: BattleUnit[] = []
     for (const c of cells) {
       if (spec.canRevive) {
         const downed = downedHeroAt(battle, c.col, c.row)
@@ -5120,6 +5182,9 @@ function executeTacticCard(state: GameState, tacticUid: string, col: number, row
         if (spec.status && !isBeneficialStatus(spec.status) && target.alive) {
           applyStatus(battle, target, spec.status, spec.statusStacks)
         }
+        if (spec.displacement && target.alive) {
+          displaceTargets.push(target)
+        }
       }
       if (target.team === 'ally') {
         if (spec.heal > 0 || spec.shield > 0) applyHealAndShield(state, target, spec.heal, spec.shield)
@@ -5127,6 +5192,20 @@ function executeTacticCard(state: GameState, tacticUid: string, col: number, row
         if (spec.refreshMove) {
           target.moved = false
           addFloat(battle, target.x, target.y + 0.55, target.z, 'MOVE +1', '#8ef5ff')
+        }
+      }
+    }
+    if (spec.displacement && displaceTargets.length > 0) {
+      const originC = tacticActor ? tacticActor.col : col
+      const originR = tacticActor ? tacticActor.row : row
+      const ordered = orderDisplacementTargets(displaceTargets, originC, originR, spec.displacement.kind)
+      for (const dt of ordered) {
+        if (!dt.alive) continue
+        applyDisplacement(state, tacticActor, dt, spec.displacement)
+        if (dt.alive) checkTileObjectiveInteractions(state, dt)
+        if (spec.displacement.kind === 'swap') {
+          if (tacticActor && tacticActor.alive) checkTileObjectiveInteractions(state, tacticActor)
+          break
         }
       }
     }

@@ -87,10 +87,10 @@ export const HERO_SPECS: Record<HeroClassId, HeroSpec> = {
     skills: [
       {
         id: 'shield_bash', name: 'Shield Bash', tier: 1,
-        desc: 'Strike adjacent foe (125% ATK), +12 Shield & Taunt 2 turns.',
+        desc: 'Strike adjacent foe (125% ATK), Push 1 tile, +12 Shield & Taunt 2 turns.',
         range: 1, cooldown: 2, target: 'enemy', pattern: 'single',
         powerMul: 1.25, flatBonus: 4, healAmount: 0, shieldAmount: 12, ignoreArmor: 0.2,
-        selfStatus: 'taunt', vfx: 'slash'
+        selfStatus: 'taunt', displacement: { kind: 'knockback', distance: 1 }, vfx: 'slash'
       },
       {
         id: 'bulwark_aura', name: 'Bulwark Aura', tier: 2,
@@ -125,10 +125,10 @@ export const HERO_SPECS: Record<HeroClassId, HeroSpec> = {
     skills: [
       {
         id: 'piercing_arrow', name: 'Piercing Shot', tier: 1,
-        desc: 'Long shot (135% ATK) ignoring 60% enemy armor.',
+        desc: 'Long shot (135% ATK, ignores 60% DEF) & Push 1 tile.',
         range: 4, cooldown: 2, target: 'enemy', pattern: 'single',
         powerMul: 1.35, flatBonus: 4, healAmount: 0, shieldAmount: 0, ignoreArmor: 0.6,
-        vfx: 'arrow'
+        displacement: { kind: 'knockback', distance: 1 }, vfx: 'arrow'
       },
       {
         id: 'volley_rain', name: 'Volley Rain', tier: 2,
@@ -242,10 +242,10 @@ export const HERO_SPECS: Record<HeroClassId, HeroSpec> = {
     skills: [
       {
         id: 'shadowstep', name: 'Shadow Strike', tier: 1,
-        desc: 'Leap up to 3 tiles to ambush foe (145% ATK) & inflict Poison x2.',
+        desc: 'Vault up to 3 tiles to ambush foe (145% ATK), Swap positions & inflict Poison x2.',
         range: 3, cooldown: 2, target: 'enemy', pattern: 'single',
         powerMul: 1.45, flatBonus: 5, healAmount: 0, shieldAmount: 0, ignoreArmor: 0.4,
-        status: 'poison', statusStacks: 2, vfx: 'shadow'
+        status: 'poison', statusStacks: 2, displacement: { kind: 'swap', distance: 1 }, vfx: 'shadow'
       },
       {
         id: 'fan_blades', name: 'Fan of Blades', tier: 2,
@@ -318,10 +318,10 @@ export const HERO_SPECS: Record<HeroClassId, HeroSpec> = {
     skills: [
       {
         id: 'frost_lance', name: 'Frost Lance', tier: 1,
-        desc: 'Pierce enemy (140% ATK, ignores 70% DEF) & Slow.',
+        desc: 'Pierce enemy (140% ATK, ignores 70% DEF), Pull 2 tiles & Slow.',
         range: 4, cooldown: 2, target: 'enemy', pattern: 'single',
         powerMul: 1.4, flatBonus: 6, healAmount: 0, shieldAmount: 0, ignoreArmor: 0.7,
-        status: 'slow', vfx: 'frost'
+        status: 'slow', displacement: { kind: 'pull', distance: 2 }, vfx: 'frost'
       },
       {
         id: 'glacial_ring', name: 'Glacial Ring', tier: 2,
@@ -356,10 +356,10 @@ export const HERO_SPECS: Record<HeroClassId, HeroSpec> = {
     skills: [
       {
         id: 'solar_slash', name: 'Solar Arc', tier: 1,
-        desc: 'Sweeping fire arc (155% ATK, ignores 50% DEF, Burn).',
+        desc: 'Sweeping fire arc (155% ATK, ignores 50% DEF, Burn) & Push 1 tile.',
         range: 2, cooldown: 2, target: 'enemy', pattern: 'cross',
         powerMul: 1.55, flatBonus: 8, healAmount: 0, shieldAmount: 14, ignoreArmor: 0.5,
-        status: 'burn', vfx: 'fire'
+        status: 'burn', displacement: { kind: 'knockback', distance: 1 }, vfx: 'fire'
       },
       {
         id: 'phoenix_charge', name: 'Phoenix Surge', tier: 2,
@@ -519,6 +519,14 @@ export const TACTIC_LIST: readonly TacticCardSpec[] = [
     target: 'ally', pattern: 'single',
     desc: 'Refresh ally Movement, +8 Shield & grant Haste.',
     damage: 0, heal: 0, shield: 8, apGain: 0, status: 'haste', refreshMove: true, vfx: 'arcane'
+  },
+  {
+    id: 'gale_gust', name: 'Gale Gust', rarity: 'uncommon', cost: 1,
+    target: 'enemy', pattern: 'single',
+    desc: 'Blast an enemy 2 tiles back (8 DMG) with roaring wind.',
+    damage: 8, heal: 0, shield: 0, apGain: 0,
+    displacement: { kind: 'knockback', distance: 2 },
+    vfx: 'arcane'
   },
   {
     id: 'taunt_banner', name: 'Vanguard Challenge', rarity: 'common', cost: 1,
