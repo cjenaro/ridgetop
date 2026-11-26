@@ -4380,8 +4380,10 @@ export function worldMapToScreen(
   }
 }
 
-// Sculpted Solis Mainland + 3 outer future-frontier landmasses/archipelagos!
-const SOLIS_MAINLAND: readonly (readonly [number, number])[] = [
+// Sculpted Solis Mainland + outer future-frontier landmasses/archipelagos.
+type MapPoly = readonly (readonly [number, number])[]
+
+const SOLIS_MAINLAND: MapPoly = [
   [0.048, 0.34], [0.072, 0.24], [0.115, 0.18], [0.165, 0.13], [0.225, 0.11],
   [0.295, 0.12], [0.355, 0.16], [0.415, 0.13], [0.455, 0.08], [0.525, 0.07],
   [0.605, 0.08], [0.685, 0.08], [0.735, 0.13], [0.715, 0.21], [0.685, 0.28],
@@ -4391,100 +4393,191 @@ const SOLIS_MAINLAND: readonly (readonly [number, number])[] = [
   [0.145, 0.59], [0.095, 0.54], [0.058, 0.46]
 ]
 
-const SUNBLEACHED_DUNES_LAND: readonly (readonly [number, number])[] = [
+const SUNBLEACHED_DUNES_LAND: MapPoly = [
   [0.065, 0.83], [0.135, 0.80], [0.215, 0.82], [0.295, 0.83], [0.385, 0.85],
   [0.435, 0.89], [0.415, 0.95], [0.325, 0.96], [0.225, 0.96], [0.125, 0.94],
   [0.062, 0.90]
 ]
 
-const AETHER_ISLES_MAIN: readonly (readonly [number, number])[] = [
+const AETHER_ISLES_MAIN: MapPoly = [
   [0.775, 0.23], [0.835, 0.14], [0.905, 0.10], [0.955, 0.15], [0.945, 0.23],
   [0.970, 0.30], [0.955, 0.39], [0.885, 0.40], [0.825, 0.36], [0.768, 0.31]
 ]
 
-const ABYSSAL_ISLE: readonly (readonly [number, number])[] = [
+const ABYSSAL_ISLE: MapPoly = [
   [0.585, 0.82], [0.645, 0.79], [0.705, 0.82], [0.715, 0.90], [0.655, 0.94], [0.595, 0.91]
 ]
 
-const SHATTERED_EXPANSE_LAND: readonly (readonly [number, number])[] = [
+const SHATTERED_EXPANSE_LAND: MapPoly = [
   [0.765, 0.69], [0.835, 0.67], [0.895, 0.72], [0.955, 0.78], [0.965, 0.89],
   [0.915, 0.95], [0.835, 0.93], [0.785, 0.86], [0.755, 0.78]
 ]
 
-const WEST_ISLET: readonly (readonly [number, number])[] = [
+const WEST_ISLET: MapPoly = [
   [0.032, 0.62], [0.068, 0.60], [0.084, 0.66], [0.062, 0.71], [0.028, 0.68]
 ]
 
-// 9 Tinted Political & Biome Provinces (6 Core Solis + 3 Future Frontier Regions!)
+const MAP_ISLANDS: readonly MapPoly[] = [
+  SOLIS_MAINLAND, SUNBLEACHED_DUNES_LAND, AETHER_ISLES_MAIN, ABYSSAL_ISLE, SHATTERED_EXPANSE_LAND, WEST_ISLET
+]
+
+// 9 tinted political & biome provinces (6 core Solis + 3 future frontier regions).
+// Labels are inked straight onto the chart BENEATH roads so no route ever appears to dead-end at a banner.
 const REGION_POLYS: readonly {
-  readonly pts: readonly (readonly [number, number])[]
+  readonly pts: MapPoly
   readonly fill: string
   readonly stroke: string
   readonly labelX: number
   readonly labelY: number
+  readonly labelSize: number
+  readonly labelAngle: number
   readonly label: string
   readonly subLabel: string
   readonly textCol: string
-  readonly bannerBg: string
   readonly future?: boolean
 }[] = [
   {
     pts: [[0.03, 0.11], [0.25, 0.09], [0.27, 0.34], [0.21, 0.60], [0.03, 0.60]],
-    fill: 'rgba(138, 184, 86, 0.44)', stroke: 'rgba(66, 98, 40, 0.62)',
-    labelX: 0.125, labelY: 0.175, label: 'SOLIS VALE', subLabel: 'TIER I–II',
-    textCol: '#293f16', bannerBg: 'rgba(244, 232, 198, 0.90)'
+    fill: 'rgba(146, 190, 92, 0.42)', stroke: 'rgba(66, 98, 40, 0.55)',
+    labelX: 0.106, labelY: 0.318, labelSize: 18, labelAngle: -0.08,
+    label: 'SOLIS VALE', subLabel: 'TIER I–II', textCol: '#2d4318'
   },
   {
     pts: [[0.23, 0.11], [0.43, 0.11], [0.42, 0.48], [0.20, 0.66], [0.21, 0.45]],
-    fill: 'rgba(94, 178, 152, 0.40)', stroke: 'rgba(38, 96, 82, 0.62)',
-    labelX: 0.335, labelY: 0.175, label: 'THE SILVERFEN', subLabel: 'TIER II–III',
-    textCol: '#17453a', bannerBg: 'rgba(232, 245, 238, 0.90)'
+    fill: 'rgba(98, 178, 150, 0.38)', stroke: 'rgba(38, 96, 82, 0.55)',
+    labelX: 0.33, labelY: 0.352, labelSize: 18, labelAngle: -0.05,
+    label: 'THE SILVERFEN', subLabel: 'TIER II–III', textCol: '#17453a'
   },
   {
     pts: [[0.12, 0.59], [0.49, 0.49], [0.51, 0.83], [0.12, 0.81]],
-    fill: 'rgba(130, 108, 172, 0.44)', stroke: 'rgba(68, 50, 106, 0.62)',
-    labelX: 0.355, labelY: 0.63, label: 'ASHEN CATACOMBS', subLabel: 'TIER II–IV',
-    textCol: '#312052', bannerBg: 'rgba(235, 226, 248, 0.90)'
+    fill: 'rgba(136, 112, 176, 0.40)', stroke: 'rgba(68, 50, 106, 0.55)',
+    labelX: 0.36, labelY: 0.638, labelSize: 16, labelAngle: 0.04,
+    label: 'ASHEN CATACOMBS', subLabel: 'TIER II–IV', textCol: '#312052'
   },
   {
     pts: [[0.42, 0.05], [0.75, 0.05], [0.73, 0.34], [0.43, 0.37]],
-    fill: 'rgba(178, 224, 246, 0.56)', stroke: 'rgba(68, 118, 152, 0.62)',
-    labelX: 0.575, labelY: 0.105, label: 'FROSTSPIRE', subLabel: 'TIER III–V',
-    textCol: '#1b4361', bannerBg: 'rgba(232, 246, 255, 0.92)'
+    fill: 'rgba(196, 230, 248, 0.55)', stroke: 'rgba(68, 118, 152, 0.55)',
+    labelX: 0.575, labelY: 0.1, labelSize: 22, labelAngle: 0,
+    label: 'FROSTSPIRE', subLabel: 'TIER III–V', textCol: '#1b4361'
   },
   {
     pts: [[0.49, 0.42], [0.77, 0.46], [0.77, 0.76], [0.48, 0.76]],
-    fill: 'rgba(206, 108, 74, 0.46)', stroke: 'rgba(128, 46, 26, 0.62)',
-    labelX: 0.615, labelY: 0.725, label: 'EMBERWASTE', subLabel: 'TIER IV–V',
-    textCol: '#591c10', bannerBg: 'rgba(250, 226, 210, 0.90)'
+    fill: 'rgba(210, 112, 74, 0.44)', stroke: 'rgba(128, 46, 26, 0.55)',
+    labelX: 0.606, labelY: 0.57, labelSize: 18, labelAngle: -0.06,
+    label: 'EMBERWASTE', subLabel: 'TIER IV–V', textCol: '#591c10'
   },
   {
     pts: [[0.62, 0.30], [0.76, 0.30], [0.76, 0.51], [0.62, 0.49]],
-    fill: 'rgba(146, 78, 178, 0.46)', stroke: 'rgba(78, 28, 108, 0.66)',
-    labelX: 0.695, labelY: 0.325, label: 'ECLIPSE DOMINION', subLabel: 'TIER V',
-    textCol: '#3b1252', bannerBg: 'rgba(242, 222, 250, 0.92)'
+    fill: 'rgba(150, 82, 182, 0.44)', stroke: 'rgba(78, 28, 108, 0.6)',
+    labelX: 0.665, labelY: 0.332, labelSize: 15, labelAngle: 0,
+    label: 'ECLIPSE DOMINION', subLabel: 'TIER V', textCol: '#3b1252'
   },
   {
     pts: [[0.05, 0.79], [0.45, 0.82], [0.45, 0.97], [0.05, 0.97]],
-    fill: 'rgba(232, 188, 102, 0.56)', stroke: 'rgba(148, 98, 32, 0.68)',
-    labelX: 0.255, labelY: 0.822, label: 'SUNBLEACHED DUNES', subLabel: 'FUTURE · V–VI',
-    textCol: '#5c380c', bannerBg: 'rgba(252, 236, 194, 0.94)', future: true
+    fill: 'rgba(236, 192, 104, 0.5)', stroke: 'rgba(148, 98, 32, 0.6)',
+    labelX: 0.29, labelY: 0.846, labelSize: 13, labelAngle: 0.03,
+    label: 'SUNBLEACHED DUNES', subLabel: 'FUTURE · V–VI', textCol: '#5c380c', future: true
   },
   {
     pts: [[0.76, 0.09], [0.98, 0.09], [0.98, 0.42], [0.76, 0.40]],
-    fill: 'rgba(112, 166, 226, 0.52)', stroke: 'rgba(52, 92, 166, 0.68)',
-    labelX: 0.885, labelY: 0.425, label: 'AETHER ISLES', subLabel: 'FUTURE · VI–VII',
-    textCol: '#1b356b', bannerBg: 'rgba(222, 238, 255, 0.94)', future: true
+    fill: 'rgba(120, 172, 228, 0.46)', stroke: 'rgba(52, 92, 166, 0.6)',
+    labelX: 0.905, labelY: 0.252, labelSize: 13, labelAngle: -0.04,
+    label: 'AETHER ISLES', subLabel: 'FUTURE · VI–VII', textCol: '#1b356b', future: true
   },
   {
     pts: [[0.57, 0.66], [0.98, 0.66], [0.98, 0.97], [0.57, 0.97]],
-    fill: 'rgba(136, 62, 118, 0.52)', stroke: 'rgba(96, 26, 78, 0.72)',
-    labelX: 0.835, labelY: 0.655, label: 'SHATTERED EXPANSE', subLabel: 'FUTURE · VI–VIII',
-    textCol: '#470f38', bannerBg: 'rgba(248, 218, 238, 0.94)', future: true
+    fill: 'rgba(146, 70, 124, 0.46)', stroke: 'rgba(96, 26, 78, 0.62)',
+    labelX: 0.832, labelY: 0.842, labelSize: 13, labelAngle: 0.1,
+    label: 'SHATTERED EXPANSE', subLabel: 'FUTURE · VI–VIII', textCol: '#470f38', future: true
   }
 ]
 
-function traceSmoothPolygon(ctx: CanvasRenderingContext2D, pts: readonly (readonly [number, number])[], w: number, h: number) {
+// Rivers flow from a real source (lake / spring) to the coast, so none of them read as a road to nowhere.
+const MAP_RIVERS: readonly { readonly pts: MapPoly; readonly w0: number; readonly w1: number; readonly lava?: boolean }[] = [
+  // Silverfen: drains Mirror Tarn, runs under Sunken Bridge and out through the southern delta
+  {
+    pts: [[0.536, 0.192], [0.49, 0.172], [0.43, 0.176], [0.372, 0.194], [0.318, 0.236], [0.282, 0.318],
+      [0.263, 0.42], [0.248, 0.54], [0.238, 0.655], [0.226, 0.755], [0.218, 0.805]],
+    w0: 5, w1: 17
+  },
+  // Millers' Creek: spring-fed pond -> Millers' Ford -> joins the Silverfen
+  { pts: [[0.104, 0.478], [0.135, 0.51], [0.168, 0.543], [0.205, 0.574], [0.242, 0.598]], w0: 4, w1: 9 },
+  // Emberwaste lava flow: crater -> southern coast, hissing into the sea
+  { pts: [[0.6, 0.632], [0.604, 0.67], [0.598, 0.702], [0.602, 0.75]], w0: 4, w1: 9, lava: true }
+]
+
+const MAP_MOUNTAINS: readonly [number, number, number, number, 'snow' | 'volcano' | 'hill'][] = [
+  // Frostspire northern alpine range
+  [0.42, 0.13, 68, 52, 'snow'], [0.47, 0.10, 82, 64, 'snow'], [0.51, 0.14, 72, 56, 'snow'],
+  [0.58, 0.12, 86, 68, 'snow'], [0.63, 0.15, 76, 58, 'snow'], [0.68, 0.11, 88, 70, 'snow'],
+  [0.71, 0.19, 72, 54, 'snow'], [0.60, 0.25, 62, 46, 'snow'], [0.51, 0.26, 58, 42, 'snow'],
+  [0.545, 0.09, 60, 46, 'snow'], [0.65, 0.085, 58, 44, 'snow'],
+  // Emberwaste volcanic ridges
+  [0.54, 0.46, 62, 46, 'volcano'], [0.65, 0.50, 74, 58, 'volcano'], [0.71, 0.56, 78, 62, 'volcano'],
+  [0.60, 0.66, 62, 46, 'volcano'], [0.70, 0.66, 66, 50, 'volcano'],
+  // Western & central foothills
+  [0.08, 0.30, 52, 34, 'hill'], [0.19, 0.23, 50, 32, 'hill'], [0.28, 0.18, 56, 36, 'hill'],
+  [0.43, 0.49, 52, 34, 'hill'], [0.49, 0.56, 56, 36, 'hill'], [0.098, 0.468, 40, 26, 'hill'],
+  // Sunbleached Dunes sandstone mesas
+  [0.19, 0.87, 62, 38, 'hill'], [0.31, 0.92, 68, 44, 'hill'],
+  // Aether Isles glacial crystal peaks
+  [0.84, 0.18, 74, 58, 'snow'], [0.91, 0.21, 78, 62, 'snow'],
+  // Shattered Expanse obsidian volcanic peaks
+  [0.84, 0.76, 76, 62, 'volcano'], [0.91, 0.80, 82, 68, 'volcano']
+]
+
+function pointInPoly(px: number, py: number, pts: MapPoly): boolean {
+  let inside = false
+  for (let i = 0, j = pts.length - 1; i < pts.length; j = i++) {
+    const [xi, yi] = pts[i]
+    const [xj, yj] = pts[j]
+    if ((yi > py) !== (yj > py) && px < ((xj - xi) * (py - yi)) / (yj - yi) + xi) inside = !inside
+  }
+  return inside
+}
+
+function isMapLand(nx: number, ny: number): boolean {
+  for (const poly of MAP_ISLANDS) if (pointInPoly(nx, ny, poly)) return true
+  return false
+}
+
+function islandOf(nx: number, ny: number): number {
+  return MAP_ISLANDS.findIndex(poly => pointInPoly(nx, ny, poly))
+}
+
+function hash2i(x: number, y: number, seed: number): number {
+  let h = (Math.imul(x | 0, 374761393) + Math.imul(y | 0, 668265263) + Math.imul(seed | 0, 1442695041)) | 0
+  h = Math.imul(h ^ (h >>> 13), 1274126177)
+  return ((h ^ (h >>> 16)) >>> 0) / 4294967296
+}
+
+function valueNoise2(x: number, y: number, seed: number): number {
+  const xi = Math.floor(x)
+  const yi = Math.floor(y)
+  const xf = x - xi
+  const yf = y - yi
+  const u = xf * xf * (3 - 2 * xf)
+  const v = yf * yf * (3 - 2 * yf)
+  const a = hash2i(xi, yi, seed)
+  const b = hash2i(xi + 1, yi, seed)
+  const c = hash2i(xi, yi + 1, seed)
+  const d = hash2i(xi + 1, yi + 1, seed)
+  return a + (b - a) * u + (c - a) * v + (a - b - c + d) * u * v
+}
+
+function fbm2(x: number, y: number, seed: number, octaves = 4): number {
+  let sum = 0
+  let amp = 0.5
+  let freq = 1
+  for (let o = 0; o < octaves; o++) {
+    sum += amp * valueNoise2(x * freq, y * freq, seed + o * 17)
+    freq *= 2.03
+    amp *= 0.5
+  }
+  return sum
+}
+
+function traceSmoothPolygon(ctx: CanvasRenderingContext2D, pts: MapPoly, w: number, h: number) {
   const n = pts.length
   if (n < 3) return
   const px = (i: number) => pts[((i % n) + n) % n][0] * w
@@ -4503,6 +4596,42 @@ function traceSmoothPolygon(ctx: CanvasRenderingContext2D, pts: readonly (readon
   ctx.closePath()
 }
 
+/** Trace every landmass into a single compound path (one fill/clip instead of one per island). */
+function traceIslands(ctx: CanvasRenderingContext2D, w: number, h: number) {
+  ctx.beginPath()
+  for (const pts of MAP_ISLANDS) {
+    const n = pts.length
+    const px = (i: number) => pts[((i % n) + n) % n][0] * w
+    const py = (i: number) => pts[((i % n) + n) % n][1] * h
+    ctx.moveTo((px(n - 1) + px(0)) * 0.5, (py(n - 1) + py(0)) * 0.5)
+    for (let i = 0; i < n; i++) ctx.quadraticCurveTo(px(i), py(i), (px(i) + px(i + 1)) * 0.5, (py(i) + py(i + 1)) * 0.5)
+    ctx.closePath()
+  }
+}
+
+/** Sample a Catmull-Rom spline through normalized points into pixel space. */
+function sampleSpline(pts: MapPoly, w: number, h: number, stepsPerSeg = 10): { x: number; y: number }[] {
+  const out: { x: number; y: number }[] = []
+  const p = (i: number) => pts[Math.max(0, Math.min(pts.length - 1, i))]
+  for (let i = 0; i < pts.length - 1; i++) {
+    const p0 = p(i - 1)
+    const p1 = p(i)
+    const p2 = p(i + 1)
+    const p3 = p(i + 2)
+    for (let s = 0; s < stepsPerSeg; s++) {
+      const t = s / stepsPerSeg
+      const t2 = t * t
+      const t3 = t2 * t
+      const f = (a: number, b: number, c: number, d: number) =>
+        0.5 * (2 * b + (-a + c) * t + (2 * a - 5 * b + 4 * c - d) * t2 + (-a + 3 * b - 3 * c + d) * t3)
+      out.push({ x: f(p0[0], p1[0], p2[0], p3[0]) * w, y: f(p0[1], p1[1], p2[1], p3[1]) * h })
+    }
+  }
+  const last = pts[pts.length - 1]
+  out.push({ x: last[0] * w, y: last[1] * h })
+  return out
+}
+
 function drawInkedTree(
   ctx: CanvasRenderingContext2D,
   x: number,
@@ -4511,59 +4640,89 @@ function drawInkedTree(
   style: 'oak' | 'autumn' | 'pine' | 'snow' | 'dead'
 ) {
   ctx.save()
-  // Soft ground shadow
   ctx.beginPath()
-  ctx.ellipse(x + 2, y + 2, size * 0.75, size * 0.35, 0, 0, Math.PI * 2)
-  ctx.fillStyle = 'rgba(32, 24, 14, 0.22)'
+  ctx.ellipse(x + size * 0.25, y + 1.5, size * 0.8, size * 0.3, 0, 0, Math.PI * 2)
+  ctx.fillStyle = 'rgba(40, 28, 14, 0.24)'
   ctx.fill()
 
-  // Trunk
-  ctx.fillStyle = '#5c4028'
-  ctx.fillRect(x - size * 0.14, y - size * 0.45, size * 0.28, size * 0.55)
-
   if (style === 'pine' || style === 'snow') {
-    const c1 = style === 'snow' ? '#4f7d8a' : '#35594a'
-    const c2 = style === 'snow' ? '#e8f5fc' : '#4a7a60'
-    for (let tier = 0; tier < 2; tier++) {
-      const ty = y - size * (0.45 + tier * 0.55)
-      const tw = size * (0.78 - tier * 0.2)
-      const th = size * 0.85
+    ctx.fillStyle = '#4a3220'
+    ctx.fillRect(x - size * 0.09, y - size * 0.35, size * 0.18, size * 0.42)
+    const dark = style === 'snow' ? '#3f6a78' : '#2e5242'
+    const light = style === 'snow' ? '#5f8f9c' : '#4b7d5e'
+    for (let tier = 0; tier < 3; tier++) {
+      const by = y - size * (0.3 + tier * 0.42)
+      const tw = size * (0.74 - tier * 0.17)
+      const th = size * 0.7
       ctx.beginPath()
-      ctx.moveTo(x, ty - th)
-      ctx.lineTo(x + tw, ty)
-      ctx.lineTo(x - tw, ty)
+      ctx.moveTo(x, by - th)
+      ctx.lineTo(x + tw, by)
+      ctx.lineTo(x - tw, by)
       ctx.closePath()
-      ctx.fillStyle = tier === 1 ? c2 : c1
+      ctx.fillStyle = dark
       ctx.fill()
-      ctx.strokeStyle = '#241b12'
-      ctx.lineWidth = 1.3
-      ctx.stroke()
+      // Sunlit west half
+      ctx.beginPath()
+      ctx.moveTo(x, by - th)
+      ctx.lineTo(x, by)
+      ctx.lineTo(x - tw, by)
+      ctx.closePath()
+      ctx.fillStyle = light
+      ctx.fill()
+      if (style === 'snow') {
+        ctx.beginPath()
+        ctx.moveTo(x, by - th)
+        ctx.lineTo(x + tw * 0.38, by - th * 0.55)
+        ctx.lineTo(x - tw * 0.38, by - th * 0.55)
+        ctx.closePath()
+        ctx.fillStyle = '#f2fbff'
+        ctx.fill()
+      }
     }
+    ctx.beginPath()
+    ctx.moveTo(x, y - size * 1.84)
+    ctx.lineTo(x + size * 0.74, y - size * 0.3)
+    ctx.lineTo(x - size * 0.74, y - size * 0.3)
+    ctx.closePath()
+    ctx.strokeStyle = 'rgba(30, 22, 14, 0.75)'
+    ctx.lineWidth = 1.1
+    ctx.stroke()
   } else if (style === 'dead') {
-    ctx.strokeStyle = '#33293d'
-    ctx.lineWidth = 1.6
+    ctx.strokeStyle = '#3a2f42'
+    ctx.lineWidth = 1.7
     ctx.lineCap = 'round'
     ctx.beginPath()
     ctx.moveTo(x, y); ctx.lineTo(x, y - size * 1.1)
-    ctx.moveTo(x, y - size * 0.65); ctx.lineTo(x - size * 0.55, y - size * 1.05)
-    ctx.moveTo(x, y - size * 0.78); ctx.lineTo(x + size * 0.5, y - size * 1.18)
+    ctx.moveTo(x, y - size * 0.6); ctx.lineTo(x - size * 0.5, y - size * 1.0)
+    ctx.moveTo(x - size * 0.3, y - size * 0.82); ctx.lineTo(x - size * 0.42, y - size * 1.22)
+    ctx.moveTo(x, y - size * 0.76); ctx.lineTo(x + size * 0.48, y - size * 1.14)
     ctx.stroke()
   } else {
-    // Hand-inked broadleaf canopy (Summerlands style!)
-    const colHi = style === 'autumn' ? '#d98a45' : '#6ea352'
-    const colLo = style === 'autumn' ? '#a6572b' : '#4a7a3a'
+    ctx.fillStyle = '#5a3d24'
+    ctx.fillRect(x - size * 0.1, y - size * 0.45, size * 0.2, size * 0.5)
+    const hi = style === 'autumn' ? '#e9a253' : '#86b95f'
+    const mid = style === 'autumn' ? '#c8713a' : '#5d9446'
+    const lo = style === 'autumn' ? '#8e4424' : '#3d6b34'
+    const blob = (ox: number, oy: number, r: number, col: string) => {
+      ctx.beginPath()
+      ctx.arc(x + ox * size, y + oy * size, r * size, 0, Math.PI * 2)
+      ctx.fillStyle = col
+      ctx.fill()
+    }
+    // Outline pass
     ctx.beginPath()
-    ctx.arc(x - size * 0.34, y - size * 0.62, size * 0.48, 0, Math.PI * 2)
-    ctx.arc(x + size * 0.34, y - size * 0.58, size * 0.45, 0, Math.PI * 2)
-    ctx.arc(x, y - size * 0.92, size * 0.56, 0, Math.PI * 2)
-    const g = ctx.createLinearGradient(x, y - size * 1.45, x, y - size * 0.2)
-    g.addColorStop(0, colHi)
-    g.addColorStop(1, colLo)
-    ctx.fillStyle = g
-    ctx.fill()
-    ctx.strokeStyle = '#261e14'
-    ctx.lineWidth = 1.4
+    ctx.arc(x - size * 0.32, y - size * 0.6, size * 0.44, 0, Math.PI * 2)
+    ctx.arc(x + size * 0.32, y - size * 0.58, size * 0.42, 0, Math.PI * 2)
+    ctx.arc(x, y - size * 0.92, size * 0.5, 0, Math.PI * 2)
+    ctx.strokeStyle = 'rgba(32, 24, 14, 0.85)'
+    ctx.lineWidth = 2.2
     ctx.stroke()
+    blob(-0.32, -0.6, 0.44, lo)
+    blob(0.32, -0.58, 0.42, lo)
+    blob(0, -0.92, 0.5, mid)
+    blob(-0.2, -0.78, 0.34, mid)
+    blob(-0.16, -1.02, 0.24, hi)
+    blob(-0.4, -0.7, 0.16, hi)
   }
   ctx.restore()
 }
@@ -4574,67 +4733,267 @@ function drawInkedMountain(
   y: number,
   w: number,
   h: number,
-  style: 'snow' | 'volcano' | 'hill'
+  style: 'snow' | 'volcano' | 'hill',
+  seed: number
 ) {
   ctx.save()
-  const peakX = x
+  ctx.lineJoin = 'round'
+  ctx.lineCap = 'round'
+  const peakX = x + (hash1(seed * 3.1) - 0.5) * w * 0.12
   const peakY = y - h
   const leftX = x - w * 0.52
   const rightX = x + w * 0.52
 
-  // Sunlit left slope
+  // Soft cast shadow to the south-east
   ctx.beginPath()
-  ctx.moveTo(leftX, y)
-  ctx.lineTo(peakX, peakY)
-  ctx.lineTo(peakX + w * 0.06, y)
-  ctx.closePath()
-  ctx.fillStyle = style === 'snow' ? '#8eaabf' : style === 'volcano' ? '#63434a' : '#8a8268'
+  ctx.ellipse(x + w * 0.16, y + 2, w * 0.56, h * 0.13, 0, 0, Math.PI * 2)
+  ctx.fillStyle = 'rgba(30, 20, 10, 0.2)'
   ctx.fill()
 
-  // Shaded right slope
-  ctx.beginPath()
-  ctx.moveTo(peakX, peakY)
-  ctx.lineTo(rightX, y)
-  ctx.lineTo(peakX + w * 0.06, y)
-  ctx.closePath()
-  ctx.fillStyle = style === 'snow' ? '#5c7891' : style === 'volcano' ? '#3d2830' : '#635c47'
-  ctx.fill()
-
-  if (style === 'snow') {
-    // Crisp snow cap
+  if (style === 'hill') {
+    // Rounded hill with a lit crown and hatch shading
     ctx.beginPath()
-    ctx.moveTo(peakX, peakY)
-    ctx.lineTo(peakX - w * 0.22, peakY + h * 0.42)
-    ctx.lineTo(peakX - w * 0.06, peakY + h * 0.34)
-    ctx.lineTo(peakX + w * 0.06, peakY + h * 0.44)
-    ctx.lineTo(peakX + w * 0.22, peakY + h * 0.38)
+    ctx.moveTo(leftX, y)
+    ctx.bezierCurveTo(leftX + w * 0.18, peakY + h * 0.05, rightX - w * 0.3, peakY - h * 0.05, rightX, y)
     ctx.closePath()
-    ctx.fillStyle = '#eff8ff'
+    const g = ctx.createLinearGradient(leftX, peakY, rightX, y)
+    g.addColorStop(0, '#c9b88a')
+    g.addColorStop(0.55, '#a39168')
+    g.addColorStop(1, '#7d6c4d')
+    ctx.fillStyle = g
     ctx.fill()
-  } else if (style === 'volcano') {
-    // Glowing lava fissure & crater rim
+    ctx.strokeStyle = 'rgba(52, 38, 22, 0.55)'
+    ctx.lineWidth = 1.1
+    for (let i = 0; i < 4; i++) {
+      const t = 0.56 + i * 0.1
+      const hx = leftX + (rightX - leftX) * t
+      ctx.beginPath()
+      ctx.moveTo(hx, y - h * (0.62 - i * 0.12))
+      ctx.lineTo(hx + w * 0.04, y - 2)
+      ctx.stroke()
+    }
     ctx.beginPath()
-    ctx.moveTo(peakX - w * 0.1, peakY + h * 0.16)
-    ctx.lineTo(peakX + w * 0.1, peakY + h * 0.16)
-    ctx.lineTo(peakX + w * 0.04, peakY + h * 0.55)
-    ctx.lineTo(peakX - w * 0.03, peakY + h * 0.42)
-    ctx.closePath()
-    ctx.fillStyle = '#ff7b38'
-    ctx.fill()
+    ctx.moveTo(leftX, y)
+    ctx.bezierCurveTo(leftX + w * 0.18, peakY + h * 0.05, rightX - w * 0.3, peakY - h * 0.05, rightX, y)
+    ctx.strokeStyle = '#2c2014'
+    ctx.lineWidth = 1.8
+    ctx.stroke()
+    ctx.restore()
+    return
   }
 
-  // Hand-inked mountain silhouette & ridge crest
+  const litCol = style === 'snow' ? '#9ab4c8' : '#6c4a4e'
+  const shadeCol = style === 'snow' ? '#58738c' : '#3a252c'
+  const midX = peakX + w * 0.08
+  // Jagged secondary shoulder peak behind
+  ctx.beginPath()
+  ctx.moveTo(x + w * 0.05, y)
+  ctx.lineTo(x + w * 0.32, y - h * 0.62)
+  ctx.lineTo(x + w * 0.66, y)
+  ctx.closePath()
+  ctx.fillStyle = shadeCol
+  ctx.fill()
+  ctx.strokeStyle = '#241b13'
+  ctx.lineWidth = 1.5
+  ctx.stroke()
+
+  // Sunlit west slope
   ctx.beginPath()
   ctx.moveTo(leftX, y)
+  ctx.lineTo(peakX - w * 0.2, y - h * 0.55)
+  ctx.lineTo(peakX - w * 0.12, y - h * 0.62)
   ctx.lineTo(peakX, peakY)
+  ctx.lineTo(midX, y)
+  ctx.closePath()
+  ctx.fillStyle = litCol
+  ctx.fill()
+  // Shaded east slope
+  ctx.beginPath()
+  ctx.moveTo(peakX, peakY)
+  ctx.lineTo(peakX + w * 0.2, y - h * 0.58)
+  ctx.lineTo(rightX, y)
+  ctx.lineTo(midX, y)
+  ctx.closePath()
+  ctx.fillStyle = shadeCol
+  ctx.fill()
+  // Hatching on the shadow side
+  ctx.strokeStyle = 'rgba(20, 14, 18, 0.45)'
+  ctx.lineWidth = 1
+  for (let i = 1; i <= 4; i++) {
+    const t = i / 5
+    const sx = peakX + (rightX - peakX) * t * 0.82
+    const sy = peakY + (y - peakY) * t * 0.82
+    ctx.beginPath()
+    ctx.moveTo(sx, sy)
+    ctx.lineTo(sx - w * 0.06, y - 1)
+    ctx.stroke()
+  }
+
+  if (style === 'snow') {
+    ctx.beginPath()
+    ctx.moveTo(peakX, peakY)
+    ctx.lineTo(peakX - w * 0.2, peakY + h * 0.38)
+    ctx.lineTo(peakX - w * 0.1, peakY + h * 0.3)
+    ctx.lineTo(peakX - w * 0.02, peakY + h * 0.42)
+    ctx.lineTo(peakX + w * 0.08, peakY + h * 0.32)
+    ctx.lineTo(peakX + w * 0.17, peakY + h * 0.4)
+    ctx.closePath()
+    ctx.fillStyle = '#f4faff'
+    ctx.fill()
+    ctx.beginPath()
+    ctx.moveTo(peakX, peakY)
+    ctx.lineTo(peakX + w * 0.08, peakY + h * 0.32)
+    ctx.lineTo(peakX + w * 0.17, peakY + h * 0.4)
+    ctx.closePath()
+    ctx.fillStyle = '#c4d8e8'
+    ctx.fill()
+  } else {
+    // Glowing crater and lava rivulet
+    ctx.beginPath()
+    ctx.ellipse(peakX, peakY + h * 0.06, w * 0.09, h * 0.04, 0, 0, Math.PI * 2)
+    ctx.fillStyle = '#ffb04a'
+    ctx.fill()
+    ctx.beginPath()
+    ctx.moveTo(peakX - w * 0.03, peakY + h * 0.08)
+    ctx.quadraticCurveTo(peakX - w * 0.08, peakY + h * 0.35, peakX - w * 0.04, peakY + h * 0.6)
+    ctx.strokeStyle = '#ff7433'
+    ctx.lineWidth = 2.6
+    ctx.stroke()
+    // Smoke plume
+    for (let i = 0; i < 3; i++) {
+      ctx.beginPath()
+      ctx.arc(peakX + i * w * 0.07, peakY - h * (0.14 + i * 0.13), w * (0.06 + i * 0.025), 0, Math.PI * 2)
+      ctx.fillStyle = `rgba(70, 60, 64, ${0.4 - i * 0.1})`
+      ctx.fill()
+    }
+  }
+
+  // Ink silhouette & ridge crest
+  ctx.beginPath()
+  ctx.moveTo(leftX, y)
+  ctx.lineTo(peakX - w * 0.2, y - h * 0.55)
+  ctx.lineTo(peakX - w * 0.12, y - h * 0.62)
+  ctx.lineTo(peakX, peakY)
+  ctx.lineTo(peakX + w * 0.2, y - h * 0.58)
   ctx.lineTo(rightX, y)
   ctx.moveTo(peakX, peakY)
-  ctx.lineTo(peakX + w * 0.05, y - h * 0.08)
-  ctx.strokeStyle = '#241b13'
-  ctx.lineWidth = 2
-  ctx.lineJoin = 'round'
+  ctx.lineTo(midX, y - h * 0.1)
+  ctx.strokeStyle = '#211810'
+  ctx.lineWidth = 1.9
   ctx.stroke()
   ctx.restore()
+}
+
+/** Tiny ink sailing ship (sea-lane marker and ocean decoration). */
+function drawMapShip(ctx: CanvasRenderingContext2D, x: number, y: number, s: number, facingLeft: boolean, sail = '#f3e6c4') {
+  ctx.save()
+  ctx.translate(x, y)
+  if (facingLeft) ctx.scale(-1, 1)
+  ctx.lineJoin = 'round'
+  ctx.lineCap = 'round'
+  // Wake
+  ctx.strokeStyle = 'rgba(230, 248, 255, 0.55)'
+  ctx.lineWidth = s * 0.08
+  ctx.beginPath()
+  ctx.moveTo(-s * 0.7, s * 0.28)
+  ctx.quadraticCurveTo(-s * 1.1, s * 0.32, -s * 1.45, s * 0.24)
+  ctx.stroke()
+  // Hull
+  ctx.beginPath()
+  ctx.moveTo(-s * 0.62, s * 0.02)
+  ctx.lineTo(s * 0.66, s * 0.02)
+  ctx.quadraticCurveTo(s * 0.5, s * 0.34, s * 0.3, s * 0.34)
+  ctx.lineTo(-s * 0.44, s * 0.34)
+  ctx.closePath()
+  ctx.fillStyle = '#6b4526'
+  ctx.fill()
+  ctx.strokeStyle = '#1b120a'
+  ctx.lineWidth = Math.max(1, s * 0.07)
+  ctx.stroke()
+  // Mast + sails
+  ctx.beginPath()
+  ctx.moveTo(0, s * 0.02)
+  ctx.lineTo(0, -s * 0.9)
+  ctx.stroke()
+  ctx.beginPath()
+  ctx.moveTo(s * 0.04, -s * 0.82)
+  ctx.quadraticCurveTo(s * 0.5, -s * 0.5, s * 0.06, -s * 0.12)
+  ctx.closePath()
+  ctx.fillStyle = sail
+  ctx.fill()
+  ctx.stroke()
+  ctx.beginPath()
+  ctx.moveTo(-s * 0.04, -s * 0.7)
+  ctx.quadraticCurveTo(-s * 0.36, -s * 0.42, -s * 0.06, -s * 0.16)
+  ctx.closePath()
+  ctx.fill()
+  ctx.stroke()
+  // Pennant
+  ctx.beginPath()
+  ctx.moveTo(0, -s * 0.9)
+  ctx.lineTo(s * 0.26, -s * 0.84)
+  ctx.lineTo(0, -s * 0.78)
+  ctx.fillStyle = '#d2402f'
+  ctx.fill()
+  ctx.restore()
+}
+
+/** Generates the relief (hillshade) layer from fBm noise + mountain/hill bumps. */
+function bakeReliefLayer(W: number, H: number): HTMLCanvasElement | null {
+  const RW = Math.round(W / 5)
+  const RH = Math.round(H / 5)
+  const canvas = document.createElement('canvas')
+  canvas.width = RW
+  canvas.height = RH
+  const rctx = canvas.getContext('2d')
+  if (!rctx) return null
+  const height = new Float32Array(RW * RH)
+  const bumps = MAP_MOUNTAINS.map(([mx, my, mw, mh, st]) => ({
+    x: mx * W,
+    y: my * H - mh * 0.3,
+    s: mw * (st === 'hill' ? 0.75 : 0.95),
+    a: (mh / 60) * (st === 'hill' ? 0.55 : 1.1)
+  }))
+  for (let j = 0; j < RH; j++) {
+    for (let i = 0; i < RW; i++) {
+      const px = (i + 0.5) * (W / RW)
+      const py = (j + 0.5) * (H / RH)
+      let z = fbm2(px / 150, py / 150, 7, 5) * 0.9
+      for (const b of bumps) {
+        const dx = px - b.x
+        const dy = py - b.y
+        const d2 = (dx * dx + dy * dy) / (b.s * b.s)
+        if (d2 < 9) z += b.a * Math.exp(-d2)
+      }
+      height[j * RW + i] = z
+    }
+  }
+  const img = rctx.createImageData(RW, RH)
+  const lx = -0.62
+  const ly = -0.62
+  const lz = 0.48
+  for (let j = 0; j < RH; j++) {
+    for (let i = 0; i < RW; i++) {
+      const hL = height[j * RW + Math.max(0, i - 1)]
+      const hR = height[j * RW + Math.min(RW - 1, i + 1)]
+      const hU = height[Math.max(0, j - 1) * RW + i]
+      const hD = height[Math.min(RH - 1, j + 1) * RW + i]
+      const dx = (hR - hL) * 3.2
+      const dy = (hD - hU) * 3.2
+      const len = Math.hypot(dx, dy, 1)
+      const shade = (-dx * lx - dy * ly + lz) / len - lz
+      const o = (j * RW + i) * 4
+      if (shade >= 0) {
+        img.data[o] = 255; img.data[o + 1] = 246; img.data[o + 2] = 220
+        img.data[o + 3] = Math.min(255, shade * 260)
+      } else {
+        img.data[o] = 54; img.data[o + 1] = 34; img.data[o + 2] = 18
+        img.data[o + 3] = Math.min(255, -shade * 300)
+      }
+    }
+  }
+  rctx.putImageData(img, 0, 0)
+  return canvas
 }
 
 let cachedSolisMapCanvas: HTMLCanvasElement | null = null
@@ -4651,272 +5010,407 @@ function getBakedSolisMap(chapters: readonly ChapterSpec[]): HTMLCanvasElement |
 
   const W = WORLD_MAP_W
   const H = WORLD_MAP_H
+  const nodePts = chapters.map(c => ({ x: c.mapX * W, y: c.mapY * H }))
+  const nearNode = (tx: number, ty: number, r = 64) => nodePts.some(p => Math.hypot(p.x - tx, (p.y + 14 - ty) * 1.1) < r)
 
-  // 1. Aged cartographic parchment-teal ocean gradient
+  // 1. Deep ocean with mottled depth variation
   const sea = ctx.createRadialGradient(W * 0.48, H * 0.48, W * 0.08, W * 0.5, H * 0.5, W * 0.72)
-  sea.addColorStop(0, '#366f85')
-  sea.addColorStop(0.65, '#255066')
-  sea.addColorStop(1, '#173245')
+  sea.addColorStop(0, '#2f6a80')
+  sea.addColorStop(0.65, '#21495e')
+  sea.addColorStop(1, '#152c3d')
   ctx.fillStyle = sea
   ctx.fillRect(0, 0, W, H)
-
-  // Subtle parchment navigation grid + rhumb lines radiating from two sea compass points (FFT style!)
-  ctx.save()
-  ctx.strokeStyle = 'rgba(232, 214, 174, 0.11)'
-  ctx.lineWidth = 1
-  for (let gx = 90; gx < W; gx += 120) {
-    ctx.beginPath(); ctx.moveTo(gx, 0); ctx.lineTo(gx, H); ctx.stroke()
-  }
-  for (let gy = 80; gy < H; gy += 120) {
-    ctx.beginPath(); ctx.moveTo(0, gy); ctx.lineTo(W, gy); ctx.stroke()
-  }
-  for (const [rx, ry] of [[W * 0.08, H * 0.88], [W * 0.93, H * 0.12]] as const) {
-    for (let i = 0; i < 16; i++) {
-      const a = (i / 16) * Math.PI * 2
-      ctx.beginPath()
-      ctx.moveTo(rx, ry)
-      ctx.lineTo(rx + Math.cos(a) * W, ry + Math.sin(a) * W)
-      ctx.stroke()
+  {
+    const NW = Math.round(W / 8)
+    const NH = Math.round(H / 8)
+    const nc = document.createElement('canvas')
+    nc.width = NW
+    nc.height = NH
+    const nctx = nc.getContext('2d')
+    if (nctx) {
+      const img = nctx.createImageData(NW, NH)
+      for (let j = 0; j < NH; j++) {
+        for (let i = 0; i < NW; i++) {
+          const n = fbm2(i / 22, j / 22, 31, 4) - 0.5
+          const o = (j * NW + i) * 4
+          if (n > 0) { img.data[o] = 140; img.data[o + 1] = 210; img.data[o + 2] = 226 }
+          else { img.data[o] = 6; img.data[o + 1] = 18; img.data[o + 2] = 30 }
+          img.data[o + 3] = Math.min(255, Math.abs(n) * 150)
+        }
+      }
+      nctx.putImageData(img, 0, 0)
+      ctx.save()
+      ctx.imageSmoothingEnabled = true
+      ctx.drawImage(nc, 0, 0, W, H)
+      ctx.restore()
     }
   }
-  // Tiny horizontal wave ripples across open ocean
-  ctx.strokeStyle = 'rgba(186, 232, 245, 0.18)'
-  ctx.lineWidth = 1.5
-  for (let i = 0; i < 85; i++) {
-    const wx = hash1(i * 4.1) * W
-    const wy = hash1(i * 8.7) * H
-    const wl = 14 + (i % 4) * 7
+
+  // Stylised wave glyphs scattered through open water (kept off coasts)
+  ctx.save()
+  ctx.lineCap = 'round'
+  for (let i = 0; i < 260; i++) {
+    const wx = hash1(i * 4.17 + 0.3) * W
+    const wy = hash1(i * 8.73 + 1.1) * H
+    const nx = wx / W
+    const ny = wy / H
+    if (isMapLand(nx, ny) || isMapLand(nx + 0.03, ny) || isMapLand(nx - 0.03, ny) || isMapLand(nx, ny + 0.045) || isMapLand(nx, ny - 0.045)) continue
+    const s = 7 + (i % 4) * 2
+    ctx.strokeStyle = 'rgba(196, 236, 246, 0.26)'
+    ctx.lineWidth = 1.6
     ctx.beginPath()
-    ctx.moveTo(wx, wy)
-    ctx.quadraticCurveTo(wx + wl * 0.5, wy - 3.5, wx + wl, wy)
+    ctx.moveTo(wx - s * 1.5, wy)
+    ctx.quadraticCurveTo(wx - s * 0.75, wy - s * 0.7, wx, wy)
+    ctx.quadraticCurveTo(wx + s * 0.75, wy - s * 0.7, wx + s * 1.5, wy)
     ctx.stroke()
   }
   ctx.restore()
 
-  const islands: readonly (readonly (readonly [number, number])[])[] = [
-    SOLIS_MAINLAND, SUNBLEACHED_DUNES_LAND, AETHER_ISLES_MAIN, ABYSSAL_ISLE, SHATTERED_EXPANSE_LAND, WEST_ISLET
-  ]
-
-  // 2. Multi-ring turquoise shallow-water coastal shelves + subtle drop-shadow around every landmass!
-  for (const poly of islands) {
+  // 2. Island drop shadow + concentric shallow-water ripple rings
+  for (const poly of MAP_ISLANDS) {
     ctx.save()
-    ctx.translate(6, 8)
+    ctx.translate(7, 9)
     traceSmoothPolygon(ctx, poly, W, H)
-    ctx.fillStyle = 'rgba(10, 22, 34, 0.42)'
+    ctx.fillStyle = 'rgba(8, 18, 28, 0.45)'
     ctx.fill()
     ctx.restore()
-
+  }
+  const shelves: readonly [number, string][] = [[36, '#29637a'], [22, '#317389'], [10, '#468fa3']]
+  for (const [d, col] of shelves) {
+    for (const poly of MAP_ISLANDS) {
+      traceSmoothPolygon(ctx, poly, W, H)
+      ctx.lineJoin = 'round'
+      ctx.strokeStyle = 'rgba(214, 244, 250, 0.26)'
+      ctx.lineWidth = d * 2 + 2.5
+      ctx.stroke()
+    }
+    for (const poly of MAP_ISLANDS) {
+      traceSmoothPolygon(ctx, poly, W, H)
+      ctx.strokeStyle = col
+      ctx.lineWidth = d * 2
+      ctx.stroke()
+    }
+  }
+  // Surf foam hugging every coast
+  for (const poly of MAP_ISLANDS) {
     traceSmoothPolygon(ctx, poly, W, H)
-    ctx.save()
-    ctx.lineJoin = 'round'
-    ctx.strokeStyle = 'rgba(92, 194, 214, 0.22)'
-    ctx.lineWidth = 42
+    ctx.strokeStyle = 'rgba(240, 252, 255, 0.6)'
+    ctx.lineWidth = 6
     ctx.stroke()
-    ctx.strokeStyle = 'rgba(142, 224, 238, 0.30)'
-    ctx.lineWidth = 22
-    ctx.stroke()
-    ctx.strokeStyle = 'rgba(222, 248, 252, 0.40)'
-    ctx.lineWidth = 7
-    ctx.stroke()
-    ctx.restore()
   }
 
-  // 3. Aged parchment continent base fill + watercolor region washes + topographic contours!
-  for (const poly of islands) {
+  const relief = bakeReliefLayer(W, H)
+
+  // 3. Land: parchment base, watercolour provinces, relief shading (one compound clip for every island)
+  {
     ctx.save()
-    traceSmoothPolygon(ctx, poly, W, H)
+    traceIslands(ctx, W, H)
     const landGrad = ctx.createLinearGradient(0, 0, W, H)
-    landGrad.addColorStop(0, '#e6d19e')
-    landGrad.addColorStop(0.5, '#d8be85')
-    landGrad.addColorStop(1, '#c2a36b')
+    landGrad.addColorStop(0, '#ead7a6')
+    landGrad.addColorStop(0.5, '#dcc38c')
+    landGrad.addColorStop(1, '#c8aa72')
     ctx.fillStyle = landGrad
     ctx.fill()
     ctx.clip()
 
-    // Subtle parchment grain speckles
-    for (let i = 0; i < 520; i++) {
-      const sx = hash1(i * 11.7) * W
-      const sy = hash1(i * 19.1) * H
-      ctx.fillStyle = i % 2 === 0 ? 'rgba(92, 68, 36, 0.06)' : 'rgba(255, 248, 224, 0.09)'
-      ctx.fillRect(sx, sy, 3 + (i % 4), 2 + (i % 3))
-    }
-
-    // Paint the 9 tinted political/biome provinces (6 core Solis + 3 outer frontiers!)
+    // Watercolour province washes with soft bleeding edges
+    ctx.save()
+    if ('filter' in ctx) ctx.filter = 'blur(10px)'
     for (const reg of REGION_POLYS) {
       traceSmoothPolygon(ctx, reg.pts, W, H)
       ctx.fillStyle = reg.fill
       ctx.fill()
+    }
+    ctx.restore()
+
+    if (relief) {
       ctx.save()
-      ctx.setLineDash([9, 7])
-      ctx.strokeStyle = reg.stroke
-      ctx.lineWidth = 2.6
-      ctx.stroke()
+      ctx.imageSmoothingEnabled = true
+      ctx.globalAlpha = 0.85
+      ctx.drawImage(relief, 0, 0, W, H)
       ctx.restore()
     }
 
-    // Stepped topographic contour hills (Triangle Strategy inspired!)
-    const hillContours: readonly [number, number, number, number][] = [
-      [0.12, 0.38, 130, 78], [0.36, 0.24, 145, 86], [0.55, 0.22, 195, 100],
-      [0.37, 0.65, 175, 92], [0.62, 0.56, 185, 105], [0.69, 0.39, 130, 88],
-      [0.24, 0.89, 180, 68], [0.87, 0.25, 150, 92], [0.86, 0.82, 155, 94]
-    ]
-    ctx.strokeStyle = 'rgba(72, 54, 30, 0.19)'
-    ctx.lineWidth = 1.8
-    for (const [hx, hy, rx, ry] of hillContours) {
-      for (let ring = 0; ring < 2; ring++) {
-        ctx.beginPath()
-        ctx.ellipse(hx * W, hy * H, rx * (1 - ring * 0.35), ry * (1 - ring * 0.35), -0.14, 0, Math.PI * 2)
-        ctx.stroke()
-      }
+    // Paper grain
+    for (let i = 0; i < 900; i++) {
+      const sx = hash1(i * 11.7) * W
+      const sy = hash1(i * 19.1) * H
+      ctx.fillStyle = i % 2 === 0 ? 'rgba(92, 68, 36, 0.07)' : 'rgba(255, 248, 224, 0.1)'
+      ctx.fillRect(sx, sy, 2 + (i % 4), 1.5 + (i % 3))
     }
 
-    // Sweeping desert sand-dune crests in Sunbleached Dunes
-    if (poly === SUNBLEACHED_DUNES_LAND) {
-      ctx.strokeStyle = 'rgba(148, 92, 24, 0.34)'
+    // Hand-inked province borders
+    ctx.save()
+    ctx.setLineDash([2, 6])
+    ctx.lineCap = 'round'
+    for (const reg of REGION_POLYS) {
+      traceSmoothPolygon(ctx, reg.pts, W, H)
+      ctx.strokeStyle = reg.stroke
       ctx.lineWidth = 2.6
-      for (let i = 0; i < 14; i++) {
-        const dx = (0.09 + (i % 5) * 0.068 + (i % 2) * 0.015) * W
-        const dy = (0.84 + Math.floor(i / 5) * 0.038) * H
-        ctx.beginPath()
-        ctx.moveTo(dx - 34, dy + 4)
-        ctx.quadraticCurveTo(dx, dy - 12, dx + 36, dy + 6)
-        ctx.stroke()
-      }
-    }
-
-    // Ethereal glowing starlight rifts across Aether Isles
-    if (poly === AETHER_ISLES_MAIN) {
-      ctx.strokeStyle = 'rgba(130, 224, 255, 0.45)'
-      ctx.lineWidth = 3.2
-      ctx.beginPath()
-      ctx.moveTo(0.80 * W, 0.26 * H)
-      ctx.quadraticCurveTo(0.86 * W, 0.24 * H, 0.92 * W, 0.19 * H)
-      ctx.moveTo(0.85 * W, 0.25 * H)
-      ctx.quadraticCurveTo(0.90 * W, 0.29 * H, 0.94 * W, 0.35 * H)
       ctx.stroke()
     }
+    ctx.restore()
 
-    // Obsidian crimson-violet void cracks across Shattered Expanse
-    if (poly === SHATTERED_EXPANSE_LAND) {
-      ctx.strokeStyle = 'rgba(255, 92, 174, 0.44)'
-      ctx.lineWidth = 3.2
-      ctx.beginPath()
-      ctx.moveTo(0.79 * W, 0.72 * H)
-      ctx.lineTo(0.85 * W, 0.78 * H)
-      ctx.lineTo(0.83 * W, 0.85 * H)
-      ctx.lineTo(0.92 * W, 0.89 * H)
-      ctx.stroke()
-    }
-
-    // Inner coastal warm cliff drop-shadow bevel
-    traceSmoothPolygon(ctx, poly, W, H)
-    ctx.strokeStyle = 'rgba(72, 48, 22, 0.34)'
-    ctx.lineWidth = 14
+    // Inner coastal cliff bevel
+    traceIslands(ctx, W, H)
+    ctx.strokeStyle = 'rgba(92, 62, 30, 0.32)'
+    ctx.lineWidth = 16
     ctx.stroke()
     ctx.restore()
   }
 
-  // 4. Winding rivers, lakes & volcanic magma fissures carved across the mainland!
+  // Biome detailing, kept inland and clear of every location medallion
+  const scatter = (count: number, seed: number, region: number, draw: (x: number, y: number, k: number) => void, clear = 58) => {
+    const reg = REGION_POLYS[region]
+    let minX = 1, minY = 1, maxX = 0, maxY = 0
+    for (const [px, py] of reg.pts) {
+      minX = Math.min(minX, px); maxX = Math.max(maxX, px)
+      minY = Math.min(minY, py); maxY = Math.max(maxY, py)
+    }
+    for (let i = 0; i < count; i++) {
+      const nx = minX + hash1(seed + i * 3.31) * (maxX - minX)
+      const ny = minY + hash1(seed + i * 7.77 + 0.5) * (maxY - minY)
+      if (!pointInPoly(nx, ny, reg.pts) || !isMapLand(nx, ny)) continue
+      // Stay off the coast so details never spill into the sea
+      if (!isMapLand(nx + 0.012, ny) || !isMapLand(nx - 0.012, ny) || !isMapLand(nx, ny + 0.02) || !isMapLand(nx, ny - 0.02)) continue
+      const px = nx * W
+      const py = ny * H
+      if (nearNode(px, py, clear)) continue
+      draw(px, py, i)
+    }
+  }
+  ctx.save()
+  ctx.lineCap = 'round'
+  ctx.lineJoin = 'round'
+  // Solis Vale: patchwork farm fields + grass tufts
+  scatter(26, 101, 0, (px, py, k) => {
+    ctx.save()
+    ctx.translate(px, py)
+    ctx.rotate(-0.35 + hash1(k * 5.1) * 0.7)
+    const fw = 26 + hash1(k * 2.3) * 18
+    const fh = 16 + hash1(k * 3.9) * 10
+    const cols = ['#c9c46a', '#a9c063', '#dcc277', '#94b55a']
+    ctx.fillStyle = cols[k % cols.length]
+    ctx.globalAlpha = 0.75
+    ctx.fillRect(-fw / 2, -fh / 2, fw, fh)
+    ctx.globalAlpha = 1
+    ctx.strokeStyle = 'rgba(92, 72, 34, 0.45)'
+    ctx.lineWidth = 1
+    for (let r = -fh / 2 + 4; r < fh / 2; r += 4) {
+      ctx.beginPath(); ctx.moveTo(-fw / 2 + 2, r); ctx.lineTo(fw / 2 - 2, r); ctx.stroke()
+    }
+    ctx.strokeStyle = 'rgba(70, 52, 26, 0.6)'
+    ctx.strokeRect(-fw / 2, -fh / 2, fw, fh)
+    ctx.restore()
+  }, 70)
+  // Silverfen: marsh reeds and small pools
+  scatter(70, 211, 1, (px, py, k) => {
+    if (k % 6 === 0) {
+      ctx.beginPath()
+      ctx.ellipse(px, py, 11, 5, 0, 0, Math.PI * 2)
+      ctx.fillStyle = 'rgba(78, 160, 182, 0.7)'
+      ctx.fill()
+      ctx.strokeStyle = 'rgba(30, 64, 70, 0.6)'
+      ctx.lineWidth = 1
+      ctx.stroke()
+      return
+    }
+    ctx.strokeStyle = 'rgba(38, 86, 66, 0.6)'
+    ctx.lineWidth = 1.3
+    ctx.beginPath()
+    ctx.moveTo(px - 4, py); ctx.lineTo(px - 6, py - 7)
+    ctx.moveTo(px, py); ctx.lineTo(px, py - 9)
+    ctx.moveTo(px + 4, py); ctx.lineTo(px + 6, py - 7)
+    ctx.moveTo(px - 8, py + 1); ctx.lineTo(px + 8, py + 1)
+    ctx.stroke()
+  })
+  // Ashen Catacombs: weathered gravestones
+  scatter(46, 331, 2, (px, py, k) => {
+    const s = 5 + (k % 3)
+    ctx.beginPath()
+    ctx.moveTo(px - s * 0.6, py)
+    ctx.lineTo(px - s * 0.6, py - s * 1.1)
+    ctx.arc(px, py - s * 1.1, s * 0.6, Math.PI, 0)
+    ctx.lineTo(px + s * 0.6, py)
+    ctx.closePath()
+    ctx.fillStyle = '#b3a9b8'
+    ctx.fill()
+    ctx.strokeStyle = 'rgba(40, 30, 50, 0.8)'
+    ctx.lineWidth = 1.1
+    ctx.stroke()
+  })
+  // Frostspire: snowdrift sparkles
+  scatter(90, 401, 3, (px, py) => {
+    ctx.fillStyle = 'rgba(255, 255, 255, 0.8)'
+    ctx.beginPath()
+    ctx.ellipse(px, py, 7, 2.5, 0, 0, Math.PI * 2)
+    ctx.fill()
+    ctx.strokeStyle = 'rgba(80, 120, 150, 0.35)'
+    ctx.lineWidth = 1
+    ctx.beginPath()
+    ctx.moveTo(px - 7, py + 2); ctx.quadraticCurveTo(px, py + 4, px + 7, py + 2)
+    ctx.stroke()
+  }, 50)
+  // Emberwaste: cracked ash ground
+  scatter(60, 503, 4, (px, py, k) => {
+    ctx.strokeStyle = k % 4 === 0 ? 'rgba(255, 120, 50, 0.55)' : 'rgba(70, 30, 18, 0.45)'
+    ctx.lineWidth = 1.3
+    ctx.beginPath()
+    ctx.moveTo(px - 8, py - 2)
+    ctx.lineTo(px - 2, py + 1)
+    ctx.lineTo(px + 3, py - 3)
+    ctx.lineTo(px + 9, py + 1)
+    ctx.moveTo(px - 2, py + 1)
+    ctx.lineTo(px - 1, py + 6)
+    ctx.stroke()
+  }, 50)
+  // Sunbleached Dunes: sweeping dune crests
+  scatter(40, 601, 6, (px, py) => {
+    ctx.strokeStyle = 'rgba(150, 96, 30, 0.42)'
+    ctx.lineWidth = 2.2
+    ctx.beginPath()
+    ctx.moveTo(px - 26, py + 4)
+    ctx.quadraticCurveTo(px, py - 10, px + 28, py + 5)
+    ctx.stroke()
+    ctx.strokeStyle = 'rgba(255, 238, 190, 0.45)'
+    ctx.lineWidth = 1.4
+    ctx.beginPath()
+    ctx.moveTo(px - 22, py + 1)
+    ctx.quadraticCurveTo(px - 2, py - 11, px + 20, py)
+    ctx.stroke()
+  }, 46)
+  // Aether Isles: floating sky-crystal shards
+  scatter(26, 701, 7, (px, py, k) => {
+    const s = 5 + (k % 3) * 2
+    ctx.save()
+    ctx.shadowColor = 'rgba(140, 230, 255, 0.9)'
+    ctx.shadowBlur = 8
+    ctx.beginPath()
+    ctx.moveTo(px, py - s * 1.6)
+    ctx.lineTo(px + s * 0.6, py)
+    ctx.lineTo(px, py + s * 0.6)
+    ctx.lineTo(px - s * 0.6, py)
+    ctx.closePath()
+    ctx.fillStyle = '#bff2ff'
+    ctx.fill()
+    ctx.restore()
+    ctx.strokeStyle = 'rgba(30, 70, 120, 0.8)'
+    ctx.lineWidth = 1
+    ctx.stroke()
+  }, 50)
+  // Shattered Expanse: jagged obsidian shards glowing with void light
+  scatter(22, 809, 8, (px, py, k) => {
+    ctx.save()
+    ctx.shadowColor = 'rgba(255, 90, 180, 0.85)'
+    ctx.shadowBlur = 9
+    for (let c = 0; c < 3; c++) {
+      const ox = (c - 1) * 6
+      const s = (c === 1 ? 1.25 : 0.85) * (5 + (k % 3) * 1.5)
+      ctx.beginPath()
+      ctx.moveTo(px + ox, py - s * 1.7)
+      ctx.lineTo(px + ox + s * 0.55, py)
+      ctx.lineTo(px + ox - s * 0.55, py)
+      ctx.closePath()
+      ctx.fillStyle = c === 1 ? '#4a1f4a' : '#36163a'
+      ctx.fill()
+    }
+    ctx.restore()
+    ctx.strokeStyle = 'rgba(255, 140, 210, 0.85)'
+    ctx.lineWidth = 1
+    ctx.beginPath()
+    ctx.moveTo(px, py - 8)
+    ctx.lineTo(px + 1.5, py - 1)
+    ctx.stroke()
+  }, 56)
+  ctx.restore()
+
+  // 4. Tapered rivers flowing source -> sea (mainland only), and the Emberwaste lava flow
   ctx.save()
   traceSmoothPolygon(ctx, SOLIS_MAINLAND, W, H)
   ctx.clip()
-
-  const drawRiver = (pts: readonly (readonly [number, number])[], width: number, col: string, edgeCol: string) => {
+  // Source ponds
+  const pond = (nx: number, ny: number, rx: number, ry: number, col: string) => {
     ctx.beginPath()
-    ctx.moveTo(pts[0][0] * W, pts[0][1] * H)
-    for (let i = 1; i < pts.length; i++) {
-      const prev = pts[i - 1]
-      const cur = pts[i]
-      ctx.quadraticCurveTo(prev[0] * W, prev[1] * H, ((prev[0] + cur[0]) * 0.5) * W, ((prev[1] + cur[1]) * 0.5) * H)
-    }
-    const last = pts[pts.length - 1]
-    ctx.lineTo(last[0] * W, last[1] * H)
-    ctx.lineCap = 'round'
-    ctx.lineJoin = 'round'
-    ctx.strokeStyle = edgeCol
-    ctx.lineWidth = width + 5
+    ctx.ellipse(nx * W, ny * H, rx, ry, 0.12, 0, Math.PI * 2)
+    ctx.fillStyle = col
+    ctx.fill()
+    ctx.strokeStyle = '#1f3b4e'
+    ctx.lineWidth = 2.6
     ctx.stroke()
-    ctx.strokeStyle = col
-    ctx.lineWidth = width
-    ctx.stroke()
-    ctx.strokeStyle = 'rgba(255, 255, 255, 0.32)'
-    ctx.lineWidth = Math.max(2, width * 0.24)
-    ctx.stroke()
+    ctx.beginPath()
+    ctx.ellipse(nx * W - rx * 0.2, ny * H - ry * 0.25, rx * 0.5, ry * 0.3, 0.12, 0, Math.PI * 2)
+    ctx.fillStyle = 'rgba(255, 255, 255, 0.28)'
+    ctx.fill()
   }
-
-  // Silverfen twin-branch river flowing from Frostspire peaks through Sunken Bridge to the southern strait
-  drawRiver([[0.48, 0.12], [0.37, 0.18], [0.28, 0.31], [0.26, 0.43], [0.24, 0.59], [0.22, 0.77]], 16, '#3996ba', '#1f394a')
-  // Western Millers' Creek tributary
-  drawRiver([[0.12, 0.46], [0.17, 0.55], [0.24, 0.60]], 10, '#45a6c9', '#234154')
-  // Mirror Tarn frozen alpine lake
-  ctx.beginPath()
-  ctx.ellipse(0.55 * W, 0.19 * H, 52, 29, 0.12, 0, Math.PI * 2)
-  ctx.fillStyle = '#74c8e6'
-  ctx.fill()
-  ctx.strokeStyle = '#213d52'
-  ctx.lineWidth = 2.8
-  ctx.stroke()
-
-  // Emberwaste glowing magma channels
-  drawRiver([[0.61, 0.45], [0.60, 0.55], [0.66, 0.64], [0.74, 0.62]], 9, '#ff7333', '#3b1814')
+  for (const river of MAP_RIVERS) {
+    const pts = sampleSpline(river.pts, W, H, 12)
+    const n = pts.length
+    const passes: readonly [number, string][] = river.lava
+      ? [[5, '#3b1612'], [0, '#ff6a2a'], [-0.6, '#ffd36a']]
+      : [[5, '#1f3b4e'], [0, '#3d9cc0'], [-0.7, 'rgba(220, 246, 255, 0.55)']]
+    for (const [extra, col] of passes) {
+      ctx.strokeStyle = col
+      ctx.lineCap = 'round'
+      for (let i = 1; i < n; i++) {
+        const t = i / (n - 1)
+        const base = river.w0 + (river.w1 - river.w0) * t
+        const lw = extra < 0 ? Math.max(1.2, base * -extra * 0.45) : base + extra
+        ctx.lineWidth = lw
+        ctx.beginPath()
+        ctx.moveTo(pts[i - 1].x, pts[i - 1].y)
+        ctx.lineTo(pts[i].x, pts[i].y)
+        ctx.stroke()
+      }
+    }
+    if (river.lava) {
+      // Steam where the lava meets the sea
+      const end = pts[n - 1]
+      for (let i = 0; i < 4; i++) {
+        ctx.beginPath()
+        ctx.arc(end.x + (i - 1.5) * 9, end.y - 8 - i * 6, 7 + i * 2, 0, Math.PI * 2)
+        ctx.fillStyle = `rgba(235, 235, 235, ${0.4 - i * 0.07})`
+        ctx.fill()
+      }
+    }
+  }
+  pond(0.55, 0.19, 54, 30, '#78cbe8') // Mirror Tarn, Silverfen headwaters
+  pond(0.104, 0.478, 15, 9, '#62b4d3') // Millers' spring
   ctx.restore()
 
-  // 5. Crisp hand-inked outer coastlines on all islands
-  for (const poly of islands) {
+  // 5. Crisp inked coastlines
+  for (const poly of MAP_ISLANDS) {
     traceSmoothPolygon(ctx, poly, W, H)
     ctx.strokeStyle = '#22170e'
-    ctx.lineWidth = 4.2
+    ctx.lineWidth = 4
     ctx.lineJoin = 'round'
     ctx.stroke()
   }
 
-  // 6. Illustrated mountain ranges across Frostspire, Emberwaste, Western Hills, and Outer Frontiers!
-  const mountains: readonly [number, number, number, number, 'snow' | 'volcano' | 'hill'][] = [
-    // Frostspire northern alpine range
-    [0.42, 0.13, 68, 52, 'snow'], [0.47, 0.10, 82, 64, 'snow'], [0.51, 0.14, 72, 56, 'snow'],
-    [0.58, 0.12, 86, 68, 'snow'], [0.63, 0.15, 76, 58, 'snow'], [0.68, 0.11, 88, 70, 'snow'],
-    [0.71, 0.19, 72, 54, 'snow'], [0.60, 0.25, 62, 46, 'snow'], [0.51, 0.26, 58, 42, 'snow'],
-    // Emberwaste volcanic ridges
-    [0.54, 0.46, 62, 46, 'volcano'], [0.65, 0.50, 74, 58, 'volcano'], [0.71, 0.56, 78, 62, 'volcano'],
-    [0.60, 0.66, 62, 46, 'volcano'], [0.70, 0.66, 66, 50, 'volcano'],
-    // Western & central foothills
-    [0.08, 0.30, 52, 34, 'hill'], [0.19, 0.23, 50, 32, 'hill'], [0.28, 0.18, 56, 36, 'hill'],
-    [0.43, 0.49, 52, 34, 'hill'], [0.49, 0.56, 56, 36, 'hill'],
-    // Sunbleached Dunes sandstone mesas
-    [0.19, 0.87, 62, 38, 'hill'], [0.31, 0.88, 68, 44, 'hill'],
-    // Aether Isles glacial crystal peaks
-    [0.84, 0.18, 74, 58, 'snow'], [0.91, 0.21, 78, 62, 'snow'],
-    // Shattered Expanse obsidian volcanic peaks
-    [0.84, 0.76, 76, 62, 'volcano'], [0.91, 0.80, 82, 68, 'volcano']
-  ]
-  for (const [mx, my, mw, mh, st] of mountains) {
-    drawInkedMountain(ctx, mx * W, my * H, mw, mh, st)
-  }
-
-  // 7. Hand-inked miniature forest groves (carefully avoiding every location node!)
-  const nodePts = chapters.map(c => ({ x: c.mapX * W, y: c.mapY * H }))
-  const isNearNode = (tx: number, ty: number) => nodePts.some(p => Math.hypot(p.x - tx, p.y - ty) < 64)
-
+  // 6 & 7. Mountains and forests depth-sorted together so nothing overlaps awkwardly
+  type Prop = { y: number; draw: () => void }
+  const props: Prop[] = []
+  MAP_MOUNTAINS.forEach(([mx, my, mw, mh, st], i) => {
+    const px = mx * W
+    const py = my * H
+    if (nearNode(px, py - mh * 0.4, 58)) return
+    props.push({ y: py, draw: () => drawInkedMountain(ctx, px, py, mw, mh, st, i + 1) })
+  })
   const forestClusters: readonly [number, number, number, number, 'oak' | 'autumn' | 'pine' | 'snow' | 'dead'][] = [
     [0.08, 0.45, 85, 16, 'oak'],
-    [0.16, 0.32, 78, 15, 'oak'],
-    [0.21, 0.40, 70, 12, 'oak'],
-    [0.28, 0.32, 75, 14, 'autumn'],
-    [0.37, 0.30, 70, 12, 'autumn'],
-    [0.30, 0.50, 70, 13, 'autumn'],
+    [0.16, 0.32, 78, 18, 'oak'],
+    [0.21, 0.40, 70, 14, 'oak'],
+    [0.28, 0.32, 75, 16, 'autumn'],
+    [0.37, 0.30, 70, 14, 'autumn'],
+    [0.30, 0.50, 70, 14, 'autumn'],
     [0.22, 0.68, 92, 18, 'dead'],
     [0.37, 0.64, 85, 16, 'dead'],
     [0.47, 0.72, 75, 12, 'dead'],
     [0.46, 0.22, 82, 15, 'snow'],
     [0.60, 0.29, 80, 14, 'snow'],
     [0.67, 0.27, 65, 10, 'snow'],
-    [0.53, 0.40, 72, 12, 'pine']
+    [0.53, 0.40, 72, 14, 'pine'],
+    [0.87, 0.31, 60, 10, 'snow']
   ]
-
-  // Clip trees strictly to mainland so none spill into the sea!
-  ctx.save()
-  traceSmoothPolygon(ctx, SOLIS_MAINLAND, W, H)
-  ctx.clip()
   let seedIdx = 1
   for (const [fx, fy, radius, count, style] of forestClusters) {
     for (let i = 0; i < count; i++) {
@@ -4925,54 +5419,245 @@ function getBakedSolisMap(chapters: readonly ChapterSpec[]): HTMLCanvasElement |
       const dist = Math.sqrt(hash1(seedIdx * 7.9)) * radius
       const tx = fx * W + Math.cos(ang) * dist * 1.25
       const ty = fy * H + Math.sin(ang) * dist * 0.85
-      if (isNearNode(tx, ty)) continue
-      drawInkedTree(ctx, tx, ty, 11 + (seedIdx % 5) * 1.6, style)
+      if (nearNode(tx, ty) || !isMapLand(tx / W, ty / H) || !isMapLand(tx / W, ty / H + 0.015)) continue
+      const size = 10 + (seedIdx % 5) * 1.5
+      props.push({ y: ty, draw: () => drawInkedTree(ctx, tx, ty, size, style) })
     }
   }
-  ctx.restore()
+  props.sort((a, b) => a.y - b.y)
+  for (const p of props) p.draw()
 
-  // 8. Ornate cartographic compass rose in bottom-left sea (region banners draw live above roads!)
-  const crx = W * 0.048
-  const cry = H * 0.80
-  ctx.save()
-  ctx.beginPath()
-  ctx.arc(crx, cry, 42, 0, Math.PI * 2)
-  ctx.fillStyle = 'rgba(20, 38, 56, 0.72)'
-  ctx.fill()
-  ctx.strokeStyle = '#e8cf94'
-  ctx.lineWidth = 2.6
-  ctx.stroke()
-  drawStarShape(ctx, crx, cry, 36, 10, 4)
-  ctx.fillStyle = '#e8cf94'
-  ctx.fill()
-  ctx.strokeStyle = '#241a10'
-  ctx.lineWidth = 1.8
-  ctx.stroke()
-  drawText(ctx, 'N', crx, cry - 50, { size: 16, weight: 900, color: '#f5e2b3', align: 'center', display: true, stroke: true })
-  ctx.restore()
+  // 8. Ocean set-dressing: ships and a sea serpent, placed clear of every sea lane
+  drawMapShip(ctx, 0.515 * W, 0.935 * H, 26, false)
+  drawMapShip(ctx, 0.05 * W, 0.255 * H, 20, true)
+  {
+    const sx = 0.85 * W
+    const sy = 0.545 * H
+    ctx.save()
+    ctx.lineCap = 'round'
+    for (let i = 0; i < 3; i++) {
+      const hx = sx - 46 + i * 30
+      ctx.beginPath()
+      ctx.arc(hx, sy, 11, Math.PI, 0)
+      ctx.strokeStyle = '#183c34'
+      ctx.lineWidth = 10
+      ctx.stroke()
+      ctx.strokeStyle = '#4f9a74'
+      ctx.lineWidth = 6
+      ctx.stroke()
+      ctx.beginPath()
+      ctx.moveTo(hx - 14, sy + 1)
+      ctx.quadraticCurveTo(hx, sy + 5, hx + 14, sy + 1)
+      ctx.strokeStyle = 'rgba(220, 245, 250, 0.6)'
+      ctx.lineWidth = 1.6
+      ctx.stroke()
+    }
+    // Head
+    ctx.beginPath()
+    ctx.moveTo(sx + 44, sy)
+    ctx.quadraticCurveTo(sx + 46, sy - 26, sx + 60, sy - 24)
+    ctx.quadraticCurveTo(sx + 70, sy - 20, sx + 62, sy - 15)
+    ctx.quadraticCurveTo(sx + 54, sy - 14, sx + 54, sy)
+    ctx.closePath()
+    ctx.fillStyle = '#4f9a74'
+    ctx.fill()
+    ctx.strokeStyle = '#183c34'
+    ctx.lineWidth = 2
+    ctx.stroke()
+    ctx.beginPath()
+    ctx.arc(sx + 58, sy - 20, 1.8, 0, Math.PI * 2)
+    ctx.fillStyle = '#ffe36a'
+    ctx.fill()
+    ctx.restore()
+  }
 
-  // 10. Classic double-lined parchment atlas border frame
-  ctx.save()
-  ctx.strokeStyle = 'rgba(232, 206, 148, 0.42)'
-  ctx.lineWidth = 4
-  ctx.strokeRect(14, 14, W - 28, H - 28)
-  ctx.strokeStyle = 'rgba(232, 206, 148, 0.22)'
-  ctx.lineWidth = 1.5
-  ctx.strokeRect(24, 24, W - 48, H - 48)
-  ctx.restore()
+  // 9. Ornate 16-point compass rose
+  {
+    const crx = W * 0.048
+    const cry = H * 0.135
+    ctx.save()
+    ctx.beginPath()
+    ctx.arc(crx, cry, 56, 0, Math.PI * 2)
+    ctx.fillStyle = 'rgba(16, 32, 48, 0.55)'
+    ctx.fill()
+    ctx.strokeStyle = '#e8cf94'
+    ctx.lineWidth = 2.2
+    ctx.stroke()
+    ctx.beginPath()
+    ctx.arc(crx, cry, 48, 0, Math.PI * 2)
+    ctx.lineWidth = 1
+    ctx.stroke()
+    for (let i = 0; i < 32; i++) {
+      const a = (i / 32) * Math.PI * 2
+      const r0 = i % 4 === 0 ? 42 : 45
+      ctx.beginPath()
+      ctx.moveTo(crx + Math.cos(a) * r0, cry + Math.sin(a) * r0)
+      ctx.lineTo(crx + Math.cos(a) * 48, cry + Math.sin(a) * 48)
+      ctx.stroke()
+    }
+    const point = (a: number, len: number, wid: number, light: string, dark: string) => {
+      const ca = Math.cos(a)
+      const sa = Math.sin(a)
+      const tipX = crx + ca * len
+      const tipY = cry + sa * len
+      const lx = crx - sa * wid
+      const ly = cry + ca * wid
+      const rx = crx + sa * wid
+      const ry = cry - ca * wid
+      ctx.beginPath(); ctx.moveTo(crx, cry); ctx.lineTo(tipX, tipY); ctx.lineTo(lx, ly); ctx.closePath()
+      ctx.fillStyle = light; ctx.fill()
+      ctx.beginPath(); ctx.moveTo(crx, cry); ctx.lineTo(tipX, tipY); ctx.lineTo(rx, ry); ctx.closePath()
+      ctx.fillStyle = dark; ctx.fill()
+      ctx.strokeStyle = '#1e150c'; ctx.lineWidth = 1
+      ctx.beginPath(); ctx.moveTo(lx, ly); ctx.lineTo(tipX, tipY); ctx.lineTo(rx, ry); ctx.stroke()
+    }
+    for (let i = 0; i < 8; i++) point(Math.PI / 8 + (i * Math.PI) / 4, 26, 4, '#d9c08a', '#8f7446')
+    for (let i = 0; i < 4; i++) point(Math.PI / 4 + (i * Math.PI) / 2, 34, 6, '#efdcae', '#a8895a')
+    for (let i = 0; i < 4; i++) point((i * Math.PI) / 2 - Math.PI / 2, 46, 8, i === 0 ? '#ffe9a8' : '#f4e6c2', i === 0 ? '#c4402f' : '#7a6240')
+    ctx.beginPath()
+    ctx.arc(crx, cry, 4, 0, Math.PI * 2)
+    ctx.fillStyle = '#e8cf94'
+    ctx.fill()
+    ctx.stroke()
+    drawText(ctx, 'N', crx, cry - 66, { size: 16, weight: 900, color: '#f5e2b3', align: 'center', display: true, stroke: true })
+    ctx.restore()
+  }
 
-  // Warm antique vignette around the edges of the chart
+  // Warm antique vignette
   const vig = ctx.createRadialGradient(W * 0.5, H * 0.5, W * 0.36, W * 0.5, H * 0.5, W * 0.68)
   vig.addColorStop(0, 'rgba(20, 14, 8, 0)')
-  vig.addColorStop(1, 'rgba(14, 10, 8, 0.40)')
+  vig.addColorStop(1, 'rgba(14, 10, 8, 0.38)')
   ctx.fillStyle = vig
   ctx.fillRect(0, 0, W, H)
+
+  // 10. Atlas border: double rule with an alternating degree scale and corner bosses
+  ctx.save()
+  const b0 = 12
+  const b1 = 30
+  ctx.fillStyle = '#20170e'
+  ctx.fillRect(0, 0, W, b1)
+  ctx.fillRect(0, H - b1, W, b1)
+  ctx.fillRect(0, 0, b1, H)
+  ctx.fillRect(W - b1, 0, b1, H)
+  ctx.strokeStyle = '#d9bf86'
+  ctx.lineWidth = 2
+  ctx.strokeRect(b0 - 4, b0 - 4, W - (b0 - 4) * 2, H - (b0 - 4) * 2)
+  ctx.strokeRect(b1, b1, W - b1 * 2, H - b1 * 2)
+  const seg = 50
+  const bandA = b0 + 2
+  const bandW = b1 - b0 - 6
+  for (let sx = b1, k = 0; sx < W - b1; sx += seg, k++) {
+    ctx.fillStyle = k % 2 === 0 ? '#e9d7a8' : '#6b5232'
+    const ww = Math.min(seg, W - b1 - sx)
+    ctx.fillRect(sx, bandA, ww, bandW)
+    ctx.fillRect(sx, H - bandA - bandW, ww, bandW)
+  }
+  for (let sy = b1, k = 0; sy < H - b1; sy += seg, k++) {
+    ctx.fillStyle = k % 2 === 0 ? '#e9d7a8' : '#6b5232'
+    const hh = Math.min(seg, H - b1 - sy)
+    ctx.fillRect(bandA, sy, bandW, hh)
+    ctx.fillRect(W - bandA - bandW, sy, bandW, hh)
+  }
+  for (const [cxp, cyp] of [[b0 + 9, b0 + 9], [W - b0 - 9, b0 + 9], [b0 + 9, H - b0 - 9], [W - b0 - 9, H - b0 - 9]] as const) {
+    ctx.fillStyle = '#20170e'
+    ctx.fillRect(cxp - 15, cyp - 15, 30, 30)
+    ctx.strokeStyle = '#d9bf86'
+    ctx.strokeRect(cxp - 13, cyp - 13, 26, 26)
+    drawStarShape(ctx, cxp, cyp, 11, 4, 4)
+    ctx.fillStyle = '#e8cf94'
+    ctx.fill()
+  }
+  ctx.restore()
 
   cachedSolisMapCanvas = canvas
   return canvas
 }
 
-/** Draw the baked high-res Solis world atlas + crisp high-contrast roads, sea lanes & drifting clouds. */
+interface WorldMapRoad {
+  readonly from: ChapterSpec
+  readonly to: ChapterSpec
+  readonly x0: number
+  readonly y0: number
+  readonly cx: number
+  readonly cy: number
+  readonly x1: number
+  readonly y1: number
+  readonly sea: boolean
+  /** Curve parameter where the lane's ship marker floats (always over open water). */
+  readonly shipT: number
+}
+
+let cachedWorldMapRoads: { readonly chapters: readonly ChapterSpec[]; readonly roads: readonly WorldMapRoad[] } | null = null
+
+/**
+ * Route every prerequisite -> stage connection once, in map pixel space.
+ * Each road picks the gentlest bend that keeps it clear of unrelated medallions, and is classified as a
+ * sea lane purely from how much of it crosses open water.
+ */
+function getWorldMapRoads(chapters: readonly ChapterSpec[]): readonly WorldMapRoad[] {
+  if (cachedWorldMapRoads && cachedWorldMapRoads.chapters === chapters) return cachedWorldMapRoads.roads
+  const W = WORLD_MAP_W
+  const H = WORLD_MAP_H
+  const byId = new Map(chapters.map(ch => [ch.id, ch]))
+  const roads: WorldMapRoad[] = []
+  const quad = (x0: number, y0: number, cx: number, cy: number, x1: number, y1: number, t: number) => {
+    const it = 1 - t
+    return { x: it * it * x0 + 2 * it * t * cx + t * t * x1, y: it * it * y0 + 2 * it * t * cy + t * t * y1 }
+  }
+  for (const ch of chapters) {
+    for (const reqId of ch.requires) {
+      const from = byId.get(reqId)
+      if (!from) continue
+      const x0 = from.mapX * W
+      const y0 = from.mapY * H
+      const x1 = ch.mapX * W
+      const y1 = ch.mapY * H
+      const dx = x1 - x0
+      const dy = y1 - y0
+      const len = Math.max(1, Math.hypot(dx, dy))
+      const nx = -dy / len
+      const ny = dx / len
+      const mx = (x0 + x1) * 0.5
+      const my = (y0 + y1) * 0.5
+      let best = { score: -Infinity, cx: mx, cy: my }
+      for (const k of [0.06, -0.06, 0.14, -0.14, 0.22, -0.22, 0.3, -0.3, 0.38, -0.38]) {
+        const cx = mx + nx * k * len
+        const cy = my + ny * k * len
+        let clearance = Infinity
+        for (let t = 0.06; t <= 0.94; t += 0.02) {
+          const p = quad(x0, y0, cx, cy, x1, y1, t)
+          for (const o of chapters) {
+            if (o === ch || o === from) continue
+            // Medallion + name plaque footprint (plaque hangs below the pin)
+            const ox = (p.x - o.mapX * W) / 78
+            const oy = (p.y - (o.mapY * H + 26)) / 64
+            clearance = Math.min(clearance, Math.hypot(ox, oy))
+          }
+        }
+        const score = Math.min(clearance, 1.5) - Math.abs(k) * 0.9
+        if (score > best.score) best = { score, cx, cy }
+      }
+      // Sea lane whenever the two ends sit on different landmasses, or the route spends real time over water
+      let water = 0
+      let shipT = 0.5
+      const samples = 24
+      for (let i = 1; i < samples; i++) {
+        const t = i / samples
+        const p = quad(x0, y0, best.cx, best.cy, x1, y1, t)
+        if (!isMapLand(p.x / W, p.y / H)) {
+          water++
+          if (water === 1 || Math.abs(t - 0.5) < Math.abs(shipT - 0.5)) shipT = t
+        }
+      }
+      const sea = islandOf(from.mapX, from.mapY) !== islandOf(ch.mapX, ch.mapY) || water / (samples - 1) > 0.22
+      roads.push({ from, to: ch, x0, y0, cx: best.cx, cy: best.cy, x1, y1, sea, shipT })
+    }
+  }
+  cachedWorldMapRoads = { chapters, roads }
+  return roads
+}
+
+/** Draw the baked Solis atlas, inked region names, roads & sea lanes, and drifting cloud shadows. */
 export function drawWorldMapCanvas(
   ctx: CanvasRenderingContext2D,
   rect: LayoutRect,
@@ -4994,19 +5679,59 @@ export function drawWorldMapCanvas(
   ctx.rect(x, y, w, h)
   ctx.clip()
 
-  ctx.fillStyle = '#152e40'
+  // Dark chart-table backdrop beyond the atlas sheet
+  const table = ctx.createRadialGradient(x + w * 0.5, y + h * 0.5, Math.min(w, h) * 0.2, x + w * 0.5, y + h * 0.5, Math.max(w, h) * 0.8)
+  table.addColorStop(0, '#1a3346')
+  table.addColorStop(1, '#0c1824')
+  ctx.fillStyle = table
   ctx.fillRect(x, y, w, h)
 
   const baked = getBakedSolisMap(chapters)
   if (baked) {
+    ctx.save()
+    ctx.shadowColor = 'rgba(0, 0, 0, 0.55)'
+    ctx.shadowBlur = 24
+    ctx.shadowOffsetY = 8
+    ctx.fillStyle = '#152c3d'
+    ctx.fillRect(mapLeft, mapTop, mapDrawW, mapDrawH)
+    ctx.restore()
     ctx.drawImage(baked, mapLeft, mapTop, mapDrawW, mapDrawH)
   }
 
-  // Draw unmistakably bold, high-contrast roads & maritime sea lanes connecting prerequisites -> stage
-  const posById = new Map<string, { cx: number; cy: number; stage: ChapterSpec }>()
-  for (const ch of chapters) {
-    const pt = worldMapToScreen(ch.mapX, ch.mapY, rect, vp)
-    posById.set(ch.id, { cx: pt.x, cy: pt.y, stage: ch })
+  const sx = (mx: number) => mapLeft + mx * scale
+  const sy = (my: number) => mapTop + my * scale
+
+  // Inked region names sit UNDER the roads so routes always read as continuous
+  for (const reg of REGION_POLYS) {
+    const px = mapLeft + reg.labelX * mapDrawW
+    const py = mapTop + reg.labelY * mapDrawH
+    const titleSz = Math.max(8, Math.round(reg.labelSize * 1.3 * scale))
+    const subSz = Math.max(7, Math.round(titleSz * 0.5))
+    ctx.save()
+    ctx.translate(px, py)
+    ctx.rotate(reg.labelAngle)
+    ctx.globalAlpha = 0.86
+    drawText(ctx, reg.label, 0, -subSz * 0.35, {
+      size: titleSz,
+      weight: 900,
+      color: reg.textCol,
+      align: 'center',
+      spacing: titleSz * 0.2,
+      display: true,
+      stroke: 'rgba(250, 238, 206, 0.7)',
+      strokeWidth: Math.max(2, titleSz * 0.22)
+    })
+    drawText(ctx, reg.subLabel, 0, titleSz * 0.62, {
+      size: subSz,
+      weight: 900,
+      color: reg.future ? '#8c2046' : 'rgba(70, 52, 30, 0.92)',
+      align: 'center',
+      spacing: subSz * 0.25,
+      display: true,
+      stroke: 'rgba(250, 238, 206, 0.6)',
+      strokeWidth: Math.max(1.6, subSz * 0.2)
+    })
+    ctx.restore()
   }
 
   const quadPoint = (
@@ -5038,164 +5763,128 @@ export function drawWorldMapCanvas(
     ctx.restore()
   }
 
-  for (const ch of chapters) {
-    const to = posById.get(ch.id)
-    if (!to) continue
-    const toCleared = clearedSet.has(ch.id)
-    const toUnlocked = unlockedSet.has(ch.id)
-    const isSoon = Boolean(ch.comingSoon)
-
-    for (let rIdx = 0; rIdx < ch.requires.length; rIdx++) {
-      const reqId = ch.requires[rIdx]
-      const from = posById.get(reqId)
-      if (!from) continue
-      const fromCleared = clearedSet.has(reqId)
-      const activeRoad = !isSoon && fromCleared && toUnlocked
-      const completedRoad = !isSoon && fromCleared && toCleared
-      const isSea = Boolean(ch.seaRoute || from.stage.seaRoute) && (
-        ch.region !== from.stage.region || ch.id === 'first_sun_sanctum' || ch.id === 'tempest_spire'
-      )
-
-      const dx = to.cx - from.cx
-      const dy = to.cy - from.cy
-      const len = Math.max(1, Math.hypot(dx, dy))
-      // Gentle perpendicular curve offset so parallel routes & forks separate cleanly!
-      const bendSign = ((ch.index + rIdx) % 2 === 0 ? 1 : -1)
-      const curveOffset = Math.min(28 * vp.zoom, len * 0.14) * bendSign
-      const mx = (from.cx + to.cx) * 0.5 + (-dy / len) * curveOffset
-      const my = (from.cy + to.cy) * 0.5 + (dx / len) * curveOffset
-
-      const z = Math.max(0.72, vp.zoom)
-
-      ctx.save()
-      ctx.lineCap = 'round'
-      ctx.lineJoin = 'round'
-      ctx.beginPath()
-      ctx.moveTo(from.cx, from.cy)
-      ctx.quadraticCurveTo(mx, my, to.cx, to.cy)
-
-      if (isSea) {
-        // Distinct nautical maritime shipping lane (dark sea halo + bright ivory-gold dashes!)
-        ctx.setLineDash([10 * z, 9 * z])
-        ctx.strokeStyle = 'rgba(11, 24, 38, 0.85)'
-        ctx.lineWidth = 6.2 * z
-        ctx.stroke()
-        ctx.strokeStyle = activeRoad || completedRoad ? '#ffe484' : '#e8d7a8'
-        ctx.lineWidth = 3.2 * z
-        ctx.stroke()
-        ctx.setLineDash([])
-        const mid = quadPoint(from.cx, from.cy, mx, my, to.cx, to.cy, 0.5)
-        drawRoadChevron(mid.x, mid.y, mid.ang, 5.2 * z, activeRoad ? '#ffe878' : '#f2dfb0')
-      } else if (completedRoad) {
-        // Cleared Imperial Highway: thick dark ink border + radiant gold core + bright cream highlight!
-        ctx.strokeStyle = 'rgba(18, 10, 4, 0.36)'
-        ctx.lineWidth = 12 * z
-        ctx.stroke()
-        ctx.strokeStyle = '#1f1208'
-        ctx.lineWidth = 9.2 * z
-        ctx.stroke()
-        ctx.strokeStyle = '#f5be2e'
-        ctx.lineWidth = 5.4 * z
-        ctx.stroke()
-        ctx.strokeStyle = '#fff5bd'
-        ctx.lineWidth = 2.0 * z
-        ctx.stroke()
-      } else if (activeRoad) {
-        // Active Frontier Road: glowing vermilion-gold highway + marching animated chevrons!
-        ctx.strokeStyle = 'rgba(20, 10, 4, 0.42)'
-        ctx.lineWidth = 12.5 * z
-        ctx.stroke()
-        ctx.strokeStyle = '#1f1208'
-        ctx.lineWidth = 9.6 * z
-        ctx.stroke()
-        ctx.strokeStyle = '#e05024'
-        ctx.lineWidth = 5.8 * z
-        ctx.stroke()
-        ctx.setLineDash([10 * z, 9 * z])
-        ctx.lineDashOffset = -time * 32
-        ctx.strokeStyle = '#fff094'
-        ctx.lineWidth = 3.2 * z
-        ctx.stroke()
-        ctx.setLineDash([])
-        const animT = 0.28 + ((time * 0.38) % 0.48)
-        const chev = quadPoint(from.cx, from.cy, mx, my, to.cx, to.cy, animT)
-        drawRoadChevron(chev.x, chev.y, chev.ang, 6.2 * z, '#fff29e')
-      } else if (isSoon) {
-        // Future Expansion Land Road: clearly visible warm ochre-rust bordered trail!
-        ctx.strokeStyle = '#24160b'
-        ctx.lineWidth = 7.0 * z
-        ctx.stroke()
-        ctx.strokeStyle = '#9c5f38'
-        ctx.lineWidth = 4.0 * z
-        ctx.stroke()
-        ctx.setLineDash([6 * z, 7 * z])
-        ctx.strokeStyle = '#edd2a4'
-        ctx.lineWidth = 1.9 * z
-        ctx.stroke()
-      } else {
-        // Locked Playable Land Road: bold classic FFTA crimson-terracotta bordered highway!
-        ctx.strokeStyle = 'rgba(20, 11, 5, 0.32)'
-        ctx.lineWidth = 10.5 * z
-        ctx.stroke()
-        ctx.strokeStyle = '#211309'
-        ctx.lineWidth = 8.4 * z
-        ctx.stroke()
-        ctx.strokeStyle = '#c43f31'
-        ctx.lineWidth = 4.8 * z
-        ctx.stroke()
-        ctx.setLineDash([7 * z, 7 * z])
-        ctx.strokeStyle = '#f5d8a6'
-        ctx.lineWidth = 2.0 * z
-        ctx.stroke()
-      }
-      ctx.restore()
-    }
+  const z = Math.max(0.72, vp.zoom)
+  const roads = getWorldMapRoads(chapters)
+  // Paint order: future trails -> locked -> active -> cleared, so live progress is never buried
+  const rank = (r: WorldMapRoad) => {
+    if (r.to.comingSoon) return 0
+    const fromCleared = clearedSet.has(r.from.id)
+    if (fromCleared && clearedSet.has(r.to.id)) return 3
+    if (fromCleared && unlockedSet.has(r.to.id)) return 2
+    return 1
   }
+  const ordered = [...roads].sort((a, b) => rank(a) - rank(b))
 
-  // Grand Engraved Scrollwork Region Banners rendered cleanly ABOVE roads & BELOW landmark pins!
-  const bannerScale = Math.max(0.76, Math.min(1.18, vp.zoom * 0.92))
-  for (const reg of REGION_POLYS) {
-    const pt = worldMapToScreen(reg.labelX, reg.labelY, rect, vp)
-    const titleSz = Math.round(11.5 * bannerScale)
-    const subSz = Math.round(7.5 * bannerScale)
-    const titleW = measureText(ctx, reg.label, titleSz, 900, true) + reg.label.length * 1.1
-    const subW = measureText(ctx, reg.subLabel, subSz, 900, true) + reg.subLabel.length * 0.8
-    const pillW = Math.max(titleW, subW) + 20 * bannerScale
-    const pillH = Math.round(28 * bannerScale)
+  for (const road of ordered) {
+    const x0 = sx(road.x0)
+    const y0 = sy(road.y0)
+    const cx = sx(road.cx)
+    const cy = sy(road.cy)
+    const x1 = sx(road.x1)
+    const y1 = sy(road.y1)
+    const minX = Math.min(x0, cx, x1)
+    const maxX = Math.max(x0, cx, x1)
+    const minY = Math.min(y0, cy, y1)
+    const maxY = Math.max(y0, cy, y1)
+    if (maxX < x - 20 || minX > x + w + 20 || maxY < y - 20 || minY > y + h + 20) continue
+
+    const r = rank(road)
+    const isSoon = r === 0
+    const completedRoad = r === 3
+    const activeRoad = r === 2
+
     ctx.save()
-    rr(ctx, pt.x - pillW / 2, pt.y - pillH / 2, pillW, pillH, 6)
-    ctx.fillStyle = reg.bannerBg
-    ctx.fill()
-    ctx.strokeStyle = reg.future ? '#7a2c48' : '#3a2918'
-    ctx.lineWidth = reg.future ? 2.0 : 1.6
-    ctx.stroke()
-    drawText(ctx, reg.label, pt.x, pt.y - pillH * 0.16, {
-      size: titleSz,
-      weight: 900,
-      color: reg.textCol,
-      align: 'center',
-      spacing: 1.1,
-      display: true
-    })
-    drawText(ctx, reg.subLabel, pt.x, pt.y + pillH * 0.27, {
-      size: subSz,
-      weight: 900,
-      color: reg.future ? '#8c2046' : '#57422a',
-      align: 'center',
-      spacing: 0.8,
-      display: true
-    })
+    ctx.lineCap = 'round'
+    ctx.lineJoin = 'round'
+    ctx.beginPath()
+    ctx.moveTo(x0, y0)
+    ctx.quadraticCurveTo(cx, cy, x1, y1)
+
+    if (road.sea) {
+      // Nautical shipping lane: dark halo + parchment dashes, with a little ship riding the lane
+      ctx.setLineDash([9 * z, 8 * z])
+      if (activeRoad) ctx.lineDashOffset = -time * 26
+      ctx.strokeStyle = 'rgba(8, 20, 32, 0.6)'
+      ctx.lineWidth = 5.4 * z
+      ctx.stroke()
+      ctx.strokeStyle = completedRoad || activeRoad ? '#ffe484' : isSoon ? 'rgba(236, 222, 186, 0.78)' : '#efe0b8'
+      ctx.lineWidth = 2.6 * z
+      ctx.stroke()
+      ctx.setLineDash([])
+      const t = activeRoad ? 0.2 + ((time * 0.08) % 0.6) : road.shipT
+      const mid = quadPoint(x0, y0, cx, cy, x1, y1, t)
+      drawMapShip(ctx, mid.x, mid.y + 3 * z, 11 * z, Math.cos(mid.ang) < 0, activeRoad || completedRoad ? '#ffe484' : '#f3e6c4')
+    } else if (completedRoad) {
+      // Cleared royal highway: ink border, gold paving, cream highlight
+      ctx.strokeStyle = 'rgba(18, 10, 4, 0.3)'
+      ctx.lineWidth = 10.5 * z
+      ctx.stroke()
+      ctx.strokeStyle = '#24160a'
+      ctx.lineWidth = 7.8 * z
+      ctx.stroke()
+      ctx.strokeStyle = '#efb835'
+      ctx.lineWidth = 4.6 * z
+      ctx.stroke()
+      ctx.strokeStyle = '#fff3c4'
+      ctx.lineWidth = 1.6 * z
+      ctx.stroke()
+    } else if (activeRoad) {
+      // Frontier road: glowing vermilion trail with marching dashes and a chevron pointing onward
+      ctx.strokeStyle = 'rgba(255, 170, 70, 0.28)'
+      ctx.lineWidth = 15 * z
+      ctx.stroke()
+      ctx.strokeStyle = '#24160a'
+      ctx.lineWidth = 8.4 * z
+      ctx.stroke()
+      ctx.strokeStyle = '#e8622c'
+      ctx.lineWidth = 5.2 * z
+      ctx.stroke()
+      ctx.setLineDash([9 * z, 8 * z])
+      ctx.lineDashOffset = -time * 32
+      ctx.strokeStyle = '#fff094'
+      ctx.lineWidth = 2.4 * z
+      ctx.stroke()
+      ctx.setLineDash([])
+      const animT = 0.28 + ((time * 0.38) % 0.48)
+      const chev = quadPoint(x0, y0, cx, cy, x1, y1, animT)
+      drawRoadChevron(chev.x, chev.y, chev.ang, 6 * z, '#fff29e')
+    } else if (isSoon) {
+      // Uncharted trail: a light dotted path, clearly secondary to playable roads
+      ctx.setLineDash([0.1, 7 * z])
+      ctx.strokeStyle = 'rgba(255, 244, 214, 0.5)'
+      ctx.lineWidth = 5 * z
+      ctx.stroke()
+      ctx.strokeStyle = 'rgba(74, 48, 26, 0.85)'
+      ctx.lineWidth = 3.2 * z
+      ctx.stroke()
+    } else {
+      // Locked dirt road: inked edges, packed-earth fill and stitched centre line
+      ctx.strokeStyle = 'rgba(30, 18, 8, 0.22)'
+      ctx.lineWidth = 9.5 * z
+      ctx.stroke()
+      ctx.strokeStyle = '#3a2614'
+      ctx.lineWidth = 6.8 * z
+      ctx.stroke()
+      ctx.strokeStyle = '#cfa877'
+      ctx.lineWidth = 4.2 * z
+      ctx.stroke()
+      ctx.setLineDash([5 * z, 6 * z])
+      ctx.strokeStyle = '#7b5532'
+      ctx.lineWidth = 1.4 * z
+      ctx.stroke()
+    }
     ctx.restore()
   }
 
-  // Gentle drifting atmospheric cloud shadows over the map (Triangle Strategy touch!)
+  // Gentle drifting cloud shadows over the chart
   for (let i = 0; i < 6; i++) {
-    const cx = x + (((hash1(i * 6.3) + time * (0.008 + i * 0.002)) % 1.25) - 0.12) * w
-    const cy = y + hash1(i * 9.1) * h
+    const cxp = x + (((hash1(i * 6.3) + time * (0.008 + i * 0.002)) % 1.25) - 0.12) * w
+    const cyp = y + hash1(i * 9.1) * h
     ctx.save()
     ctx.globalAlpha = 0.06
     ctx.beginPath()
-    ctx.ellipse(cx, cy, 110 * vp.zoom, 36 * vp.zoom, -0.1, 0, Math.PI * 2)
+    ctx.ellipse(cxp, cyp, 110 * vp.zoom, 36 * vp.zoom, -0.1, 0, Math.PI * 2)
+    ctx.ellipse(cxp + 60 * vp.zoom, cyp - 14 * vp.zoom, 70 * vp.zoom, 26 * vp.zoom, -0.1, 0, Math.PI * 2)
     ctx.fillStyle = '#ffffff'
     ctx.fill()
     ctx.restore()
