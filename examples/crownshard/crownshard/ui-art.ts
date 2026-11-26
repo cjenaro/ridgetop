@@ -2756,17 +2756,21 @@ export function drawCombatForecast(
   const isRevive = Boolean(fc.isRevive)
   const isHeal = isRevive || (!fc.isOffensive && fc.targetTeam === 'ally')
   const isEmpty = fc.emptyTileTarget || fc.targetTeam === 'none'
+  const showCounterWarn = !isEmpty && !isHeal && Boolean(fc.canCounter && (fc.counterDmg ?? 0) > 0)
+  const showCounterAvoid = !isEmpty && !isHeal && !showCounterWarn && (fc.counterAvoidReason === 'flank' || fc.counterAvoidReason === 'backstab')
   const accent = fc.friendlyFire
     ? '#ff4588'
     : isRevive
       ? COLOR.accent
       : fc.lethalNormal
         ? '#ff5768'
-        : isHeal
-          ? COLOR.good
-          : isEmpty
-            ? COLOR.muted
-            : fc.requiresMove ? '#ff9f38' : COLOR.accent
+        : showCounterWarn && fc.counterLethal
+          ? '#ff5768'
+          : isHeal
+            ? COLOR.good
+            : isEmpty
+              ? COLOR.muted
+              : fc.requiresMove ? '#ff9f38' : COLOR.accent
   drawSurface(ctx, rect, {
     r: RADIUS.lg,
     lipH: 4,
@@ -3073,6 +3077,92 @@ export function drawCombatForecast(
     maxW: hpTextW,
     display: true
   })
+
+  // Counter-Attack Warning / Avoidance Strip
+  if (showCounterWarn || showCounterAvoid) {
+    const stripY = wellY + wellH + 4
+    const stripH = 18
+    const hasStripRoom = stripY + stripH <= y + rect.height - 2
+    if (showCounterWarn) {
+      const dmg = fc.counterDmg ?? 0
+      const lethal = Boolean(fc.counterLethal)
+      const label = lethal ? 'COUNTER LETHAL!' : `COUNTER -${dmg} HP`
+      const bg = lethal ? '#8a1628' : '#733510'
+      const border = lethal ? '#ff6b7a' : '#ffad42'
+      const textCol = lethal ? '#ffd9de' : '#ffe2a8'
+      if (hasStripRoom) {
+        const sx = x + pad
+        const sw = w - pad * 2
+        ctx.save()
+        rr(ctx, sx, stripY, sw, stripH, 6)
+        ctx.fillStyle = bg
+        ctx.fill()
+        ctx.strokeStyle = border
+        ctx.lineWidth = 1.6
+        ctx.stroke()
+        drawIcon(ctx, lethal ? 'skull' : 'sword', sx + 11, stripY + stripH / 2, 10, textCol)
+        drawText(ctx, label, sx + 21, stripY + stripH / 2 + 0.5, {
+          size: 9.5,
+          weight: 900,
+          color: textCol,
+          maxW: sw - 82,
+          display: true,
+          shadow: true
+        })
+        drawText(ctx, lethal ? `-${dmg} HP` : 'FRONTAL', sx + sw - 7, stripY + stripH / 2 + 0.5, {
+          size: 8.5,
+          weight: 900,
+          color: lethal ? '#ff99a5' : '#ffc978',
+          align: 'right',
+          display: true
+        })
+        ctx.restore()
+      } else {
+        drawChip(ctx, x + w - pad, wellY - 11, label, {
+          h: 16,
+          size: 8.5,
+          color: textCol,
+          bg,
+          border,
+          align: 'right'
+        })
+      }
+    } else if (showCounterAvoid) {
+      const avoidTag = fc.counterAvoidReason === 'backstab' ? 'NO COUNTER (BACKSTAB)' : 'NO COUNTER (FLANK)'
+      const bg = '#15402c'
+      const border = '#3ee07f'
+      const textCol = '#a8ffd0'
+      if (hasStripRoom) {
+        const sx = x + pad
+        const sw = w - pad * 2
+        ctx.save()
+        rr(ctx, sx, stripY, sw, stripH, 6)
+        ctx.fillStyle = bg
+        ctx.fill()
+        ctx.strokeStyle = border
+        ctx.lineWidth = 1.4
+        ctx.stroke()
+        drawIcon(ctx, 'check', sx + 11, stripY + stripH / 2, 9.5, textCol)
+        drawText(ctx, avoidTag, sx + 21, stripY + stripH / 2 + 0.5, {
+          size: 9,
+          weight: 900,
+          color: textCol,
+          maxW: sw - 28,
+          display: true
+        })
+        ctx.restore()
+      } else {
+        drawChip(ctx, x + w - pad, wellY - 11, avoidTag, {
+          h: 16,
+          size: 8.5,
+          color: textCol,
+          bg,
+          border,
+          align: 'right'
+        })
+      }
+    }
+  }
 }
 
 /** Clickable Strike vs Skill comparison chip rendered inside the Combat Forecast card. */
