@@ -3,6 +3,8 @@ import type { Vec3 } from 'ridgetop'
 export const GRID_COLS = 8
 export const GRID_ROWS = 6
 export const TILE_SIZE = 1.65
+export const HEIGHT_STEP = 0.45
+export const MAX_HEIGHT_LEVEL = 4
 
 export type Rarity = 'common' | 'uncommon' | 'rare' | 'epic' | 'legendary'
 
@@ -42,6 +44,8 @@ export type TileTerrain =
   | 'lava'
   | 'snow'
   | 'darkstone'
+  | 'stairs'
+  | 'void'
 
 export type BiomeId = 'meadow' | 'river' | 'crypt' | 'frost' | 'volcano' | 'throne'
 
@@ -77,6 +81,7 @@ export interface HeroSpec {
   readonly def: number
   readonly speed: number
   readonly move: number
+  readonly jump: number
   readonly range: number
   readonly crit: number
   readonly lore: string
@@ -94,6 +99,7 @@ export interface EquipmentSpec {
   readonly hp: number
   readonly speed: number
   readonly move: number
+  readonly jump?: number
   readonly range: number
   readonly crit: number
   readonly lifesteal: number
@@ -177,6 +183,7 @@ export interface EnemySpec {
   readonly def: number
   readonly speed: number
   readonly move: number
+  readonly jump: number
   readonly range: number
   readonly ai: 'melee' | 'ranged' | 'support' | 'boss'
   readonly isBoss?: boolean
@@ -220,6 +227,7 @@ export interface ChapterSpec {
   readonly rewardEquipId: string | null
   readonly rewardHeroId: HeroClassId | null
   readonly grid: readonly (readonly TileTerrain[])[]
+  readonly heights?: readonly (readonly number[])[]
   readonly heroSpawns: readonly (readonly [number, number])[]
   readonly enemies: readonly ChapterEnemySpawn[]
 }
@@ -261,6 +269,7 @@ export interface GridCell {
   readonly terrain: TileTerrain
   readonly elevation: number
   readonly walkable: boolean
+  readonly heightLevel?: number
 }
 
 export interface BattleUnit {
@@ -293,6 +302,7 @@ export interface BattleUnit {
   speed: number
   ct: number
   move: number
+  jump: number
   range: number
   crit: number
   lifesteal: number
@@ -437,6 +447,9 @@ export interface CombatForecast {
   readonly selfShield: number
   readonly status?: 'burn' | 'slow' | 'stun' | 'empower'
   readonly highGround: boolean
+  readonly elevationDiff: number
+  readonly coverBonus: number
+  readonly terrainDefBonus: number
   readonly empowered: boolean
   readonly attackArc: AttackArc
   readonly isOffensive: boolean
@@ -546,17 +559,77 @@ export function worldToGrid(
   return { col, row }
 }
 
-export function terrainElevation(t: TileTerrain): number {
-  if (t === 'hill') return 0.45
-  if (t === 'pillar') return 1.15
-  if (t === 'water' || t === 'lava') return -0.22
-  if (t === 'bridge') return 0.08
-  if (t === 'shrine') return 0.16
+export function defaultTerrainHeightLevel(t: TileTerrain): number {
+  if (t === 'void') return -1
+  if (t === 'hill') return 1
   return 0
 }
 
+export function terrainElevation(t: TileTerrain, heightLevel?: number): number {
+  if (t === 'void') return -1.2
+  const level = heightLevel !== undefined
+    ? Math.max(0, Math.min(MAX_HEIGHT_LEVEL, Math.round(heightLevel)))
+    : defaultTerrainHeightLevel(t)
+  const base = level * HEIGHT_STEP
+  if (t === 'pillar') return base + 1.15
+  if (t === 'water' || t === 'lava') return base - 0.22
+  if (t === 'bridge') return base + 0.08
+  if (t === 'shrine') return base + 0.16
+  return base
+}
+
 export function terrainWalkable(t: TileTerrain): boolean {
-  return t !== 'water' && t !== 'lava' && t !== 'pillar'
+  return t !== 'water' && t !== 'lava' && t !== 'pillar' && t !== 'void'
+}
+
+export function terrainMoveCost(t: TileTerrain): number {
+  if (!terrainWalkable(t)) return 99
+  if (t === 'snow') return 2
+  return 1
+}
+
+export function terrainDefBonus(t: TileTerrain): number {
+  if (t === 'darkstone') return 2
+  if (t === 'stone' || t === 'shrine') return 1
+  if (t === 'bridge') return -1
+  return 0
+}
+
+export function cellHeightLevel(cell: Pick<GridCell, 'terrain' | 'elevation' | 'heightLevel'>): number {
+  if (cell.heightLevel !== undefined) return cell.heightLevel
+  if (cell.terrain === 'void') return -1
+  if (cell.terrain === 'water' || cell.terrain === 'lava') {
+    return Math.max(0, Math.round((cell.elevation + 0.22) / HEIGHT_STEP))
+  }
+  if (cell.terrain === 'pillar') {
+    return Math.max(0, Math.round((cell.elevation - 1.15) / HEIGHT_STEP))
+  }
+  if (cell.terrain === 'bridge') {
+    return Math.max(0, Math.round((cell.elevation - 0.08) / HEIGHT_STEP))
+  }
+  if (cell.terrain === 'shrine') {
+    return Math.max(0, Math.round((cell.elevation - 0.16) / HEIGHT_STEP))
+  }
+  return Math.max(0, Math.round(cell.elevation / HEIGHT_STEP))
+}
+
+export function cellElevation(
+  state: Pick<BattleState, 'cells' | 'cols' | 'rows'>,
+  col: number,
+  row: number
+): number {
+  if (row < 0 || row >= state.rows || col < 0 || col >= state.cols) return 0
+  return state.cells[row]?.[col]?.elevation ?? 0
+}
+
+export function cellHeightAt(
+  state: Pick<BattleState, 'cells' | 'cols' | 'rows'>,
+  col: number,
+  row: number
+): number {
+  if (row < 0 || row >= state.rows || col < 0 || col >= state.cols) return 0
+  const cell = state.cells[row]?.[col]
+  return cell ? cellHeightLevel(cell) : 0
 }
 
 export function facingVector(dir: FacingDir): readonly [number, number] {

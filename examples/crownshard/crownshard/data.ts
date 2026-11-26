@@ -80,6 +80,7 @@ export const HERO_SPECS: Record<HeroClassId, HeroSpec> = {
     def: 6,
     speed: 8,
     move: 3,
+    jump: 1,
     range: 1,
     crit: 0.10,
     lore: 'Sworn shieldbearer of the Solis Vanguard who holds the line against the Eclipse.',
@@ -117,6 +118,7 @@ export const HERO_SPECS: Record<HeroClassId, HeroSpec> = {
     def: 3,
     speed: 13,
     move: 3,
+    jump: 2,
     range: 3,
     crit: 0.22,
     lore: 'Highland scout whose fletched arrows strike true from every ridge and tower.',
@@ -154,6 +156,7 @@ export const HERO_SPECS: Record<HeroClassId, HeroSpec> = {
     def: 2,
     speed: 11,
     move: 3,
+    jump: 2,
     range: 3,
     crit: 0.16,
     lore: 'Keeper of the Solis Lantern who channels raw starfire into tactical bursts.',
@@ -191,6 +194,7 @@ export const HERO_SPECS: Record<HeroClassId, HeroSpec> = {
     def: 4,
     speed: 10,
     move: 3,
+    jump: 2,
     range: 3,
     crit: 0.12,
     lore: 'Sun-order healer who mends shattered bones and burns shadow creatures.',
@@ -228,6 +232,7 @@ export const HERO_SPECS: Record<HeroClassId, HeroSpec> = {
     def: 3,
     speed: 15,
     move: 4,
+    jump: 3,
     range: 1,
     crit: 0.32,
     lore: 'Swift twilight duelist who vaults across battle lines to sever enemy casters.',
@@ -265,6 +270,7 @@ export const HERO_SPECS: Record<HeroClassId, HeroSpec> = {
     def: 8,
     speed: 9,
     move: 3,
+    jump: 1,
     range: 1,
     crit: 0.15,
     lore: 'Gilded champion of the High Bastion, armored in sun-forged plate.',
@@ -302,6 +308,7 @@ export const HERO_SPECS: Record<HeroClassId, HeroSpec> = {
     def: 4,
     speed: 11,
     move: 3,
+    jump: 2,
     range: 3,
     crit: 0.18,
     lore: 'Glacial arcanist from Frostspire who locks entire enemy flanks in crystal ice.',
@@ -339,6 +346,7 @@ export const HERO_SPECS: Record<HeroClassId, HeroSpec> = {
     def: 9,
     speed: 12,
     move: 4,
+    jump: 2,
     range: 2,
     crit: 0.26,
     lore: 'Mythic heir of the First Crown, wielding twin blades of living starlight.',
@@ -576,25 +584,25 @@ export const PACK_BY_ID: Record<PackId, PackSpec> = {
 
 export const ENEMY_SPECS: Record<EnemyArchetypeId, EnemySpec> = {
   goblin: {
-    id: 'goblin', name: 'Ashen Goblin', maxHp: 38, atk: 12, def: 2, speed: 12, move: 3, range: 1, ai: 'melee'
+    id: 'goblin', name: 'Ashen Goblin', maxHp: 38, atk: 12, def: 2, speed: 12, move: 3, jump: 2, range: 1, ai: 'melee'
   },
   bone_archer: {
-    id: 'bone_archer', name: 'Bone Archer', maxHp: 34, atk: 14, def: 1, speed: 11, move: 2, range: 3, ai: 'ranged'
+    id: 'bone_archer', name: 'Bone Archer', maxHp: 34, atk: 14, def: 1, speed: 11, move: 2, jump: 2, range: 3, ai: 'ranged'
   },
   orc_brute: {
-    id: 'orc_brute', name: 'Ironclad Orc', maxHp: 64, atk: 17, def: 5, speed: 7, move: 2, range: 1, ai: 'melee'
+    id: 'orc_brute', name: 'Ironclad Orc', maxHp: 64, atk: 17, def: 5, speed: 7, move: 2, jump: 1, range: 1, ai: 'melee'
   },
   bog_shaman: {
-    id: 'bog_shaman', name: 'Eclipse Shaman', maxHp: 46, atk: 14, def: 2, speed: 10, move: 2, range: 3, ai: 'support'
+    id: 'bog_shaman', name: 'Eclipse Shaman', maxHp: 46, atk: 14, def: 2, speed: 10, move: 2, jump: 2, range: 3, ai: 'support'
   },
   crypt_knight: {
-    id: 'crypt_knight', name: 'Dread Knight', maxHp: 78, atk: 20, def: 7, speed: 9, move: 3, range: 1, ai: 'melee'
+    id: 'crypt_knight', name: 'Dread Knight', maxHp: 78, atk: 20, def: 7, speed: 9, move: 3, jump: 1, range: 1, ai: 'melee'
   },
   frost_golem: {
-    id: 'frost_golem', name: 'Frost Golem', maxHp: 96, atk: 22, def: 8, speed: 6, move: 2, range: 1, ai: 'melee'
+    id: 'frost_golem', name: 'Frost Golem', maxHp: 96, atk: 22, def: 8, speed: 6, move: 2, jump: 1, range: 1, ai: 'melee'
   },
   eclipse_archon: {
-    id: 'eclipse_archon', name: 'Archon Malakor', maxHp: 190, atk: 26, def: 7, speed: 11, move: 3, range: 3, ai: 'boss', isBoss: true
+    id: 'eclipse_archon', name: 'Archon Malakor', maxHp: 190, atk: 26, def: 7, speed: 11, move: 3, jump: 3, range: 3, ai: 'boss', isBoss: true
   }
 }
 
@@ -608,6 +616,8 @@ const P: TileTerrain = 'pillar'
 const L: TileTerrain = 'lava'
 const N: TileTerrain = 'snow'
 const D: TileTerrain = 'darkstone'
+const T: TileTerrain = 'stairs'
+const V: TileTerrain = 'void'
 
 // Compact placeholder grid for upcoming ("SOON...") expansion nodes
 const SOON_GRID: readonly (readonly TileTerrain[])[] = [
@@ -645,11 +655,18 @@ export const CHAPTERS: readonly ChapterSpec[] = [
     rewardEquipId: 'iron_plate',
     rewardHeroId: 'knight',
     grid: [
-      [G, G, H, H, G, G, G],
-      [G, S, G, G, P, G, G],
+      [V, G, H, H, T, G, G],
+      [G, S, T, G, P, S, H],
       [G, S, R, G, G, H, G],
       [G, H, G, P, G, S, G],
-      [G, G, G, W, W, G, G]
+      [V, G, G, W, W, G, V]
+    ],
+    heights: [
+      [0, 0, 2, 2, 1, 1, 1],
+      [0, 0, 1, 1, 1, 1, 2],
+      [0, 0, 0, 0, 0, 1, 1],
+      [0, 1, 0, 0, 0, 1, 1],
+      [0, 0, 0, 0, 0, 0, 0]
     ],
     heroSpawns: [[0, 1], [1, 2], [0, 3], [1, 1]],
     enemies: [
@@ -683,11 +700,18 @@ export const CHAPTERS: readonly ChapterSpec[] = [
     rewardEquipId: 'copper_signet',
     rewardHeroId: 'archer',
     grid: [
-      [G, G, W, G, H, G],
-      [G, S, B, S, G, G],
+      [V, G, W, G, H, H],
+      [G, S, B, S, T, G],
       [G, H, W, G, P, G],
-      [G, S, B, S, G, G],
-      [G, G, W, G, H, G]
+      [G, S, B, S, T, G],
+      [V, G, W, G, H, V]
+    ],
+    heights: [
+      [0, 0, 0, 0, 2, 2],
+      [0, 0, 0, 0, 1, 1],
+      [0, 1, 0, 0, 1, 1],
+      [0, 0, 0, 0, 1, 1],
+      [0, 0, 0, 0, 2, 0]
     ],
     heroSpawns: [[0, 1], [0, 3], [1, 1], [1, 3]],
     enemies: [
@@ -722,12 +746,20 @@ export const CHAPTERS: readonly ChapterSpec[] = [
     rewardEquipId: 'ember_wand',
     rewardHeroId: 'archer',
     grid: [
-      [G, G, W, W, G, H, G, G],
-      [G, H, B, B, S, G, G, G],
-      [G, G, W, W, G, P, G, G],
-      [G, R, W, W, G, G, G, G],
-      [G, G, B, B, S, G, H, G],
-      [G, G, W, W, G, G, G, G]
+      [V, G, W, W, G, H, H, V],
+      [G, H, B, B, S, T, G, G],
+      [G, T, W, W, G, P, G, G],
+      [G, R, W, W, G, G, S, H],
+      [G, T, B, B, S, T, H, G],
+      [V, G, W, W, G, G, G, V]
+    ],
+    heights: [
+      [0, 0, 0, 0, 1, 2, 2, 0],
+      [0, 1, 1, 1, 1, 1, 1, 1],
+      [0, 0, 0, 0, 1, 1, 1, 1],
+      [0, 0, 0, 0, 1, 1, 1, 2],
+      [0, 1, 1, 1, 1, 1, 2, 1],
+      [0, 0, 0, 0, 1, 1, 1, 0]
     ],
     heroSpawns: [[0, 1], [1, 2], [0, 4], [1, 3]],
     enemies: [
@@ -762,11 +794,18 @@ export const CHAPTERS: readonly ChapterSpec[] = [
     rewardEquipId: 'hunter_bow',
     rewardHeroId: 'mage',
     grid: [
-      [G, H, G, P, G, H, G, G],
-      [G, S, G, G, G, G, S, G],
+      [V, H, H, P, T, H, H, V],
+      [G, T, G, G, G, G, T, G],
       [G, S, R, P, G, P, S, G],
-      [G, S, G, G, G, G, S, G],
-      [G, H, G, P, G, H, G, G]
+      [G, T, G, G, G, G, T, G],
+      [V, H, H, P, T, H, H, V]
+    ],
+    heights: [
+      [0, 2, 2, 2, 1, 2, 3, 0],
+      [0, 1, 0, 0, 0, 1, 2, 1],
+      [0, 0, 0, 0, 0, 1, 1, 1],
+      [0, 1, 0, 0, 0, 1, 2, 1],
+      [0, 2, 2, 2, 1, 2, 3, 0]
     ],
     heroSpawns: [[0, 1], [1, 2], [0, 3], [1, 1]],
     enemies: [
@@ -802,13 +841,22 @@ export const CHAPTERS: readonly ChapterSpec[] = [
     rewardEquipId: 'swift_boots',
     rewardHeroId: 'cleric',
     grid: [
-      [G, H, G, R, G, H, G],
+      [V, H, T, R, T, H, V],
       [G, G, P, G, P, G, G],
-      [G, S, G, H, G, S, G],
-      [G, R, G, G, G, R, G],
-      [G, S, G, H, G, S, G],
+      [G, S, T, H, T, S, G],
+      [G, R, G, H, G, R, S],
+      [G, S, T, H, T, S, G],
       [G, G, P, G, P, G, G],
-      [G, H, G, W, G, H, G]
+      [V, H, T, W, T, H, V]
+    ],
+    heights: [
+      [0, 2, 1, 2, 1, 2, 0],
+      [0, 1, 1, 1, 1, 1, 1],
+      [0, 0, 1, 2, 1, 1, 1],
+      [0, 1, 1, 2, 1, 1, 2],
+      [0, 0, 1, 2, 1, 1, 1],
+      [0, 1, 1, 1, 1, 1, 1],
+      [0, 2, 1, 0, 1, 2, 0]
     ],
     heroSpawns: [[0, 2], [1, 3], [0, 4], [1, 2]],
     enemies: [
@@ -846,12 +894,20 @@ export const CHAPTERS: readonly ChapterSpec[] = [
     rewardEquipId: 'ranger_cloak',
     rewardHeroId: 'mage',
     grid: [
-      [D, S, S, D, D, S, S, D],
-      [S, S, P, S, S, P, S, S],
-      [S, H, S, R, S, S, H, S],
+      [V, D, S, T, D, S, H, V],
+      [S, S, P, S, S, P, S, H],
+      [S, T, S, R, S, S, T, S],
       [S, S, S, S, S, S, S, S],
-      [S, S, P, S, S, P, S, S],
-      [D, S, S, D, D, S, S, D]
+      [S, S, P, S, S, P, S, H],
+      [V, D, S, T, D, S, H, V]
+    ],
+    heights: [
+      [0, 2, 2, 1, 2, 2, 2, 0],
+      [0, 1, 1, 1, 1, 1, 1, 2],
+      [0, 1, 0, 1, 0, 1, 2, 2],
+      [0, 0, 0, 0, 0, 1, 1, 1],
+      [0, 1, 1, 1, 1, 1, 1, 2],
+      [0, 2, 2, 1, 2, 2, 2, 0]
     ],
     heroSpawns: [[1, 1], [1, 2], [1, 3], [1, 4]],
     enemies: [
@@ -886,12 +942,20 @@ export const CHAPTERS: readonly ChapterSpec[] = [
     rewardEquipId: 'frostbite_staff',
     rewardHeroId: null,
     grid: [
-      [D, S, H, D, H, S, D],
-      [S, S, P, S, P, S, S],
+      [V, D, H, D, H, H, V],
+      [S, T, P, T, P, T, S],
       [S, R, S, S, S, H, S],
       [S, S, S, P, S, S, S],
-      [S, S, P, S, P, S, S],
-      [D, S, H, D, H, S, D]
+      [S, T, P, T, P, T, S],
+      [V, D, H, D, H, H, V]
+    ],
+    heights: [
+      [0, 2, 3, 3, 3, 3, 0],
+      [0, 1, 2, 2, 2, 2, 1],
+      [0, 0, 0, 1, 1, 2, 1],
+      [0, 0, 0, 1, 1, 1, 1],
+      [0, 1, 2, 2, 2, 2, 1],
+      [0, 2, 3, 3, 3, 3, 0]
     ],
     heroSpawns: [[0, 2], [1, 2], [0, 3], [1, 3]],
     enemies: [
@@ -926,12 +990,20 @@ export const CHAPTERS: readonly ChapterSpec[] = [
     rewardEquipId: 'sunsteel_blade',
     rewardHeroId: null,
     grid: [
-      [D, S, D, D, S, D],
-      [S, P, S, S, P, S],
-      [S, S, R, H, S, S],
-      [S, S, H, S, S, S],
-      [S, P, S, S, P, S],
-      [D, S, D, D, S, D]
+      [V, S, D, D, S, V],
+      [S, P, T, T, P, S],
+      [S, T, R, H, S, S],
+      [S, T, H, S, S, S],
+      [S, P, T, T, P, S],
+      [V, S, D, D, S, V]
+    ],
+    heights: [
+      [0, 1, 2, 2, 1, 0],
+      [0, 1, 1, 1, 1, 1],
+      [0, 1, 2, 2, 1, 1],
+      [0, 1, 2, 1, 1, 1],
+      [0, 1, 1, 1, 1, 1],
+      [0, 1, 2, 2, 1, 0]
     ],
     heroSpawns: [[0, 2], [0, 3], [1, 2], [1, 3]],
     enemies: [
@@ -965,12 +1037,20 @@ export const CHAPTERS: readonly ChapterSpec[] = [
     rewardEquipId: 'runed_mail',
     rewardHeroId: 'rogue',
     grid: [
-      [N, N, H, H, N, N, H, N, N],
-      [N, S, N, P, N, H, N, S, N],
-      [N, S, R, N, N, N, S, N, N],
-      [W, W, N, N, P, N, S, N, N],
-      [N, N, H, N, N, H, N, S, N],
-      [N, N, N, N, W, W, N, N, N]
+      [V, V, H, H, N, T, H, H, V],
+      [N, S, T, P, N, H, T, S, H],
+      [N, S, R, S, T, S, S, T, N],
+      [W, W, N, N, P, N, S, S, H],
+      [N, S, T, N, N, H, T, S, N],
+      [V, N, N, V, W, W, N, V, V]
+    ],
+    heights: [
+      [0, 0, 2, 2, 2, 3, 4, 4, 0],
+      [0, 0, 1, 2, 2, 3, 3, 3, 4],
+      [0, 0, 1, 1, 2, 2, 2, 3, 3],
+      [0, 0, 1, 1, 2, 2, 2, 3, 3],
+      [0, 0, 1, 1, 2, 2, 2, 3, 3],
+      [0, 0, 1, 0, 0, 0, 2, 0, 0]
     ],
     heroSpawns: [[0, 1], [1, 2], [0, 4], [1, 4]],
     enemies: [
@@ -1005,13 +1085,22 @@ export const CHAPTERS: readonly ChapterSpec[] = [
     rewardEquipId: 'eagle_charm',
     rewardHeroId: null,
     grid: [
-      [N, N, H, N, N, H, N, N],
+      [V, N, H, N, N, H, N, V],
       [N, S, W, B, B, W, S, N],
-      [N, W, W, N, N, W, W, N],
-      [N, B, N, R, H, N, B, N],
-      [N, W, W, N, N, W, W, N],
+      [N, W, W, T, T, W, W, N],
+      [N, B, T, R, H, T, B, H],
+      [N, W, W, T, T, W, W, N],
       [N, S, W, B, B, W, S, N],
-      [N, N, H, N, N, H, N, N]
+      [V, N, H, N, N, H, N, V]
+    ],
+    heights: [
+      [0, 0, 1, 1, 1, 1, 1, 0],
+      [0, 0, 0, 1, 1, 0, 1, 1],
+      [0, 0, 0, 1, 1, 0, 0, 1],
+      [0, 0, 1, 2, 3, 2, 1, 2],
+      [0, 0, 0, 1, 1, 0, 0, 1],
+      [0, 0, 0, 1, 1, 0, 1, 1],
+      [0, 0, 1, 1, 1, 1, 1, 0]
     ],
     heroSpawns: [[0, 2], [0, 3], [0, 4], [1, 3]],
     enemies: [
@@ -1047,12 +1136,20 @@ export const CHAPTERS: readonly ChapterSpec[] = [
     rewardEquipId: 'dragonfang_spear',
     rewardHeroId: null,
     grid: [
-      [N, H, N, W, W, N, N, H, N, N],
-      [N, S, S, B, B, S, P, N, S, N],
-      [N, R, N, W, W, N, N, H, N, N],
-      [N, N, N, W, W, N, H, N, S, N],
-      [N, S, S, B, B, S, P, N, S, N],
-      [N, H, N, W, W, N, N, H, N, N]
+      [V, H, N, V, V, N, H, H, N, V],
+      [N, S, S, B, B, S, P, T, S, H],
+      [N, R, N, V, V, N, T, H, S, N],
+      [N, N, N, V, V, N, H, T, S, N],
+      [N, S, S, B, B, S, P, T, S, H],
+      [V, H, N, V, V, N, H, H, N, V]
+    ],
+    heights: [
+      [0, 1, 1, 0, 0, 1, 2, 3, 3, 0],
+      [0, 0, 1, 1, 1, 1, 2, 2, 3, 4],
+      [0, 0, 1, 0, 0, 1, 2, 3, 3, 3],
+      [0, 0, 1, 0, 0, 1, 2, 2, 3, 3],
+      [0, 0, 1, 1, 1, 1, 2, 2, 3, 4],
+      [0, 1, 1, 0, 0, 1, 2, 3, 3, 0]
     ],
     heroSpawns: [[0, 1], [1, 1], [0, 4], [1, 4]],
     enemies: [
@@ -1091,12 +1188,20 @@ export const CHAPTERS: readonly ChapterSpec[] = [
     rewardEquipId: 'blood_amulet',
     rewardHeroId: 'paladin',
     grid: [
-      [D, D, L, L, D, H, D, D, D],
-      [D, S, B, B, S, D, D, H, D],
-      [D, R, L, P, D, D, H, D, D],
-      [D, S, B, B, S, D, D, D, D],
-      [D, D, L, L, D, P, D, H, D],
-      [D, H, D, D, D, D, D, D, D]
+      [V, D, L, L, D, H, H, D, V],
+      [D, S, B, B, S, T, D, H, H],
+      [D, R, L, P, D, D, H, T, D],
+      [D, S, B, B, S, T, D, D, D],
+      [D, D, L, L, D, P, T, H, H],
+      [V, H, D, V, V, D, D, D, V]
+    ],
+    heights: [
+      [0, 1, 0, 0, 1, 2, 3, 3, 0],
+      [0, 1, 1, 1, 1, 2, 2, 3, 4],
+      [0, 1, 0, 1, 1, 2, 3, 3, 3],
+      [0, 1, 1, 1, 1, 2, 2, 3, 3],
+      [0, 1, 0, 0, 1, 2, 2, 3, 4],
+      [0, 2, 1, 0, 0, 1, 2, 2, 0]
     ],
     heroSpawns: [[0, 1], [1, 1], [0, 3], [1, 3]],
     enemies: [
@@ -1132,13 +1237,22 @@ export const CHAPTERS: readonly ChapterSpec[] = [
     rewardEquipId: 'frostguard_plate',
     rewardHeroId: null,
     grid: [
-      [D, D, L, B, L, D, D],
-      [D, S, D, S, D, H, D],
-      [L, D, P, S, P, D, L],
-      [B, S, S, R, S, S, B],
-      [L, D, P, S, P, D, L],
-      [D, S, D, S, D, H, D],
-      [D, D, L, B, L, D, D]
+      [V, D, L, B, L, D, V],
+      [D, S, T, S, T, H, D],
+      [L, T, P, T, P, T, L],
+      [B, S, T, R, T, S, B],
+      [L, T, P, T, P, T, L],
+      [D, S, T, S, T, H, D],
+      [V, D, L, B, L, D, V]
+    ],
+    heights: [
+      [0, 1, 0, 1, 0, 1, 0],
+      [0, 1, 1, 2, 2, 3, 2],
+      [0, 1, 2, 2, 2, 2, 0],
+      [0, 1, 2, 3, 2, 2, 2],
+      [0, 1, 2, 2, 2, 2, 0],
+      [0, 1, 1, 2, 2, 3, 2],
+      [0, 1, 0, 1, 0, 1, 0]
     ],
     heroSpawns: [[0, 3], [1, 1], [1, 3], [1, 5]],
     enemies: [
@@ -1175,13 +1289,22 @@ export const CHAPTERS: readonly ChapterSpec[] = [
     rewardEquipId: 'solis_crownblade',
     rewardHeroId: 'champion',
     grid: [
-      [D, D, S, H, H, H, S, D, D, D],
-      [D, S, P, S, S, S, P, S, D, D],
-      [D, R, S, S, H, S, S, H, S, D],
-      [D, S, S, S, S, S, S, H, S, D],
-      [D, S, S, S, H, S, S, H, S, D],
-      [D, S, P, S, S, S, P, S, D, D],
-      [D, D, S, L, L, L, S, D, D, D]
+      [V, V, S, H, H, H, S, V, V, V],
+      [V, S, P, S, T, S, P, S, H, V],
+      [D, R, S, T, H, S, T, H, S, D],
+      [D, S, S, S, T, S, T, H, H, D],
+      [D, S, S, T, H, S, T, H, S, D],
+      [V, S, P, S, T, S, P, S, H, V],
+      [V, V, S, L, L, L, S, V, V, V]
+    ],
+    heights: [
+      [0, 0, 1, 2, 2, 2, 2, 0, 0, 0],
+      [0, 1, 1, 1, 2, 2, 2, 3, 3, 0],
+      [0, 1, 1, 1, 2, 2, 3, 4, 3, 3],
+      [0, 0, 1, 1, 2, 2, 3, 4, 4, 3],
+      [0, 1, 1, 1, 2, 2, 3, 4, 3, 3],
+      [0, 1, 1, 1, 2, 2, 2, 3, 3, 0],
+      [0, 0, 1, 0, 0, 0, 2, 0, 0, 0]
     ],
     heroSpawns: [[0, 2], [1, 2], [0, 4], [1, 4]],
     enemies: [
