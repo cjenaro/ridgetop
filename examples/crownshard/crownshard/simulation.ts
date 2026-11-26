@@ -39,9 +39,22 @@ import {
   classifyElement, classifyHazardElement, collectWildfirePatch,
   previewElementalCombo, triggerElementalCombo
 } from './elemental-combos.ts'
+import {
+  MAX_HERO_LEVEL, XP_ACTION_BOSS_KO, XP_ACTION_DAMAGE, XP_ACTION_KO, XP_ACTION_REVIVE, XP_ACTION_SUPPORT,
+  XP_MERGE_TRANSFER_RATIO, XP_VICTORY_BASE, XP_VICTORY_PER_DIFFICULTY, XP_VICTORY_SURVIVAL_BONUS,
+  grantHeroXp, heroLevelProgress, levelStatBonuses, normalizeHeroLevel, normalizeHeroXp,
+  totalXpForLevel, victoryXpBonus, xpRequiredForLevel
+} from './leveling.ts'
+export {
+  MAX_HERO_LEVEL, XP_ACTION_BOSS_KO, XP_ACTION_DAMAGE, XP_ACTION_KO, XP_ACTION_REVIVE, XP_ACTION_SUPPORT,
+  XP_MERGE_TRANSFER_RATIO, XP_VICTORY_BASE, XP_VICTORY_PER_DIFFICULTY, XP_VICTORY_SURVIVAL_BONUS,
+  grantHeroXp, heroLevelProgress, levelStatBonuses, normalizeHeroLevel, normalizeHeroXp,
+  totalXpForLevel, victoryXpBonus, xpRequiredForLevel
+}
+export type { GrantHeroXpResult, HeroLevelProgress, LevelStatBonuses } from './leveling.ts'
 import type {
-  AttackArc, BattleCellSnapshot, BattleObjectiveEvaluation, BattleObjectiveKind, BattleObjectiveSnapshot,
-  BattleObjectiveState, BattleReward, BattleSaveSnapshot, BattleState, BattleUnit,
+  AttackArc, BattleCellSnapshot, BattleHeroXpGain, BattleObjectiveEvaluation, BattleObjectiveKind,
+  BattleObjectiveSnapshot, BattleObjectiveState, BattleReward, BattleSaveSnapshot, BattleState, BattleUnit,
   BattleUnitSnapshot, BiomeId, CampaignState, ChapterSpec, CombatForecast, CombatForecastAlt,
   CounterAvoidReason, DangerZoneMap, DangerZoneTile, DifficultyLevel, DisplacementPreview,
   ElementalComboPreview, EnemyArchetypeId, EnemyThreatMap, EquipSlot,
@@ -178,15 +191,16 @@ export function computeHeroStats(campaign: CampaignState, hero: OwnedHeroCard): 
   const hpMul = hero.stars === 3 ? 2.05 : hero.stars === 2 ? 1.48 : 1.0
   const atkMul = hero.stars === 3 ? 1.85 : hero.stars === 2 ? 1.38 : 1.0
   const defBonus = hero.stars === 3 ? 5 : hero.stars === 2 ? 2 : 0
+  const lvlBonus = levelStatBonuses(hero.heroId, hero.level ?? 1)
 
-  let maxHp = Math.round(spec.maxHp * hpMul)
-  let atk = Math.round(spec.atk * atkMul)
-  let def = spec.def + defBonus
-  let speed = spec.speed + (hero.stars - 1)
+  let maxHp = Math.round(spec.maxHp * hpMul) + lvlBonus.hp
+  let atk = Math.round(spec.atk * atkMul) + lvlBonus.atk
+  let def = spec.def + defBonus + lvlBonus.def
+  let speed = spec.speed + (hero.stars - 1) + lvlBonus.speed
   let move = spec.move
   let jump = spec.jump
   let range = spec.range
-  let crit = spec.crit
+  let crit = spec.crit + lvlBonus.crit
   let lifesteal = 0
   let shieldStart = 0
 
@@ -277,6 +291,31 @@ export function mergeHero(state: GameState, heroUid: string): boolean {
 
   const sacrifices = candidates.slice(1, required)
   const sacrificeSet = new Set(sacrifices.map(s => s.uid))
+
+  // Preserve the highest level & XP across all merged copies, plus +25% bonus XP from consumed copies
+  const allMerged = [target, ...sacrifices]
+  let bestCopy = target
+  let bestTotalXp = totalXpForLevel(target.level, target.xp)
+  for (const copy of sacrifices) {
+    const copyTotal = totalXpForLevel(copy.level, copy.xp)
+    if (copyTotal > bestTotalXp) {
+      bestTotalXp = copyTotal
+      bestCopy = copy
+    }
+  }
+  const baseLevel = normalizeHeroLevel(bestCopy.level)
+  const baseXp = normalizeHeroXp(baseLevel, bestCopy.xp)
+  let consumedXp = 0
+  for (const copy of allMerged) {
+    if (copy === bestCopy) continue
+    consumedXp += totalXpForLevel(copy.level, copy.xp)
+  }
+  const mergeBonusXp = Math.floor(consumedXp * XP_MERGE_TRANSFER_RATIO)
+  target.level = baseLevel
+  target.xp = baseXp
+  if (mergeBonusXp > 0) {
+    grantHeroXp(target, mergeBonusXp)
+  }
 
   // Remove sacrificed copies (their equipment automatically stays in campaign.equipment, unequipped)
   campaign.heroes = campaign.heroes.filter(h => !sacrificeSet.has(h.uid))
@@ -516,6 +555,8 @@ export function buyPack(state: GameState, packId: PackId): PackRevealItem[] | nu
         uid: allocUid(campaign, 'hero'),
         heroId: heroSpec.id,
         stars: 1,
+        level: 1,
+        xp: 0,
         weaponUid: null,
         armorUid: null,
         relicUid: null
@@ -636,15 +677,15 @@ export function createInitialCampaign(seed = 1337): CampaignState {
   }
 
   const starterKnight: OwnedHeroCard = {
-    uid: allocUid(campaign, 'hero'), heroId: 'knight', stars: 1,
+    uid: allocUid(campaign, 'hero'), heroId: 'knight', stars: 1, level: 1, xp: 0,
     weaponUid: null, armorUid: null, relicUid: null
   }
   const starterArcher: OwnedHeroCard = {
-    uid: allocUid(campaign, 'hero'), heroId: 'archer', stars: 1,
+    uid: allocUid(campaign, 'hero'), heroId: 'archer', stars: 1, level: 1, xp: 0,
     weaponUid: null, armorUid: null, relicUid: null
   }
   const starterMage: OwnedHeroCard = {
-    uid: allocUid(campaign, 'hero'), heroId: 'mage', stars: 1,
+    uid: allocUid(campaign, 'hero'), heroId: 'mage', stars: 1, level: 1, xp: 0,
     weaponUid: null, armorUid: null, relicUid: null
   }
   campaign.heroes.push(starterKnight, starterArcher, starterMage)
@@ -765,7 +806,11 @@ function cloneCampaignFromSave(c: CampaignState, fallbackSeed: number): Campaign
     endlessBest: Number.isFinite(c.endlessBest) ? Math.max(0, Math.floor(c.endlessBest)) : 0,
     battlesWon: Number.isFinite(c.battlesWon) ? Math.max(0, Math.floor(c.battlesWon)) : 0,
     packsOpened: Number.isFinite(c.packsOpened) ? Math.max(0, Math.floor(c.packsOpened)) : 0,
-    heroes: c.heroes.map(h => ({ ...h })),
+    heroes: c.heroes.map(h => {
+      const level = normalizeHeroLevel(h.level)
+      const xp = normalizeHeroXp(level, h.xp)
+      return { ...h, level, xp }
+    }),
     equipment: Array.isArray(c.equipment) ? c.equipment.map(e => ({ ...e })) : [],
     tactics: Array.isArray(c.tactics) ? c.tactics.map(t => ({ ...t })) : [],
     squadUids: Array.isArray(c.squadUids) && c.squadUids.length ? c.squadUids.slice() : [c.heroes[0].uid],
@@ -914,6 +959,7 @@ export function serializeBattleState(
       ...(u.heroId !== undefined ? { heroId: u.heroId } : {}),
       ...(u.enemyId !== undefined ? { enemyId: u.enemyId } : {}),
       stars: u.stars,
+      level: normalizeHeroLevel(u.level),
       isBoss: u.isBoss,
       ...(u.weaponId !== undefined ? { weaponId: u.weaponId } : {}),
       ...(u.armorId !== undefined ? { armorId: u.armorId } : {}),
@@ -986,7 +1032,9 @@ export function serializeBattleState(
     enemyDelay: battle.enemyDelay,
     enemyActedThisTurn: enemyMidMoveReset ? false : battle.enemyActedThisTurn,
     ...(rngSeed !== undefined && Number.isFinite(rngSeed) ? { rngSeed: (rngSeed >>> 0) || 1337 } : {}),
-    objective: serializeObjective(battle.objective)
+    objective: serializeObjective(battle.objective),
+    xpEarnedByHero: { ...battle.xpEarnedByHero },
+    heroStartLevelByUid: { ...battle.heroStartLevelByUid }
   }
 }
 
@@ -1099,6 +1147,8 @@ export function validateBattleSnapshot(raw: unknown): BattleSaveSnapshot | null 
 
     if (!isFiniteNum(item.stars)) return null
     const stars = toStarTier(item.stars)
+    if (item.level !== undefined && !isFiniteNum(item.level)) return null
+    const unitLevel = item.level !== undefined ? normalizeHeroLevel(item.level) : 1
     const isBoss = Boolean(item.isBoss)
 
     if (!isFiniteNum(item.col) || !isFiniteNum(item.row)) return null
@@ -1172,6 +1222,7 @@ export function validateBattleSnapshot(raw: unknown): BattleSaveSnapshot | null 
       ...(heroId !== undefined ? { heroId } : {}),
       ...(enemyId !== undefined ? { enemyId } : {}),
       stars,
+      level: unitLevel,
       isBoss,
       ...(weaponId !== undefined ? { weaponId } : {}),
       ...(armorId !== undefined ? { armorId } : {}),
@@ -1234,6 +1285,20 @@ export function validateBattleSnapshot(raw: unknown): BattleSaveSnapshot | null 
   const enemyActedThisTurn = typeof raw.enemyActedThisTurn === 'boolean' ? raw.enemyActedThisTurn : false
   const rngSeed = isFiniteNum(raw.rngSeed) ? ((raw.rngSeed >>> 0) || 1337) : undefined
   const objective = raw.objective !== undefined ? validateObjectiveSnapshot(raw.objective, cols, rows) ?? undefined : undefined
+  let xpEarnedByHero: Record<string, number> | undefined
+  if (isRecord(raw.xpEarnedByHero)) {
+    xpEarnedByHero = {}
+    for (const [k, v] of Object.entries(raw.xpEarnedByHero)) {
+      if (isFiniteNum(v) && v >= 0) xpEarnedByHero[k] = Math.floor(v)
+    }
+  }
+  let heroStartLevelByUid: Record<string, number> | undefined
+  if (isRecord(raw.heroStartLevelByUid)) {
+    heroStartLevelByUid = {}
+    for (const [k, v] of Object.entries(raw.heroStartLevelByUid)) {
+      if (isFiniteNum(v)) heroStartLevelByUid[k] = normalizeHeroLevel(v)
+    }
+  }
 
   return {
     version: 1,
@@ -1259,7 +1324,9 @@ export function validateBattleSnapshot(raw: unknown): BattleSaveSnapshot | null 
     enemyDelay,
     enemyActedThisTurn,
     ...(rngSeed !== undefined ? { rngSeed } : {}),
-    ...(objective !== undefined ? { objective } : {})
+    ...(objective !== undefined ? { objective } : {}),
+    ...(xpEarnedByHero !== undefined ? { xpEarnedByHero } : {}),
+    ...(heroStartLevelByUid !== undefined ? { heroStartLevelByUid } : {})
   }
 }
 
@@ -1298,6 +1365,7 @@ export function restoreBattleState(state: GameState, snapshot: unknown): boolean
       ...(u.heroId !== undefined ? { heroId: u.heroId } : {}),
       ...(u.enemyId !== undefined ? { enemyId: u.enemyId } : {}),
       stars: u.stars,
+      level: normalizeHeroLevel(u.level),
       isBoss: u.isBoss,
       ...(u.weaponId !== undefined ? { weaponId: u.weaponId } : {}),
       ...(u.armorId !== undefined ? { armorId: u.armorId } : {}),
@@ -1423,6 +1491,10 @@ export function restoreBattleState(state: GameState, snapshot: unknown): boolean
     bannerText: '',
     bannerTimer: 0,
     shake: 0,
+    xpEarnedByHero: valid.xpEarnedByHero ? { ...valid.xpEarnedByHero } : {},
+    heroStartLevelByUid: valid.heroStartLevelByUid
+      ? { ...valid.heroStartLevelByUid }
+      : Object.fromEntries(units.filter(u => u.team === 'ally').map(u => [u.uid, normalizeHeroLevel(u.level)])),
     reward: null
   }
 
@@ -1514,7 +1586,11 @@ export function serializeSave(state: GameState): SaveData {
     campaign: {
       ...state.campaign,
       clearedStageIds: state.campaign.clearedStageIds.slice(),
-      heroes: state.campaign.heroes.map(h => ({ ...h })),
+      heroes: state.campaign.heroes.map(h => {
+        const level = normalizeHeroLevel(h.level)
+        const xp = normalizeHeroXp(level, h.xp)
+        return { ...h, level, xp }
+      }),
       equipment: state.campaign.equipment.map(e => ({ ...e })),
       tactics: state.campaign.tactics.map(t => ({ ...t })),
       squadUids: state.campaign.squadUids.slice(),
@@ -1555,7 +1631,13 @@ export function loadSave(storage: StorageLike | null | undefined): SaveData | nu
         endlessBest: 'endlessBest' in camp && typeof camp.endlessBest === 'number' ? camp.endlessBest : 0,
         battlesWon: 'battlesWon' in camp && typeof camp.battlesWon === 'number' ? camp.battlesWon : 0,
         packsOpened: 'packsOpened' in camp && typeof camp.packsOpened === 'number' ? camp.packsOpened : 0,
-        heroes: camp.heroes.filter((h): h is OwnedHeroCard => typeof h === 'object' && h !== null && 'uid' in h && 'heroId' in h),
+        heroes: camp.heroes
+          .filter((h): h is OwnedHeroCard => typeof h === 'object' && h !== null && 'uid' in h && 'heroId' in h)
+          .map(h => {
+            const level = normalizeHeroLevel(h.level)
+            const xp = normalizeHeroXp(level, h.xp)
+            return { ...h, level, xp }
+          }),
         equipment: 'equipment' in camp && Array.isArray(camp.equipment)
           ? camp.equipment.filter((e): e is OwnedEquipCard => typeof e === 'object' && e !== null && 'uid' in e && 'equipId' in e)
           : [],
@@ -2194,6 +2276,7 @@ export function startChapterBattle(
       name: spec.name,
       heroId: hero.heroId,
       stars: hero.stars,
+      level: normalizeHeroLevel(hero.level),
       isBoss: false,
       weaponId: weaponOwned?.equipId,
       armorId: armorOwned?.equipId,
@@ -2253,6 +2336,7 @@ export function startChapterBattle(
       name: spawn.name ?? spec.name,
       enemyId: spawn.id,
       stars: spec.isBoss ? 3 : 1,
+      level: normalizeHeroLevel(Math.round(chapter.difficulty * 2 - 1 + (endlessWave > 0 ? endlessWave : 0) + (spec.isBoss ? 2 : 0))),
       isBoss: Boolean(spec.isBoss),
       col: spawn.col,
       row: spawn.row,
@@ -2339,6 +2423,10 @@ export function startChapterBattle(
     bannerText: useDeploy ? 'DEPLOY SQUAD' : endlessWave > 0 ? `Endless Wave ${endlessWave}` : chapter.title,
     bannerTimer: 2.1,
     shake: 0,
+    xpEarnedByHero: {},
+    heroStartLevelByUid: Object.fromEntries(
+      squad.map(h => [h.uid, normalizeHeroLevel(h.level)])
+    ),
     reward: null
   }
 
@@ -4565,6 +4653,40 @@ function addFloat(battle: BattleState, x: number, y: number, z: number, text: st
   })
 }
 
+function awardHeroBattleXp(
+  state: GameState,
+  heroUnit: BattleUnit,
+  amount: number
+): void {
+  const battle = state.battle
+  if (!battle || heroUnit.team !== 'ally' || amount <= 0) return
+  const owned = getHeroByUid(state.campaign, heroUnit.uid)
+  if (!owned) return
+
+  const res = grantHeroXp(owned, amount)
+  if (res.xpGained <= 0) return
+
+  battle.xpEarnedByHero[heroUnit.uid] = (battle.xpEarnedByHero[heroUnit.uid] ?? 0) + res.xpGained
+  addFloat(battle, heroUnit.x, heroUnit.y + 0.72, heroUnit.z, `+${res.xpGained} XP`, '#7ef0ff')
+
+  if (res.levelsGained > 0) {
+    const oldBonus = levelStatBonuses(owned.heroId, res.oldLevel)
+    const newBonus = levelStatBonuses(owned.heroId, res.newLevel)
+    const hpGain = Math.max(0, newBonus.hp - oldBonus.hp)
+    heroUnit.level = res.newLevel
+    heroUnit.maxHp += hpGain
+    if (heroUnit.alive && hpGain > 0) {
+      heroUnit.hp = Math.min(heroUnit.maxHp, heroUnit.hp + hpGain)
+    }
+    heroUnit.atk += newBonus.atk - oldBonus.atk
+    heroUnit.def += newBonus.def - oldBonus.def
+    heroUnit.speed = clamp(heroUnit.speed + (newBonus.speed - oldBonus.speed), 4, 24)
+    heroUnit.crit = clamp(heroUnit.crit + (newBonus.crit - oldBonus.crit), 0, 0.85)
+    addFloat(battle, heroUnit.x, heroUnit.y + 1.08, heroUnit.z, `LEVEL UP! LV ${res.newLevel}`, '#ffe16b')
+    state.vfx.push({ kind: 'levelup', at: [heroUnit.x, heroUnit.y + 0.5, heroUnit.z] })
+  }
+}
+
 function applyDamage(
   state: GameState,
   attacker: BattleUnit | null,
@@ -4661,6 +4783,12 @@ function applyDamage(
   if (defender.hp <= 0) {
     handleUnitDefeat(state, defender)
   }
+
+  if (attacker && attacker.team === 'ally' && defender.team === 'enemy' && (finalDmg > 0 || absorbed > 0)) {
+    const koBonus = defender.hp <= 0 ? (defender.isBoss ? XP_ACTION_BOSS_KO : XP_ACTION_KO) : 0
+    awardHeroBattleXp(state, attacker, XP_ACTION_DAMAGE + koBonus)
+  }
+
   return finalDmg
 }
 
@@ -4980,6 +5108,8 @@ function awardBattleVictory(state: GameState): void {
       uid: allocUid(campaign, 'hero'),
       heroId: hSpec.id,
       stars: 1,
+      level: 1,
+      xp: 0,
       weaponUid: null,
       armorUid: null,
       relicUid: null
@@ -4998,6 +5128,8 @@ function awardBattleVictory(state: GameState): void {
         uid: allocUid(campaign, 'hero'),
         heroId: chapter.rewardHeroId,
         stars: 1,
+        level: 1,
+        xp: 0,
         weaponUid: null,
         armorUid: null,
         relicUid: null
@@ -5019,6 +5151,8 @@ function awardBattleVictory(state: GameState): void {
         uid: allocUid(campaign, 'hero'),
         heroId: hSpec.id,
         stars: 1,
+        level: 1,
+        xp: 0,
         weaponUid: null,
         armorUid: null,
         relicUid: null
@@ -5031,6 +5165,30 @@ function awardBattleVictory(state: GameState): void {
     }
   }
 
+  const heroXpGains: BattleHeroXpGain[] = []
+  for (const u of battle.units) {
+    if (u.team !== 'ally' || !u.heroId) continue
+    const survived = u.alive
+    const bonusXp = victoryXpBonus(chapter.difficulty, battle.endlessWave, survived)
+    awardHeroBattleXp(state, u, bonusXp)
+    const owned = getHeroByUid(campaign, u.uid)
+    const oldLevel = battle.heroStartLevelByUid[u.uid] ?? normalizeHeroLevel(owned?.level ?? u.level)
+    const progress = heroLevelProgress(owned?.level ?? u.level, owned?.xp)
+    heroXpGains.push({
+      uid: u.uid,
+      heroId: u.heroId,
+      name: u.name,
+      xpGained: battle.xpEarnedByHero[u.uid] ?? 0,
+      oldLevel,
+      newLevel: progress.level,
+      levelsGained: Math.max(0, progress.level - oldLevel),
+      currentXp: progress.xp,
+      xpForNext: progress.xpForNext,
+      isMaxLevel: progress.isMaxLevel,
+      survived
+    })
+  }
+
   const reward: BattleReward = {
     gold,
     equipCard,
@@ -5041,7 +5199,8 @@ function awardBattleVictory(state: GameState): void {
     firstClear,
     specialRewardsClaimed,
     unlockedSlot4,
-    campaignWon
+    campaignWon,
+    heroXpGains
   }
   battle.reward = reward
   battle.bannerText = 'VICTORY!'
@@ -5202,6 +5361,10 @@ function executePincerFollowUp(state: GameState, attacker: BattleUnit, target: B
     if (target.hp <= 0) {
       handleUnitDefeat(state, target)
     }
+    if (assister.team === 'ally' && target.team === 'enemy' && (finalDmg > 0 || absorbed > 0)) {
+      const koBonus = target.hp <= 0 ? (target.isBoss ? XP_ACTION_BOSS_KO : XP_ACTION_KO) : 0
+      awardHeroBattleXp(state, assister, XP_ACTION_DAMAGE + koBonus)
+    }
   }
   return totalDealt
 }
@@ -5260,6 +5423,10 @@ function executeCounterAttack(state: GameState, defender: BattleUnit, attacker: 
 
   if (attacker.hp <= 0) {
     handleUnitDefeat(state, attacker)
+  }
+  if (defender.team === 'ally' && attacker.team === 'enemy' && (hpDmg > 0 || absorbed > 0)) {
+    const koBonus = attacker.hp <= 0 ? (attacker.isBoss ? XP_ACTION_BOSS_KO : XP_ACTION_KO) : 0
+    awardHeroBattleXp(state, defender, XP_ACTION_DAMAGE + koBonus)
   }
   checkBattleOutcome(state)
 
@@ -5381,12 +5548,15 @@ function executeHeroSkill(
     cells: cellCentres(battle, affected)
   })
   let hitAny = false
+  let supportXp = 0
 
   if (skill.target === 'self') {
     for (const c of affected) {
       const downed = skill.canRevive ? downedHeroAt(battle, c.col, c.row) : undefined
       if (downed && downed.team === caster.team) {
-        reviveHero(state, downed, computeReviveHp(downed, skill.reviveHpRatio), skill.shieldAmount)
+        if (reviveHero(state, downed, computeReviveHp(downed, skill.reviveHpRatio), skill.shieldAmount)) {
+          supportXp += XP_ACTION_REVIVE
+        }
         if (skill.status && isBeneficialStatus(skill.status)) applyStatus(battle, downed, skill.status, skill.statusStacks)
         hitAny = true
         continue
@@ -5394,6 +5564,7 @@ function executeHeroSkill(
       const ally = unitAt(battle, c.col, c.row)
       if (!ally || ally.team !== caster.team) continue
       applyHealAndShield(state, ally, skill.healAmount, skill.shieldAmount)
+      if (skill.healAmount > 0 || skill.shieldAmount > 0) supportXp += XP_ACTION_SUPPORT
       if (skill.status && isBeneficialStatus(skill.status)) applyStatus(battle, ally, skill.status, skill.statusStacks)
       hitAny = true
     }
@@ -5403,7 +5574,9 @@ function executeHeroSkill(
     for (const c of affected) {
       const downed = skill.canRevive ? downedHeroAt(battle, c.col, c.row) : undefined
       if (downed && downed.team === caster.team) {
-        reviveHero(state, downed, computeReviveHp(downed, skill.reviveHpRatio), skill.shieldAmount)
+        if (reviveHero(state, downed, computeReviveHp(downed, skill.reviveHpRatio), skill.shieldAmount)) {
+          supportXp += XP_ACTION_REVIVE
+        }
         if (skill.status && isBeneficialStatus(skill.status)) applyStatus(battle, downed, skill.status, skill.statusStacks)
         hitAny = true
         continue
@@ -5411,6 +5584,7 @@ function executeHeroSkill(
       const unit = unitAt(battle, c.col, c.row)
       if (!unit) continue
       applyHealAndShield(state, unit, skill.healAmount, skill.shieldAmount)
+      if (unit.team === caster.team && (skill.healAmount > 0 || skill.shieldAmount > 0)) supportXp += XP_ACTION_SUPPORT
       if (skill.status && isBeneficialStatus(skill.status)) applyStatus(battle, unit, skill.status, skill.statusStacks)
       hitAny = true
     }
@@ -5433,7 +5607,9 @@ function executeHeroSkill(
       if (isDawnsJudgmentSafe && skill.canRevive) {
         const downed = downedHeroAt(battle, c.col, c.row)
         if (downed && downed.team === caster.team) {
-          reviveHero(state, downed, computeReviveHp(downed, skill.reviveHpRatio), skill.shieldAmount)
+          if (reviveHero(state, downed, computeReviveHp(downed, skill.reviveHpRatio), skill.shieldAmount)) {
+            supportXp += XP_ACTION_REVIVE
+          }
           hitAny = true
           continue
         }
@@ -5454,6 +5630,7 @@ function executeHeroSkill(
       if (target.uid === caster.uid && !(col === caster.col && row === caster.row)) continue
       if (isDawnsJudgmentSafe && target.team === caster.team) {
         applyHealAndShield(state, target, skill.healAmount, skill.shieldAmount)
+        if (skill.healAmount > 0 || skill.shieldAmount > 0) supportXp += XP_ACTION_SUPPORT
         hitAny = true
         continue
       }
@@ -5506,6 +5683,10 @@ function executeHeroSkill(
     ) {
       executeCounterAttack(state, counterCandidate.target, caster)
     }
+  }
+
+  if (supportXp > 0 && caster.team === 'ally') {
+    awardHeroBattleXp(state, caster, supportXp)
   }
 
   if (!hitAny) {

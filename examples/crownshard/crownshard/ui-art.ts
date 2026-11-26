@@ -1,10 +1,12 @@
 import type { CanvasWidgetDrawState, LayoutRect } from 'ridgetop/ui'
 import type {
-  BattleUnit, ChapterSpec, CombatForecast, CombatForecastAlt, DifficultyLevel, ElementalComboPreview, EquipSlot, EquipmentSpec,
-  FacingDir, FacingExposureLevel, HeroSpec, LandmarkKind, OwnedHeroCard, PackRevealItem, PackSpec,
-  Rarity, SkillSpec, StatusKind, TacticCardSpec, TurnOrderActionPreview, TurnPreviewEntry
+  BattleHeroXpGain, BattleUnit, ChapterSpec, CombatForecast, CombatForecastAlt, DifficultyLevel,
+  ElementalComboPreview, EquipSlot, EquipmentSpec, FacingDir, FacingExposureLevel, HeroSpec,
+  LandmarkKind, OwnedHeroCard, PackRevealItem, PackSpec, Rarity, SkillSpec, StatusKind,
+  TacticCardSpec, TurnOrderActionPreview, TurnPreviewEntry
 } from './types.ts'
 import { DIFFICULTY_META, RARITY_META, RARITY_ORDER } from './data.ts'
+import { heroLevelProgress } from './leveling.ts'
 
 // ===========================================================================
 // Stylized Game UI Tokens
@@ -2213,7 +2215,8 @@ export function drawUnitCard(
   unit: BattleUnit | undefined,
   portrait: CanvasImageSource | undefined,
   speedValue: number,
-  roleLabel: string
+  roleLabel: string,
+  xpProgress?: { readonly xp: number; readonly xpForNext: number; readonly ratio: number; readonly isMaxLevel: boolean }
 ) {
   const ally = !unit || unit.team === 'ally'
   const team = ally ? COLOR.ally : COLOR.enemy
@@ -2267,9 +2270,21 @@ export function drawUnitCard(
     bg: ally ? '#16355e' : '#541826',
     border: COLOR.outline
   })
-  const unitBadges = getUnitStatusBadges(unit)
-  let badgeX = tx + roleW + 4
   const badgeMaxX = x + w - pad
+  let badgeX = tx + roleW + 4
+  const lvLabel = `Lv.${unit.level ?? 1}`
+  const lvEstW = Math.round(measureText(ctx, lvLabel, 8.5, 800, true) + 12)
+  if (badgeX + lvEstW <= badgeMaxX) {
+    const lvW = drawChip(ctx, badgeX, py + 20, lvLabel, {
+      h: 16,
+      size: 8.5,
+      color: ally ? '#8ef5ff' : '#ffd6a8',
+      bg: ally ? '#112a4a' : '#4a1d28',
+      border: COLOR.outline
+    })
+    badgeX += lvW + 3
+  }
+  const unitBadges = getUnitStatusBadges(unit)
   for (const b of unitBadges) {
     const estW = Math.round(measureText(ctx, b.text, 8, 800, true) + 12)
     if (badgeX + estW > badgeMaxX) break
@@ -2312,18 +2327,30 @@ export function drawUnitCard(
       stroke: true,
       strokeWidth: 2
     })
+    if (ally && xpProgress && barW > 24) {
+      const xpY = barY + barH + (unit.shield > 0 ? 7 : 3)
+      if (xpY + 4 <= y + faceH - 2) {
+        drawBar(ctx, barX, xpY, barW, 4, xpProgress.ratio, xpProgress.isMaxLevel ? COLOR.accent : COLOR.ap, COLOR.wellDeep)
+      }
+    }
     return
   }
 
-  // Crisp HP readout + shield
+  // Crisp HP readout + shield (and compact XP bar for allies on the right)
+  const showXpBar = ally && xpProgress !== undefined && barW >= 96
+  const xpBarW = showXpBar ? Math.min(68, Math.max(36, Math.round(barW * 0.34))) : 0
   drawText(ctx, `HP ${unit.hp}/${unit.maxHp}${unit.shield > 0 ? ` +${unit.shield}` : ''}`, barX + 2, barY + barH + 10, {
     size: 10.5,
     weight: 900,
     color: '#e8f0ff',
-    maxW: barW - 4,
+    maxW: barW - (showXpBar ? xpBarW + 8 : 4),
     display: true,
     shadow: true
   })
+  if (showXpBar && xpProgress) {
+    const xpBarX = barX + barW - xpBarW
+    drawBar(ctx, xpBarX, barY + barH + 7, xpBarW, 6, xpProgress.ratio, xpProgress.isMaxLevel ? COLOR.accent : COLOR.ap, COLOR.wellDeep)
+  }
 
   // Chunky outlined stat pills along bottom
   const stats: [IconName, number, string][] = [['sword', unit.atk, '#ffaa54'], ['shield', unit.def, '#69c2ff'], ['bolt', speedValue, '#ffe066']]
@@ -3397,10 +3424,15 @@ export function drawHeroRosterCard(
   }
 
   const faceH = drawH - (pressed ? 1 : 3)
+  const prog = heroLevelProgress(o.hero.level, o.hero.xp)
+  const lvText = `Lv.${prog.level}`
   if (o.token) {
-    const ps = Math.min(w - 10, faceH - 18)
-    drawPortraitTile(ctx, x + (w - ps) / 2, y + 4, ps, o.portrait, { ring: meta.hex, ringW: 2 })
-    drawStars(ctx, x + w / 2, y + faceH - 7, o.hero.stars, 3, 8.5, 'center')
+    const ps = Math.min(w - 10, faceH - 20)
+    const px = x + (w - ps) / 2
+    drawPortraitTile(ctx, px, y + 3, ps, o.portrait, { ring: meta.hex, ringW: 2 })
+    drawBar(ctx, px + 2, y + 3 + ps + 1.5, Math.max(8, ps - 4), 3.5, prog.ratio, prog.isMaxLevel ? COLOR.accent : COLOR.ap, COLOR.wellDeep)
+    drawStars(ctx, x + w / 2, y + faceH - 6.5, o.hero.stars, 3, 8, 'center')
+    drawChip(ctx, x + 3, y + 3, lvText, { h: 13, size: 7.5, color: '#a8f2ff', bg: '#102442e8', border: COLOR.outline })
     if (o.inSquad) {
       ctx.beginPath()
       ctx.arc(x + w - 8, y + 8, 5, 0, Math.PI * 2)
@@ -3412,7 +3444,7 @@ export function drawHeroRosterCard(
     }
     if (o.readyMerge) {
       ctx.beginPath()
-      ctx.arc(x + 8, y + 8, 5, 0, Math.PI * 2)
+      ctx.arc(x + w - 8, y + 20, 4.5, 0, Math.PI * 2)
       ctx.fillStyle = COLOR.accent
       ctx.fill()
       ctx.strokeStyle = COLOR.outline
@@ -3428,18 +3460,32 @@ export function drawHeroRosterCard(
   drawPortraitTile(ctx, x + 6, y + 5, ps, o.portrait, { ring: meta.hex, ringW: 2 })
   const tx = x + ps + 14
   const right = x + w - 10
-  const badgeW = o.inSquad ? 48 : 0
-  drawText(ctx, o.spec.name, tx, y + faceH * 0.32, { size: 13, weight: 900, maxW: right - tx - badgeW - 4, display: true, stroke: true, strokeWidth: 2 })
-  const sw = drawStars(ctx, tx, y + faceH * 0.72, o.hero.stars, 3, 9.5)
+  let rightUsed = 0
+  if (o.inSquad) {
+    rightUsed += drawChip(ctx, right, y + faceH * 0.28 - 8, 'SQUAD', { h: 16, size: 8, color: '#072e17', bg: COLOR.good, border: COLOR.outline, align: 'right' }) + 4
+  }
+  rightUsed += drawChip(ctx, right - rightUsed, y + faceH * 0.28 - 8, lvText, {
+    h: 16,
+    size: 8.5,
+    color: prog.isMaxLevel ? COLOR.accentHi : '#8ef5ff',
+    bg: '#132b4f',
+    border: COLOR.outline,
+    align: 'right'
+  }) + 4
+  drawText(ctx, o.spec.name, tx, y + faceH * 0.28, { size: 13, weight: 900, maxW: Math.max(12, right - tx - rightUsed), display: true, stroke: true, strokeWidth: 2 })
+  const sw = drawStars(ctx, tx, y + faceH * 0.62, o.hero.stars, 3, 9)
   if (o.hero.stars < 3 && o.need > 0) {
     const bx = tx + sw + 7
     const bw = Math.max(0, right - bx - 30)
-    if (bw > 16) drawBar(ctx, bx, y + faceH * 0.72 - 3.5, bw, 7, o.copies / o.need, o.readyMerge ? COLOR.accent : COLOR.ally)
-    drawText(ctx, `${o.copies}/${o.need}`, right, y + faceH * 0.72 + 0.5, { size: 10, weight: 900, color: o.readyMerge ? COLOR.accentHi : COLOR.muted, align: 'right', display: true })
+    if (bw > 16) drawBar(ctx, bx, y + faceH * 0.62 - 3, bw, 6, o.copies / o.need, o.readyMerge ? COLOR.accent : COLOR.ally)
+    drawText(ctx, `${o.copies}/${o.need}`, right, y + faceH * 0.62 + 0.5, { size: 9.5, weight: 900, color: o.readyMerge ? COLOR.accentHi : COLOR.muted, align: 'right', display: true })
   } else {
-    drawText(ctx, 'MAX', right, y + faceH * 0.72 + 0.5, { size: 10, weight: 900, color: COLOR.accentHi, align: 'right', display: true })
+    drawText(ctx, 'MAX', right, y + faceH * 0.62 + 0.5, { size: 9.5, weight: 900, color: COLOR.accentHi, align: 'right', display: true })
   }
-  if (o.inSquad) drawChip(ctx, right, y + faceH * 0.32 - 8.5, 'SQUAD', { h: 17, size: 8.5, color: '#072e17', bg: COLOR.good, border: COLOR.outline, align: 'right' })
+  const xpBarW = Math.max(0, right - tx)
+  if (xpBarW > 18) {
+    drawBar(ctx, tx, y + faceH - 6.5, xpBarW, 4, prog.ratio, prog.isMaxLevel ? COLOR.accent : COLOR.ap, COLOR.wellDeep)
+  }
   ctx.restore()
   if (st.focused) drawFocusRing(ctx, x, y, w, drawH, r)
 }
@@ -3447,19 +3493,45 @@ export function drawHeroRosterCard(
 export function drawHeroHeader(
   ctx: CanvasRenderingContext2D,
   rect: LayoutRect,
-  o: { name: string; title: string; stars: number; rarity: Rarity; power: number; portrait?: CanvasImageSource; inSquad: boolean }
+  o: { name: string; title: string; stars: number; rarity: Rarity; power: number; portrait?: CanvasImageSource; inSquad: boolean; level?: number; xp?: number }
 ) {
   const meta = RARITY_META[o.rarity]
+  const prog = heroLevelProgress(o.level, o.xp)
   const { x, y, width: w, height: h } = rect
   const ps = h
   drawPortraitTile(ctx, x, y, ps, o.portrait, { ring: meta.hex, ringW: 2.5, bg: '#3e598c' })
   const tx = x + ps + 12
   const powerW = 86
-  drawText(ctx, o.name, tx, y + h * 0.28, { size: 19, weight: 900, maxW: w - ps - 12 - powerW, display: true, stroke: true, strokeWidth: 3 })
-  const sw = drawStars(ctx, tx, y + h * 0.74, o.stars, 3, 13)
-  let cx = tx + sw + 10
-  cx += drawChip(ctx, cx, y + h * 0.74 - 9.5, o.title, { h: 19, size: 10, color: '#ffffff', bg: '#2c3d66', border: COLOR.outline }) + 6
-  if (cx + 70 < x + w - powerW) drawChip(ctx, cx, y + h * 0.74 - 9.5, meta.label, { h: 19, size: 10, color: meta.hex, bg: COLOR.wellDeep, border: COLOR.outline })
+  const midRight = x + w - powerW
+  const lvLabel = `Lv.${prog.level}`
+  const lvW = drawChip(ctx, midRight, y + h * 0.24 - 8.5, lvLabel, {
+    h: 17,
+    size: 9.5,
+    color: prog.isMaxLevel ? COLOR.accentHi : '#8ef5ff',
+    bg: '#132b4f',
+    border: COLOR.outline,
+    align: 'right'
+  })
+  drawText(ctx, o.name, tx, y + h * 0.24, { size: 18, weight: 900, maxW: Math.max(20, midRight - tx - lvW - 6), display: true, stroke: true, strokeWidth: 3 })
+  const sw = drawStars(ctx, tx, y + h * 0.58, o.stars, 3, 12)
+  let cx = tx + sw + 8
+  cx += drawChip(ctx, cx, y + h * 0.58 - 8.5, o.title, { h: 17, size: 9.5, color: '#ffffff', bg: '#2c3d66', border: COLOR.outline }) + 5
+  if (cx + 64 < midRight) drawChip(ctx, cx, y + h * 0.58 - 8.5, meta.label, { h: 17, size: 9.5, color: meta.hex, bg: COLOR.wellDeep, border: COLOR.outline })
+
+  // Compact XP progress bar + readout along the bottom edge of the inspector header
+  const xpText = prog.isMaxLevel ? 'MAX LV' : `${prog.xp}/${prog.xpForNext} XP`
+  const xpTextW = Math.round(measureText(ctx, xpText, 9, 800, true)) + 4
+  const xpBarW = Math.max(0, midRight - tx - xpTextW - 6)
+  if (xpBarW > 18) {
+    drawBar(ctx, tx, y + h - 7, xpBarW, 5.5, prog.ratio, prog.isMaxLevel ? COLOR.accent : COLOR.ap, COLOR.wellDeep)
+  }
+  drawText(ctx, xpText, midRight, y + h - 4, {
+    size: 9,
+    weight: 800,
+    color: prog.isMaxLevel ? COLOR.accentHi : '#8ef5ff',
+    align: 'right',
+    display: true
+  })
 
   // Power crest badge on right
   const pw = 76
@@ -7203,6 +7275,96 @@ export function drawRewardRowAnimated(
     ctx.fillRect(rect.x, rect.y, rect.width, rect.height)
     ctx.restore()
   }
+  ctx.restore()
+}
+
+/** Victory summary strip displaying each deployed hero's Lv.N, +XP gain, XP bar, and LEVEL UP! badge. */
+export function drawHeroXpSummaryAnimated(
+  ctx: CanvasRenderingContext2D,
+  rect: LayoutRect,
+  gains: readonly BattleHeroXpGain[],
+  portraits: Readonly<Record<string, CanvasImageSource | undefined>>,
+  revealT: number
+) {
+  if (gains.length === 0) return
+  const t = Math.max(0, Math.min(1, revealT))
+  if (t <= 0.01) return
+  const eased = easeOutCubic(t)
+  const slide = (1 - eased) * 18
+
+  ctx.save()
+  ctx.globalAlpha = Math.min(1, t * 1.4)
+  ctx.translate(slide, 0)
+  drawSurface(ctx, rect, { r: RADIUS.md, lipH: 3, fill: '#26365c', fillBot: '#192340', shadow: false })
+
+  const { x, y, width: w, height: h } = rect
+  const faceH = h - 3
+  const pad = 7
+  const gap = 6
+  const cols = gains.length
+  const colW = (w - pad * 2 - gap * (cols - 1)) / cols
+  const ps = Math.min(34, Math.max(22, faceH - 22))
+
+  for (let i = 0; i < cols; i++) {
+    const g = gains[i]
+    const cx = x + pad + i * (colW + gap)
+    const leveled = g.levelsGained > 0
+    rr(ctx, cx, y + 4, colW, faceH - 8, RADIUS.sm)
+    ctx.fillStyle = leveled ? '#2c3d68' : COLOR.wellDeep
+    ctx.fill()
+    ctx.strokeStyle = leveled ? COLOR.accent : COLOR.outline
+    ctx.lineWidth = leveled ? 1.8 : 1.5
+    ctx.stroke()
+
+    const px = cx + 5
+    const py = y + 8
+    drawPortraitTile(ctx, px, py, ps, portraits[g.uid] ?? portraits[g.heroId], {
+      ring: leveled ? COLOR.accentHi : COLOR.ally,
+      ringW: 2,
+      r: 7
+    })
+
+    const tx = px + ps + 6
+    const tw = Math.max(12, cx + colW - 5 - tx)
+    drawText(ctx, `Lv.${g.newLevel}`, tx, py + 7, {
+      size: 11,
+      weight: 900,
+      color: leveled ? COLOR.accentHi : '#ffffff',
+      maxW: tw,
+      display: true,
+      shadow: true
+    })
+    drawText(ctx, `+${g.xpGained} XP`, tx, py + 19, {
+      size: 10,
+      weight: 800,
+      color: '#7ef0ff',
+      maxW: tw,
+      display: true
+    })
+    if (leveled) {
+      drawText(ctx, 'LEVEL UP!', tx, py + 30, {
+        size: 8.5,
+        weight: 900,
+        color: COLOR.accentHi,
+        maxW: tw,
+        display: true,
+        shadow: true
+      })
+    }
+
+    const ratio = g.isMaxLevel ? 1 : (g.xpForNext > 0 ? Math.min(1, g.currentXp / g.xpForNext) : 1)
+    drawBar(
+      ctx,
+      cx + 5,
+      y + faceH - 10,
+      Math.max(12, colW - 10),
+      5,
+      ratio * eased,
+      leveled || g.isMaxLevel ? COLOR.accent : COLOR.ap,
+      '#0b1020'
+    )
+  }
+
   ctx.restore()
 }
 
