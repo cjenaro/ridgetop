@@ -161,7 +161,36 @@ export type DifficultyLevel = 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8
 
 export type FacingDir = 'n' | 's' | 'e' | 'w'
 
+export const FACING_DIRS: readonly FacingDir[] = ['n', 'e', 's', 'w']
+
 export type AttackArc = 'front' | 'flank' | 'back'
+
+export type FacingExposureLevel = 'safe' | 'flank' | 'back'
+
+export interface FacingThreatEntry {
+  readonly enemyUid: string
+  readonly enemyName: string
+  readonly arc: AttackArc
+  readonly inRangeNow: boolean
+  readonly canReachNextTurn: boolean
+  readonly distance: number
+}
+
+export interface FacingExposureReport {
+  readonly facing: FacingDir
+  readonly level: FacingExposureLevel
+  readonly worstArc: AttackArc
+  readonly backstabCount: number
+  readonly flankCount: number
+  readonly threats: readonly FacingThreatEntry[]
+  readonly warningText: string | null
+}
+
+export interface FacingPickerState {
+  readonly unitUid: string
+  readonly originalFacing: FacingDir
+  previewFacing: FacingDir
+}
 
 export interface PackSpec {
   readonly id: PackId
@@ -543,6 +572,7 @@ export interface BattleState {
   moveAttackTiles: MoveAttackTile[]
   moveUndo: MoveUndoRecord | null
   pendingAction: PendingUnitAction | null
+  facingPicker: FacingPickerState | null
   enemyDelay: number
   enemyActedThisTurn: boolean
   floatingNumbers: FloatingNumber[]

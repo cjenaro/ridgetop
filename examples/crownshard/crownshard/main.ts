@@ -12,19 +12,20 @@ import {
   MERGE_COPIES_REQUIRED, PACK_BY_ID, PACK_LIST, PLAYABLE_CHAPTERS, RARITY_META, RARITY_ORDER,
   TACTIC_BY_ID, WORLD_REGIONS
 } from './data.ts'
-import { cameraCardinalHeading, createCrownshardScene } from './scene.ts'
+import { cameraAlignedFacing, cameraCardinalHeading, createCrownshardScene, facingPickerAnchor } from './scene.ts'
 import {
-  abandonBattle, armSkill, armTacticCard, autoEquipBestFit, buyPack, canBuyPack, canMergeHero, canUndoMove,
-  clearSave, computeCombatForecast, computeDangerZone, computeDeckValue, computeEnemyThreat,
-  computeHeroStats, computeSquadPower, createInitialState, createTurnBoundaryTracker, effectiveSpeed,
-  endPlayerTurn, equipItem, findBestFitUpgrades, findEquipOwner, getEquipmentByUid, getHeroByUid,
+  abandonBattle, armSkill, armTacticCard, autoEquipBestFit, beginWaitFacingPicker, buyPack, canBuyPack,
+  canMergeHero, canUndoMove, cancelWaitFacingPicker, clearSave, computeCombatForecast, computeDangerZone,
+  computeDeckValue, computeEnemyThreat, computeHeroStats, computeSquadPower, confirmWaitFacingPicker,
+  createInitialState, createTurnBoundaryTracker, effectiveSpeed, equipItem, evaluateAllFacingExposures,
+  evaluateFacingExposure, findBestFitUpgrades, findEquipOwner, getEquipmentByUid, getHeroByUid,
   getHeroSkill, getMergeCandidates, getNextRecommendedStage, getStageUnlockHint, getTacticByUid,
   getUnitByUid, isEndlessUnlocked, isStageCleared, isStageUnlocked, loadSave, maxSquadSize, mergeHero,
-  persistSave, restoreBattleState, rotateActiveUnitFacing, salvageEquipCard, salvageHeroCard,
+  persistSave, previewWaitFacing, restoreBattleState, salvageEquipCard, salvageHeroCard,
   selectHeroByUid, selectTile, serializeBattleState, shouldAutoSaveOnTurnBoundary, startChapterBattle,
   stepGame, syncTurnBoundaryTracker, toggleSquadMember, undoMove, unequipItem, unitAt
 } from './simulation.ts'
-import { cellHeightLevel } from './types.ts'
+import { FACING_DIRS, cellHeightLevel } from './types.ts'
 import type {
   BattleSaveSnapshot, BattleUnit, ChapterSpec, CombatForecast, EnemyArchetypeId, GameState, OwnedEquipCard,
   OwnedHeroCard, PackId, PackRevealItem, Rarity
@@ -112,7 +113,7 @@ const TITLE_HINTS: readonly (readonly [string, string])[] = [
   ['Click', 'Move / Strike'],
   ['1-4', 'Skills'],
   ['Q / E', 'Snap 90°'],
-  ['Space', 'End Turn']
+  ['Space', 'Wait / Face']
 ]
 
 function isEditableEventTarget(target: EventTarget | null): boolean {
@@ -339,7 +340,7 @@ async function start() {
   }
 
   function resolveActiveForecast(): CombatForecast | null {
-    if (screen !== 'battle' || !state.battle) {
+    if (screen !== 'battle' || !state.battle || state.battle.facingPicker) {
       lockedForecastCell = null
       return null
     }
@@ -558,12 +559,18 @@ async function start() {
     if (state.battle?.phase === 'player') {
       lockedForecastCell = null
       mobileHandOpen = false
-      endPlayerTurn(state)
-      if (shouldAutoSaveOnTurnBoundary(turnSaveTracker, state.battle)) {
-        saveNow()
+      if (state.battle.facingPicker) {
+        if (confirmWaitFacingPicker(state)) {
+          if (shouldAutoSaveOnTurnBoundary(turnSaveTracker, state.battle)) saveNow()
+          uiDirty = true
+          hudRev++
+        }
+      } else if (beginWaitFacingPicker(state)) {
+        scene.setHoveredCell(null)
+        scene.setForecast(null)
+        uiDirty = true
+        hudRev++
       }
-      uiDirty = true
-      hudRev++
     }
   }
 
@@ -750,6 +757,15 @@ async function start() {
       }
       return
     }
+    if (state.battle.facingPicker) {
+      if (scene.getHoveredCell()) scene.setHoveredCell(null)
+      const hit = scene.pickFacingPickerAt(state.battle, x, y, w, h)
+      if (hit && hit !== 'confirm' && previewWaitFacing(state, hit)) {
+        uiDirty = true
+        hudRev++
+      }
+      return
+    }
     const cell = scene.pickCellAt(state.battle, x, y, w, h)
     const prev = scene.getHoveredCell()
     if (prev?.col !== cell?.col || prev?.row !== cell?.row) {
@@ -813,6 +829,17 @@ async function start() {
       return
     }
 
+    // Desktop mouse: if Wait-to-Face picker is active, clicking an arrow or center ring commits facing!
+    if (state.battle.facingPicker) {
+      const hit = scene.pickFacingPickerAt(state.battle, x, y, w, h)
+      if (hit === 'confirm') {
+        if (confirmWaitFacingPicker(state)) { uiDirty = true; hudRev++ }
+      } else if (hit) {
+        if (confirmWaitFacingPicker(state, hit)) { uiDirty = true; hudRev++ }
+      }
+      return
+    }
+
     // Desktop mouse: instant Move+Attack / Strike / Move (forecast shown live on hover!)
     const cell = scene.pickCellAt(state.battle, x, y, w, h)
     if (!cell) {
@@ -850,7 +877,12 @@ async function start() {
     boardDrag = null
     if (drag.pointerType === 'mouse') {
       if (!drag.dragged && drag.button === 2 && screen === 'battle' && state.battle) {
-        if (lockedForecastCell) {
+        if (state.battle.facingPicker) {
+          if (cancelWaitFacingPicker(state)) {
+            uiDirty = true
+            hudRev++
+          }
+        } else if (lockedForecastCell) {
           lockedForecastCell = null
           uiDirty = true
           hudRev++
@@ -866,6 +898,20 @@ async function start() {
     if (drag.dragged || isTestingPaused() || screen !== 'battle' || !state.battle) return
     const { x, y, w, h } = pointerToCss(event)
     if (ui.blocksPoint(x, y)) return
+    if (state.battle.facingPicker) {
+      const hit = scene.pickFacingPickerAt(state.battle, x, y, w, h)
+      if (hit === 'confirm') {
+        if (confirmWaitFacingPicker(state)) { uiDirty = true; hudRev++ }
+      } else if (hit) {
+        if (hit === state.battle.facingPicker.previewFacing) {
+          if (confirmWaitFacingPicker(state, hit)) { uiDirty = true; hudRev++ }
+        } else if (previewWaitFacing(state, hit)) {
+          uiDirty = true
+          hudRev++
+        }
+      }
+      return
+    }
     const cell = scene.pickCellAt(state.battle, x, y, w, h)
     if (!cell) {
       if (lockedForecastCell || mobileHandOpen) {
@@ -951,6 +997,13 @@ async function start() {
     if (screen === 'battle' && state.battle) {
       if (event.code === 'Escape' && !event.repeat) {
         event.preventDefault()
+        if (state.battle.facingPicker) {
+          if (cancelWaitFacingPicker(state)) {
+            uiDirty = true
+            hudRev++
+          }
+          return
+        }
         if (lockedForecastCell || mobileHandOpen) {
           lockedForecastCell = null
           mobileHandOpen = false
@@ -961,14 +1014,36 @@ async function start() {
         setScreen('paused')
         return
       }
-      if (event.code === 'Enter' && !event.repeat && lockedForecastCell) {
-        event.preventDefault()
-        confirmLockedForecast()
-        return
+      if (event.code === 'Enter' && !event.repeat) {
+        if (state.battle.facingPicker && state.battle.phase === 'player') {
+          event.preventDefault()
+          audio.unlock()
+          if (confirmWaitFacingPicker(state)) {
+            uiDirty = true
+            hudRev++
+          }
+          return
+        }
+        if (lockedForecastCell) {
+          event.preventDefault()
+          confirmLockedForecast()
+          return
+        }
       }
       if (event.code === 'KeyF' && !event.repeat && state.battle.phase === 'player') {
         audio.unlock()
-        if (rotateActiveUnitFacing(state)) {
+        if (state.battle.facingPicker) {
+          const cur = state.battle.facingPicker.previewFacing
+          const next = FACING_DIRS[(FACING_DIRS.indexOf(cur) + 1) % FACING_DIRS.length]
+          if (previewWaitFacing(state, next)) {
+            uiDirty = true
+            hudRev++
+          }
+        } else if (beginWaitFacingPicker(state)) {
+          lockedForecastCell = null
+          mobileHandOpen = false
+          scene.setHoveredCell(null)
+          scene.setForecast(null)
           uiDirty = true
           hudRev++
         }
@@ -986,12 +1061,7 @@ async function start() {
       }
       if (event.code === 'Space' && !event.repeat && state.battle.phase === 'player') {
         event.preventDefault()
-        audio.unlock()
-        lockedForecastCell = null
-        mobileHandOpen = false
-        endPlayerTurn(state)
-        uiDirty = true
-        hudRev++
+        endBattleTurn()
         return
       }
       if (event.code === 'KeyQ' && !event.repeat) {
@@ -1007,6 +1077,40 @@ async function start() {
         uiDirty = true
         hudRev++
         return
+      }
+      if (state.battle.facingPicker && state.battle.phase === 'player') {
+        if (event.code === 'KeyW' || event.code === 'ArrowUp') {
+          event.preventDefault()
+          if (previewWaitFacing(state, cameraAlignedFacing(0, -1, scene.getCameraYawActual()))) {
+            uiDirty = true
+            hudRev++
+          }
+          return
+        }
+        if (event.code === 'KeyS' || event.code === 'ArrowDown') {
+          event.preventDefault()
+          if (previewWaitFacing(state, cameraAlignedFacing(0, 1, scene.getCameraYawActual()))) {
+            uiDirty = true
+            hudRev++
+          }
+          return
+        }
+        if (event.code === 'KeyA' || event.code === 'ArrowLeft') {
+          event.preventDefault()
+          if (previewWaitFacing(state, cameraAlignedFacing(-1, 0, scene.getCameraYawActual()))) {
+            uiDirty = true
+            hudRev++
+          }
+          return
+        }
+        if (event.code === 'KeyD' || event.code === 'ArrowRight') {
+          event.preventDefault()
+          if (previewWaitFacing(state, cameraAlignedFacing(1, 0, scene.getCameraYawActual()))) {
+            uiDirty = true
+            hudRev++
+          }
+          return
+        }
       }
       if (event.code === 'KeyA' || event.code === 'ArrowLeft') {
         scene.rotateCamera(-0.12)
@@ -2056,16 +2160,39 @@ async function start() {
     const ctBonus = active && isPlayerTurn
       ? (active.moved && active.acted ? 0 : (active.moved || active.acted) ? 20 : 40)
       : 0
+    const facingPickerState = isPlayerTurn && battle.facingPicker && active && battle.facingPicker.unitUid === active.uid
+      ? battle.facingPicker
+      : null
+    const facingPickerExposure = facingPickerState && active
+      ? evaluateFacingExposure(battle, active.uid, facingPickerState.previewFacing)
+      : null
+    const facingPickerButtonMeta = facingPickerState && facingPickerExposure
+      ? { facing: facingPickerState.previewFacing, exposureLevel: facingPickerExposure.level }
+      : null
 
     const undoAvailable = canUndoMove(battle)
     let statusLine = undoAvailable
-      ? 'Moved — strike/cast, press Z / Backspace to Undo Move, T for Danger Zone, or Space to End Turn.'
-      : 'Click [.] frame to move, [X] crosshair to strike, T for Danger Zone, or arm a skill (1-4).'
+      ? 'Moved — strike/cast, press Z / Backspace to Undo Move, T for Danger Zone, or Space Wait-to-Face.'
+      : 'Click [.] frame to move, [X] crosshair to strike, T for Danger Zone, or arm a skill (1-4). Space Wait-to-Face.'
     let statusAccent: string = COLOR.accent
     let statusImportant = undoAvailable
     if (!isPlayerTurn && active) {
       statusLine = `${active.name}'s turn - resolving maneuver...`
       statusAccent = COLOR.enemy
+      statusImportant = true
+    } else if (facingPickerState && facingPickerExposure) {
+      const dirTxt = facingPickerState.previewFacing.toUpperCase()
+      const hintKeys = isPhone ? 'Tap arrow or Confirm' : 'WASD/Arrows · Space confirm · Esc cancel'
+      if (facingPickerExposure.level === 'back') {
+        statusLine = `FACE ${dirTxt} — ${facingPickerExposure.warningText}! ${hintKeys}`
+        statusAccent = COLOR.danger
+      } else if (facingPickerExposure.level === 'flank') {
+        statusLine = `FACE ${dirTxt} — ${facingPickerExposure.warningText}. ${hintKeys}`
+        statusAccent = '#ffaa2b'
+      } else {
+        statusLine = `FACE ${dirTxt} — Front Secured! ${hintKeys}`
+        statusAccent = COLOR.good
+      }
       statusImportant = true
     } else if (battle.armedTacticUid) {
       const owned = getTacticByUid(state.campaign, battle.armedTacticUid)
@@ -2096,9 +2223,8 @@ async function start() {
     const fpsShort = `${Math.round(perf.snapshot().fps || 60)}`
     const chapterShort = battle.endlessWave > 0 ? `Endless Wave ${battle.endlessWave}` : `${ch.title} · D${battle.difficulty}`
 
-    // Top-right toolbar (compact on phone: Undo when active, Danger Zone, Face, Music, Pause)
+    // Top-right toolbar (compact on phone: Undo when active, Danger Zone, Music, Pause; Wait-to-Face lives on-board via Wait/Space/F!)
     const tbIconS = isPhone ? 28 : 30
-    const facingLabel = active ? active.facing.toUpperCase() : 'E'
     const camYawActual = scene.getCameraYawActual()
     const camHeading = cameraCardinalHeading(camYawActual)
     const showUndoBtn = isPhone ? undoAvailable : (isPlayerTurn && Boolean(active && active.team === 'ally'))
@@ -2133,22 +2259,6 @@ async function start() {
           })
         }
       }),
-      ...(isPlayerTurn && active && active.team === 'ally' ? [
-        boxNode({
-          id: 'tb-face-turn', style: { width: isPhone ? 46 : 56, height: tbIconS },
-          widget: {
-            type: 'button', label: `Face ${facingLabel} (F)`,
-            onPress: () => {
-              audio.unlock()
-              if (rotateActiveUnitFacing(state)) { uiDirty = true; hudRev++ }
-            },
-            draw: (ctx: CanvasRenderingContext2D, rect: LayoutRect, st: CanvasWidgetDrawState) => drawIconButton(ctx, rect, 'rotate-right', st, {
-              label: facingLabel,
-              color: COLOR.accentHi
-            })
-          }
-        })
-      ] : []),
       ...(isPhone ? [] : [
         boxNode({
           id: 'tb-cam-up', style: { width: tbIconS, height: tbIconS },
@@ -2308,11 +2418,11 @@ async function start() {
             id: 'cs-end-turn', style: { width: 84, height: topRowH },
             widget: {
               type: 'button',
-              label: !isPlayerTurn ? 'Enemy' : ctBonus > 0 ? `Wait (+${ctBonus} CT)` : 'End Turn',
+              label: !isPlayerTurn ? 'Enemy' : facingPickerButtonMeta ? `Confirm Face ${facingPickerButtonMeta.facing.toUpperCase()}` : ctBonus > 0 ? `Wait (+${ctBonus} CT)` : 'End Turn',
               primary: isPlayerTurn,
               disabled: !isPlayerTurn,
               onPress: endBattleTurn,
-              draw: (ctx: CanvasRenderingContext2D, rect: LayoutRect, st: CanvasWidgetDrawState) => drawEndTurnButton(ctx, rect, { isPlayerTurn, ctBonus }, st)
+              draw: (ctx: CanvasRenderingContext2D, rect: LayoutRect, st: CanvasWidgetDrawState) => drawEndTurnButton(ctx, rect, { isPlayerTurn, ctBonus, facingPicker: facingPickerButtonMeta }, st)
             }
           })
         ]),
@@ -2374,11 +2484,11 @@ async function start() {
           id: 'cs-end-turn', style: { width: 88, height: innerH },
           widget: {
             type: 'button',
-            label: !isPlayerTurn ? 'Enemy' : ctBonus > 0 ? `Wait (+${ctBonus} CT)` : 'End Turn',
+            label: !isPlayerTurn ? 'Enemy' : facingPickerButtonMeta ? `Confirm Face ${facingPickerButtonMeta.facing.toUpperCase()}` : ctBonus > 0 ? `Wait (+${ctBonus} CT)` : 'End Turn',
             primary: isPlayerTurn,
             disabled: !isPlayerTurn,
             onPress: endBattleTurn,
-            draw: (ctx: CanvasRenderingContext2D, rect: LayoutRect, st: CanvasWidgetDrawState) => drawEndTurnButton(ctx, rect, { isPlayerTurn, ctBonus }, st)
+            draw: (ctx: CanvasRenderingContext2D, rect: LayoutRect, st: CanvasWidgetDrawState) => drawEndTurnButton(ctx, rect, { isPlayerTurn, ctBonus, facingPicker: facingPickerButtonMeta }, st)
           }
         })
       ])
@@ -2442,11 +2552,11 @@ async function start() {
           style: { width: narrow ? 96 : 112, height: innerH },
           widget: {
             type: 'button',
-            label: !isPlayerTurn ? 'Enemy...' : ctBonus > 0 ? `Wait (+${ctBonus} CT)` : 'End Turn',
+            label: !isPlayerTurn ? 'Enemy...' : facingPickerButtonMeta ? `Confirm Face ${facingPickerButtonMeta.facing.toUpperCase()}` : ctBonus > 0 ? `Wait (+${ctBonus} CT)` : 'End Turn',
             primary: isPlayerTurn,
             disabled: !isPlayerTurn,
             onPress: endBattleTurn,
-            draw: (ctx: CanvasRenderingContext2D, rect: LayoutRect, st: CanvasWidgetDrawState) => drawEndTurnButton(ctx, rect, { isPlayerTurn, ctBonus }, st)
+            draw: (ctx: CanvasRenderingContext2D, rect: LayoutRect, st: CanvasWidgetDrawState) => drawEndTurnButton(ctx, rect, { isPlayerTurn, ctBonus, facingPicker: facingPickerButtonMeta }, st)
           }
         })
       ])
@@ -2785,21 +2895,58 @@ async function start() {
         }
       }, timelineNodes),
 
-      // Context hint pill right above bottom dock (hidden on phone when idle or when forecast/hand open)
-      ...(showHintPill ? [boxNode({
-        id: 'dock-status-ribbon',
-        style: {
-          anchor: 'bottom',
-          width: Math.min(w - 20, 580),
-          height: 26,
-          inset: [8, dockH + 12],
-          respectSafeArea: true
-        },
-        widget: {
-          type: 'panel',
-          draw: (ctx: CanvasRenderingContext2D, rect: LayoutRect) => drawHintPill(ctx, rect, statusLine, statusAccent)
-        }
-      })] : []),
+      // Context hint pill right above bottom dock (with one-click Cancel when Wait-to-Face picker is active!)
+      ...(showHintPill ? [facingPickerState
+        ? row({
+            id: 'dock-facing-ribbon',
+            style: {
+              anchor: 'bottom',
+              width: Math.min(w - 16, 650),
+              height: 28,
+              inset: [8, dockH + 12],
+              gap: 6,
+              align: 'center',
+              respectSafeArea: true
+            }
+          }, [
+            boxNode({
+              id: 'dock-status-ribbon',
+              style: { grow: 1, height: 28 },
+              widget: {
+                type: 'panel',
+                draw: (ctx: CanvasRenderingContext2D, rect: LayoutRect) => drawHintPill(ctx, rect, statusLine, statusAccent)
+              }
+            }),
+            boxNode({
+              id: 'cs-cancel-facing',
+              style: { width: isPhone ? 72 : 96, height: 28 },
+              widget: {
+                type: 'button',
+                label: 'Cancel (Esc)',
+                onPress: () => {
+                  audio.unlock()
+                  if (cancelWaitFacingPicker(state)) { uiDirty = true; hudRev++ }
+                },
+                draw: (ctx: CanvasRenderingContext2D, rect: LayoutRect, st: CanvasWidgetDrawState) => drawButton(
+                  ctx, rect, isPhone ? 'Cancel' : 'Cancel (Esc)', st, { variant: 'secondary', size: 11 }
+                )
+              }
+            })
+          ])
+        : boxNode({
+            id: 'dock-status-ribbon',
+            style: {
+              anchor: 'bottom',
+              width: Math.min(w - 20, 580),
+              height: 26,
+              inset: [8, dockH + 12],
+              respectSafeArea: true
+            },
+            widget: {
+              type: 'panel',
+              draw: (ctx: CanvasRenderingContext2D, rect: LayoutRect) => drawHintPill(ctx, rect, statusLine, statusAccent)
+            }
+          })] : []),
 
       ...forecastNodes,
       ...phoneHandNodes,
@@ -4292,7 +4439,67 @@ async function start() {
       g.text(fn.text, p.x, p.y, { fill: fn.color, size: 17, weight: 900, align: 'center' })
     }
 
-    if (hovered && g.width >= 660) {
+    // World-space Wait-to-Face directional arrow badges & live exposure warnings
+    if (battle.facingPicker && battle.phase === 'player') {
+      const pickerUnit = getUnitByUid(battle, battle.facingPicker.unitUid)
+      if (pickerUnit && pickerUnit.alive) {
+        const exposures = evaluateAllFacingExposures(battle, pickerUnit.uid)
+        for (const dir of FACING_DIRS) {
+          const [ax, ay, az] = facingPickerAnchor(battle, pickerUnit, dir)
+          const p = scene.project(ax, ay + 0.22, az, g.width, g.height)
+          if (!p) continue
+          const exp = exposures[dir]
+          const isSel = battle.facingPicker.previewFacing === dir
+          const dirChar = dir.toUpperCase()
+          const tag = exp.level === 'back'
+            ? `${dirChar} · BACK!`
+            : exp.level === 'flank'
+              ? `${dirChar} · FLANK`
+              : isSel
+                ? `${dirChar} · SAFE`
+                : dirChar
+          const pw = Math.max(isSel ? 54 : 26, Math.round(tag.length * 6.5 + 14))
+          const ph = isSel ? 21 : 18
+          const fill = exp.level === 'back'
+            ? (isSel ? '#6e1622' : '#4a121de6')
+            : exp.level === 'flank'
+              ? (isSel ? '#66410c' : '#472f0de6')
+              : (isSel ? '#124a3de6' : '#1b2848e0')
+          const stroke = exp.level === 'back'
+            ? COLOR.danger
+            : exp.level === 'flank'
+              ? '#ffaa2b'
+              : isSel
+                ? COLOR.good
+                : COLOR.borderHi
+          const textColor = exp.level === 'back'
+            ? '#ffd0d4'
+            : exp.level === 'flank'
+              ? '#ffe2a6'
+              : isSel
+                ? '#c8ffe8'
+                : '#e6f2ff'
+          const bx = Math.round(p.x - pw / 2)
+          const by = Math.round(p.y - ph / 2)
+          g.panel(bx, by, pw, ph, { fill, stroke, radius: Math.round(ph / 2) })
+          g.text(tag, p.x, by + (isSel ? 5 : 3.5), { fill: textColor, size: isSel ? 10 : 9.5, weight: 900, align: 'center' })
+        }
+        const centerP = scene.project(pickerUnit.x, pickerUnit.y + 0.14, pickerUnit.z, g.width, g.height)
+        if (centerP) {
+          const cTag = 'CONFIRM'
+          const cw = 64
+          const ch = 18
+          g.panel(Math.round(centerP.x - cw / 2), Math.round(centerP.y + 6), cw, ch, {
+            fill: '#2b3a63e8',
+            stroke: COLOR.accent,
+            radius: 9
+          })
+          g.text(cTag, centerP.x, Math.round(centerP.y + 10), { fill: COLOR.accentHi, size: 9, weight: 900, align: 'center' })
+        }
+      }
+    }
+
+    if (hovered && !battle.facingPicker && g.width >= 660) {
       const cell = battle.cells[hovered.row]?.[hovered.col]
       if (cell && cell.terrain !== 'void') {
         const desc = TERRAIN_LABEL[cell.terrain] ?? cell.terrain
@@ -4374,6 +4581,7 @@ async function start() {
       battleTurn: state.battle?.turn ?? 0,
       battleAp: state.battle?.ap ?? 0,
       activeUnitUid: state.battle?.activeUnitUid ?? null,
+      facingPicker: state.battle?.facingPicker ? { ...state.battle.facingPicker } : null,
       turnOrder: state.battle?.turnOrder.map(t => t.name) ?? [],
       battleAlliesAlive: state.battle ? state.battle.units.filter(u => u.alive && u.team === 'ally').length : 0,
       battleEnemiesAlive: state.battle ? state.battle.units.filter(u => u.alive && u.team === 'enemy').length : 0,

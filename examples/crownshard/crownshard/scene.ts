@@ -17,14 +17,14 @@ import type { Gait, UnitClipName } from './animations.ts'
 import { VFX_COLORS, arrowMesh, createBattleVfx } from './vfx.ts'
 import type { StrikeShape } from './vfx.ts'
 import {
-  computeDangerZone, computeEnemyThreat, getEquipmentByUid, getHeroByUid, getHeroSkill,
-  getPatternCells, getTacticByUid, getUnitByUid, unitAt
+  computeDangerZone, computeEnemyThreat, evaluateAllFacingExposures, getEquipmentByUid,
+  getHeroByUid, getHeroSkill, getPatternCells, getTacticByUid, getUnitByUid, unitAt
 } from './simulation.ts'
 import { TACTIC_BY_ID } from './data.ts'
-import { TILE_SIZE, facingToYaw, gridToWorld } from './types.ts'
+import { FACING_DIRS, TILE_SIZE, facingToYaw, facingVector, gridToWorld, vectorToFacing } from './types.ts'
 import type {
   AttackArc, BattleState, BattleUnit, CombatForecast, DangerZoneMap, EnemyThreatMap,
-  EquipSlot, FlankThreatTile, GameState, OwnedHeroCard
+  EquipSlot, FacingDir, FacingExposureLevel, FlankThreatTile, GameState, OwnedHeroCard
 } from './types.ts'
 
 const C_MOVE_TILE: Color = [0.22, 0.80, 1.0, 0.34]
@@ -61,6 +61,14 @@ const C_FORECAST_ALLY_ARC: Color = [0.44, 0.98, 0.68, 0.94]
 const C_FORECAST_FF_ARC: Color = [1.0, 0.34, 0.68, 0.96]
 const C_FACING_ALLY: Color = [0.64, 0.95, 1.0, 0.96]
 const C_FACING_ENEMY: Color = [1.0, 0.48, 0.22, 0.96]
+const C_PICKER_SAFE: Color = [0.30, 0.96, 0.74, 0.96]
+const C_PICKER_SAFE_DIM: Color = [0.26, 0.80, 0.66, 0.62]
+const C_PICKER_FLANK: Color = [1.0, 0.74, 0.16, 0.98]
+const C_PICKER_FLANK_DIM: Color = [0.96, 0.64, 0.14, 0.66]
+const C_PICKER_BACK: Color = [1.0, 0.24, 0.28, 0.98]
+const C_PICKER_BACK_DIM: Color = [0.94, 0.22, 0.26, 0.70]
+const C_PICKER_SEL_RING: Color = [1.0, 0.94, 0.56, 0.98]
+const C_PICKER_CONFIRM: Color = [1.0, 0.88, 0.34, 0.96]
 const C_ACTIVE_RING: Color = [1.0, 0.85, 0.32, 0.96]
 const C_SELECT_RING: Color = [0.70, 0.94, 1.0, 0.82]
 const C_ENEMY_RING: Color = [0.98, 0.32, 0.30, 0.78]
@@ -133,6 +141,24 @@ const facingChevronMesh = (() => {
   // Crisp forward chevron arrowhead placed at z = 0.56..0.84
   tri([0, y, 0.86], [-0.20, y, 0.56], [0, y, 0.64])
   tri([0, y, 0.86], [0, y, 0.64], [0.20, y, 0.56])
+  return mesh(pos, idx)
+})()
+
+/** Bold ground-plane directional arrow centered at origin pointing along +Z for the Wait-to-Face picker. */
+const facingArrowMesh = (() => {
+  const pos: number[] = []
+  const idx: number[] = []
+  function tri(a: Vec3, b: Vec3, c: Vec3) {
+    const n = pos.length / 3
+    pos.push(...a, ...b, ...c, ...a, ...c, ...b)
+    idx.push(n, n + 1, n + 2, n + 3, n + 4, n + 5)
+  }
+  const y = 0.0
+  // Arrowhead
+  tri([0, y, 0.48], [-0.36, y, 0.02], [0.36, y, 0.02])
+  // Stem
+  tri([-0.14, y, 0.05], [-0.14, y, -0.32], [0.14, y, 0.05])
+  tri([0.14, y, 0.05], [-0.14, y, -0.32], [0.14, y, -0.32])
   return mesh(pos, idx)
 })()
 
@@ -303,6 +329,36 @@ export function cameraCardinalHeading(yaw: number): 'N' | 'W' | 'S' | 'E' {
   if (q === 2) return 'S'
   if (q === 3) return 'E'
   return 'N'
+}
+
+/** Map screen-aligned directional input (right, down) to a world cardinal FacingDir at camera `yaw`. */
+export function cameraAlignedFacing(right: number, down: number, yaw: number): FacingDir {
+  const [worldDx, worldDz] = cameraRelativePanDelta(right, down, yaw)
+  return vectorToFacing(worldDx, worldDz, 'n')
+}
+
+/**
+ * World-space anchor for one of the 4 on-board Wait-to-Face directional arrows around `unit`,
+ * respecting multi-tier terrain elevation, tall cliffs/pillars, chasms, and board edges.
+ */
+export function facingPickerAnchor(
+  battle: Pick<BattleState, 'cells' | 'cols' | 'rows'>,
+  unit: Pick<BattleUnit, 'col' | 'row' | 'x' | 'y' | 'z'>,
+  dir: FacingDir
+): Vec3 {
+  const [dc, dr] = facingVector(dir)
+  const nc = unit.col + dc
+  const nr = unit.row + dr
+  const inBounds = nc >= 0 && nc < battle.cols && nr >= 0 && nr < battle.rows
+  const neighbor = inBounds ? battle.cells[nr]?.[nc] : undefined
+  const dist = TILE_SIZE * 0.92
+  const wx = unit.x + dc * dist
+  const wz = unit.z + dr * dist
+  let wy = unit.y
+  if (neighbor && neighbor.terrain !== 'void') {
+    wy = Math.max(neighbor.elevation, unit.y - 0.45)
+  }
+  return [wx, wy + 0.08, wz]
 }
 
 function wrapAngle(a: number): number {
@@ -1011,7 +1067,8 @@ export function createCrownshardScene(renderer: LowPolyRenderer) {
     realDt: number,
     isActive: boolean,
     isSelected: boolean,
-    time: number
+    time: number,
+    pickerExposureLevel?: FacingExposureLevel | null
   ) {
     const fx = getFx(unit.uid, unit)
     const anim = fx.anim
@@ -1117,7 +1174,7 @@ export function createCrownshardScene(renderer: LowPolyRenderer) {
     fx.lastState = st
     fx.lastTimer = unit.animTimer
 
-    // Facing-pivot footwork when the unit is turned in place (Turn Facing / F)
+    // Facing-pivot footwork when the unit is turned in place (Wait-to-Face / Turn Facing / AI end-of-turn)
     const teleported = unit.path.length === 0 && st === 'idle' &&
       (Math.abs(unit.col - fx.lastCol) + Math.abs(unit.row - fx.lastRow) > 1)
     if (teleported) {
@@ -1127,7 +1184,8 @@ export function createCrownshardScene(renderer: LowPolyRenderer) {
     }
     const yawJump = wrapAngle(unit.yaw - fx.simYaw)
     fx.simYaw = unit.yaw
-    if (!teleported && Math.abs(yawJump) > 0.3 && st === 'idle' && !retrigger && !fx.action && unit.path.length === 0) {
+    const canRetriggerTurn = !fx.action || fx.action === 'turn_l' || fx.action === 'turn_r' || fx.action === 'turn_about'
+    if (!teleported && Math.abs(yawJump) > 0.3 && st === 'idle' && !retrigger && canRetriggerTurn && unit.path.length === 0) {
       startAction(fx, turnClipFor(Math.abs(yawJump) > 2.4 ? 'about' : yawJump > 0 ? 'left' : 'right'), 0.05)
     }
 
@@ -1266,8 +1324,19 @@ export function createCrownshardScene(renderer: LowPolyRenderer) {
     } else {
       pool.add(flatRing, [px, groundY + 0.038, pz], [ringScale, 1, ringScale], time * (isActive ? 1.1 : 0), ringColor, 0.95, 'alpha')
     }
-    const facingCol = isActive ? C_ACTIVE_RING : unit.team === 'ally' ? C_FACING_ALLY : C_FACING_ENEMY
-    const chevronS = (isActive ? 1.16 : 0.96) * scale
+    const facingCol = pickerExposureLevel === 'back'
+      ? C_PICKER_BACK
+      : pickerExposureLevel === 'flank'
+        ? C_PICKER_FLANK
+        : pickerExposureLevel === 'safe'
+          ? C_PICKER_SAFE
+          : isActive
+            ? C_ACTIVE_RING
+            : unit.team === 'ally'
+              ? C_FACING_ALLY
+              : C_FACING_ENEMY
+    const chevronPulse = pickerExposureLevel ? (1.28 + Math.sin(time * 7.0) * 0.08) : (isActive ? 1.16 : 0.96)
+    const chevronS = chevronPulse * scale
     pool.add(facingChevronMesh, [px, groundY + 0.046, pz], [chevronS, 1, chevronS], facingToYaw(unit.facing), facingCol, 0.98, 'alpha')
 
     if (unit.team === 'ally' && unit.stars >= 2) {
@@ -1567,9 +1636,63 @@ export function createCrownshardScene(renderer: LowPolyRenderer) {
       }
     }
 
-    const previewCell = activeForecast
-      ? { col: activeForecast.targetCol, row: activeForecast.targetRow }
-      : hoveredCell
+    // 5. On-board 4-way Wait-to-Face directional picker around the active hero
+    let pickerUnitUid: string | null = null
+    let pickerPreviewExposure: FacingExposureLevel | null = null
+    if (battle.facingPicker && battle.phase === 'player') {
+      const pickerUnit = getUnitByUid(battle, battle.facingPicker.unitUid)
+      if (pickerUnit && pickerUnit.alive && pickerUnit.path.length === 0) {
+        pickerUnitUid = pickerUnit.uid
+        const exposures = evaluateAllFacingExposures(battle, pickerUnit.uid)
+        pickerPreviewExposure = exposures[battle.facingPicker.previewFacing].level
+
+        // Center pulsing confirm ring around the active hero
+        const cPulse = 0.80 + Math.sin(state.time * 6.5) * 0.055
+        pool.add(flatRing, [pickerUnit.x, pickerUnit.y + 0.052, pickerUnit.z], [cPulse, 1, cPulse], state.time * 1.6, C_PICKER_CONFIRM, 0.98, 'alpha')
+        pool.add(flatRing, [pickerUnit.x, pickerUnit.y + 0.062, pickerUnit.z], [cPulse * 1.12, 1, cPulse * 1.12], -state.time * 2.1, C_PICKER_SEL_RING, 0.95, 'additive')
+
+        // 4 directional arrows colored + shape-coded by live threat exposure
+        for (const dir of FACING_DIRS) {
+          const [ax, ay, az] = facingPickerAnchor(battle, pickerUnit, dir)
+          const exp = exposures[dir]
+          const isSel = battle.facingPicker.previewFacing === dir
+          const dirYaw = facingToYaw(dir)
+          const arrowCol = exp.level === 'back'
+            ? (isSel ? C_PICKER_BACK : C_PICKER_BACK_DIM)
+            : exp.level === 'flank'
+              ? (isSel ? C_PICKER_FLANK : C_PICKER_FLANK_DIM)
+              : (isSel ? C_PICKER_SAFE : C_PICKER_SAFE_DIM)
+          const padScale = isSel ? 0.60 + Math.sin(state.time * 7.5) * 0.04 : 0.48
+          const arrowScale = isSel ? 1.12 + Math.sin(state.time * 7.5) * 0.06 : 0.86
+
+          pool.add(flatRing, [ax, ay - 0.02, az], [padScale, 1, padScale], isSel ? state.time * 2.2 : 0, isSel ? C_PICKER_SEL_RING : arrowCol, 0.95, 'alpha')
+          if (exp.level === 'back') {
+            pool.add(tileCrossMesh, [ax, ay - 0.012, az], [TILE_SIZE * 0.56, 1, TILE_SIZE * 0.56], 0, arrowCol, 0.96, 'alpha')
+          } else if (exp.level === 'flank') {
+            pool.add(tileDiamondMesh, [ax, ay - 0.012, az], [TILE_SIZE * 0.62, 1, TILE_SIZE * 0.62], 0, arrowCol, 0.94, 'alpha')
+          }
+          pool.add(facingArrowMesh, [ax, ay + 0.01, az], [arrowScale, 1, arrowScale], dirYaw, arrowCol, 0.98, 'alpha')
+          if (isSel) {
+            pool.add(flatRing, [ax, ay + 0.02, az], [padScale * 1.18, 1, padScale * 1.18], -state.time * 2.8, arrowCol, 0.98, 'additive')
+            pool.add(
+              crystalMesh,
+              [ax, ay + 0.42 + Math.sin(state.time * 6.5) * 0.08, az],
+              [0.11, 0.17, 0.11],
+              state.time * 3.2,
+              arrowCol,
+              1.0,
+              'additive'
+            )
+          }
+        }
+      }
+    }
+
+    const previewCell = battle.facingPicker
+      ? null
+      : activeForecast
+        ? { col: activeForecast.targetCol, row: activeForecast.targetRow }
+        : hoveredCell
 
     if (previewCell && battle.phase === 'player' && previewCell.row < battle.rows && previewCell.col < battle.cols) {
       const hCell = battle.cells[previewCell.row][previewCell.col]
@@ -1689,7 +1812,16 @@ export function createCrownshardScene(renderer: LowPolyRenderer) {
     }
 
     for (const unit of battle.units) {
-      renderUnit(battle, unit, animDt, dt, unit.uid === battle.activeUnitUid, unit.uid === battle.selectedUnitUid, state.time)
+      renderUnit(
+        battle,
+        unit,
+        animDt,
+        dt,
+        unit.uid === battle.activeUnitUid,
+        unit.uid === battle.selectedUnitUid,
+        state.time,
+        unit.uid === pickerUnitUid ? pickerPreviewExposure : null
+      )
     }
 
     vfx.update(dt)
@@ -1921,6 +2053,63 @@ export function createCrownshardScene(renderer: LowPolyRenderer) {
     return pickCellFromRay(battle, ray.origin, ray.direction)
   }
 
+  /**
+   * Hit-test the 4-way on-board Wait-to-Face picker (directional arrows or center confirm ring),
+   * working across multi-tier elevation, board edges, zoom levels, and arbitrary camera yaw.
+   */
+  function pickFacingPickerAt(
+    battle: BattleState | null,
+    cssX: number,
+    cssY: number,
+    width: number,
+    height: number
+  ): 'confirm' | FacingDir | null {
+    if (!battle || !battle.facingPicker || battle.phase !== 'player') return null
+    const unit = getUnitByUid(battle, battle.facingPicker.unitUid)
+    if (!unit || !unit.alive) return null
+
+    const centerPt = worldToScreen(lastMatrix, unit.x, unit.y + 0.25, unit.z, width, height)
+    const anchors: { kind: 'confirm' | FacingDir; x: number; y: number }[] = []
+    if (centerPt) anchors.push({ kind: 'confirm', x: centerPt.x, y: centerPt.y })
+
+    let stepSum = 0
+    let stepCount = 0
+    for (const dir of FACING_DIRS) {
+      const [ax, ay, az] = facingPickerAnchor(battle, unit, dir)
+      const pt = worldToScreen(lastMatrix, ax, ay, az, width, height)
+      if (!pt) continue
+      anchors.push({ kind: dir, x: pt.x, y: pt.y })
+      if (centerPt) {
+        stepSum += Math.hypot(pt.x - centerPt.x, pt.y - centerPt.y)
+        stepCount += 1
+      }
+    }
+
+    const avgStep = stepCount > 0 ? stepSum / stepCount : 72
+    const hitRadius = Math.max(26, Math.min(66, avgStep * 0.46))
+    let bestKind: 'confirm' | FacingDir | null = null
+    let bestDist = hitRadius
+    for (const a of anchors) {
+      const d = Math.hypot(cssX - a.x, cssY - a.y)
+      if (d <= bestDist) {
+        bestDist = d
+        bestKind = a.kind
+      }
+    }
+    if (bestKind) return bestKind
+
+    // Fallback: direct ray pick on active tile or adjacent cardinal tile
+    const cell = pickCellAt(battle, cssX, cssY, width, height)
+    if (!cell) return null
+    const dc = cell.col - unit.col
+    const dr = cell.row - unit.row
+    if (dc === 0 && dr === 0) return 'confirm'
+    if (Math.abs(dc) + Math.abs(dr) === 1) {
+      return vectorToFacing(dc, dr, battle.facingPicker.previewFacing)
+    }
+    return null
+  }
+
   function project(x: number, y: number, z: number, width: number, height: number) {
     return worldToScreen(lastMatrix, x, y, z, width, height)
   }
@@ -1949,6 +2138,7 @@ export function createCrownshardScene(renderer: LowPolyRenderer) {
       })
     },
     pickCellAt,
+    pickFacingPickerAt,
     setHoveredCell(cell: { col: number; row: number } | null) {
       hoveredCell = cell
     },
