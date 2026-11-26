@@ -2353,7 +2353,9 @@ function awardBattleVictory(state: GameState): void {
 function cellCentres(battle: BattleState, cells: readonly { col: number; row: number }[]): Vec3[] {
   const out: Vec3[] = []
   for (const c of cells) {
-    out.push(gridToWorld(c.col, c.row, battle.cells[c.row][c.col].elevation, battle.cols, battle.rows))
+    const cell = battle.cells[c.row]?.[c.col]
+    if (!cell || cell.terrain === 'void') continue
+    out.push(gridToWorld(c.col, c.row, cell.elevation, battle.cols, battle.rows))
   }
   return out
 }

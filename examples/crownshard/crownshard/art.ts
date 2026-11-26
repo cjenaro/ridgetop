@@ -200,7 +200,7 @@ export interface PortraitStore {
 
 /** Create a lazy loadout-aware portrait store with clean headless fallback when no DOM canvas is available. */
 export function createPortraitStore(size = 96): PortraitStore {
-  const base = bakePortraitCanvases()
+  const base = bakePortraitCanvases(size)
   const canvasCache = new Map<string, HTMLCanvasElement>()
   for (const [k, canvas] of Object.entries(base)) canvasCache.set(k, canvas)
 
@@ -230,10 +230,10 @@ export function createPortraitStore(size = 96): PortraitStore {
 }
 
 /** Wrap DOM-free portrait pixels into canvases for the Canvas UI (empty outside the browser). */
-export function bakePortraitCanvases(): Record<string, HTMLCanvasElement> {
+export function bakePortraitCanvases(size = 96): Record<string, HTMLCanvasElement> {
   const out: Record<string, HTMLCanvasElement> = {}
   if (typeof document === 'undefined') return out
-  for (const [key, portrait] of Object.entries(bakePortraitPixels())) {
+  for (const [key, portrait] of Object.entries(bakePortraitPixels(size))) {
     const canvas = pixelsToCanvas(portrait)
     if (canvas) out[key] = canvas
   }
@@ -248,13 +248,13 @@ const ENEMY_IDS: readonly EnemyArchetypeId[] = [
 ]
 
 /** DOM-free bust portraits for every hero and enemy rig (usable from Node tools, tests, and packagers). */
-export function bakePortraitPixels(): Record<string, PortraitPixels> {
+export function bakePortraitPixels(size = 96): Record<string, PortraitPixels> {
   const out: Record<string, PortraitPixels> = {}
   for (const id of HERO_IDS) {
-    out[id] = getHeroPortraitPixels(id)
+    out[id] = getHeroPortraitPixels(id, undefined, size)
   }
   for (const id of ENEMY_IDS) {
-    out[id] = bakeRigPortrait(ENEMY_RIGS[id], stanceOffsetFor(undefined, id))
+    out[id] = bakeRigPortrait(ENEMY_RIGS[id], stanceOffsetFor(undefined, id), size)
   }
   return out
 }

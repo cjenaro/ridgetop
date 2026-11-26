@@ -454,6 +454,7 @@ async function start() {
   }
 
   function openStory(chapterIndex: number, endlessWave = 0) {
+    state.battle = null
     pendingChapter = Math.max(0, Math.min(CHAPTERS.length - 1, chapterIndex))
     state.campaign.selectedStageId = CHAPTERS[pendingChapter].id
     pendingEndless = endlessWave

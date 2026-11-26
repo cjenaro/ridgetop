@@ -639,6 +639,8 @@ export function createCrownshardAudio(options: CrownshardAudioOptions = {}) {
   let accentTimer = 1.6
   let accentStep = 0
   let activeDrone: ActiveDroneRig | null = null
+  let lastBedKey = ''
+  let lastMusicVolume = -1
 
   function teardownDrone() {
     if (!activeDrone) return
@@ -717,6 +719,9 @@ export function createCrownshardAudio(options: CrownshardAudioOptions = {}) {
   function syncAmbientBeds(isBoss = false) {
     if (!sound.running) return
     const activeBiome = musicMode === 'battle' ? battleBiome : null
+    const bedKey = `${musicMode}:${activeBiome ?? ''}:${isBoss ? 1 : 0}`
+    if (bedKey === lastBedKey) return
+    lastBedKey = bedKey
 
     if (activeBiome) {
       const theme = BIOME_MUSIC_THEMES[activeBiome]
@@ -878,12 +883,15 @@ export function createCrownshardAudio(options: CrownshardAudioOptions = {}) {
 
     if (changed) {
       crossfade = 0
+      lastBedKey = ''
+      lastMusicVolume = -1
       sequencer.reset()
       if (resolvedBiome) {
         accentTimer = BIOME_AMBIENT_PROFILES[resolvedBiome].accent.intervalMin * 0.6
       }
       if (sound.running) {
         sound.setMusicVolume(0.035, 0.08)
+        lastMusicVolume = 0.035
       }
       syncAmbientBeds(false)
       syncDrone()
@@ -969,7 +977,10 @@ export function createCrownshardAudio(options: CrownshardAudioOptions = {}) {
     }
     const baseMusicVolume = active ? 0.14 : 0.09
     const fadedVolume = baseMusicVolume * (0.25 + 0.75 * crossfade)
-    sound.setMusicVolume(fadedVolume, 0.12)
+    if (Math.abs(fadedVolume - lastMusicVolume) > 1e-4) {
+      sound.setMusicVolume(fadedVolume, 0.12)
+      lastMusicVolume = fadedVolume
+    }
 
     syncAmbientBeds(isBoss)
     syncDrone()
