@@ -1,20 +1,18 @@
 import assert from 'node:assert/strict'
-import { spawn } from 'node:child_process'
-import { once } from 'node:events'
 import { copyFile, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { createInterface } from 'node:readline'
-import { click, key, openTab, status, until } from './browser-driver.ts'
+import type { ChromiumPage, HostedServer } from './browser-driver.ts'
+import { click, key, openTab, startHostedServer, status, uiAct, uiRect, uiState, until } from './browser-driver.ts'
 import { createGame } from '../packages/ridgetop/tools/create-game.ts'
 import { createArtRecipe, multiply, orthographic, projectPoint, view } from 'ridgetop'
 
-type Tab = Awaited<ReturnType<typeof openTab>>
 const backend = process.env.RIDGETOP_REVIEW_RENDERER ?? 'canvas'
 const temp = await mkdtemp(join(tmpdir(), 'ridgetop-playtest-'))
-let server: ReturnType<typeof spawn> | undefined, tab: Tab | undefined
+let server: HostedServer | undefined
+let tab: ChromiumPage | undefined
 
-function activeTab(): Tab {
+function activeTab(): ChromiumPage {
   if (!tab) throw new Error('Browser tab is not open')
   return tab
 }
@@ -38,28 +36,31 @@ function requireString(value: unknown, label: string): string {
 function change(selector: string, value: string) {
   return activeTab().evaluate(`{const f=document.querySelector(${JSON.stringify(selector)}); f.value=${JSON.stringify(value)}; f.dispatchEvent(new Event('change'))}`)
 }
-const value = (id: string) => activeTab().evaluate(`document.getElementById('${id}')?.value`)
-const viewMode = () => activeTab().evaluate("window.__ridgetopUi?.state?.()?.view")
+const value = (id: string) => activeTab().evaluate(`document.getElementById(${JSON.stringify(id)})?.value`)
+const viewMode = () => uiState(activeTab(), 'view')
 const footerText = () => activeTab().evaluate("document.querySelector('#ridgetop-testing-drawer .rt-footer-msg')?.textContent?.trim()")
 const clickButtonByText = (text: string) => activeTab().evaluate(`(() => {
   const btn = [...document.querySelectorAll('#ridgetop-testing-drawer button')].find(b => b.textContent?.trim() === ${JSON.stringify(text)})
   if (!btn) throw new Error('Missing button: ' + ${JSON.stringify(text)})
   btn.click()
 })()`)
+
 async function point(selector: string, u: number, v: number): Promise<{ x: number; y: number }> {
   const res = await activeTab().evaluate(`(() => { const el=document.querySelector(${JSON.stringify(selector)}); el.scrollIntoView({block:'center'});
     const r=el.getBoundingClientRect(); return { x:r.x+r.width*${u}, y:r.y+r.height*${v} } })()`)
   if (!isPoint(res)) throw new Error(`Invalid point for ${selector}`)
   return res
 }
+
 async function press(selector: string, u: number, v: number, end?: [number, number]) {
   const t = activeTab()
   const start = await point(selector, u, v)
   const at = end ? await point(selector, ...end) : start
-  await t.call('Input.dispatchMouseEvent', { type: 'mousePressed', ...start, button: 'left', buttons: 1, clickCount: 1 })
-  if (end) await t.call('Input.dispatchMouseEvent', { type: 'mouseMoved', ...at, buttons: 1 })
-  await t.call('Input.dispatchMouseEvent', { type: 'mouseReleased', ...at, button: 'left', clickCount: 1 })
+  await t.dispatchMouse('mousePressed', start.x, start.y, { button: 'left', buttons: 1, clickCount: 1 })
+  if (end) await t.dispatchMouse('mouseMoved', at.x, at.y, { buttons: 1 })
+  await t.dispatchMouse('mouseReleased', at.x, at.y, { button: 'left', clickCount: 1 })
 }
+
 async function saveComment(text: string): Promise<string> {
   await clickButtonByText('Comments / Reviews')
   await until(() => activeTab().evaluate("Boolean(document.getElementById('rt-review-comment'))"), true, 'review form mounted')
@@ -79,15 +80,13 @@ try {
   await writeFile(join(game, 'art/Moon Crystal.art.json'), JSON.stringify(createArtRecipe('crystal')))
   for (const name of ['sprites.json', 'sprites.png']) await copyFile(new URL('../examples/beacon-run/game/assets/' + name, import.meta.url), join(game, 'art', name))
 
-  server = spawn(process.execPath, ['game/serve.js', '--testing'], { cwd: project, env: { ...process.env, PORT: '0' }, stdio: ['ignore', 'pipe', 'inherit'] })
-  assert.ok(server.stdout)
-  let origin: string | undefined
-  for await (const line of createInterface({ input: server.stdout })) {
-    const port = /listening on port (\d+)/.exec(line)?.[1]
-    if (port) { origin = 'http://127.0.0.1:' + port; break }
-  }
-  assert.ok(origin, 'testing host started')
-  const url = origin + '/?testing=1&renderer=' + backend
+  server = await startHostedServer({
+    args: ['game/serve.js'],
+    testing: true,
+    cwd: project,
+    manageSaveDir: false
+  })
+  const url = server.origin + '/?testing=1&renderer=' + backend
   tab = await openTab(url)
   await until(() => status(activeTab(), 'rt-pause-btn'), 'Pause & Inspect (F9)', 'loaded framework testing studio')
   await click(tab, 'rt-pause-btn')
@@ -150,7 +149,7 @@ try {
 
   // Resume, switch to 2D sprites, pause, pick 2D sprite & HUD icon
   await click(tab, 'rt-pause-btn')
-  await tab.evaluate("window.__ridgetopUi.act('hud-view-toggle', 'toggle')")
+  await uiAct(tab, 'hud-view-toggle', 'toggle')
   await until(() => activeTab().evaluate("document.getElementById('sprites').hidden"), false, 'switched to 2D')
   await tab.evaluate("new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)))")
   await click(tab, 'rt-pause-btn')
@@ -163,17 +162,21 @@ try {
   assert.equal(sprite.target.view.clip, 'run')
 
   // Pick Canvas UI pickup-icon HUD region
-  const rawIconCenter = await tab.evaluate(`(() => {
+  const iconRect = await uiRect(tab, 'pickup-icon')
+  assert.ok(iconRect, 'pickup-icon rect present')
+  const boardOrigin = await tab.evaluate(`(() => {
     const board = document.querySelector('.board')
     board.scrollIntoView({ block: 'center' })
     const b = board.getBoundingClientRect()
-    const r = window.__ridgetopUi.rects()['pickup-icon']
-    return { x: b.x + r.x + r.width / 2, y: b.y + r.y + r.height / 2 }
+    return { x: b.x, y: b.y }
   })()`)
-  if (!isPoint(rawIconCenter)) throw new Error('Invalid pickup-icon center')
-  const iconCenter = rawIconCenter
-  await tab.call('Input.dispatchMouseEvent', { type: 'mousePressed', ...iconCenter, button: 'left', buttons: 1, clickCount: 1 })
-  await tab.call('Input.dispatchMouseEvent', { type: 'mouseReleased', ...iconCenter, button: 'left', clickCount: 1 })
+  if (!isPoint(boardOrigin)) throw new Error('Invalid board origin')
+  const iconCenter = {
+    x: boardOrigin.x + iconRect.x + iconRect.width / 2,
+    y: boardOrigin.y + iconRect.y + iconRect.height / 2
+  }
+  await tab.dispatchMouse('mousePressed', iconCenter.x, iconCenter.y, { button: 'left', buttons: 1, clickCount: 1 })
+  await tab.dispatchMouse('mouseReleased', iconCenter.x, iconCenter.y, { button: 'left', clickCount: 1 })
   await until(() => activeTab().evaluate("document.querySelector('#ridgetop-testing-drawer .rt-badge')?.textContent"), 'HUD', 'picked HUD icon')
   const hudId = await saveComment('Give just the inventory icon more contrast.')
   const hud = JSON.parse(await readFile(join(game, 'reviews', hudId + '.json'), 'utf8'))
@@ -198,11 +201,9 @@ try {
   if (tab) console.error(await tab.evaluate("({ status: document.getElementById('rt-status-pill')?.textContent, footer: document.querySelector('#ridgetop-testing-drawer .rt-footer-msg')?.textContent })").catch(() => ''), tab.errors)
   throw error
 } finally {
-  if (tab) await tab.close().catch(() => {})
-  if (server && server.exitCode === null && server.signalCode === null) {
-    const stopped = once(server, 'exit')
-    server.kill()
-    await stopped
-  }
+  if (tab) await tab.close().catch(() => {
+    // Ignore tab teardown errors.
+  })
+  if (server) await server.stop()
   await rm(temp, { recursive: true, force: true })
 }
