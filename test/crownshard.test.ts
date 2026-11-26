@@ -1,13 +1,15 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import { STEP, createPerfMonitor, verifyTrace } from '../packages/ridgetop/framework/index.ts'
-import { CHAPTERS, EQUIPMENT_BY_ID, HERO_SPECS, RARITY_META, RARITY_ORDER } from '../examples/crownshard/crownshard/data.ts'
+import { CHAPTERS, CHAPTER_BY_ID, EQUIPMENT_BY_ID, HERO_SPECS, RARITY_META, RARITY_ORDER } from '../examples/crownshard/crownshard/data.ts'
 import {
   armSkill, armTacticCard, autoEquipBestFit, buyPack, canMergeHero, computeCombatForecast,
   computeDeckValue, computeHeroStats, createInitialState, effectiveSpeed, endPlayerTurn, equipItem,
-  findBestFitUpgrades, getHeroSkill, getUnitByUid, maxSquadSize, mergeHero, salvageEquipCard,
-  selectHeroByUid, selectTile, serializeSave, startChapterBattle, stepGame, unequipItem
+  findBestFitUpgrades, getHeroSkill, getUnitByUid, isEndlessUnlocked, isStageCleared, isStageUnlocked,
+  maxSquadSize, mergeHero, salvageEquipCard, selectHeroByUid, selectTile, serializeSave,
+  startChapterBattle, startStageBattle, stepGame, unequipItem
 } from '../examples/crownshard/crownshard/simulation.ts'
+import { terrainWalkable } from '../examples/crownshard/crownshard/types.ts'
 import type { GameState } from '../examples/crownshard/crownshard/types.ts'
 
 test('Crownshard starts with Knight, Archer, Mage, starter equipment, and tactic deck', () => {
@@ -93,9 +95,9 @@ test('Equipment cards equip, swap owners, boost stats, and salvage for rarity-sc
   assert.ok(legGold >= commonGold * 10, `Legendary salvage (${legGold}g) should far exceed Common (${commonGold}g)`)
 })
 
-test('Buying Recruit, Vanguard, and Sovereign card decks enforces rarity floors and scales deck value', () => {
+test('Buying Recruit, Vanguard, and Sovereign card decks enforces rarity floors and keeps Epics/Legendaries scarce', () => {
   const state = createInitialState(777)
-  state.campaign.gold = 2000
+  state.campaign.gold = 50000
   const initialVal = computeDeckValue(state.campaign)
 
   const r1 = buyPack(state, 'recruit')
@@ -111,16 +113,32 @@ test('Buying Recruit, Vanguard, and Sovereign card decks enforces rarity floors 
   const r3 = buyPack(state, 'sovereign')
   assert.ok(r3 && r3.length === 4, 'Sovereign deck yields 4 cards')
   assert.ok(
-    r3.some(c => RARITY_ORDER.indexOf(c.rarity) >= RARITY_ORDER.indexOf('epic')),
-    'Sovereign deck must guarantee at least 1 Epic+ card'
+    r3.some(c => RARITY_ORDER.indexOf(c.rarity) >= RARITY_ORDER.indexOf('rare')),
+    'Sovereign deck must guarantee at least 1 Rare+ card'
   )
 
   const newVal = computeDeckValue(state.campaign)
-  assert.ok(newVal > initialVal + 500, 'Opening rare decks must substantially raise deck valuation')
+  assert.ok(newVal > initialVal + 400, 'Opening decks must raise deck valuation')
   assert.ok(RARITY_META.legendary.value > RARITY_META.epic.value)
   assert.ok(RARITY_META.epic.value > RARITY_META.rare.value)
   assert.ok(RARITY_META.rare.value > RARITY_META.uncommon.value)
   assert.ok(RARITY_META.uncommon.value > RARITY_META.common.value)
+
+  // Verify long-game scarcity: across 120 Recruit decks (360 cards), Epics & Legendaries stay genuinely rare
+  let epicOrLeg = 0
+  let totalCards = 0
+  for (let i = 0; i < 120; i++) {
+    const pulled = buyPack(state, 'recruit')
+    assert.ok(pulled)
+    for (const card of pulled) {
+      totalCards++
+      if (card.rarity === 'epic' || card.rarity === 'legendary') epicOrLeg++
+    }
+  }
+  assert.ok(
+    epicOrLeg / totalCards < 0.04,
+    `Recruit pack Epic/Legendary rate (${epicOrLeg}/${totalCards}) should stay scarce for long-game pacing`
+  )
 })
 
 test('Speed-based CT initiative turn order, movement, skills, tactic cards, victory loot, and save round-trip', () => {
@@ -267,16 +285,114 @@ test('Crownshard battle simulation passes Ridgetop verifyTrace determinism & bou
   assert.equal(report.status, 'pass')
 })
 
-test('All 6 story chapters and 8 hero classes have valid grids, spawns, and skills', () => {
-  assert.equal(CHAPTERS.length, 6)
+test('World Map has branching stages, special levels, difficulty tiers, and valid variable-size grids', () => {
+  assert.ok(CHAPTERS.length >= 9, 'World Map should include branching story, special, treasure, elite, and boss stages')
+  const gridSizes = new Set<string>()
+  const kinds = new Set<string>()
+  const diffs = new Set<number>()
+
   for (const ch of CHAPTERS) {
-    assert.equal(ch.grid.length, 6)
-    for (const row of ch.grid) assert.equal(row.length, 8)
-    assert.ok(ch.enemies.length >= 3)
-    assert.ok(EQUIPMENT_BY_ID[ch.rewardEquipId], `Missing reward equip ${ch.rewardEquipId}`)
-    assert.ok(HERO_SPECS[ch.rewardHeroId], `Missing reward hero ${ch.rewardHeroId}`)
+    const rows = ch.grid.length
+    const cols = ch.grid[0]?.length ?? 0
+    assert.ok(rows >= 5 && rows <= 8, `${ch.id} rows out of expected range: ${rows}`)
+    assert.ok(cols >= 6 && cols <= 10, `${ch.id} cols out of expected range: ${cols}`)
+    for (const row of ch.grid) assert.equal(row.length, cols, `${ch.id} grid must be rectangular`)
+    gridSizes.add(`${cols}x${rows}`)
+    kinds.add(ch.kind)
+    diffs.add(ch.difficulty)
+
+    assert.ok(ch.enemies.length >= 3, `${ch.id} needs >= 3 enemies`)
+    assert.ok(ch.rewardGold > ch.replayGold, `${ch.id} first-clear gold should exceed replay gold`)
+    if (ch.rewardEquipId) assert.ok(EQUIPMENT_BY_ID[ch.rewardEquipId], `Missing reward equip ${ch.rewardEquipId}`)
+    if (ch.rewardHeroId) assert.ok(HERO_SPECS[ch.rewardHeroId], `Missing reward hero ${ch.rewardHeroId}`)
+    for (const reqId of ch.requires) assert.ok(CHAPTER_BY_ID[reqId], `${ch.id} requires missing stage ${reqId}`)
+
+    const occupied = new Set<string>()
+    for (const [col, row] of ch.heroSpawns) {
+      assert.ok(col >= 0 && col < cols && row >= 0 && row < rows, `${ch.id} hero spawn (${col},${row}) out of bounds`)
+      assert.ok(terrainWalkable(ch.grid[row][col]), `${ch.id} hero spawn (${col},${row}) not walkable`)
+      assert.ok(!occupied.has(`${col},${row}`), `${ch.id} duplicate spawn (${col},${row})`)
+      occupied.add(`${col},${row}`)
+    }
+    for (const sp of ch.enemies) {
+      assert.ok(sp.col >= 0 && sp.col < cols && sp.row >= 0 && sp.row < rows, `${ch.id} enemy spawn (${sp.col},${sp.row}) out of bounds`)
+      assert.ok(terrainWalkable(ch.grid[sp.row][sp.col]), `${ch.id} enemy spawn (${sp.col},${sp.row}) not walkable`)
+      assert.ok(!occupied.has(`${sp.col},${sp.row}`), `${ch.id} overlapping spawn (${sp.col},${sp.row})`)
+      occupied.add(`${sp.col},${sp.row}`)
+    }
   }
+
+  assert.ok(gridSizes.size >= 5, `Expected varied map sizes across stages, got ${[...gridSizes].join(', ')}`)
+  assert.ok(kinds.has('story') && kinds.has('special') && kinds.has('treasure') && kinds.has('elite') && kinds.has('boss'))
+  assert.equal(diffs.size, 5, 'Should span difficulty levels 1 through 5')
   assert.equal(Object.keys(HERO_SPECS).length, 8)
+})
+
+test('World Map enforces prerequisite locks, bifurcations, and one-time special rewards on replay', () => {
+  const state = createInitialState(4040)
+  // Initially only Border Watch is unlocked
+  assert.equal(isStageUnlocked(state.campaign, 'border_watch'), true)
+  assert.equal(isStageUnlocked(state.campaign, 'sunken_bridge'), false)
+  assert.equal(isStageUnlocked(state.campaign, 'sunwell_glade'), false)
+  assert.equal(isStageUnlocked(state.campaign, 'lantern_crypt'), false)
+  assert.equal(isEndlessUnlocked(state.campaign), false)
+
+  const winStage = (stageId: string) => {
+    const battle = startStageBattle(state, stageId)
+    assert.equal(battle.stageId, stageId)
+    assert.equal(battle.cols, CHAPTER_BY_ID[stageId].grid[0].length)
+    assert.equal(battle.rows, CHAPTER_BY_ID[stageId].grid.length)
+    const active = getUnitByUid(battle, battle.activeUnitUid)!
+    const enemies = battle.units.filter(u => u.alive && u.team === 'enemy')
+    for (let i = 0; i < enemies.length - 1; i++) {
+      enemies[i].hp = 0
+      enemies[i].alive = false
+    }
+    const last = enemies[enemies.length - 1]
+    last.hp = 4
+    active.col = Math.max(0, last.col - 1)
+    active.row = last.row
+    active.acted = false
+    active.cooldowns = [0, 0, 0]
+    assert.equal(selectHeroByUid(state, active.uid), true)
+    assert.equal(armSkill(state, 0), true)
+    assert.equal(selectTile(state, last.col, last.row), true)
+    assert.equal(battle.phase, 'victory')
+    return battle.reward!
+  }
+
+  // First clear of Border Watch grants one-time Watchman Plate + Knight + first-clear gold
+  const firstReward = winStage('border_watch')
+  assert.equal(firstReward.firstClear, true)
+  assert.equal(firstReward.specialRewardsClaimed, true)
+  assert.equal(firstReward.gold, CHAPTER_BY_ID.border_watch.rewardGold)
+  assert.equal(firstReward.equipCard?.equipId, 'iron_plate')
+  assert.equal(firstReward.heroCard?.heroId, 'knight')
+  assert.equal(isStageCleared(state.campaign, 'border_watch'), true)
+  assert.equal(isStageUnlocked(state.campaign, 'sunken_bridge'), true)
+
+  // Replaying Border Watch awards replayGold and does NOT re-award both one-time specials!
+  const replayReward = winStage('border_watch')
+  assert.equal(replayReward.firstClear, false)
+  assert.equal(replayReward.specialRewardsClaimed, false)
+  assert.equal(replayReward.gold, CHAPTER_BY_ID.border_watch.replayGold)
+  const dropCount = (replayReward.equipCard ? 1 : 0) + (replayReward.heroCard ? 1 : 0) + (replayReward.tacticCard ? 1 : 0)
+  assert.equal(dropCount, 1, 'Replay victory should award exactly one repeatable drop')
+
+  // Clearing Sunken Bridge unlocks BOTH bifurcated routes (Sunwell Glade AND Lantern Crypt) + 4th squad slot!
+  const bridgeReward = winStage('sunken_bridge')
+  assert.equal(bridgeReward.unlockedSlot4, true)
+  assert.equal(maxSquadSize(state.campaign), 4)
+  assert.equal(isStageUnlocked(state.campaign, 'sunwell_glade'), true)
+  assert.equal(isStageUnlocked(state.campaign, 'lantern_crypt'), true)
+  assert.equal(isStageUnlocked(state.campaign, 'frostspire_pass'), false)
+
+  // Taking ONLY the North bifurcation (Sunwell Glade) unlocks Frostspire Pass via unlockMode: 'any'
+  // while Cursed Vault (which requires Lantern Crypt) remains locked!
+  const gladeReward = winStage('sunwell_glade')
+  assert.equal(gladeReward.heroCard?.heroId, 'cleric')
+  assert.equal(isStageUnlocked(state.campaign, 'frostspire_pass'), true)
+  assert.equal(isStageUnlocked(state.campaign, 'cursed_vault'), false)
 })
 
 test('Move+Attack in one click approaches optimal tile and executes Strike or Skill on arrival', () => {

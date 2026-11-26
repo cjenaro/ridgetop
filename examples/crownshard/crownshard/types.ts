@@ -118,6 +118,10 @@ export interface TacticCardSpec {
   readonly vfx: 'fire' | 'frost' | 'holy' | 'arcane' | 'slash' | 'shadow'
 }
 
+export type StageKind = 'story' | 'special' | 'treasure' | 'elite' | 'boss'
+
+export type DifficultyLevel = 1 | 2 | 3 | 4 | 5
+
 export interface PackSpec {
   readonly id: PackId
   readonly name: string
@@ -126,6 +130,7 @@ export interface PackSpec {
   readonly cardsPerPack: number
   readonly guaranteedMinRarity: Rarity
   readonly weights: Record<Rarity, number>
+  readonly featuredWeights?: Record<Rarity, number>
   readonly accentHex: string
 }
 
@@ -150,7 +155,19 @@ export interface ChapterEnemySpawn {
 }
 
 export interface ChapterSpec {
+  readonly id: string
   readonly index: number
+  readonly kind: StageKind
+  readonly difficulty: DifficultyLevel
+  readonly recommendedPower: number
+  readonly mapX: number
+  readonly mapY: number
+  readonly requires: readonly string[]
+  readonly unlockMode?: 'all' | 'any'
+  readonly specialTag?: string
+  readonly modifierDesc?: string
+  readonly unlocksSlot4?: boolean
+  readonly unlocksEndless?: boolean
   readonly title: string
   readonly subtitle: string
   readonly biome: BiomeId
@@ -159,8 +176,9 @@ export interface ChapterSpec {
   readonly outroSpeaker: string
   readonly outroText: string
   readonly rewardGold: number
-  readonly rewardEquipId: string
-  readonly rewardHeroId: HeroClassId
+  readonly replayGold: number
+  readonly rewardEquipId: string | null
+  readonly rewardHeroId: HeroClassId | null
   readonly grid: readonly (readonly TileTerrain[])[]
   readonly heroSpawns: readonly (readonly [number, number])[]
   readonly enemies: readonly ChapterEnemySpawn[]
@@ -292,10 +310,13 @@ export type VfxEvent =
 
 export interface BattleReward {
   readonly gold: number
-  readonly equipCard: OwnedEquipCard
-  readonly heroCard: OwnedHeroCard
+  readonly equipCard: OwnedEquipCard | null
+  readonly heroCard: OwnedHeroCard | null
+  readonly tacticCard: OwnedTacticCard | null
+  readonly stageId: string
   readonly chapterCleared: number
   readonly firstClear: boolean
+  readonly specialRewardsClaimed: boolean
   readonly unlockedSlot4: boolean
   readonly campaignWon: boolean
 }
@@ -380,8 +401,12 @@ export interface CombatForecast {
 }
 
 export interface BattleState {
+  readonly stageId: string
   readonly chapterIndex: number
   readonly endlessWave: number
+  readonly difficulty: DifficultyLevel
+  readonly cols: number
+  readonly rows: number
   readonly biome: BiomeId
   readonly cells: GridCell[][]
   readonly units: BattleUnit[]
@@ -416,6 +441,8 @@ export interface CampaignState {
   nextUid: number
   gold: number
   chaptersCleared: number
+  clearedStageIds: string[]
+  selectedStageId: string
   endlessBest: number
   battlesWon: number
   packsOpened: number
@@ -440,16 +467,27 @@ export interface SaveData {
   campaign: CampaignState
 }
 
-export function gridToWorld(col: number, row: number, elevation = 0): [number, number, number] {
-  const x = (col - (GRID_COLS - 1) * 0.5) * TILE_SIZE
-  const z = (row - (GRID_ROWS - 1) * 0.5) * TILE_SIZE
+export function gridToWorld(
+  col: number,
+  row: number,
+  elevation = 0,
+  cols = GRID_COLS,
+  rows = GRID_ROWS
+): [number, number, number] {
+  const x = (col - (cols - 1) * 0.5) * TILE_SIZE
+  const z = (row - (rows - 1) * 0.5) * TILE_SIZE
   return [x, elevation, z]
 }
 
-export function worldToGrid(x: number, z: number): { col: number; row: number } | null {
-  const col = Math.round(x / TILE_SIZE + (GRID_COLS - 1) * 0.5)
-  const row = Math.round(z / TILE_SIZE + (GRID_ROWS - 1) * 0.5)
-  if (col < 0 || col >= GRID_COLS || row < 0 || row >= GRID_ROWS) return null
+export function worldToGrid(
+  x: number,
+  z: number,
+  cols = GRID_COLS,
+  rows = GRID_ROWS
+): { col: number; row: number } | null {
+  const col = Math.round(x / TILE_SIZE + (cols - 1) * 0.5)
+  const row = Math.round(z / TILE_SIZE + (rows - 1) * 0.5)
+  if (col < 0 || col >= cols || row < 0 || row >= rows) return null
   return { col, row }
 }
 

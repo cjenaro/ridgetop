@@ -11,37 +11,57 @@ import { isTestingPaused } from 'ridgetop/testing'
 import { bakePortraitCanvases } from './art.ts'
 import { createCrownshardAudio } from './audio.ts'
 import {
-  CHAPTERS, EQUIPMENT_BY_ID, HERO_SPECS, MERGE_COPIES_REQUIRED, PACK_LIST,
-  RARITY_META, TACTIC_BY_ID
+  CHAPTERS, CHAPTER_BY_ID, DIFFICULTY_META, ENEMY_SPECS, EQUIPMENT_BY_ID, HERO_SPECS,
+  MERGE_COPIES_REQUIRED, PACK_BY_ID, PACK_LIST, RARITY_META, RARITY_ORDER, TACTIC_BY_ID
 } from './data.ts'
 import { createCrownshardScene } from './scene.ts'
 import {
   armSkill, armTacticCard, autoEquipBestFit, buyPack, canBuyPack, canMergeHero, clearSave,
-  computeCombatForecast, computeDeckValue, computeHeroStats, createInitialState, effectiveSpeed,
-  endPlayerTurn, equipItem, findBestFitUpgrades, findEquipOwner, getEquipmentByUid, getHeroByUid,
-  getHeroSkill, getMergeCandidates, getTacticByUid, getUnitByUid, loadSave,
+  computeCombatForecast, computeDeckValue, computeHeroStats, computeSquadPower, createInitialState,
+  effectiveSpeed, endPlayerTurn, equipItem, findBestFitUpgrades, findEquipOwner, getEquipmentByUid,
+  getHeroByUid, getHeroSkill, getMergeCandidates, getNextRecommendedStage, getStageUnlockHint,
+  getTacticByUid, getUnitByUid, isEndlessUnlocked, isStageCleared, isStageUnlocked, loadSave,
   maxSquadSize, mergeHero, persistSave, salvageEquipCard, salvageHeroCard,
   selectHeroByUid, selectTile, startChapterBattle, stepGame,
   toggleSquadMember, unequipItem
 } from './simulation.ts'
-import type { CombatForecast, GameState, OwnedEquipCard, OwnedHeroCard, PackId } from './types.ts'
+import type {
+  ChapterSpec, CombatForecast, EnemyArchetypeId, GameState, OwnedEquipCard, OwnedHeroCard,
+  PackId, PackRevealItem, Rarity
+} from './types.ts'
 import {
   COLOR, RADIUS, TIER_COLOR, TYPE, UI_THEME_PALETTE,
-  drawApMeter, drawBattleInfo, drawBoosterPack, drawButton, drawCampHeader,
-  drawChapterPicker, drawCombatForecast, drawControlHints, drawEmptyNote, drawEndTurnButton,
-  drawEquipCard, drawForecastAltChip, drawHeroHeader, drawHeroRosterCard, drawHintPill,
-  drawIconButton, drawLabel, drawLetterbox, drawLootRow, drawModal,
-  drawOverline, drawPanel, drawResultHeadline, drawRevealCard, drawRewardRow,
-  drawSegmentTrack, drawSettingRow, drawSheet, drawSkillRow, drawSkillTile,
-  drawSpeakerPortrait, drawStatStrip, drawStoryHeading, drawTab, drawTacticCard,
-  drawTimelineBg, drawTitleCard, drawTitleLogo, drawToast, drawToolbarBg,
-  drawTopFade, drawTurnToken, drawUnitCard, drawWell
+  drawAnimatedRevealCard, drawApMeter, drawBattleInfo, drawBoosterPack, drawButton, drawCampHeader,
+  drawChapterPicker, drawChip, drawCombatForecast, drawControlHints, drawDefeatBackdrop,
+  drawDifficultyBadge, drawEmptyNote, drawEndTurnButton, drawEquipCard, drawForecastAltChip,
+  drawHeroHeader, drawHeroRosterCard, drawHintPill, drawIconButton, drawLabel, drawLetterbox,
+  drawLootRow, drawModal, drawOverline, drawPackCeremonyBackdrop, drawPanel, drawPortraitTile,
+  drawResultHeadlineAnimated, drawRevealCard, drawRewardRowAnimated, drawSegmentTrack,
+  drawSettingRow, drawSheet, drawSkillRow, drawSkillTile, drawSpeakerPortrait, drawStatStrip,
+  drawStoryHeading, drawTab, drawTacticCard, drawText, drawTimelineBg, drawTitleCard,
+  drawTitleLogo, drawToast, drawToolbarBg, drawTopFade, drawTurnToken, drawUnitCard,
+  drawVictoryBackdrop, drawWell, drawWorldMapBackdrop, drawWorldMapNode
 } from './ui-art.ts'
 import type { IconName } from './ui-art.ts'
 
-type Screen = 'title' | 'camp' | 'story' | 'battle' | 'victory' | 'defeat' | 'paused'
+type Screen = 'title' | 'world' | 'camp' | 'story' | 'battle' | 'victory' | 'defeat' | 'paused'
 type CampTab = 'squad' | 'armory' | 'decks'
 type ArmoryFilter = 'all' | 'weapon' | 'armor' | 'relic'
+
+interface PackAnimState {
+  readonly packId: PackId
+  readonly cards: readonly PackRevealItem[]
+  readonly bestRarity: Rarity
+  elapsed: number
+  phase: 'spin' | 'reveal'
+  flipStartTimes: number[]
+  lastTickStep: number
+  burstPlayed: boolean
+}
+
+const PACK_SPIN_DURATION = 1.35
+const PACK_FLIP_DURATION = 0.42
+const PACK_FLIP_STAGGER = 0.36
 
 const ARMORY_FILTERS: readonly ArmoryFilter[] = ['all', 'weapon', 'armor', 'relic']
 
@@ -119,7 +139,7 @@ async function start() {
   let state: GameState = createInitialState(1337, existingSave)
   let screen: Screen = 'title'
   let campTab: CampTab = 'squad'
-  let pendingChapter = Math.min(state.campaign.chaptersCleared, CHAPTERS.length - 1)
+  let pendingChapter = CHAPTER_BY_ID[state.campaign.selectedStageId]?.index ?? getNextRecommendedStage(state.campaign).index
   let pendingEndless = 0
   let armorySlotFilter: ArmoryFilter = 'all'
   let rosterPage = 0
@@ -134,6 +154,55 @@ async function start() {
   let mobileCampCollapsed = false
   let lastForecastSig = ''
   let forecastPulseTick = 0
+  let resultAnimTime = 0
+  let worldMapTime = 0
+  let packAnim: PackAnimState | null = null
+
+  function getSelectedStage(): ChapterSpec {
+    return CHAPTER_BY_ID[state.campaign.selectedStageId] ?? CHAPTERS[pendingChapter] ?? CHAPTERS[0]
+  }
+
+  function startPackCeremony(packId: PackId, cards: readonly PackRevealItem[]) {
+    let bestRarity: Rarity = 'common'
+    for (const c of cards) {
+      if (RARITY_ORDER.indexOf(c.rarity) > RARITY_ORDER.indexOf(bestRarity)) bestRarity = c.rarity
+    }
+    packAnim = {
+      packId,
+      cards,
+      bestRarity,
+      elapsed: 0,
+      phase: 'spin',
+      flipStartTimes: cards.map(() => -1),
+      lastTickStep: -1,
+      burstPlayed: false
+    }
+    uiDirty = true
+  }
+
+  function skipPackCeremony() {
+    if (!packAnim) return
+    if (packAnim.phase === 'spin') {
+      packAnim.phase = 'reveal'
+      packAnim.elapsed = PACK_SPIN_DURATION + 0.05
+      packAnim.burstPlayed = true
+    }
+    for (let i = 0; i < packAnim.flipStartTimes.length; i++) {
+      if (packAnim.flipStartTimes[i] < 0) {
+        packAnim.flipStartTimes[i] = packAnim.elapsed - PACK_FLIP_DURATION
+      }
+    }
+    packAnim.elapsed = Math.max(packAnim.elapsed, PACK_SPIN_DURATION + PACK_FLIP_DURATION + 0.2)
+    uiDirty = true
+  }
+
+  function isPackCeremonyComplete(): boolean {
+    if (!packAnim || packAnim.phase !== 'reveal') return false
+    for (const st of packAnim.flipStartTimes) {
+      if (st < 0 || (packAnim.elapsed - st) < PACK_FLIP_DURATION) return false
+    }
+    return true
+  }
 
   function resolveActiveForecast(): CombatForecast | null {
     if (screen !== 'battle' || !state.battle) {
@@ -195,7 +264,9 @@ async function start() {
     screen = next
     lockedForecastCell = null
     mobileHandOpen = false
-    if (next === 'title' || next === 'camp' || next === 'story') {
+    if (next !== 'camp') packAnim = null
+    if (next === 'victory' || next === 'defeat') resultAnimTime = 0
+    if (next === 'title' || next === 'camp' || next === 'story' || next === 'world') {
       scene.setCampFraming(next)
       scene.setForecast(null)
     }
@@ -203,11 +274,29 @@ async function start() {
     hudRev++
   }
 
+  function openWorldMap(selectStageId?: string) {
+    state.battle = null
+    packAnim = null
+    if (selectStageId && CHAPTER_BY_ID[selectStageId]) {
+      state.campaign.selectedStageId = selectStageId
+      pendingChapter = CHAPTER_BY_ID[selectStageId].index
+    } else if (!CHAPTER_BY_ID[state.campaign.selectedStageId]) {
+      const rec = getNextRecommendedStage(state.campaign)
+      state.campaign.selectedStageId = rec.id
+      pendingChapter = rec.index
+    } else {
+      pendingChapter = CHAPTER_BY_ID[state.campaign.selectedStageId].index
+    }
+    pendingEndless = 0
+    setScreen('world')
+  }
+
   function openCamp(tab: CampTab = campTab) {
     state.battle = null
     campTab = tab
     mobileCampCollapsed = false
-    pendingChapter = Math.min(state.campaign.chaptersCleared, CHAPTERS.length - 1)
+    const sel = getSelectedStage()
+    pendingChapter = sel.index
     pendingEndless = 0
     if (!getHeroByUid(state.campaign, state.campaign.selectedCampHeroUid)) {
       state.campaign.selectedCampHeroUid = state.campaign.squadUids[0] ?? state.campaign.heroes[0]?.uid ?? null
@@ -217,6 +306,7 @@ async function start() {
 
   function openStory(chapterIndex: number, endlessWave = 0) {
     pendingChapter = Math.max(0, Math.min(CHAPTERS.length - 1, chapterIndex))
+    state.campaign.selectedStageId = CHAPTERS[pendingChapter].id
     pendingEndless = endlessWave
     setScreen('story')
   }
@@ -234,11 +324,9 @@ async function start() {
       clearSave(page.storage)
       state = createInitialState((Date.now() & 0xffff) || 1337)
       saveNow()
-      openStory(0, 0)
-    } else if (state.campaign.battlesWon === 0) {
-      openStory(0, 0)
+      openWorldMap(CHAPTERS[0].id)
     } else {
-      openCamp('squad')
+      openWorldMap(getNextRecommendedStage(state.campaign).id)
     }
   }
 
@@ -246,7 +334,8 @@ async function start() {
   const playBtn = buttonPrimitive.create({ id: 'cs-play', label: 'Begin Campaign', onPress: () => startCampaign(false) })
   const newBtn = buttonPrimitive.create({ id: 'cs-new', label: 'New Campaign', onPress: () => startCampaign(true) })
   const storyGoBtn = buttonPrimitive.create({ id: 'cs-story-go', label: 'Deploy to Battle', onPress: launchBattle })
-  const storyBackBtn = buttonPrimitive.create({ id: 'cs-story-back', label: 'Vanguard Camp', onPress: () => openCamp('squad') })
+  const storyBackBtn = buttonPrimitive.create({ id: 'cs-story-back', label: 'World Map', onPress: () => openWorldMap() })
+  const worldMapBtn = buttonPrimitive.create({ id: 'cs-world-map', label: 'World Map', onPress: () => openWorldMap() })
   const endTurnBtn = buttonPrimitive.create({
     id: 'cs-end-turn',
     label: 'End Turn',
@@ -302,23 +391,23 @@ async function start() {
   const victoryCampBtn = buttonPrimitive.create({ id: 'cs-victory-camp', label: 'Vanguard Camp', onPress: () => openCamp('squad') })
   const victoryNextBtn = buttonPrimitive.create({
     id: 'cs-victory-next',
-    label: 'Next Chapter',
+    label: 'Next Stage',
     onPress: () => {
-      const nextCh = Math.min(state.campaign.chaptersCleared, CHAPTERS.length - 1)
-      if (state.campaign.chaptersCleared >= CHAPTERS.length) {
-        openStory(CHAPTERS.length - 1, Math.max(1, (state.battle?.endlessWave ?? 0) + 1))
+      if (isEndlessUnlocked(state.campaign) && (state.battle?.endlessWave ?? 0) > 0) {
+        openStory(CHAPTERS.length - 1, (state.battle?.endlessWave ?? 0) + 1)
       } else {
-        openStory(nextCh, 0)
+        const nextStage = getNextRecommendedStage(state.campaign)
+        openWorldMap(nextStage.id)
       }
     }
   })
   const defeatRetryBtn = buttonPrimitive.create({ id: 'cs-defeat-retry', label: 'Retry Battle', onPress: launchBattle })
   const campBattleBtn = buttonPrimitive.create({
     id: 'cs-camp-battle',
-    label: 'March to Battle',
+    label: 'World Map',
     onPress: () => {
       audio.unlock()
-      openStory(pendingChapter, pendingEndless)
+      openWorldMap()
     }
   })
 
@@ -328,8 +417,12 @@ async function start() {
     safeArea: { top: 8, right: 8, bottom: 8, left: 8 },
     keyboardEnabled: () => screen !== 'battle',
     onBack: () => {
-      if (screen === 'paused') setScreen('battle')
-      else if (screen === 'story') openCamp('squad')
+      if (packAnim) {
+        if (isPackCeremonyComplete()) { packAnim = null; uiDirty = true }
+        else skipPackCeremony()
+      } else if (screen === 'paused') setScreen('battle')
+      else if (screen === 'story') openWorldMap()
+      else if (screen === 'camp') openWorldMap()
     }
   })
 
@@ -651,7 +744,7 @@ async function start() {
     const shortH = h < 480
     const hasSave = Boolean(existingSave && (existingSave.campaign.battlesWon > 0 || existingSave.campaign.packsOpened > 0))
     const playLabel = hasSave
-      ? `Continue - Ch ${Math.min(state.campaign.chaptersCleared + 1, CHAPTERS.length)}`
+      ? `Continue (${state.campaign.clearedStageIds.length}/${CHAPTERS.length})`
       : 'Begin Campaign'
 
     const logoH = shortH ? Math.min(108, Math.round(h * 0.30)) : Math.min(138, Math.round(h * 0.22))
@@ -727,6 +820,435 @@ async function start() {
   }
 
   // =========================================================================
+  // WORLD MAP OVERWORLD (BRANCHING STAGES, DIFFICULTY, REWARDS & SPECIALS)
+  // =========================================================================
+
+  function buildWorldMapTree(w: number, h: number): LayoutNode {
+    const camp = state.campaign
+    const mobile = w < 780
+    const shortH = !mobile && h < 500
+    const isCompact = mobile || shortH
+    const selected = getSelectedStage()
+    const selectedUnlocked = isStageUnlocked(camp, selected)
+    const selectedCleared = isStageCleared(camp, selected.id)
+    const endlessReady = isEndlessUnlocked(camp)
+    const squadPower = computeSquadPower(camp)
+    const clearedSet = new Set(camp.clearedStageIds)
+    const unlockedSet = new Set(CHAPTERS.filter(ch => isStageUnlocked(camp, ch)).map(ch => ch.id))
+
+    const outerPad = isCompact ? 8 : 14
+    const topH = shortH ? 40 : 48
+    const gap = isCompact ? 8 : 12
+    const contentW = Math.min(w - outerPad * 2, 1220)
+    const contentH = Math.max(240, h - topH - outerPad * 3 - gap)
+
+    const inspW = mobile ? contentW : Math.min(354, Math.max(288, Math.round(contentW * 0.31)))
+    const mapW = mobile ? contentW : contentW - inspW - gap
+    const mapH = mobile ? Math.max(190, Math.round(contentH * 0.48)) : contentH
+    const inspH = mobile ? Math.max(190, contentH - mapH - gap) : contentH
+
+    const mapPadX = mobile ? 44 : 58
+    const mapPadY = mobile ? 38 : 48
+    const nodeW = mobile ? 84 : 104
+    const nodeH = mobile ? 66 : 74
+    const pinCenterY = mobile ? 22 : 26
+    const innerW = Math.max(1, mapW - mapPadX * 2)
+    const innerH = Math.max(1, mapH - mapPadY * 2)
+
+    const mapNodes: LayoutNode[] = CHAPTERS.map(stage => {
+      const cx = mapPadX + stage.mapX * innerW
+      const cy = mapPadY + stage.mapY * innerH
+      const left = Math.max(4, Math.min(mapW - nodeW - 4, Math.round(cx - nodeW / 2)))
+      const top = Math.max(4, Math.min(mapH - nodeH - 4, Math.round(cy - pinCenterY)))
+      const unlocked = unlockedSet.has(stage.id)
+      const cleared = clearedSet.has(stage.id)
+      const isSel = selected.id === stage.id
+      return boxNode({
+        id: `map-node-${stage.id}`,
+        style: { anchor: 'top-left', inset: [left, top], width: nodeW, height: nodeH },
+        widget: {
+          type: 'button',
+          label: stage.title,
+          selected: isSel,
+          onPress: () => {
+            audio.unlock()
+            camp.selectedStageId = stage.id
+            pendingChapter = stage.index
+            pendingEndless = 0
+            state.sounds.push({ kind: 'card', pitch: unlocked ? 1.15 : 0.8 })
+            uiDirty = true
+          },
+          draw: (ctx: CanvasRenderingContext2D, rect: LayoutRect, st: CanvasWidgetDrawState) => drawWorldMapNode(
+            ctx,
+            rect,
+            stage,
+            { unlocked, cleared, selected: isSel, time: worldMapTime, compact: mobile },
+            st
+          )
+        }
+      })
+    })
+
+    // Aggregate unique enemy roster for the selected stage
+    const enemyCounts = new Map<EnemyArchetypeId, number>()
+    for (const sp of selected.enemies) {
+      enemyCounts.set(sp.id, (enemyCounts.get(sp.id) ?? 0) + 1)
+    }
+    const enemyList = Array.from(enemyCounts.entries())
+    const gridCols = selected.grid[0]?.length ?? 8
+    const gridRows = selected.grid.length
+    const biomeName = selected.biome[0].toUpperCase() + selected.biome.slice(1)
+    const firstEq = selected.rewardEquipId ? EQUIPMENT_BY_ID[selected.rewardEquipId] : undefined
+    const firstHero = selected.rewardHeroId ? HERO_SPECS[selected.rewardHeroId] : undefined
+
+    const firstClearLoot: { icon: IconName; text: string; color?: string }[] = [
+      { icon: 'coin', text: `+${selected.rewardGold}g`, color: selectedCleared ? COLOR.faint : COLOR.accentHi }
+    ]
+    if (firstEq) {
+      firstClearLoot.push({
+        icon: 'bag',
+        text: firstEq.name,
+        color: selectedCleared ? COLOR.faint : RARITY_META[firstEq.rarity].hex
+      })
+    }
+    if (firstHero) {
+      firstClearLoot.push({
+        icon: 'users',
+        text: firstHero.name,
+        color: selectedCleared ? COLOR.faint : '#9ff0c4'
+      })
+    }
+    if (selected.unlocksSlot4) {
+      firstClearLoot.push({
+        icon: 'star',
+        text: '4th Slot',
+        color: selectedCleared ? COLOR.faint : COLOR.ap
+      })
+    }
+
+    const replayTierText = selected.difficulty <= 2
+      ? 'Com/Unc Drop'
+      : selected.difficulty === 3 ? 'Up to Rare'
+      : 'Rare/Slim Epic'
+    const replayLoot: { icon: IconName; text: string; color?: string }[] = [
+      { icon: 'coin', text: `+${selected.replayGold}g`, color: COLOR.accentHi },
+      { icon: 'cards', text: replayTierText, color: '#9fd3ff' }
+    ]
+
+    const powerRatio = squadPower / Math.max(1, selected.recommendedPower)
+    const powerColor = powerRatio >= 1.0 ? COLOR.good : powerRatio >= 0.8 ? COLOR.accentHi : COLOR.danger
+    const deployLabel = !selectedUnlocked
+      ? 'Locked'
+      : selectedCleared ? 'Replay Battle' : 'Deploy to Battle'
+
+    const mapArea = overlay({
+      id: 'wm-map-box',
+      style: { width: mapW, height: mapH },
+      widget: {
+        type: 'panel',
+        blocksPointer: true,
+        draw: (ctx: CanvasRenderingContext2D, rect: LayoutRect) => drawWorldMapBackdrop(
+          ctx, rect, worldMapTime, CHAPTERS, clearedSet, unlockedSet, mapPadX, mapPadY
+        )
+      }
+    }, mapNodes)
+
+    const inspectorPanel = column({
+      id: 'wm-inspector',
+      style: { width: inspW, height: inspH, padding: isCompact ? [10, 12] : [14, 14], gap: isCompact ? 6 : 9 },
+      widget: {
+        type: 'panel',
+        blocksPointer: true,
+        draw: (ctx: CanvasRenderingContext2D, rect: LayoutRect) => drawPanel(ctx, rect, { r: RADIUS.xl, lipH: 5 })
+      }
+    }, [
+      // Header: Title + Special/Story Badge
+      boxNode({
+        id: 'wm-st-head',
+        style: { height: isCompact ? 42 : 52 },
+        widget: {
+          type: 'panel',
+          draw: (ctx: CanvasRenderingContext2D, rect: LayoutRect) => {
+            const tag = selected.specialTag ?? 'Story Stage'
+            const tagBg = selected.kind === 'boss' ? '#5e1a2a'
+              : selected.kind === 'elite' ? '#4a2417'
+              : selected.kind === 'treasure' ? '#4a3610'
+              : selected.kind === 'special' ? '#1c4236'
+              : '#1e2c4f'
+            const tagCol = selected.kind === 'boss' ? '#ff9ea8'
+              : selected.kind === 'elite' ? '#ffa266'
+              : selected.kind === 'treasure' || selected.kind === 'special' ? COLOR.accentHi
+              : COLOR.ally
+            drawChip(ctx, rect.x, rect.y, tag.toUpperCase(), { h: 18, size: 9, color: tagCol, bg: tagBg })
+            if (selectedCleared) {
+              drawChip(ctx, rect.x + rect.width, rect.y, 'CLEARED', {
+                h: 18, size: 9, color: '#072b16', bg: COLOR.good, icon: 'check', align: 'right'
+              })
+            } else if (!selectedUnlocked) {
+              drawChip(ctx, rect.x + rect.width, rect.y, 'LOCKED', {
+                h: 18, size: 9, color: COLOR.muted, bg: '#222b42', icon: 'lock', align: 'right'
+              })
+            }
+            drawText(ctx, selected.title, rect.x, rect.y + (isCompact ? 32 : 38), {
+              size: isCompact ? 16 : 20,
+              weight: 900,
+              color: '#ffffff',
+              maxW: rect.width,
+              display: true,
+              stroke: true,
+              strokeWidth: 3
+            })
+          }
+        }
+      }),
+
+      // Difficulty + Arena Size + Recommended Power strip
+      boxNode({
+        id: 'wm-st-meta',
+        style: { height: isCompact ? 44 : 52 },
+        widget: {
+          type: 'panel',
+          draw: (ctx: CanvasRenderingContext2D, rect: LayoutRect) => {
+            drawWell(ctx, rect, RADIUS.md)
+            const bw = drawDifficultyBadge(ctx, rect.x + 8, rect.y + 6, selected.difficulty, { h: 20, showLabel: true })
+            drawChip(ctx, rect.x + 14 + bw, rect.y + 6, `${gridCols}x${gridRows} ${biomeName}`, {
+              h: 20, size: 9.5, color: '#dce8ff', bg: '#1e2b4a'
+            })
+            drawText(
+              ctx,
+              `Squad Power ${squadPower} / Rec ${selected.recommendedPower}`,
+              rect.x + 10,
+              rect.y + rect.height - 11,
+              { size: 10.5, weight: 800, color: powerColor, maxW: rect.width - 20, display: true }
+            )
+          }
+        }
+      }),
+
+      // Enemy Forces preview with 3D-baked portraits
+      ...(isCompact ? [] : [boxNode({
+        id: 'wm-st-foes',
+        style: { height: 74 },
+        widget: {
+          type: 'panel',
+          draw: (ctx: CanvasRenderingContext2D, rect: LayoutRect) => {
+            drawWell(ctx, rect, RADIUS.md)
+            drawOverline(ctx, `Hostile Forces (${selected.enemies.length})`, rect.x + 10, rect.y + 12, rect.width - 20)
+            let ex = rect.x + 10
+            const ey = rect.y + 24
+            const ps = 40
+            for (const [eid, count] of enemyList) {
+              if (ex + ps > rect.x + rect.width - 8) break
+              const spec = ENEMY_SPECS[eid]
+              drawPortraitTile(ctx, ex, ey, ps, portraits[eid], {
+                ring: spec.isBoss ? COLOR.accent : COLOR.enemy,
+                ringW: 2,
+                bg: spec.isBoss ? '#59205e' : '#632535'
+              })
+              drawChip(ctx, ex + ps + 2, ey + ps - 13, `x${count}`, {
+                h: 15, size: 8.5, color: '#ffffff', bg: '#151c33', align: 'right'
+              })
+              ex += ps + 10
+            }
+          }
+        }
+      })]),
+
+      // Possible Rewards: One-Time First-Clear vs Replayable
+      boxNode({
+        id: 'wm-st-rewards',
+        style: { grow: 1, minHeight: isCompact ? 76 : 112 },
+        widget: {
+          type: 'panel',
+          draw: (ctx: CanvasRenderingContext2D, rect: LayoutRect) => {
+            drawWell(ctx, rect, RADIUS.md)
+            const px = rect.x + 10
+            const pw = rect.width - 20
+            drawOverline(
+              ctx,
+              selectedCleared ? 'First-Clear Special (Claimed)' : 'First-Clear Special (One-Time)',
+              px,
+              rect.y + 13,
+              pw,
+              selectedCleared ? COLOR.faint : COLOR.accentHi
+            )
+            // Wrap chips cleanly so every one-time reward (gold, gear, hero, slot unlock) is always visible!
+            let cx = px
+            let cy = rect.y + 24
+            const chipH = 22
+            for (const item of firstClearLoot) {
+              const estW = Math.min(pw, item.text.length * 6.8 + 38)
+              if (cx > px && cx + estW > px + pw) {
+                cx = px
+                cy += chipH + 5
+              }
+              const cw = drawChip(ctx, cx, cy, item.text, {
+                icon: item.icon,
+                h: chipH,
+                size: 10.5,
+                color: item.color ?? COLOR.text,
+                bg: '#1c2642',
+                border: COLOR.outline
+              })
+              cx += cw + 6
+            }
+
+            const repTop = Math.max(cy + chipH + 12, rect.y + rect.height * 0.56)
+            drawOverline(ctx, 'Replay Spoils (Repeatable)', px, repTop, pw, '#8fd4ff')
+            let rx = px
+            const ry = repTop + 10
+            for (const item of replayLoot) {
+              const cw = drawChip(ctx, rx, ry, item.text, {
+                icon: item.icon,
+                h: chipH,
+                size: 10.5,
+                color: item.color ?? COLOR.text,
+                bg: '#1c2642',
+                border: COLOR.outline
+              })
+              rx += cw + 6
+            }
+          }
+        }
+      }),
+
+      // Unlock hint or modifier blurb
+      boxNode({
+        id: 'wm-st-hint',
+        style: { height: 20 },
+        widget: {
+          type: 'panel',
+          draw: (ctx: CanvasRenderingContext2D, rect: LayoutRect) => drawLabel(
+            ctx,
+            rect,
+            !selectedUnlocked
+              ? getStageUnlockHint(selected)
+              : selected.modifierDesc ?? `${selected.subtitle} · ${selected.enemies.length} foes`,
+            {
+              size: 11,
+              weight: 700,
+              color: !selectedUnlocked ? '#ff9ea8' : COLOR.muted,
+              align: 'center'
+            }
+          )
+        }
+      }),
+
+      // Deploy / Replay CTA
+      boxNode({
+        id: 'cs-world-deploy',
+        style: { height: isCompact ? 38 : 44 },
+        widget: {
+          type: 'button',
+          label: deployLabel,
+          primary: selectedUnlocked,
+          disabled: !selectedUnlocked,
+          onPress: () => {
+            if (!selectedUnlocked) return
+            audio.unlock()
+            openStory(selected.index, 0)
+          },
+          draw: (ctx: CanvasRenderingContext2D, rect: LayoutRect, st: CanvasWidgetDrawState) => drawButton(
+            ctx,
+            rect,
+            deployLabel,
+            st,
+            {
+              variant: !selectedUnlocked ? 'secondary' : selectedCleared ? 'success' : 'primary',
+              icon: !selectedUnlocked ? 'lock' : 'sword',
+              size: isCompact ? 13 : 14.5
+            }
+          )
+        }
+      })
+    ])
+
+    const mainBody = mobile
+      ? column({ id: 'wm-body', style: { width: contentW, height: contentH, gap } }, [mapArea, inspectorPanel])
+      : row({ id: 'wm-body', style: { width: contentW, height: contentH, gap } }, [mapArea, inspectorPanel])
+
+    return overlay({ id: 'root', style: { anchor: 'fill' } }, [
+      boxNode({
+        id: 'wm-scrim',
+        style: { anchor: 'fill' },
+        widget: {
+          type: 'panel',
+          draw: (ctx: CanvasRenderingContext2D, rect: LayoutRect) => {
+            ctx.fillStyle = 'rgba(7, 10, 22, 0.72)'
+            ctx.fillRect(rect.x, rect.y, rect.width, rect.height)
+          }
+        }
+      }),
+      column({
+        id: 'wm-shell',
+        style: { anchor: 'center', width: contentW, height: h - outerPad * 2, gap, respectSafeArea: true }
+      }, [
+        row({ id: 'wm-top', style: { height: topH, gap: 8, align: 'center' } }, [
+          boxNode({
+            id: 'wm-header',
+            style: { grow: 1, height: topH },
+            widget: {
+              type: 'panel',
+              draw: (ctx: CanvasRenderingContext2D, rect: LayoutRect) => {
+                drawPanel(ctx, rect, { r: RADIUS.lg, lipH: 4 })
+                const cy = rect.y + (rect.height - 4) / 2
+                drawText(ctx, 'SOLIS WORLD MAP', rect.x + 14, cy + 0.5, {
+                  size: isCompact ? 13 : 16,
+                  weight: 900,
+                  color: COLOR.accentHi,
+                  display: true,
+                  stroke: true,
+                  strokeWidth: 2.6
+                })
+                const prog = `${camp.clearedStageIds.length}/${CHAPTERS.length} Cleared`
+                drawChip(ctx, rect.x + rect.width - 12, cy - 10, `${camp.gold}g  ·  ${prog}`, {
+                  icon: 'coin',
+                  h: 21,
+                  size: 10.5,
+                  color: COLOR.accentHi,
+                  bg: COLOR.wellDeep,
+                  align: 'right'
+                })
+              }
+            }
+          }),
+          ...(endlessReady ? [boxNode({
+            id: 'cs-world-endless',
+            style: { width: mobile ? 96 : 138, height: topH },
+            widget: {
+              type: 'button',
+              label: `Endless W${camp.endlessBest + 1}`,
+              onPress: () => {
+                audio.unlock()
+                openStory(CHAPTERS.length - 1, camp.endlessBest + 1)
+              },
+              draw: (ctx: CanvasRenderingContext2D, rect: LayoutRect, st: CanvasWidgetDrawState) => drawButton(
+                ctx, rect, mobile ? `Wave ${camp.endlessBest + 1}` : `Endless W${camp.endlessBest + 1}`, st, { variant: 'danger', icon: 'skull', size: 12 }
+              )
+            }
+          })] : []),
+          boxNode({
+            id: 'cs-world-camp',
+            style: { width: mobile ? 92 : 168, height: topH },
+            widget: {
+              type: 'button',
+              label: 'Vanguard Camp',
+              onPress: () => {
+                audio.unlock()
+                openCamp('squad')
+              },
+              draw: (ctx: CanvasRenderingContext2D, rect: LayoutRect, st: CanvasWidgetDrawState) => drawButton(
+                ctx, rect, mobile ? 'Camp' : 'Vanguard Camp', st, { variant: 'secondary', icon: 'camp', size: 13 }
+              )
+            }
+          })
+        ]),
+        mainBody
+      ])
+    ])
+  }
+
+  // =========================================================================
   // STORY BRIEFING (CINEMATIC LETTERBOX OVER LIVE 3D DIORAMA)
   // =========================================================================
 
@@ -734,25 +1256,39 @@ async function start() {
     const mobile = w < 640
     const shortH = h < 480
     const ch = CHAPTERS[pendingChapter]
-    const eq = EQUIPMENT_BY_ID[ch.rewardEquipId]
-    const hero = HERO_SPECS[ch.rewardHeroId]
+    const alreadyCleared = pendingEndless === 0 && isStageCleared(state.campaign, ch.id)
+    const eq = ch.rewardEquipId ? EQUIPMENT_BY_ID[ch.rewardEquipId] : undefined
+    const hero = ch.rewardHeroId ? HERO_SPECS[ch.rewardHeroId] : undefined
     const speakerIcon = portraits[SPEAKER_PORTRAIT[ch.introSpeaker] ?? 'knight']
+    const gridCols = ch.grid[0]?.length ?? 8
+    const gridRows = ch.grid.length
+    const diffMeta = DIFFICULTY_META[ch.difficulty]
     const header = pendingEndless > 0 ? `Endless Arena - Wave ${pendingEndless}` : ch.title
+    const kicker = pendingEndless > 0
+      ? `${ch.subtitle} · ${gridCols}x${gridRows}`
+      : `${ch.subtitle} · ${gridCols}x${gridRows} · Diff ${diffMeta.short}`
     const desc = pendingEndless > 0
-      ? `Eclipse remnants surge back into ${ch.subtitle}. Every wave scales foes and awards richer gold and rare loot.`
+      ? `Eclipse remnants surge back into ${ch.subtitle}. Every wave scales foes and awards richer gold and weighted loot.`
       : `"${ch.introText}"`
 
-    const lootItems: { icon: IconName; text: string; color?: string }[] = pendingEndless > 0
-      ? [
-          { icon: 'coin', text: `+${140 + pendingEndless * 45}g`, color: COLOR.accentHi },
-          { icon: 'bag', text: 'Random Gear', color: '#9fd3ff' },
-          { icon: 'users', text: 'Random Hero', color: '#9ff0c4' }
-        ]
-      : [
-          { icon: 'coin', text: `+${ch.rewardGold}g`, color: COLOR.accentHi },
-          { icon: 'bag', text: eq?.name ?? 'Gear', color: eq ? RARITY_META[eq.rarity].hex : COLOR.text },
-          { icon: 'users', text: `${hero.name} Card`, color: '#9ff0c4' }
-        ]
+    const lootItems: { icon: IconName; text: string; color?: string }[] = []
+    if (pendingEndless > 0) {
+      lootItems.push(
+        { icon: 'coin', text: `+${130 + pendingEndless * 35}g`, color: COLOR.accentHi },
+        { icon: 'bag', text: 'Weighted Gear', color: '#9fd3ff' },
+        { icon: 'users', text: 'Weighted Hero', color: '#9ff0c4' }
+      )
+    } else if (alreadyCleared) {
+      lootItems.push(
+        { icon: 'coin', text: `+${ch.replayGold}g (Replay)`, color: COLOR.accentHi },
+        { icon: 'cards', text: 'Repeatable Drop', color: '#9fd3ff' },
+        { icon: 'check', text: 'Specials Claimed', color: COLOR.muted }
+      )
+    } else {
+      lootItems.push({ icon: 'coin', text: `+${ch.rewardGold}g`, color: COLOR.accentHi })
+      if (eq) lootItems.push({ icon: 'bag', text: `${eq.name} (1x)`, color: RARITY_META[eq.rarity].hex })
+      if (hero) lootItems.push({ icon: 'users', text: `${hero.name} (1x)`, color: '#9ff0c4' })
+    }
 
     const topBarH = shortH ? 62 : mobile ? 92 : 104
     const bottomBarH = shortH ? 176 : mobile ? 268 : 226
@@ -776,7 +1312,7 @@ async function start() {
         style: { anchor: 'top', width: contentW, height: shortH ? 48 : 64, inset: shortH ? 6 : mobile ? 14 : 20, respectSafeArea: true },
         widget: {
           type: 'panel',
-          draw: (ctx: CanvasRenderingContext2D, rect: LayoutRect) => drawStoryHeading(ctx, rect, ch.subtitle, header)
+          draw: (ctx: CanvasRenderingContext2D, rect: LayoutRect) => drawStoryHeading(ctx, rect, kicker, header)
         }
       }),
       // Bottom cinematic dialogue bar
@@ -830,10 +1366,10 @@ async function start() {
             id: 'cs-story-back', style: { grow: 1, height: actH },
             widget: {
               type: 'button',
-              label: 'Vanguard Camp',
+              label: 'World Map',
               primitive: storyBackBtn,
               draw: (ctx: CanvasRenderingContext2D, rect: LayoutRect, st: CanvasWidgetDrawState) => drawButton(
-                ctx, rect, mobile ? 'Camp' : 'Vanguard Camp', st, { variant: 'secondary', icon: 'camp', size: shortH ? 12 : 13 }
+                ctx, rect, mobile ? 'Map' : 'World Map', st, { variant: 'secondary', icon: 'map', size: shortH ? 12 : 13 }
               )
             }
           }),
@@ -845,7 +1381,7 @@ async function start() {
               primary: true,
               primitive: storyGoBtn,
               draw: (ctx: CanvasRenderingContext2D, rect: LayoutRect, st: CanvasWidgetDrawState) => drawButton(
-                ctx, rect, 'Deploy Squad', st, { variant: 'primary', icon: 'sword', size: shortH ? 14 : 15 }
+                ctx, rect, alreadyCleared ? 'Replay Battle' : 'Deploy Squad', st, { variant: 'primary', icon: 'sword', size: shortH ? 14 : 15 }
               )
             }
           })
@@ -1050,7 +1586,7 @@ async function start() {
       ? (inspected.heroId ? HERO_SPECS[inspected.heroId].title : inspected.isBoss ? 'Boss' : 'Foe')
       : ''
     const fpsShort = `${Math.round(perf.snapshot().fps || 60)}`
-    const chapterShort = battle.endlessWave > 0 ? `Endless Wave ${battle.endlessWave}` : ch.title.replace('Chapter ', 'Ch ')
+    const chapterShort = battle.endlessWave > 0 ? `Endless Wave ${battle.endlessWave}` : `${ch.title} · D${battle.difficulty}`
 
     // Top-right toolbar (compact on phone: Music + Pause only, touch drags to orbit!)
     const tbIconS = isPhone ? 28 : 32
@@ -1651,8 +2187,6 @@ async function start() {
     const isPhone = mobile || shortH
     const wide = w >= 980 && !shortH
     const deckValue = computeDeckValue(camp)
-    const nextCh = CHAPTERS[pendingChapter]
-    const allCleared = camp.chaptersCleared >= CHAPTERS.length
 
     const sheetW = Math.min(w - (isPhone ? 12 : 24), 1120)
     // Keep upper ~48% of viewport open on desktop so the live 3D campfire + squad shine!
@@ -2227,7 +2761,7 @@ async function start() {
       ])
     } else {
       // Booster Card Decks & Pack Reveal
-      const hasReveal = camp.lastPackReveal.length > 0
+      const hasReveal = camp.lastPackReveal.length > 0 && !packAnim
       const packH = hasReveal ? (shortH ? 52 : 64) : (shortH ? 148 : mobile ? 156 : 196)
       const packCards: LayoutNode[] = PACK_LIST.map(pack => {
         const affordable = canBuyPack(camp, pack.id)
@@ -2243,6 +2777,7 @@ async function start() {
               const pulled = buyPack(state, pack.id)
               if (pulled) {
                 saveNow()
+                startPackCeremony(pack.id, pulled)
                 showToast(`Opened ${pack.name} - ${pulled.length} cards added to collection.`)
                 uiDirty = true
               }
@@ -2290,8 +2825,8 @@ async function start() {
                 draw: (ctx: CanvasRenderingContext2D, rect: LayoutRect) => drawLabel(
                   ctx,
                   rect,
-                  `Tactic Deck: ${camp.tactics.length} cards  -  Packs Opened: ${camp.packsOpened}  -  Merge 3 duplicate heroes to ascend`,
-                  { size: 11, color: COLOR.muted, align: 'center' }
+                  `Odds: Recruit (0.45% Epic / 0.05% Leg) · Vanguard (1.5% / 0.15%) · Sovereign (5.2% / 0.8%) · Packs: ${camp.packsOpened}`,
+                  { size: 10.5, color: COLOR.muted, align: 'center' }
                 )
               }
             })
@@ -2303,13 +2838,12 @@ async function start() {
       ])
     }
 
+    const selectedStage = getSelectedStage()
     const battleLabel = pendingEndless > 0
       ? `Endless Wave ${pendingEndless}`
-      : nextCh.title.replace('Chapter ', 'Ch ')
-    const battleShort = pendingEndless > 0
-      ? `Wave ${pendingEndless}`
-      : nextCh.title.split(':')[0]?.replace('Chapter ', 'Ch ') ?? 'Battle'
-    const chapterSub = pendingEndless > 0 ? 'Arena' : nextCh.subtitle
+      : selectedStage.title
+    const chapterSub = pendingEndless > 0 ? 'Arena' : `Diff ${DIFFICULTY_META[selectedStage.difficulty].short} · ${selectedStage.subtitle}`
+    const packOverlayNodes: LayoutNode[] = packAnim ? [buildPackCeremonyOverlay(w, h, packAnim)] : []
 
     return overlay({ id: 'root', style: { anchor: 'fill' } }, [
       // Subtle top fade for crisp readability over the 3D sky
@@ -2332,29 +2866,16 @@ async function start() {
             draw: (ctx: CanvasRenderingContext2D, rect: LayoutRect) => drawCampHeader(ctx, rect, camp.gold, deckValue, isPhone)
           }
         }),
-        // Chapter selector pill + March to Battle CTA
+        // World Map + Quick Deploy bar
         row({
           id: 'cp-chapter-bar',
-          style: { width: mobile ? 196 : 332, height: shortH ? 36 : 42, padding: [3, 5], gap: 4, align: 'center' },
+          style: { width: mobile ? 196 : 368, height: shortH ? 36 : 42, padding: [3, 5], gap: 6, align: 'center' },
           widget: {
             type: 'panel',
             blocksPointer: true,
             draw: (ctx: CanvasRenderingContext2D, rect: LayoutRect) => drawPanel(ctx, rect, { r: RADIUS.lg })
           }
         }, [
-          boxNode({
-            id: 'cp-ch-prev', style: { width: 30, height: 34 },
-            widget: {
-              type: 'button', label: 'Previous Chapter',
-              disabled: pendingChapter <= 0 && pendingEndless === 0,
-              onPress: () => {
-                if (pendingEndless > 0) pendingEndless = 0
-                else if (pendingChapter > 0) pendingChapter--
-                uiDirty = true
-              },
-              draw: (ctx: CanvasRenderingContext2D, rect: LayoutRect, st: CanvasWidgetDrawState) => drawIconButton(ctx, rect, 'chevron-left', st)
-            }
-          }),
           ...(mobile ? [] : [boxNode({
             id: 'cp-ch-label', style: { grow: 1, height: 34 },
             widget: {
@@ -2363,30 +2884,29 @@ async function start() {
             }
           })]),
           boxNode({
-            id: 'cp-ch-next', style: { width: 30, height: 34 },
-            widget: {
-              type: 'button', label: 'Next Chapter',
-              disabled: !allCleared && pendingChapter >= camp.chaptersCleared,
-              onPress: () => {
-                if (pendingChapter < Math.min(camp.chaptersCleared, CHAPTERS.length - 1)) {
-                  pendingChapter++
-                } else if (allCleared) {
-                  pendingEndless = Math.max(1, pendingEndless + 1)
-                }
-                uiDirty = true
-              },
-              draw: (ctx: CanvasRenderingContext2D, rect: LayoutRect, st: CanvasWidgetDrawState) => drawIconButton(ctx, rect, 'chevron-right', st)
-            }
-          }),
-          boxNode({
-            id: 'cs-camp-battle', style: { width: mobile ? 106 : 114, height: 34 },
+            id: 'cs-camp-battle', style: { width: mobile ? 106 : 126, height: 34 },
             widget: {
               type: 'button',
-              label: mobile ? battleShort : 'Battle',
+              label: 'World Map',
               primary: true,
               primitive: campBattleBtn,
               draw: (ctx: CanvasRenderingContext2D, rect: LayoutRect, st: CanvasWidgetDrawState) => drawButton(
-                ctx, rect, mobile ? battleShort : 'Battle', st, { variant: 'primary', icon: 'sword', size: 13 }
+                ctx, rect, mobile ? 'Map' : 'World Map', st, { variant: 'primary', icon: 'map', size: 13 }
+              )
+            }
+          }),
+          boxNode({
+            id: 'cs-camp-quick-fight', style: { width: mobile ? 76 : 86, height: 34 },
+            widget: {
+              type: 'button',
+              label: 'Fight',
+              disabled: !isStageUnlocked(camp, selectedStage),
+              onPress: () => {
+                audio.unlock()
+                openStory(selectedStage.index, pendingEndless)
+              },
+              draw: (ctx: CanvasRenderingContext2D, rect: LayoutRect, st: CanvasWidgetDrawState) => drawButton(
+                ctx, rect, 'Fight', st, { variant: 'success', icon: 'sword', size: 12.5 }
               )
             }
           })
@@ -2473,12 +2993,171 @@ async function start() {
           })] : [])
         ]),
         ...(collapsed ? [] : [bodyNode])
-      ])
+      ]),
+      ...packOverlayNodes
     ])
   }
 
   // =========================================================================
-  // VICTORY & DEFEAT MODALS
+  // PACK OPENING LOTTERY CEREMONY OVERLAY
+  // =========================================================================
+
+  function buildPackCeremonyOverlay(w: number, h: number, anim: PackAnimState): LayoutNode {
+    const mobile = w < 640
+    const shortH = h < 480
+    const pack = PACK_BY_ID[anim.packId]
+    const allRevealed = isPackCeremonyComplete()
+    const canBuyAgain = canBuyPack(state.campaign, anim.packId)
+    const revealElapsed = Math.max(0, anim.elapsed - PACK_SPIN_DURATION)
+
+    const stageW = Math.min(w - 24, 780)
+    const cardH = shortH ? 170 : mobile ? 200 : 236
+    const cardNodes: LayoutNode[] = anim.phase === 'reveal'
+      ? anim.cards.map((card, idx) => {
+          const cardPortrait = card.kind === 'hero' ? portraits[card.refId] : undefined
+          const tacticSpec = card.kind === 'tactic' ? TACTIC_BY_ID[card.refId] : undefined
+          const equipSpec = (card.kind === 'weapon' || card.kind === 'armor' || card.kind === 'relic')
+            ? EQUIPMENT_BY_ID[card.refId]
+            : undefined
+          const enterT = Math.max(0, Math.min(1, (revealElapsed - idx * 0.08) / 0.36))
+          const flipStart = anim.flipStartTimes[idx]
+          const flipT = flipStart >= 0 ? Math.max(0, Math.min(1, (anim.elapsed - flipStart) / PACK_FLIP_DURATION)) : 0
+          return boxNode({
+            id: `pack-anim-card-${idx}`,
+            style: { grow: 1, height: cardH },
+            widget: {
+              type: 'button',
+              label: flipT >= 0.5 ? card.name : `Flip Card ${idx + 1}`,
+              onPress: () => {
+                if (anim.flipStartTimes[idx] < 0) {
+                  anim.flipStartTimes[idx] = anim.elapsed
+                  state.sounds.push({ kind: 'card', pitch: 1.05 + idx * 0.1 })
+                  uiDirty = true
+                }
+              },
+              draw: (ctx: CanvasRenderingContext2D, rect: LayoutRect, st: CanvasWidgetDrawState) => drawAnimatedRevealCard(
+                ctx,
+                rect,
+                {
+                  rarity: card.rarity,
+                  kind: card.kind,
+                  refId: card.refId,
+                  name: card.name,
+                  detail: card.detail,
+                  value: card.value,
+                  isNew: card.isNew,
+                  portrait: cardPortrait,
+                  tacticSpec,
+                  equipAccent: equipSpec?.accentHex
+                },
+                { enterT, flipT, elapsed: anim.elapsed, hovered: st.hovered }
+              )
+            }
+          })
+        })
+      : []
+
+    const btnH = shortH ? 38 : 44
+    return overlay({ id: 'pack-ceremony-root', style: { anchor: 'fill' } }, [
+      boxNode({
+        id: 'pack-ceremony-bg',
+        style: { anchor: 'fill' },
+        widget: {
+          type: 'panel',
+          blocksPointer: true,
+          draw: (ctx: CanvasRenderingContext2D, rect: LayoutRect) => drawPackCeremonyBackdrop(ctx, rect, {
+            pack,
+            bestRarity: anim.bestRarity,
+            elapsed: anim.elapsed,
+            phase: anim.phase,
+            cards: anim.cards
+          })
+        }
+      }),
+      ...(anim.phase === 'reveal' ? [
+        column({
+          id: 'pack-ceremony-cards',
+          style: { anchor: 'center', width: stageW, height: (shortH ? 34 : 44) + cardH + (shortH ? 10 : 18), gap: shortH ? 10 : 18 }
+        }, [
+          boxNode({
+            id: 'pack-ceremony-title',
+            style: { width: stageW, height: shortH ? 34 : 44 },
+            widget: {
+              type: 'panel',
+              draw: (ctx: CanvasRenderingContext2D, rect: LayoutRect) => drawStoryHeading(
+                ctx,
+                rect,
+                pack.name,
+                allRevealed ? 'Cards Unsealed!' : 'Revealing Spoils...'
+              )
+            }
+          }),
+          row({ id: 'pack-ceremony-row', style: { width: stageW, height: cardH, gap: mobile ? 6 : 12 } }, cardNodes)
+        ])
+      ] : []),
+      row({
+        id: 'pack-ceremony-actions',
+        style: { anchor: 'bottom', width: Math.min(w - 24, 420), height: btnH, inset: shortH ? 12 : 26, gap: 10, respectSafeArea: true }
+      }, allRevealed
+        ? [
+            ...(canBuyAgain ? [boxNode({
+              id: 'cs-pack-again',
+              style: { grow: 1, height: btnH },
+              widget: {
+                type: 'button',
+                label: `Open Another (${pack.cost}g)`,
+                onPress: () => {
+                  audio.unlock()
+                  const pulled = buyPack(state, anim.packId)
+                  if (pulled) {
+                    saveNow()
+                    startPackCeremony(anim.packId, pulled)
+                  }
+                },
+                draw: (ctx: CanvasRenderingContext2D, rect: LayoutRect, st: CanvasWidgetDrawState) => drawButton(
+                  ctx, rect, `Another (${pack.cost}g)`, st, { variant: 'secondary', icon: 'cards', size: 13 }
+                )
+              }
+            })] : []),
+            boxNode({
+              id: 'cs-pack-collect',
+              style: { grow: 1.2, height: btnH },
+              widget: {
+                type: 'button',
+                label: 'Collect Cards',
+                primary: true,
+                onPress: () => {
+                  packAnim = null
+                  uiDirty = true
+                },
+                draw: (ctx: CanvasRenderingContext2D, rect: LayoutRect, st: CanvasWidgetDrawState) => drawButton(
+                  ctx, rect, 'Collect Cards', st, { variant: 'primary', icon: 'check', size: 14 }
+                )
+              }
+            })
+          ]
+        : [
+            boxNode({
+              id: 'cs-pack-skip',
+              style: { grow: 1, height: btnH },
+              widget: {
+                type: 'button',
+                label: 'Skip Animation',
+                onPress: () => {
+                  audio.unlock()
+                  skipPackCeremony()
+                },
+                draw: (ctx: CanvasRenderingContext2D, rect: LayoutRect, st: CanvasWidgetDrawState) => drawButton(
+                  ctx, rect, 'Reveal All', st, { variant: 'secondary', icon: 'sparkle', size: 13 }
+                )
+              }
+            })
+          ])
+    ])
+  }
+
+  // =========================================================================
+  // VICTORY & DEFEAT MODALS (ANIMATED CELEBRATION / GRIM ATMOSPHERE)
   // =========================================================================
 
   function buildResultTree(w: number, h: number, won: boolean): LayoutNode {
@@ -2486,83 +3165,133 @@ async function start() {
     const battle = state.battle
     const reward = battle?.reward
     const ch = CHAPTERS[battle?.chapterIndex ?? 0]
-    const eqSpec = reward ? EQUIPMENT_BY_ID[reward.equipCard.equipId] : undefined
-    const heroSpec = reward ? HERO_SPECS[reward.heroCard.heroId] : undefined
-    const copies = reward
-      ? state.campaign.heroes.filter(h => h.heroId === reward.heroCard.heroId && h.stars === 1).length
+    const eqSpec = reward?.equipCard ? EQUIPMENT_BY_ID[reward.equipCard.equipId] : undefined
+    const heroSpec = reward?.heroCard ? HERO_SPECS[reward.heroCard.heroId] : undefined
+    const tacSpec = reward?.tacticCard ? TACTIC_BY_ID[reward.tacticCard.tacticId] : undefined
+    const copies = reward?.heroCard
+      ? state.campaign.heroes.filter(h => h.heroId === reward.heroCard?.heroId && h.stars === 1).length
       : 0
 
-    const title = won ? (reward?.campaignWon ? 'Sunstone Crown Reforged' : 'Victory') : 'Vanguard Defeated'
-    const sub = won ? ch.title : 'Regroup and Adapt'
+    const title = won ? (reward?.campaignWon ? 'Sunstone Crown Reforged' : 'Victory!') : 'Vanguard Defeated'
+    const sub = won
+      ? `${ch.title}${reward && !reward.firstClear && (battle?.endlessWave ?? 0) === 0 ? ' · Replay' : ''}`
+      : `${ch.title} · Regroup & Adapt`
     const quote = won
       ? `${ch.outroSpeaker}: "${ch.outroText}"`
       : 'Return to Vanguard Camp to equip stronger gear, open booster decks, or merge 3 identical heroes to unlock Tier 2 skills.'
 
-    const rowH = shortH ? 40 : 50
+    const rowH = shortH ? 38 : 48
     const rewardRows: LayoutNode[] = []
     if (won && reward) {
+      const goldRollU = Math.max(0, Math.min(1, (resultAnimTime - 0.22) / 0.6))
+      const shownGold = Math.round(reward.gold * (1 - Math.pow(1 - goldRollU, 3)))
+      const rowReveal = (idx: number) => Math.max(0, Math.min(1, (resultAnimTime - (0.28 + idx * 0.16)) / 0.34))
+
+      let rIdx = 0
+      const goldIdx = rIdx++
       rewardRows.push(
         boxNode({
           id: 'res-gold', style: { height: rowH },
           widget: {
             type: 'panel',
-            draw: (ctx: CanvasRenderingContext2D, rect: LayoutRect) => drawRewardRow(ctx, rect, {
+            draw: (ctx: CanvasRenderingContext2D, rect: LayoutRect) => drawRewardRowAnimated(ctx, rect, {
               icon: 'coin',
-              title: `+${reward.gold} Gold`,
+              title: `+${shownGold} Gold`,
               detail: `Treasury total: ${state.campaign.gold}g`,
-              color: COLOR.accentHi
-            })
-          }
-        }),
-        boxNode({
-          id: 'res-eq', style: { height: rowH },
-          widget: {
-            type: 'panel',
-            draw: (ctx: CanvasRenderingContext2D, rect: LayoutRect) => drawRewardRow(ctx, rect, {
-              icon: 'bag',
-              title: eqSpec?.name ?? 'Equipment',
-              detail: eqSpec?.desc ?? '',
-              color: eqSpec ? RARITY_META[eqSpec.rarity].hex : COLOR.text,
-              badge: eqSpec ? RARITY_META[eqSpec.rarity].label : undefined
-            })
-          }
-        }),
-        boxNode({
-          id: 'res-hero', style: { height: rowH },
-          widget: {
-            type: 'panel',
-            draw: (ctx: CanvasRenderingContext2D, rect: LayoutRect) => drawRewardRow(ctx, rect, {
-              portrait: portraits[reward.heroCard.heroId],
-              title: `${heroSpec?.name ?? 'Hero'} (${heroSpec?.title ?? ''})`,
-              detail: `Copies: ${copies}/3`,
-              color: '#9ff0c4',
-              badge: copies >= 3 ? 'READY TO MERGE' : undefined
-            })
+              color: COLOR.accentHi,
+              badge: reward.firstClear ? 'FIRST CLEAR' : 'REPLAY'
+            }, rowReveal(goldIdx))
           }
         })
       )
+      if (reward.equipCard && eqSpec) {
+        const eqIdx = rIdx++
+        rewardRows.push(
+          boxNode({
+            id: 'res-eq', style: { height: rowH },
+            widget: {
+              type: 'panel',
+              draw: (ctx: CanvasRenderingContext2D, rect: LayoutRect) => drawRewardRowAnimated(ctx, rect, {
+                icon: 'bag',
+                title: eqSpec.name,
+                detail: eqSpec.desc,
+                color: RARITY_META[eqSpec.rarity].hex,
+                badge: reward.firstClear ? `1x ${RARITY_META[eqSpec.rarity].short}` : RARITY_META[eqSpec.rarity].label
+              }, rowReveal(eqIdx))
+            }
+          })
+        )
+      }
+      if (reward.heroCard && heroSpec) {
+        const hIdx = rIdx++
+        const heroId = reward.heroCard.heroId
+        rewardRows.push(
+          boxNode({
+            id: 'res-hero', style: { height: rowH },
+            widget: {
+              type: 'panel',
+              draw: (ctx: CanvasRenderingContext2D, rect: LayoutRect) => drawRewardRowAnimated(ctx, rect, {
+                portrait: portraits[heroId],
+                title: `${heroSpec.name} (${heroSpec.title})`,
+                detail: `Copies: ${copies}/3`,
+                color: '#9ff0c4',
+                badge: copies >= 3 ? 'READY TO MERGE' : reward.firstClear ? 'ONE-TIME' : 'REPLAY DROP'
+              }, rowReveal(hIdx))
+            }
+          })
+        )
+      }
+      if (reward.tacticCard && tacSpec) {
+        const tIdx = rIdx++
+        rewardRows.push(
+          boxNode({
+            id: 'res-tac', style: { height: rowH },
+            widget: {
+              type: 'panel',
+              draw: (ctx: CanvasRenderingContext2D, rect: LayoutRect) => drawRewardRowAnimated(ctx, rect, {
+                icon: 'cards',
+                title: tacSpec.name,
+                detail: tacSpec.desc,
+                color: RARITY_META[tacSpec.rarity].hex,
+                badge: 'TACTIC'
+              }, rowReveal(tIdx))
+            }
+          })
+        )
+      }
       if (reward.unlockedSlot4) {
+        const sIdx = rIdx++
         rewardRows.push(boxNode({
-          id: 'res-slot4', style: { height: shortH ? 36 : 46 },
+          id: 'res-slot4', style: { height: shortH ? 36 : 44 },
           widget: {
             type: 'panel',
-            draw: (ctx: CanvasRenderingContext2D, rect: LayoutRect) => drawRewardRow(ctx, rect, {
+            draw: (ctx: CanvasRenderingContext2D, rect: LayoutRect) => drawRewardRowAnimated(ctx, rect, {
               icon: 'users',
               title: '4th Squad Slot Unlocked',
               detail: 'Deploy four heroes together from Vanguard Camp.',
-              color: COLOR.ap
-            })
+              color: COLOR.ap,
+              badge: 'ONE-TIME'
+            }, rowReveal(sIdx))
           }
         }))
       }
     }
 
-    const btnH = shortH ? 38 : 46
+    const btnH = shortH ? 38 : 44
     return overlay({ id: 'root', style: { anchor: 'fill' } }, [
-      boxNode({ id: 'res-scrim', style: { anchor: 'fill' }, widget: { type: 'panel', scrim: true } }),
+      boxNode({
+        id: 'res-scrim',
+        style: { anchor: 'fill' },
+        widget: {
+          type: 'panel',
+          draw: (ctx: CanvasRenderingContext2D, rect: LayoutRect) => won
+            ? drawVictoryBackdrop(ctx, rect, resultAnimTime)
+            : drawDefeatBackdrop(ctx, rect, resultAnimTime)
+        }
+      }),
       column({
         id: 'res-modal',
-        style: { anchor: 'center', width: Math.min(w - 24, 496), padding: shortH ? 14 : 24, gap: shortH ? 7 : 12 },
+        style: { anchor: 'center', width: Math.min(w - 24, 512), padding: shortH ? 14 : 24, gap: shortH ? 7 : 12 },
         widget: {
           type: 'panel',
           blocksPointer: true,
@@ -2570,64 +3299,73 @@ async function start() {
         }
       }, [
         boxNode({
-          id: 'res-title', style: { height: shortH ? 46 : 60 },
+          id: 'res-title', style: { height: shortH ? 48 : 62 },
           widget: {
             type: 'panel',
-            draw: (ctx: CanvasRenderingContext2D, rect: LayoutRect) => drawResultHeadline(ctx, rect, title, sub, won)
+            draw: (ctx: CanvasRenderingContext2D, rect: LayoutRect) => drawResultHeadlineAnimated(ctx, rect, title, sub, won, resultAnimTime)
           }
         }),
         ...(shortH && won ? [] : [boxNode({
-          id: 'res-story', style: { height: shortH ? 40 : 52 },
+          id: 'res-story', style: { height: shortH ? 40 : 50 },
           widget: {
             type: 'panel',
             draw: (ctx: CanvasRenderingContext2D, rect: LayoutRect) => drawLabel(
-              ctx, rect, quote, { size: 12.5, weight: 500, color: COLOR.muted, align: 'center', wrap: true, lineHeight: 17 }
+              ctx, rect, quote, { size: 12.5, weight: 500, color: COLOR.muted, align: 'center', wrap: true, lineHeight: 16.5 }
             )
           }
         })]),
         ...rewardRows,
-        row({ id: 'res-btns', style: { height: btnH, gap: 10 } }, won ? [
+        row({ id: 'res-btns', style: { height: btnH, gap: 8 } }, won ? [
           boxNode({
             id: 'cs-victory-camp', style: { grow: 1, height: btnH },
             widget: {
-              type: 'button', label: 'Vanguard Camp', primitive: victoryCampBtn,
+              type: 'button', label: 'Camp', primitive: victoryCampBtn,
               draw: (ctx: CanvasRenderingContext2D, rect: LayoutRect, st: CanvasWidgetDrawState) => drawButton(
-                ctx, rect, 'Vanguard Camp', st, { variant: 'secondary', icon: 'camp', size: 13 }
+                ctx, rect, 'Camp', st, { variant: 'secondary', icon: 'camp', size: 13 }
               )
             }
           }),
           boxNode({
-            id: 'cs-victory-next', style: { grow: 1.2, height: btnH },
+            id: 'cs-victory-next', style: { grow: 1.4, height: btnH },
             widget: {
               type: 'button',
-              label: state.campaign.chaptersCleared >= CHAPTERS.length ? 'Endless Arena' : 'Next Chapter',
+              label: (state.battle?.endlessWave ?? 0) > 0 ? 'Next Wave' : 'World Map',
               primary: true,
               primitive: victoryNextBtn,
               draw: (ctx: CanvasRenderingContext2D, rect: LayoutRect, st: CanvasWidgetDrawState) => drawButton(
                 ctx,
                 rect,
-                state.campaign.chaptersCleared >= CHAPTERS.length ? 'Endless Arena' : 'Next Chapter',
+                (state.battle?.endlessWave ?? 0) > 0 ? 'Next Wave' : 'World Map',
                 st,
-                { variant: 'primary', icon: 'arrow-right', size: 14 }
+                { variant: 'primary', icon: (state.battle?.endlessWave ?? 0) > 0 ? 'arrow-right' : 'map', size: 14 }
               )
             }
           })
         ] : [
           boxNode({
+            id: 'cs-world-map', style: { grow: 1, height: btnH },
+            widget: {
+              type: 'button', label: 'World Map', primitive: worldMapBtn,
+              draw: (ctx: CanvasRenderingContext2D, rect: LayoutRect, st: CanvasWidgetDrawState) => drawButton(
+                ctx, rect, 'World Map', st, { variant: 'secondary', icon: 'map', size: 12.5 }
+              )
+            }
+          }),
+          boxNode({
             id: 'cs-victory-camp', style: { grow: 1, height: btnH },
             widget: {
-              type: 'button', label: 'Vanguard Camp', primitive: victoryCampBtn,
+              type: 'button', label: 'Camp', primitive: victoryCampBtn,
               draw: (ctx: CanvasRenderingContext2D, rect: LayoutRect, st: CanvasWidgetDrawState) => drawButton(
-                ctx, rect, 'Vanguard Camp', st, { variant: 'secondary', icon: 'camp', size: 13 }
+                ctx, rect, 'Camp', st, { variant: 'secondary', icon: 'camp', size: 12.5 }
               )
             }
           }),
           boxNode({
             id: 'cs-defeat-retry', style: { grow: 1.2, height: btnH },
             widget: {
-              type: 'button', label: 'Retry Battle', primary: true, primitive: defeatRetryBtn,
+              type: 'button', label: 'Retry', primary: true, primitive: defeatRetryBtn,
               draw: (ctx: CanvasRenderingContext2D, rect: LayoutRect, st: CanvasWidgetDrawState) => drawButton(
-                ctx, rect, 'Retry Battle', st, { variant: 'primary', icon: 'play', size: 14 }
+                ctx, rect, 'Retry', st, { variant: 'primary', icon: 'play', size: 13.5 }
               )
             }
           })
@@ -2751,6 +3489,7 @@ async function start() {
 
   function buildUiTree(w: number, h: number): LayoutNode {
     const base = screen === 'title' ? buildTitleTree(w, h)
+      : screen === 'world' ? buildWorldMapTree(w, h)
       : screen === 'story' ? buildStoryTree(w, h)
       : screen === 'battle' ? buildBattleTree(w, h)
       : screen === 'camp' ? buildCampTree(w, h)
@@ -2905,11 +3644,17 @@ async function start() {
       fps: Math.round(perf.snapshot().fps),
       gold: state.campaign.gold,
       chaptersCleared: state.campaign.chaptersCleared,
+      clearedStageIds: state.campaign.clearedStageIds.slice(),
+      selectedStageId: state.campaign.selectedStageId,
+      packAnimPhase: packAnim?.phase ?? null,
+      resultAnimTime: Math.round(resultAnimTime * 100) / 100,
       heroesCount: state.campaign.heroes.length,
       equipmentCount: state.campaign.equipment.length,
       tacticsCount: state.campaign.tactics.length,
       deckValue: computeDeckValue(state.campaign),
       battlePhase: state.battle?.phase ?? null,
+      battleCols: state.battle?.cols ?? 0,
+      battleRows: state.battle?.rows ?? 0,
       battleTurn: state.battle?.turn ?? 0,
       battleAp: state.battle?.ap ?? 0,
       activeUnitUid: state.battle?.activeUnitUid ?? null,
@@ -2921,6 +3666,18 @@ async function start() {
       campCollapsed: mobileCampCollapsed,
       cameraZoom: Math.round(scene.getCameraZoom() * 1000) / 1000
     }),
+    openWorldMap: (stageId?: string) => {
+      openWorldMap(stageId)
+      renderUiNow()
+    },
+    openCamp: (tab: CampTab = 'squad') => {
+      openCamp(tab)
+      renderUiNow()
+    },
+    skipPackAnim: () => {
+      skipPackCeremony()
+      renderUiNow()
+    },
     zoom: (z: number) => {
       scene.setCameraZoom(z)
       uiDirty = true
@@ -2962,7 +3719,12 @@ async function start() {
     forecast: () => resolveActiveForecast(),
     buyPack: (id: PackId) => {
       const res = buyPack(state, id)
-      if (res) { saveNow(); uiDirty = true; renderUiNow() }
+      if (res) {
+        saveNow()
+        startPackCeremony(id, res)
+        uiDirty = true
+        renderUiNow()
+      }
       return Boolean(res)
     }
   }
@@ -3006,6 +3768,46 @@ async function start() {
       const rawDt = Math.min(0.05, frameDeltaMs / 1000)
       lastRenderAt = now
       const renderDt = screen === 'paused' ? 0 : rawDt
+
+      // Advance animated UI scenes (World Map trails, Victory/Defeat FX, Pack Lottery Ceremony)
+      if (screen === 'world') {
+        worldMapTime += renderDt
+        uiDirty = true
+      } else if (screen === 'victory' || screen === 'defeat') {
+        resultAnimTime += renderDt
+        uiDirty = true
+      }
+      if (packAnim) {
+        packAnim.elapsed += renderDt
+        if (packAnim.phase === 'spin') {
+          const u = Math.min(1, packAnim.elapsed / PACK_SPIN_DURATION)
+          const eased = 1 - Math.pow(1 - u, 3)
+          const tickStep = Math.floor(eased * 22)
+          if (tickStep > packAnim.lastTickStep) {
+            packAnim.lastTickStep = tickStep
+            state.sounds.push({ kind: 'card', pitch: 0.85 + Math.min(0.65, tickStep * 0.03) })
+          }
+          if (packAnim.elapsed >= PACK_SPIN_DURATION) {
+            packAnim.phase = 'reveal'
+            if (!packAnim.burstPlayed) {
+              packAnim.burstPlayed = true
+              state.sounds.push({ kind: 'pack', rarity: packAnim.bestRarity })
+            }
+          }
+        } else {
+          // Auto-flip each card sequentially for a dramatic staggered reveal!
+          for (let i = 0; i < packAnim.flipStartTimes.length; i++) {
+            const autoAt = PACK_SPIN_DURATION + 0.34 + i * PACK_FLIP_STAGGER
+            if (packAnim.flipStartTimes[i] < 0 && packAnim.elapsed >= autoAt) {
+              packAnim.flipStartTimes[i] = packAnim.elapsed
+              const card = packAnim.cards[i]
+              const rIdx = RARITY_ORDER.indexOf(card.rarity)
+              state.sounds.push({ kind: rIdx >= 3 ? 'crit' : 'card', pitch: 0.95 + rIdx * 0.14 })
+            }
+          }
+        }
+        uiDirty = true
+      }
 
       const activeForecast = resolveActiveForecast()
       scene.setForecast(activeForecast)

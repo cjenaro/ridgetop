@@ -504,36 +504,38 @@ export function buildStaticBoardBatches(biome: BiomeId, cells: GridCell[][]): {
   batches: InstanceBatch[]
   brazierPositions: Vec3[]
 } {
+  const rows = cells.length || GRID_ROWS
+  const cols = cells[0]?.length ?? GRID_COLS
   const style = BIOME_STYLES[biome]
-  const tileCaps = instances(tileCapMesh, 140)
-  const tileBases = instances(tileBaseMesh, 128)
-  const bevelProps = instances(softBevel, 112)
-  const copings = instances(crispBevel, 48)
-  const trunks = instances(taperTrunk, 24)
-  const foliageTiers = instances(foliageTier, 48)
-  const foliageTips = instances(foliageTip, 20)
-  const cyls = instances(smoothCyl, 64)
+  const tileCaps = instances(tileCapMesh, 224)
+  const tileBases = instances(tileBaseMesh, 200)
+  const bevelProps = instances(softBevel, 168)
+  const copings = instances(crispBevel, 84)
+  const trunks = instances(taperTrunk, 32)
+  const foliageTiers = instances(foliageTier, 64)
+  const foliageTips = instances(foliageTip, 28)
+  const cyls = instances(smoothCyl, 80)
   const hooks = instances(lanternHookMesh, 8)
-  const pills = instances(chunkyPill, 40)
-  const pebbles = instances(roundPebble, 64)
-  const rings = instances(collarRing, 24)
-  const cones = instances(smoothCone, 24)
-  const crystals = instances(crystalMesh, 28)
-  const arches = instances(archProp, 16)
-  const gables = instances(gableRoof, 12)
+  const pills = instances(chunkyPill, 56)
+  const pebbles = instances(roundPebble, 96)
+  const rings = instances(collarRing, 32)
+  const cones = instances(smoothCone, 32)
+  const crystals = instances(crystalMesh, 40)
+  const arches = instances(archProp, 24)
+  const gables = instances(gableRoof, 16)
   const brazierPositions: Vec3[] = []
 
-  const boardW = GRID_COLS * TILE_SIZE + 1.85
-  const boardD = GRID_ROWS * TILE_SIZE + 1.85
+  const boardW = cols * TILE_SIZE + 1.85
+  const boardD = rows * TILE_SIZE + 1.85
   tileBases.add([0, -0.64, 0], [boardW, 0.72, boardD], 0, style.baseStone)
   tileBases.add([0, -1.26, 0], [boardW * 0.90, 0.76, boardD * 0.90], 0, style.cliff)
   copings.add([0, -0.26, -(boardD * 0.5 - 0.14)], [boardW * 0.96, 0.16, 0.28], 0, C_STONE_LIGHT)
   copings.add([0, -0.26, boardD * 0.5 - 0.14], [boardW * 0.96, 0.16, 0.28], 0, style.baseStone)
 
-  for (let row = 0; row < GRID_ROWS; row++) {
-    for (let col = 0; col < GRID_COLS; col++) {
+  for (let row = 0; row < rows; row++) {
+    for (let col = 0; col < cols; col++) {
       const cell = cells[row][col]
-      const [wx, wy, wz] = gridToWorld(col, row, cell.elevation)
+      const [wx, wy, wz] = gridToWorld(col, row, cell.elevation, cols, rows)
       const checker = (col + row) % 2
       const tint = style.tiles[cell.terrain][checker]
       const isLava = cell.terrain === 'lava'
@@ -596,7 +598,7 @@ export function buildStaticBoardBatches(biome: BiomeId, cells: GridCell[][]): {
         const underCol = cell.terrain === 'grass' || cell.terrain === 'snow' ? style.tileEarth : style.baseStone
         tileBases.add([wx, -0.22, wz], [TILE_SIZE * 0.95, 0.30, TILE_SIZE * 0.95], 0, underCol)
         tileCaps.add([wx, -0.06, wz], [TILE_SIZE * 0.92, 0.14, TILE_SIZE * 0.92], 0, capCol)
-        if ((row === 0 || row === GRID_ROWS - 1 || col === 0 || col === GRID_COLS - 1) && h > 0.68) {
+        if ((row === 0 || row === rows - 1 || col === 0 || col === cols - 1) && h > 0.68) {
           const ox = col === 0 ? -0.56 : 0.56
           const oz = row === 0 ? -0.56 : 0.56
           pebbles.add([wx + ox, 0.04, wz + oz], [0.18, 0.10, 0.16], h * 4, C_STONE_LIGHT)
@@ -606,8 +608,8 @@ export function buildStaticBoardBatches(biome: BiomeId, cells: GridCell[][]): {
     }
   }
 
-  const edgeX = (GRID_COLS * 0.5 + 0.38) * TILE_SIZE
-  const edgeZ = (GRID_ROWS * 0.5 + 0.35) * TILE_SIZE
+  const edgeX = (cols * 0.5 + 0.38) * TILE_SIZE
+  const edgeZ = (rows * 0.5 + 0.35) * TILE_SIZE
   const corners: [number, number, number][] = [
     [-edgeX, -edgeZ, 0.78],
     [edgeX, -edgeZ, -0.78],
@@ -619,10 +621,12 @@ export function buildStaticBoardBatches(biome: BiomeId, cells: GridCell[][]): {
     brazierPositions.push([cx, 1.35, cz])
   }
 
-  const backWallZ = -(GRID_ROWS * 0.5 + 0.34) * TILE_SIZE
-  const wallXSpots = [-3.1 * TILE_SIZE, -1.1 * TILE_SIZE, 1.1 * TILE_SIZE, 3.1 * TILE_SIZE]
-  for (let i = 0; i < wallXSpots.length; i++) {
-    const wx = wallXSpots[i]
+  const backWallZ = -(rows * 0.5 + 0.34) * TILE_SIZE
+  const wallCount = Math.max(3, Math.round(cols / 2))
+  const wallSpan = (cols - 1.6) * TILE_SIZE
+  for (let i = 0; i < wallCount; i++) {
+    const u = wallCount <= 1 ? 0 : i / (wallCount - 1) - 0.5
+    const wx = u * wallSpan
     const wallAccent = biome === 'meadow' ? C_WOOD_WARM : biome === 'throne' ? C_VIOLET : biome === 'volcano' ? C_EMBER : style.cliff
     bevelProps.add([wx, 0.02, backWallZ], [1.65, 0.44, 0.34], 0, style.baseStone)
     copings.add([wx, 0.28, backWallZ], [1.74, 0.12, 0.40], 0, C_STONE_LIGHT)
@@ -631,15 +635,16 @@ export function buildStaticBoardBatches(biome: BiomeId, cells: GridCell[][]): {
     bevelProps.add([wx + 0.84, 0.12, backWallZ], [0.34, 0.62, 0.40], 0, C_STONE_LIGHT)
   }
 
-  const backZ = -(GRID_ROWS * 0.5 + 0.68) * TILE_SIZE
+  const backZ = -(rows * 0.5 + 0.68) * TILE_SIZE
+  const halfW = (cols * 0.5 - 0.3) * TILE_SIZE
   const treeSpots: [number, number, number, boolean, boolean][] = [
-    [-3.7 * TILE_SIZE, backZ, 1.18, true, false],
-    [-2.0 * TILE_SIZE, backZ - 0.25, 1.02, false, true],
+    [-halfW, backZ, 1.18, true, false],
+    [-halfW * 0.52, backZ - 0.25, 1.02, false, true],
     [0.0, backZ - 0.32, 1.24, true, false],
-    [2.05 * TILE_SIZE, backZ - 0.22, 1.06, false, true],
-    [3.7 * TILE_SIZE, backZ, 1.15, true, false],
-    [-(GRID_COLS * 0.5 + 0.66) * TILE_SIZE, -0.8 * TILE_SIZE, 0.96, false, false],
-    [(GRID_COLS * 0.5 + 0.66) * TILE_SIZE, -0.6 * TILE_SIZE, 1.0, false, true]
+    [halfW * 0.52, backZ - 0.22, 1.06, false, true],
+    [halfW, backZ, 1.15, true, false],
+    [-(cols * 0.5 + 0.66) * TILE_SIZE, -0.8 * TILE_SIZE, 0.96, false, false],
+    [(cols * 0.5 + 0.66) * TILE_SIZE, -0.6 * TILE_SIZE, 1.0, false, true]
   ]
   for (let i = 0; i < treeSpots.length; i++) {
     const [tx, tz, sc, tall, useAccent] = treeSpots[i]

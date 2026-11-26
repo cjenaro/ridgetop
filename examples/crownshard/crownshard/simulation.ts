@@ -1,14 +1,14 @@
 import { nextRandom } from 'ridgetop'
 import {
-  CHAPTERS, ENEMY_SPECS, EQUIPMENT_BY_ID, EQUIPMENT_LIST, HERO_LIST, HERO_SPECS,
+  CHAPTERS, CHAPTER_BY_ID, ENEMY_SPECS, EQUIPMENT_BY_ID, EQUIPMENT_LIST, HERO_LIST, HERO_SPECS,
   MERGE_COPIES_REQUIRED, PACK_BY_ID, RARITY_META, RARITY_ORDER, TACTIC_BY_ID, TACTIC_LIST
 } from './data.ts'
 import {
   GRID_COLS, GRID_ROWS, gridToWorld, terrainElevation, terrainWalkable
 } from './types.ts'
 import type {
-  BattleReward, BattleState, BattleUnit, BiomeId, CampaignState, CombatForecast, CombatForecastAlt,
-  EquipSlot, EquipmentSpec, GameState, GridCell, HeroClassId, MoveAttackTile, OwnedEquipCard,
+  BattleReward, BattleState, BattleUnit, BiomeId, CampaignState, ChapterSpec, CombatForecast, CombatForecastAlt,
+  DifficultyLevel, EquipSlot, EquipmentSpec, GameState, GridCell, HeroClassId, MoveAttackTile, OwnedEquipCard,
   OwnedHeroCard, OwnedTacticCard, PackId, PackRevealItem, Rarity, SaveData,
   SkillSpec, TacticCardSpec, TileTerrain, TurnPreviewEntry
 } from './types.ts'
@@ -58,8 +58,52 @@ function rarityRank(r: Rarity): number {
   return RARITY_ORDER.indexOf(r)
 }
 
+export function isStageCleared(campaign: CampaignState, stageId: string): boolean {
+  return campaign.clearedStageIds.includes(stageId)
+}
+
+export function isStageUnlocked(campaign: CampaignState, stageOrId: string | ChapterSpec): boolean {
+  const stage = typeof stageOrId === 'string' ? CHAPTER_BY_ID[stageOrId] : stageOrId
+  if (!stage) return false
+  if (stage.requires.length === 0) return true
+  if (stage.unlockMode === 'any') {
+    return stage.requires.some(reqId => isStageCleared(campaign, reqId))
+  }
+  return stage.requires.every(reqId => isStageCleared(campaign, reqId))
+}
+
+export function isEndlessUnlocked(campaign: CampaignState): boolean {
+  return CHAPTERS.some(ch => ch.unlocksEndless && isStageCleared(campaign, ch.id))
+}
+
+export function getStageUnlockHint(stage: ChapterSpec): string {
+  if (stage.requires.length === 0) return 'Available'
+  const names = stage.requires.map(id => CHAPTER_BY_ID[id]?.title ?? id)
+  if (names.length === 1) return `Clear ${names[0]} to unlock`
+  const joiner = stage.unlockMode === 'any' ? ' or ' : ' and '
+  return `Clear ${names.join(joiner)} to unlock`
+}
+
+export function getNextRecommendedStage(campaign: CampaignState): ChapterSpec {
+  const unlockedUnclear = CHAPTERS.filter(ch => isStageUnlocked(campaign, ch) && !isStageCleared(campaign, ch.id))
+  const storyNext = unlockedUnclear.find(ch => ch.kind === 'story' || ch.kind === 'boss')
+  if (storyNext) return storyNext
+  if (unlockedUnclear.length > 0) return unlockedUnclear[0]
+  return CHAPTERS[CHAPTERS.length - 1]
+}
+
+export function computeSquadPower(campaign: CampaignState): number {
+  let total = 0
+  for (const uid of campaign.squadUids) {
+    const hero = getHeroByUid(campaign, uid)
+    if (hero) total += computeHeroStats(campaign, hero).powerScore
+  }
+  return total
+}
+
 export function maxSquadSize(campaign: CampaignState): number {
-  return campaign.chaptersCleared >= 2 ? 4 : 3
+  const slot4Cleared = CHAPTERS.some(ch => ch.unlocksSlot4 && isStageCleared(campaign, ch.id))
+  return slot4Cleared || campaign.chaptersCleared >= 2 ? 4 : 3
 }
 
 export function getEquipmentByUid(campaign: CampaignState, uid: string | null): OwnedEquipCard | undefined {
@@ -410,7 +454,8 @@ export function buyPack(state: GameState, packId: PackId): PackRevealItem[] | nu
 
   for (let i = 0; i < pack.cardsPerPack; i++) {
     const floor: Rarity = i === 0 ? pack.guaranteedMinRarity : 'common'
-    const rarity = rollRarity(campaign, pack.weights, floor)
+    const rollWeights = i === 0 && pack.featuredWeights ? pack.featuredWeights : pack.weights
+    const rarity = rollRarity(campaign, rollWeights, floor)
     if (rarityRank(rarity) > rarityRank(bestRarity)) bestRarity = rarity
 
     // Card 0 or ~48% Hero, ~32% Equipment, ~20% Tactic
@@ -528,6 +573,8 @@ export function createInitialCampaign(seed = 1337): CampaignState {
     nextUid: 1,
     gold: 100,
     chaptersCleared: 0,
+    clearedStageIds: [],
+    selectedStageId: CHAPTERS[0].id,
     endlessBest: 0,
     battlesWon: 0,
     packsOpened: 0,
@@ -577,11 +624,20 @@ export function createInitialCampaign(seed = 1337): CampaignState {
 export function createInitialState(seed = 1337, save?: SaveData | null): GameState {
   if (save && save.version === 1 && save.campaign && Array.isArray(save.campaign.heroes) && save.campaign.heroes.length > 0) {
     const c = save.campaign
+    const rawCount = Number.isFinite(c.chaptersCleared) ? clamp(Math.floor(c.chaptersCleared), 0, CHAPTERS.length) : 0
+    const clearedStageIds: string[] = Array.isArray(c.clearedStageIds)
+      ? c.clearedStageIds.filter((id): id is string => typeof id === 'string' && Boolean(CHAPTER_BY_ID[id]))
+      : CHAPTERS.slice(0, rawCount).map(ch => ch.id)
+    const dedupCleared = Array.from(new Set(clearedStageIds))
     const cloned: CampaignState = {
       seed: Number.isFinite(c.seed) ? (c.seed >>> 0) || 1337 : seed,
       nextUid: Number.isFinite(c.nextUid) && c.nextUid > 0 ? Math.floor(c.nextUid) : 100,
       gold: Number.isFinite(c.gold) && c.gold >= 0 ? Math.floor(c.gold) : 100,
-      chaptersCleared: Number.isFinite(c.chaptersCleared) ? clamp(Math.floor(c.chaptersCleared), 0, CHAPTERS.length) : 0,
+      chaptersCleared: dedupCleared.length,
+      clearedStageIds: dedupCleared,
+      selectedStageId: typeof c.selectedStageId === 'string' && CHAPTER_BY_ID[c.selectedStageId]
+        ? c.selectedStageId
+        : CHAPTERS[0].id,
       endlessBest: Number.isFinite(c.endlessBest) ? Math.max(0, Math.floor(c.endlessBest)) : 0,
       battlesWon: Number.isFinite(c.battlesWon) ? Math.max(0, Math.floor(c.battlesWon)) : 0,
       packsOpened: Number.isFinite(c.packsOpened) ? Math.max(0, Math.floor(c.packsOpened)) : 0,
@@ -591,6 +647,9 @@ export function createInitialState(seed = 1337, save?: SaveData | null): GameSta
       squadUids: Array.isArray(c.squadUids) && c.squadUids.length ? c.squadUids.slice() : [c.heroes[0].uid],
       selectedCampHeroUid: c.selectedCampHeroUid ?? c.heroes[0].uid,
       lastPackReveal: []
+    }
+    if (!isStageUnlocked(cloned, cloned.selectedStageId)) {
+      cloned.selectedStageId = getNextRecommendedStage(cloned).id
     }
     return { time: 0, campaign: cloned, battle: null, sounds: [], vfx: [] }
   }
@@ -608,6 +667,7 @@ export function serializeSave(state: GameState): SaveData {
     version: 1,
     campaign: {
       ...state.campaign,
+      clearedStageIds: state.campaign.clearedStageIds.slice(),
       heroes: state.campaign.heroes.map(h => ({ ...h })),
       equipment: state.campaign.equipment.map(e => ({ ...e })),
       tactics: state.campaign.tactics.map(t => ({ ...t })),
@@ -628,13 +688,22 @@ export function loadSave(storage: StorageLike | null | undefined): SaveData | nu
     if (!('campaign' in parsed) || typeof parsed.campaign !== 'object' || parsed.campaign === null) return null
     const camp = parsed.campaign
     if (!('heroes' in camp) || !Array.isArray(camp.heroes) || camp.heroes.length === 0) return null
+    const chaptersCleared = 'chaptersCleared' in camp && typeof camp.chaptersCleared === 'number' ? camp.chaptersCleared : 0
+    const clearedStageIds = 'clearedStageIds' in camp && Array.isArray(camp.clearedStageIds)
+      ? camp.clearedStageIds.filter((id): id is string => typeof id === 'string' && Boolean(CHAPTER_BY_ID[id]))
+      : CHAPTERS.slice(0, clamp(Math.floor(chaptersCleared), 0, CHAPTERS.length)).map(ch => ch.id)
+    const selectedStageId = 'selectedStageId' in camp && typeof camp.selectedStageId === 'string' && CHAPTER_BY_ID[camp.selectedStageId]
+      ? camp.selectedStageId
+      : CHAPTERS[0].id
     return {
       version: 1,
       campaign: {
         seed: 'seed' in camp && typeof camp.seed === 'number' ? camp.seed : 1337,
         nextUid: 'nextUid' in camp && typeof camp.nextUid === 'number' ? camp.nextUid : 100,
         gold: 'gold' in camp && typeof camp.gold === 'number' ? camp.gold : 100,
-        chaptersCleared: 'chaptersCleared' in camp && typeof camp.chaptersCleared === 'number' ? camp.chaptersCleared : 0,
+        chaptersCleared: clearedStageIds.length,
+        clearedStageIds,
+        selectedStageId,
         endlessBest: 'endlessBest' in camp && typeof camp.endlessBest === 'number' ? camp.endlessBest : 0,
         battlesWon: 'battlesWon' in camp && typeof camp.battlesWon === 'number' ? camp.battlesWon : 0,
         packsOpened: 'packsOpened' in camp && typeof camp.packsOpened === 'number' ? camp.packsOpened : 0,
@@ -678,10 +747,12 @@ export function clearSave(storage: StorageLike | null | undefined): void {
 // =========================================================================
 
 function buildCells(grid: readonly (readonly TileTerrain[])[]): GridCell[][] {
+  const rows = grid.length
+  const cols = grid[0]?.length ?? GRID_COLS
   const cells: GridCell[][] = []
-  for (let row = 0; row < GRID_ROWS; row++) {
+  for (let row = 0; row < rows; row++) {
     const line: GridCell[] = []
-    for (let col = 0; col < GRID_COLS; col++) {
+    for (let col = 0; col < cols; col++) {
       const terrain = grid[row]?.[col] ?? 'grass'
       line.push({
         col,
@@ -705,8 +776,8 @@ export function getUnitByUid(battle: BattleState, uid: string | null): BattleUni
   return battle.units.find(u => u.uid === uid && u.alive)
 }
 
-export function isCellInBounds(col: number, row: number): boolean {
-  return col >= 0 && col < GRID_COLS && row >= 0 && row < GRID_ROWS
+export function isCellInBounds(col: number, row: number, cols = GRID_COLS, rows = GRID_ROWS): boolean {
+  return col >= 0 && col < cols && row >= 0 && row < rows
 }
 
 function shuffleStrings(items: string[], campaign: CampaignState): string[] {
@@ -733,12 +804,20 @@ function drawTacticCards(battle: BattleState, campaign: CampaignState, targetHan
   }
 }
 
+export function startStageBattle(state: GameState, stageId: string, endlessWave = 0): BattleState {
+  const stage = CHAPTER_BY_ID[stageId] ?? CHAPTERS[0]
+  return startChapterBattle(state, stage.index, endlessWave)
+}
+
 export function startChapterBattle(state: GameState, chapterIndex: number, endlessWave = 0): BattleState {
   const { campaign } = state
   const safeIdx = clamp(chapterIndex, 0, CHAPTERS.length - 1)
   const chapter = CHAPTERS[safeIdx]
+  campaign.selectedStageId = chapter.id
   const biome: BiomeId = chapter.biome
   const cells = buildCells(chapter.grid)
+  const rows = cells.length
+  const cols = cells[0]?.length ?? GRID_COLS
 
   const units: BattleUnit[] = []
   const squad = campaign.squadUids
@@ -755,9 +834,9 @@ export function startChapterBattle(state: GameState, chapterIndex: number, endle
     const hero = squad[i]
     const spec = HERO_SPECS[hero.heroId]
     const stats = computeHeroStats(campaign, hero)
-    const spawn = chapter.heroSpawns[i] ?? [0, Math.min(GRID_ROWS - 1, i + 1)]
+    const spawn = chapter.heroSpawns[i] ?? [0, Math.min(rows - 1, i + 1)]
     const cell = cells[spawn[1]][spawn[0]]
-    const [wx, wy, wz] = gridToWorld(spawn[0], spawn[1], cell.elevation)
+    const [wx, wy, wz] = gridToWorld(spawn[0], spawn[1], cell.elevation, cols, rows)
     const weaponOwned = getEquipmentByUid(campaign, hero.weaponUid)
     const armorOwned = getEquipmentByUid(campaign, hero.armorUid)
     const relicOwned = getEquipmentByUid(campaign, hero.relicUid)
@@ -814,7 +893,7 @@ export function startChapterBattle(state: GameState, chapterIndex: number, endle
     const spec = ENEMY_SPECS[spawn.id]
     const scale = (spawn.levelScale ?? 1) * waveScale
     const cell = cells[spawn.row][spawn.col]
-    const [wx, wy, wz] = gridToWorld(spawn.col, spawn.row, cell.elevation)
+    const [wx, wy, wz] = gridToWorld(spawn.col, spawn.row, cell.elevation, cols, rows)
     units.push({
       uid: `enemy_${i}_${spawn.id}`,
       team: 'enemy',
@@ -859,8 +938,12 @@ export function startChapterBattle(state: GameState, chapterIndex: number, endle
 
   const deckUids = shuffleStrings(campaign.tactics.map(t => t.uid), campaign)
   const battle: BattleState = {
+    stageId: chapter.id,
     chapterIndex: safeIdx,
     endlessWave,
+    difficulty: chapter.difficulty,
+    cols,
+    rows,
     biome,
     cells,
     units,
@@ -980,7 +1063,7 @@ export function computeMoveTiles(battle: BattleState, unit: BattleUnit): { col: 
     for (const [dc, dr] of dirs) {
       const nc = cur.col + dc
       const nr = cur.row + dr
-      if (!isCellInBounds(nc, nr)) continue
+      if (!isCellInBounds(nc, nr, battle.cols, battle.rows)) continue
       const cell = battle.cells[nr][nc]
       if (!cell.walkable) continue
       const occ = unitAt(battle, nc, nr)
@@ -1021,7 +1104,7 @@ export function findGridPath(
     for (const [dc, dr] of dirs) {
       const nc = cur.col + dc
       const nr = cur.row + dr
-      if (!isCellInBounds(nc, nr)) continue
+      if (!isCellInBounds(nc, nr, battle.cols, battle.rows)) continue
       const cell = battle.cells[nr][nc]
       if (!cell.walkable) continue
       const occ = unitAt(battle, nc, nr)
@@ -1098,8 +1181,8 @@ export function computeTargetTiles(
     return targets
   }
   // 'tile': any walkable or occupied tile in range
-  for (let row = 0; row < GRID_ROWS; row++) {
-    for (let col = 0; col < GRID_COLS; col++) {
+  for (let row = 0; row < battle.rows; row++) {
+    for (let col = 0; col < battle.cols; col++) {
       if (manhattan(unit.col, unit.row, col, row) <= skill.range && battle.cells[row][col].terrain !== 'pillar') {
         targets.push({ col, row })
       }
@@ -1131,8 +1214,8 @@ export function computeTacticTargetTiles(
     for (const u of battle.units) if (u.alive && u.team === 'enemy') out.push({ col: u.col, row: u.row })
     return out
   }
-  for (let row = 0; row < GRID_ROWS; row++) {
-    for (let col = 0; col < GRID_COLS; col++) {
+  for (let row = 0; row < battle.rows; row++) {
+    for (let col = 0; col < battle.cols; col++) {
       if (battle.cells[row][col].terrain !== 'pillar') out.push({ col, row })
     }
   }
@@ -1142,11 +1225,13 @@ export function computeTacticTargetTiles(
 export function getPatternCells(
   centerCol: number,
   centerRow: number,
-  pattern: SkillSpec['pattern'] | TacticCardSpec['pattern']
+  pattern: SkillSpec['pattern'] | TacticCardSpec['pattern'],
+  cols = GRID_COLS,
+  rows = GRID_ROWS
 ): { col: number; row: number }[] {
   const out: { col: number; row: number }[] = []
   const pushIf = (c: number, r: number) => {
-    if (isCellInBounds(c, r)) out.push({ col: c, row: r })
+    if (isCellInBounds(c, r, cols, rows)) out.push({ col: c, row: r })
   }
   if (pattern === 'single' || pattern === 'self') {
     pushIf(centerCol, centerRow)
@@ -1314,7 +1399,7 @@ function previewDamageMath(
  */
 export function computeCombatForecast(state: GameState, col: number, row: number): CombatForecast | null {
   const battle = state.battle
-  if (!battle || battle.phase !== 'player' || !isCellInBounds(col, row)) return null
+  if (!battle || battle.phase !== 'player' || !isCellInBounds(col, row, battle.cols, battle.rows)) return null
   if (battle.units.some(u => u.path.length > 0)) return null
 
   const active = getUnitByUid(battle, battle.activeUnitUid)
@@ -1325,7 +1410,7 @@ export function computeCombatForecast(state: GameState, col: number, row: number
     const owned = getTacticByUid(state.campaign, battle.armedTacticUid)
     const spec = owned ? TACTIC_BY_ID[owned.tacticId] : undefined
     if (!spec) return null
-    const affected = getPatternCells(col, row, spec.pattern)
+    const affected = getPatternCells(col, row, spec.pattern, battle.cols, battle.rows)
     const primary = unitAt(battle, col, row) ?? affected.map(c => unitAt(battle, c.col, c.row)).find((u): u is BattleUnit => Boolean(u))
     if (!primary) return null
     const aoeTargets = affected.filter(c => {
@@ -1398,7 +1483,7 @@ export function computeCombatForecast(state: GameState, col: number, row: number
   const armedIdx = battle.armedSkillIndex !== null && battle.armedSkillIndex >= 0 ? battle.armedSkillIndex : null
   const armedSkill = armedIdx !== null ? getHeroSkill(active, armedIdx) : null
 
-  const affected = armedSkill ? getPatternCells(col, row, armedSkill.pattern) : [{ col, row }]
+  const affected = armedSkill ? getPatternCells(col, row, armedSkill.pattern, battle.cols, battle.rows) : [{ col, row }]
   const primary = unitAt(battle, col, row) ?? affected.map(c => unitAt(battle, c.col, c.row)).find((u): u is BattleUnit => Boolean(u))
   if (!primary) return null
 
@@ -1742,15 +1827,23 @@ function checkBattleOutcome(state: GameState): void {
   }
 }
 
+function replayWeightsForDifficulty(diff: DifficultyLevel): Record<Rarity, number> {
+  if (diff === 1) return { common: 84, uncommon: 15, rare: 1, epic: 0, legendary: 0 }
+  if (diff === 2) return { common: 72, uncommon: 24, rare: 4, epic: 0, legendary: 0 }
+  if (diff === 3) return { common: 58, uncommon: 32, rare: 9.5, epic: 0.5, legendary: 0 }
+  if (diff === 4) return { common: 46, uncommon: 36, rare: 16.5, epic: 1.5, legendary: 0 }
+  return { common: 36, uncommon: 38, rare: 22.5, epic: 3.2, legendary: 0.3 }
+}
+
 function awardBattleVictory(state: GameState): void {
   const battle = state.battle
   if (!battle) return
   const { campaign } = state
   const chapter = CHAPTERS[battle.chapterIndex]
-  const firstClear = battle.endlessWave === 0 && battle.chapterIndex >= campaign.chaptersCleared
+  const firstClear = battle.endlessWave === 0 && !isStageCleared(campaign, chapter.id)
   const gold = battle.endlessWave > 0
-    ? 140 + battle.endlessWave * 45
-    : firstClear ? chapter.rewardGold : Math.round(chapter.rewardGold * 0.65)
+    ? 130 + battle.endlessWave * 35
+    : firstClear ? chapter.rewardGold : chapter.replayGold
 
   campaign.gold += gold
   campaign.battlesWon += 1
@@ -1761,42 +1854,98 @@ function awardBattleVictory(state: GameState): void {
     if (battle.endlessWave > campaign.endlessBest) campaign.endlessBest = battle.endlessWave
   } else if (firstClear) {
     const prevSlots = maxSquadSize(campaign)
-    campaign.chaptersCleared = Math.max(campaign.chaptersCleared, battle.chapterIndex + 1)
+    campaign.clearedStageIds.push(chapter.id)
+    campaign.chaptersCleared = campaign.clearedStageIds.length
     if (maxSquadSize(campaign) > prevSlots) unlockedSlot4 = true
-    if (campaign.chaptersCleared >= CHAPTERS.length) campaignWon = true
+    if (chapter.unlocksEndless) campaignWon = true
   }
 
-  // Reward Equipment Card
-  const eqSpec = battle.endlessWave > 0
-    ? EQUIPMENT_LIST[Math.floor(randFloat(campaign) * EQUIPMENT_LIST.length) % EQUIPMENT_LIST.length]
-    : (EQUIPMENT_BY_ID[chapter.rewardEquipId] ?? EQUIPMENT_LIST[0])
-  const equipCard: OwnedEquipCard = {
-    uid: allocUid(campaign, 'eq'),
-    equipId: eqSpec.id,
-    slot: eqSpec.slot
-  }
-  campaign.equipment.push(equipCard)
+  let equipCard: OwnedEquipCard | null = null
+  let heroCard: OwnedHeroCard | null = null
+  let tacticCard: OwnedTacticCard | null = null
+  let specialRewardsClaimed = false
 
-  // Reward Hero Copy (helps players reach 3-of-a-kind merges naturally!)
-  const heroId: HeroClassId = battle.endlessWave > 0
-    ? HERO_LIST[Math.floor(randFloat(campaign) * HERO_LIST.length) % HERO_LIST.length].id
-    : chapter.rewardHeroId
-  const heroCard: OwnedHeroCard = {
-    uid: allocUid(campaign, 'hero'),
-    heroId,
-    stars: 1,
-    weaponUid: null,
-    armorUid: null,
-    relicUid: null
+  if (battle.endlessWave > 0) {
+    // Weighted rarity drop scaling gently with endless wave (never uniform Legendary farm)
+    const wBonus = Math.min(battle.endlessWave * 0.4, 4)
+    const endlessWeights: Record<Rarity, number> = {
+      common: 44,
+      uncommon: 34,
+      rare: 18 + wBonus,
+      epic: 3.5 + wBonus * 0.6,
+      legendary: 0.5 + wBonus * 0.15
+    }
+    const eqRarity = rollRarity(campaign, endlessWeights, 'common')
+    const eqSpec = pickNearestByRarity(EQUIPMENT_LIST, eqRarity, campaign)
+    equipCard = { uid: allocUid(campaign, 'eq'), equipId: eqSpec.id, slot: eqSpec.slot }
+    campaign.equipment.push(equipCard)
+
+    const heroRarity = rollRarity(campaign, endlessWeights, 'common')
+    const hSpec = pickNearestByRarity(HERO_LIST, heroRarity, campaign)
+    heroCard = {
+      uid: allocUid(campaign, 'hero'),
+      heroId: hSpec.id,
+      stars: 1,
+      weaponUid: null,
+      armorUid: null,
+      relicUid: null
+    }
+    campaign.heroes.push(heroCard)
+  } else if (firstClear) {
+    // First-clear ONE-TIME special rewards!
+    specialRewardsClaimed = Boolean(chapter.rewardEquipId || chapter.rewardHeroId || unlockedSlot4 || campaignWon)
+    if (chapter.rewardEquipId) {
+      const eqSpec = EQUIPMENT_BY_ID[chapter.rewardEquipId] ?? EQUIPMENT_LIST[0]
+      equipCard = { uid: allocUid(campaign, 'eq'), equipId: eqSpec.id, slot: eqSpec.slot }
+      campaign.equipment.push(equipCard)
+    }
+    if (chapter.rewardHeroId) {
+      heroCard = {
+        uid: allocUid(campaign, 'hero'),
+        heroId: chapter.rewardHeroId,
+        stars: 1,
+        weaponUid: null,
+        armorUid: null,
+        relicUid: null
+      }
+      campaign.heroes.push(heroCard)
+    }
+  } else {
+    // Replaying an already-cleared stage: awards replay gold + one modest repeatable drop (never one-time uniques!)
+    const repWeights = replayWeightsForDifficulty(chapter.difficulty)
+    const rarity = rollRarity(campaign, repWeights, 'common')
+    const kindRoll = randFloat(campaign)
+    if (kindRoll < 0.45) {
+      const eqSpec = pickNearestByRarity(EQUIPMENT_LIST, rarity, campaign)
+      equipCard = { uid: allocUid(campaign, 'eq'), equipId: eqSpec.id, slot: eqSpec.slot }
+      campaign.equipment.push(equipCard)
+    } else if (kindRoll < 0.80) {
+      const hSpec = pickNearestByRarity(HERO_LIST, rarity, campaign)
+      heroCard = {
+        uid: allocUid(campaign, 'hero'),
+        heroId: hSpec.id,
+        stars: 1,
+        weaponUid: null,
+        armorUid: null,
+        relicUid: null
+      }
+      campaign.heroes.push(heroCard)
+    } else {
+      const tSpec = pickNearestByRarity(TACTIC_LIST, rarity, campaign)
+      tacticCard = { uid: allocUid(campaign, 'tac'), tacticId: tSpec.id }
+      campaign.tactics.push(tacticCard)
+    }
   }
-  campaign.heroes.push(heroCard)
 
   const reward: BattleReward = {
     gold,
     equipCard,
     heroCard,
+    tacticCard,
+    stageId: chapter.id,
     chapterCleared: battle.chapterIndex,
     firstClear,
+    specialRewardsClaimed,
     unlockedSlot4,
     campaignWon
   }
@@ -1854,7 +2003,7 @@ function executeHeroSkill(
   if (!skill) return
 
   const cell = battle.cells[row][col]
-  const [tx, ty, tz] = gridToWorld(col, row, cell.elevation)
+  const [tx, ty, tz] = gridToWorld(col, row, cell.elevation, battle.cols, battle.rows)
   faceToward(caster, tx, tz)
   caster.animState = skill.vfx === 'slash' ? 'attack' : 'cast'
   caster.animTimer = 0.42
@@ -1882,7 +2031,7 @@ function executeHeroSkill(
     radius: skill.pattern === 'area3' ? 1.8 : skill.pattern === 'cross' ? 1.3 : 0.8
   })
 
-  const affected = getPatternCells(col, row, skill.pattern)
+  const affected = getPatternCells(col, row, skill.pattern, battle.cols, battle.rows)
 
   if (skill.target === 'self' || skill.target === 'ally') {
     for (const c of affected) {
@@ -1939,7 +2088,7 @@ function executeTacticCard(state: GameState, tacticUid: string, col: number, row
   state.sounds.push({ kind: 'card' })
 
   const cell = battle.cells[row][col]
-  const [tx, ty, tz] = gridToWorld(col, row, cell.elevation)
+  const [tx, ty, tz] = gridToWorld(col, row, cell.elevation, battle.cols, battle.rows)
 
   if (spec.pattern === 'all_allies') {
     for (const u of battle.units) {
@@ -1955,7 +2104,7 @@ function executeTacticCard(state: GameState, tacticUid: string, col: number, row
       at: [tx, ty + 0.6, tz],
       radius: spec.pattern === 'area3' ? 1.9 : spec.pattern === 'cross' ? 1.35 : 0.9
     })
-    const cells = getPatternCells(col, row, spec.pattern)
+    const cells = getPatternCells(col, row, spec.pattern, battle.cols, battle.rows)
     for (const c of cells) {
       const target = unitAt(battle, c.col, c.row)
       if (!target) continue
@@ -2056,7 +2205,7 @@ export function armTacticCard(state: GameState, tacticUid: string | null): boole
 
 export function selectTile(state: GameState, col: number, row: number): boolean {
   const battle = state.battle
-  if (!battle || battle.phase !== 'player' || !isCellInBounds(col, row)) return false
+  if (!battle || battle.phase !== 'player' || !isCellInBounds(col, row, battle.cols, battle.rows)) return false
 
   // Wait if a unit is currently mid-stride along a path
   if (battle.units.some(u => u.path.length > 0)) return false
@@ -2363,7 +2512,7 @@ function performEnemyAttack(state: GameState, enemy: BattleUnit, target: BattleU
       at: [target.x, target.y + 0.6, target.z],
       radius: 1.65
     })
-    for (const c of getPatternCells(target.col, target.row, 'cross')) {
+    for (const c of getPatternCells(target.col, target.row, 'cross', battle.cols, battle.rows)) {
       const victim = unitAt(battle, c.col, c.row)
       if (victim && victim.team === 'ally') {
         applyDamage(state, enemy, victim, enemy.atk * 1.15, 0.35, false)
@@ -2407,8 +2556,8 @@ export function stepGame(state: GameState, dt: number): void {
       const next = u.path[0]
       const fromCell = battle.cells[u.row][u.col]
       const toCell = battle.cells[next.row][next.col]
-      const [fx, fy, fz] = gridToWorld(u.col, u.row, fromCell.elevation)
-      const [tx, ty, tz] = gridToWorld(next.col, next.row, toCell.elevation)
+      const [fx, fy, fz] = gridToWorld(u.col, u.row, fromCell.elevation, battle.cols, battle.rows)
+      const [tx, ty, tz] = gridToWorld(next.col, next.row, toCell.elevation, battle.cols, battle.rows)
       faceToward(u, tx, tz)
 
       u.moveProgress += safeDt * 5.2

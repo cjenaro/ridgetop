@@ -1,10 +1,10 @@
 import type { LayoutRect } from 'ridgetop/ui-layout'
 import type { CanvasWidgetDrawState } from 'ridgetop/ui-canvas'
 import type {
-  BattleUnit, CombatForecast, CombatForecastAlt, EquipSlot, EquipmentSpec, HeroSpec, OwnedHeroCard,
-  PackSpec, Rarity, SkillSpec, TacticCardSpec, TurnPreviewEntry
+  BattleUnit, ChapterSpec, CombatForecast, CombatForecastAlt, DifficultyLevel, EquipSlot, EquipmentSpec,
+  HeroSpec, OwnedHeroCard, PackRevealItem, PackSpec, Rarity, SkillSpec, TacticCardSpec, TurnPreviewEntry
 } from './types.ts'
-import { RARITY_META } from './data.ts'
+import { DIFFICULTY_META, RARITY_META, RARITY_ORDER } from './data.ts'
 
 // ===========================================================================
 // Stylized Game UI Tokens
@@ -81,6 +81,7 @@ export type IconName =
   | 'rotate-left' | 'rotate-right' | 'sword' | 'shield' | 'heart' | 'boot' | 'bolt' | 'target'
   | 'crit' | 'star' | 'coin' | 'gem' | 'hourglass' | 'lock' | 'check' | 'plus' | 'minus' | 'sparkle' | 'flag'
   | 'users' | 'bag' | 'cards' | 'camp' | 'arrow-right' | 'up' | 'sell' | 'retreat'
+  | 'map' | 'skull' | 'crown' | 'chest'
 
 export type ButtonVariant = 'primary' | 'secondary' | 'ghost' | 'danger' | 'success'
 
@@ -813,6 +814,27 @@ export function drawIcon(ctx: CanvasRenderingContext2D, name: IconName, cx: numb
       draw3DCoin(ctx, cx, cy, s * 0.88); break
     case 'retreat':
       ctx.moveTo(cx + s * 0.7, cy); ctx.lineTo(cx - s * 0.6, cy); ctx.moveTo(cx - s * 0.1, cy - s * 0.5); ctx.lineTo(cx - s * 0.65, cy); ctx.lineTo(cx - s * 0.1, cy + s * 0.5); ctx.stroke(); break
+    case 'map':
+      ctx.moveTo(cx - s * 0.8, cy - s * 0.55); ctx.lineTo(cx - s * 0.25, cy - s * 0.78); ctx.lineTo(cx + s * 0.25, cy - s * 0.52); ctx.lineTo(cx + s * 0.8, cy - s * 0.75)
+      ctx.lineTo(cx + s * 0.8, cy + s * 0.55); ctx.lineTo(cx + s * 0.25, cy + s * 0.78); ctx.lineTo(cx - s * 0.25, cy + s * 0.52); ctx.lineTo(cx - s * 0.8, cy + s * 0.75)
+      ctx.closePath(); ctx.stroke()
+      ctx.beginPath(); ctx.moveTo(cx - s * 0.25, cy - s * 0.78); ctx.lineTo(cx - s * 0.25, cy + s * 0.52)
+      ctx.moveTo(cx + s * 0.25, cy - s * 0.52); ctx.lineTo(cx + s * 0.25, cy + s * 0.78); ctx.stroke(); break
+    case 'skull':
+      ctx.arc(cx, cy - s * 0.12, s * 0.66, Math.PI * 0.85, Math.PI * 2.15)
+      ctx.lineTo(cx + s * 0.44, cy + s * 0.72); ctx.lineTo(cx - s * 0.44, cy + s * 0.72); ctx.closePath(); ctx.fill()
+      ctx.fillStyle = COLOR.outline
+      ctx.beginPath(); ctx.arc(cx - s * 0.24, cy - s * 0.1, s * 0.16, 0, Math.PI * 2); ctx.fill()
+      ctx.beginPath(); ctx.arc(cx + s * 0.24, cy - s * 0.1, s * 0.16, 0, Math.PI * 2); ctx.fill(); break
+    case 'crown':
+      ctx.moveTo(cx - s * 0.78, cy + s * 0.52); ctx.lineTo(cx - s * 0.84, cy - s * 0.34); ctx.lineTo(cx - s * 0.34, cy + s * 0.04)
+      ctx.lineTo(cx, cy - s * 0.76); ctx.lineTo(cx + s * 0.34, cy + s * 0.04); ctx.lineTo(cx + s * 0.84, cy - s * 0.34)
+      ctx.lineTo(cx + s * 0.78, cy + s * 0.52); ctx.closePath(); ctx.fill(); break
+    case 'chest':
+      rr(ctx, cx - s * 0.78, cy - s * 0.56, s * 1.56, s * 1.18, s * 0.22); ctx.fill()
+      ctx.strokeStyle = COLOR.outline; ctx.lineWidth = Math.max(1.6, size * 0.12)
+      ctx.beginPath(); ctx.moveTo(cx - s * 0.78, cy - s * 0.06); ctx.lineTo(cx + s * 0.78, cy - s * 0.06); ctx.stroke()
+      ctx.fillStyle = COLOR.accentHi; ctx.fillRect(cx - s * 0.18, cy - s * 0.2, s * 0.36, s * 0.34); break
   }
   ctx.restore()
 }
@@ -3650,6 +3672,975 @@ export function drawEquipIcon(
       ctx.lineWidth = 1.3
       ctx.stroke()
     }
+  }
+  ctx.restore()
+}
+
+// ===========================================================================
+// WORLD MAP OVERWORLD & STAGE NODES
+// ===========================================================================
+
+function hash1(n: number): number {
+  const v = Math.sin(n * 127.1 + 311.7) * 43758.5453
+  return v - Math.floor(v)
+}
+
+function easeOutCubic(t: number): number {
+  const c = Math.max(0, Math.min(1, t))
+  return 1 - (1 - c) * (1 - c) * (1 - c)
+}
+
+function easeOutBack(t: number): number {
+  const c = Math.max(0, Math.min(1, t))
+  const c1 = 1.70158
+  const c3 = c1 + 1
+  return 1 + c3 * Math.pow(c - 1, 3) + c1 * Math.pow(c - 1, 2)
+}
+
+const BIOME_MAP_COLOR: Record<ChapterSpec['biome'], { readonly fill: string; readonly ring: string; readonly label: string }> = {
+  meadow: { fill: '#3f8a4b', ring: '#7be078', label: 'Meadow' },
+  river: { fill: '#2c7699', ring: '#6cd9ff', label: 'River' },
+  crypt: { fill: '#48406e', ring: '#9f87ff', label: 'Crypt' },
+  frost: { fill: '#4a81ad', ring: '#a8ecff', label: 'Frost' },
+  volcano: { fill: '#8c3728', ring: '#ff8a4c', label: 'Volcano' },
+  throne: { fill: '#572770', ring: '#e878ff', label: 'Throne' }
+}
+
+export function drawDifficultyBadge(
+  ctx: CanvasRenderingContext2D,
+  x: number,
+  y: number,
+  difficulty: DifficultyLevel,
+  opts: { align?: 'left' | 'right' | 'center'; h?: number; showLabel?: boolean } = {}
+) {
+  const meta = DIFFICULTY_META[difficulty]
+  const h = opts.h ?? 22
+  const pipCount = 5
+  const pipR = h * 0.19
+  const pipGap = pipR * 2.5
+  const pipsW = pipCount * pipGap + 2
+  const labelText = opts.showLabel ? `${meta.label} (${meta.short})` : `DIFF ${meta.short}`
+  const textW = measureText(ctx, labelText, Math.round(h * 0.48), 900, true)
+  const w = Math.round(textW + pipsW + 22)
+  const left = opts.align === 'right' ? x - w : opts.align === 'center' ? x - w / 2 : x
+
+  ctx.save()
+  rr(ctx, left, y, w, h, h / 2)
+  ctx.fillStyle = meta.bgHex
+  ctx.fill()
+  ctx.strokeStyle = COLOR.outline
+  ctx.lineWidth = 2
+  ctx.stroke()
+  rr(ctx, left + 1.5, y + 1.5, w - 3, h - 3, Math.max(2, h / 2 - 1.5))
+  ctx.strokeStyle = meta.hex + '88'
+  ctx.lineWidth = 1.2
+  ctx.stroke()
+
+  const cy = y + h / 2
+  for (let i = 0; i < pipCount; i++) {
+    const px = left + 10 + i * pipGap + pipR
+    ctx.beginPath()
+    ctx.arc(px, cy, pipR, 0, Math.PI * 2)
+    ctx.fillStyle = i < difficulty ? meta.hex : '#131a2e'
+    ctx.fill()
+    ctx.strokeStyle = COLOR.outline
+    ctx.lineWidth = 1.2
+    ctx.stroke()
+  }
+  drawText(ctx, labelText, left + 14 + pipsW, cy + 0.5, {
+    size: Math.round(h * 0.48),
+    weight: 900,
+    color: meta.hex,
+    display: true
+  })
+  ctx.restore()
+  return w
+}
+
+/** Illustrated fantasy tactical map of Solis with biome territories, animated trails & compass rose. */
+export function drawWorldMapBackdrop(
+  ctx: CanvasRenderingContext2D,
+  rect: LayoutRect,
+  time: number,
+  chapters: readonly ChapterSpec[],
+  clearedSet: ReadonlySet<string>,
+  unlockedSet: ReadonlySet<string>,
+  padX: number,
+  padY: number
+) {
+  const { x, y, width: w, height: h } = rect
+  drawSurface(ctx, rect, { r: RADIUS.xl, lipH: 6, fill: '#223154', fillBot: '#141d36' })
+
+  const ix = x + 6
+  const iy = y + 6
+  const iw = w - 12
+  const ih = h - 16
+  ctx.save()
+  rr(ctx, ix, iy, iw, ih, RADIUS.lg)
+  ctx.clip()
+
+  // Deep ocean / parchment tactical chart base
+  const sea = ctx.createLinearGradient(ix, iy, ix + iw, iy + ih)
+  sea.addColorStop(0, '#1a2f4d')
+  sea.addColorStop(0.5, '#192945')
+  sea.addColorStop(1, '#1d1c38')
+  ctx.fillStyle = sea
+  ctx.fillRect(ix, iy, iw, ih)
+
+  // Subtle cartographic grid lines
+  ctx.strokeStyle = '#ffffff0d'
+  ctx.lineWidth = 1
+  const gridStep = Math.max(36, Math.round(iw / 12))
+  for (let gx = ix + gridStep; gx < ix + iw; gx += gridStep) {
+    ctx.beginPath(); ctx.moveTo(gx, iy); ctx.lineTo(gx, iy + ih); ctx.stroke()
+  }
+  for (let gy = iy + gridStep; gy < iy + ih; gy += gridStep) {
+    ctx.beginPath(); ctx.moveTo(ix, gy); ctx.lineTo(ix + iw, gy); ctx.stroke()
+  }
+
+  // Sculpted island continent silhouettes per biome region
+  const drawBlob = (rx: number, ry: number, radX: number, radY: number, fillA: string, fillB: string, stroke: string) => {
+    const cx = ix + iw * rx
+    const cy = iy + ih * ry
+    const gx = iw * radX
+    const gy = ih * radY
+    const gr = ctx.createRadialGradient(cx - gx * 0.15, cy - gy * 0.2, Math.min(gx, gy) * 0.1, cx, cy, Math.max(gx, gy))
+    gr.addColorStop(0, fillA)
+    gr.addColorStop(1, fillB)
+    ctx.beginPath()
+    ctx.ellipse(cx, cy, gx, gy, 0, 0, Math.PI * 2)
+    ctx.fillStyle = gr
+    ctx.fill()
+    ctx.strokeStyle = stroke
+    ctx.lineWidth = 2
+    ctx.stroke()
+  }
+
+  // Western Solis Meadows & Sunwell Glade
+  drawBlob(0.24, 0.44, 0.24, 0.36, '#397349cc', '#254a34cc', '#5da66b66')
+  // Northern Frostspire Highlands & Glacial Citadel
+  drawBlob(0.64, 0.30, 0.20, 0.24, '#5a8ab5cc', '#325375cc', '#a8e4ff66')
+  // Southern Lantern Crypt & Cursed Vault
+  drawBlob(0.50, 0.76, 0.20, 0.20, '#463b6ecc', '#282145cc', '#8b73d666')
+  // Eastern Obsidian Volcano & Eclipse Throne
+  drawBlob(0.84, 0.56, 0.17, 0.34, '#6e2e36cc', '#381938cc', '#ff7b5266')
+
+  // Winding turquoise river separating West Meadow from East routes
+  ctx.save()
+  ctx.beginPath()
+  ctx.moveTo(ix + iw * 0.28, iy)
+  ctx.bezierCurveTo(ix + iw * 0.22, iy + ih * 0.36, ix + iw * 0.31, iy + ih * 0.64, ix + iw * 0.24, iy + ih)
+  ctx.strokeStyle = '#3897bd88'
+  ctx.lineWidth = Math.max(10, iw * 0.022)
+  ctx.lineCap = 'round'
+  ctx.stroke()
+  ctx.strokeStyle = '#7de2ff55'
+  ctx.lineWidth = 2.5
+  ctx.stroke()
+  ctx.restore()
+
+  // Region watermark labels
+  const regionLabels: readonly [number, number, string, string][] = [
+    [0.14, 0.16, 'SOLIS MEADOWS', '#9be6a088'],
+    [0.58, 0.10, 'FROSTSPIRE RIDGE', '#b8ecff88'],
+    [0.48, 0.93, 'ASHEN CATACOMBS', '#bba8ff88'],
+    [0.86, 0.16, 'ECLIPSE REALM', '#ff9ea888']
+  ]
+  for (const [rx, ry, lbl, col] of regionLabels) {
+    drawText(ctx, lbl, ix + iw * rx, iy + ih * ry, {
+      size: 10,
+      weight: 900,
+      color: col,
+      align: 'center',
+      spacing: 1.5,
+      display: true
+    })
+  }
+
+  // Compass rose in bottom-left corner
+  const crx = ix + 34
+  const cry = iy + ih - 32
+  ctx.save()
+  ctx.globalAlpha = 0.45
+  ctx.beginPath()
+  ctx.arc(crx, cry, 16, 0, Math.PI * 2)
+  ctx.strokeStyle = COLOR.accentHi
+  ctx.lineWidth = 1.4
+  ctx.stroke()
+  drawStarShape(ctx, crx, cry, 14, 4, 4)
+  ctx.fillStyle = COLOR.accentHi
+  ctx.fill()
+  drawText(ctx, 'N', crx, cry - 20, { size: 8, weight: 900, color: COLOR.accentHi, align: 'center', display: true })
+  ctx.restore()
+
+  // Compute node center positions matching the layout overlay
+  const innerX = x + padX
+  const innerY = y + padY
+  const innerW = Math.max(1, w - padX * 2)
+  const innerH = Math.max(1, h - padY * 2)
+  const posById = new Map<string, { cx: number; cy: number }>()
+  for (const ch of chapters) {
+    posById.set(ch.id, { cx: innerX + ch.mapX * innerW, cy: innerY + ch.mapY * innerH })
+  }
+
+  // Draw branching roads connecting prerequisites -> stage
+  for (const ch of chapters) {
+    const to = posById.get(ch.id)
+    if (!to) continue
+    const toCleared = clearedSet.has(ch.id)
+    const toUnlocked = unlockedSet.has(ch.id)
+
+    for (const reqId of ch.requires) {
+      const from = posById.get(reqId)
+      if (!from) continue
+      const fromCleared = clearedSet.has(reqId)
+      const activeRoad = fromCleared && toUnlocked
+      const completedRoad = fromCleared && toCleared
+
+      const mx = (from.cx + to.cx) * 0.5
+      const my = (from.cy + to.cy) * 0.5 + (to.cy - from.cy) * 0.14
+
+      ctx.save()
+      // Dark road casing
+      ctx.beginPath()
+      ctx.moveTo(from.cx, from.cy)
+      ctx.quadraticCurveTo(mx, my, to.cx, to.cy)
+      ctx.strokeStyle = '#090d1acc'
+      ctx.lineWidth = completedRoad ? 8 : activeRoad ? 7 : 5
+      ctx.lineCap = 'round'
+      ctx.stroke()
+
+      // Road core
+      ctx.beginPath()
+      ctx.moveTo(from.cx, from.cy)
+      ctx.quadraticCurveTo(mx, my, to.cx, to.cy)
+      if (completedRoad) {
+        ctx.strokeStyle = COLOR.accent
+        ctx.lineWidth = 4
+        ctx.stroke()
+      } else if (activeRoad) {
+        ctx.strokeStyle = '#ffc83b55'
+        ctx.lineWidth = 4
+        ctx.stroke()
+        ctx.setLineDash([8, 8])
+        ctx.lineDashOffset = -time * 26
+        ctx.strokeStyle = COLOR.accentHi
+        ctx.lineWidth = 3.2
+        ctx.stroke()
+      } else {
+        ctx.setLineDash([5, 7])
+        ctx.strokeStyle = '#5f709966'
+        ctx.lineWidth = 2.5
+        ctx.stroke()
+      }
+      ctx.restore()
+    }
+  }
+
+  // Gentle drifting atmospheric map motes
+  for (let i = 0; i < 14; i++) {
+    const px = ix + ((hash1(i * 3.1) + time * (0.012 + hash1(i * 7.2) * 0.015)) % 1) * iw
+    const py = iy + hash1(i * 5.7) * ih + Math.sin(time * 1.4 + i) * 6
+    const a = 0.18 + Math.sin(time * 2.2 + i * 1.7) * 0.12
+    ctx.beginPath()
+    ctx.arc(px, py, 1.8 + (i % 3) * 0.6, 0, Math.PI * 2)
+    ctx.fillStyle = `rgba(255, 232, 160, ${Math.max(0.05, a)})`
+    ctx.fill()
+  }
+
+  // Inner carved border
+  rr(ctx, ix + 1, iy + 1, iw - 2, ih - 2, RADIUS.lg - 1)
+  ctx.strokeStyle = COLOR.outline
+  ctx.lineWidth = 2.4
+  ctx.stroke()
+  ctx.restore()
+}
+
+export function drawWorldMapNode(
+  ctx: CanvasRenderingContext2D,
+  rect: LayoutRect,
+  stage: ChapterSpec,
+  opts: {
+    unlocked: boolean
+    cleared: boolean
+    selected: boolean
+    time: number
+    compact?: boolean
+  },
+  st: CanvasWidgetDrawState
+) {
+  const { x, y, width: w } = rect
+  const cx = x + w / 2
+  const r = opts.compact ? 17 : stage.kind === 'boss' ? 24 : stage.kind !== 'story' ? 21 : 19
+  const cy = y + r + 5
+  const biomeCol = BIOME_MAP_COLOR[stage.biome]
+  const diffMeta = DIFFICULTY_META[stage.difficulty]
+  const frontier = opts.unlocked && !opts.cleared
+  const hot = st.hovered || st.focused || opts.selected
+
+  ctx.save()
+
+  // Pulsing beacon halo on unlocked frontier nodes & selected node
+  if (frontier || opts.selected) {
+    const pulse = 1 + Math.sin(opts.time * 4.5 + stage.index) * 0.12
+    ctx.beginPath()
+    ctx.arc(cx, cy, (r + 8) * pulse, 0, Math.PI * 2)
+    ctx.fillStyle = opts.selected ? '#ffe6803d' : stage.kind === 'boss' ? '#ff526638' : '#ffc83b2e'
+    ctx.fill()
+    ctx.strokeStyle = opts.selected ? COLOR.accentHi : frontier ? COLOR.accent : biomeCol.ring
+    ctx.lineWidth = opts.selected ? 2.6 : 1.8
+    ctx.stroke()
+  }
+
+  // Drop shadow
+  ctx.beginPath()
+  ctx.arc(cx, cy + 3, r, 0, Math.PI * 2)
+  ctx.fillStyle = '#050814aa'
+  ctx.fill()
+
+  // Distinctive node frame shape: diamond/octagon for special/treasure, shield circle for story/boss
+  ctx.beginPath()
+  if (stage.kind === 'special' || stage.kind === 'treasure') {
+    const sides = stage.kind === 'treasure' ? 8 : 6
+    for (let i = 0; i < sides; i++) {
+      const a = (i / sides) * Math.PI * 2 - Math.PI / 2
+      const px = cx + Math.cos(a) * (r + 1)
+      const py = cy + Math.sin(a) * (r + 1)
+      if (i === 0) ctx.moveTo(px, py)
+      else ctx.lineTo(px, py)
+    }
+    ctx.closePath()
+  } else {
+    ctx.arc(cx, cy, r, 0, Math.PI * 2)
+  }
+
+  const grad = ctx.createLinearGradient(cx, cy - r, cx, cy + r)
+  if (!opts.unlocked) {
+    grad.addColorStop(0, '#363f57')
+    grad.addColorStop(1, '#1d2233')
+  } else {
+    grad.addColorStop(0, hot ? biomeCol.ring : biomeCol.fill)
+    grad.addColorStop(1, '#172038')
+  }
+  ctx.fillStyle = grad
+  ctx.fill()
+
+  // Outer thick ink border + inner colored rim
+  ctx.lineWidth = 2.6
+  ctx.strokeStyle = COLOR.outline
+  ctx.stroke()
+
+  ctx.beginPath()
+  ctx.arc(cx, cy, r - 3.2, 0, Math.PI * 2)
+  ctx.strokeStyle = !opts.unlocked
+    ? '#5b6785'
+    : opts.selected ? COLOR.accentHi : opts.cleared ? COLOR.good : diffMeta.hex
+  ctx.lineWidth = opts.selected ? 2.4 : 1.8
+  ctx.stroke()
+
+  // Center node icon
+  const nodeIcon: IconName = !opts.unlocked
+    ? 'lock'
+    : stage.kind === 'boss' ? 'crown'
+    : stage.kind === 'treasure' ? 'chest'
+    : stage.kind === 'elite' ? 'skull'
+    : stage.kind === 'special' ? 'sparkle'
+    : 'sword'
+  const iconCol = !opts.unlocked
+    ? '#8e9bb8'
+    : stage.kind === 'boss' ? '#ff9ea8'
+    : stage.kind === 'treasure' || stage.kind === 'special' ? COLOR.accentHi
+    : '#ffffff'
+  drawIcon(ctx, nodeIcon, cx, cy, r * 0.92, iconCol)
+
+  // Cleared checkmark badge in top-right of pin
+  if (opts.cleared) {
+    const bx = cx + r * 0.72
+    const by = cy - r * 0.68
+    ctx.beginPath()
+    ctx.arc(bx, by, 7.5, 0, Math.PI * 2)
+    ctx.fillStyle = COLOR.good
+    ctx.fill()
+    ctx.strokeStyle = COLOR.outline
+    ctx.lineWidth = 1.8
+    ctx.stroke()
+    drawIcon(ctx, 'check', bx, by, 8.5, '#072b16')
+  } else if (opts.unlocked && stage.kind !== 'story') {
+    // Unclaimed special reward sparkle badge!
+    const bx = cx + r * 0.72
+    const by = cy - r * 0.68
+    ctx.beginPath()
+    ctx.arc(bx, by, 7.5, 0, Math.PI * 2)
+    ctx.fillStyle = COLOR.accent
+    ctx.fill()
+    ctx.strokeStyle = COLOR.outline
+    ctx.lineWidth = 1.8
+    ctx.stroke()
+    drawIcon(ctx, 'star', bx, by, 8.5, COLOR.accentText)
+  }
+
+  // Difficulty numeral pip on top-left of pin
+  const dx = cx - r * 0.74
+  const dy = cy - r * 0.68
+  ctx.beginPath()
+  ctx.arc(dx, dy, 7.5, 0, Math.PI * 2)
+  ctx.fillStyle = opts.unlocked ? diffMeta.bgHex : '#1b2133'
+  ctx.fill()
+  ctx.strokeStyle = COLOR.outline
+  ctx.lineWidth = 1.6
+  ctx.stroke()
+  drawText(ctx, `${stage.difficulty}`, dx, dy + 0.5, {
+    size: 9,
+    weight: 900,
+    color: opts.unlocked ? diffMeta.hex : '#7886a6',
+    align: 'center',
+    display: true
+  })
+
+  // Name plaque below the pin
+  const plaqueY = cy + r + 4
+  const plaqueH = opts.compact ? 17 : 19
+  const plaqueW = Math.min(w, Math.max(76, measureText(ctx, stage.title, opts.compact ? 9.5 : 10.5, 900, true) + 14))
+  const plaqueX = cx - plaqueW / 2
+  rr(ctx, plaqueX, plaqueY, plaqueW, plaqueH, 6)
+  ctx.fillStyle = opts.selected ? '#35497a' : !opts.unlocked ? '#141a2be0' : '#1b2642eb'
+  ctx.fill()
+  ctx.strokeStyle = opts.selected ? COLOR.accentHi : COLOR.outline
+  ctx.lineWidth = opts.selected ? 2 : 1.6
+  ctx.stroke()
+  drawText(ctx, stage.title, cx, plaqueY + plaqueH / 2 + 0.5, {
+    size: opts.compact ? 9.5 : 10.5,
+    weight: 900,
+    color: !opts.unlocked ? '#8a97b5' : opts.selected ? COLOR.accentHi : '#ffffff',
+    align: 'center',
+    maxW: plaqueW - 8,
+    display: true
+  })
+
+  if (st.focused) drawFocusRing(ctx, cx - r - 2, cy - r - 2, r * 2 + 4, r * 2 + 4, r + 2)
+  ctx.restore()
+}
+
+// ===========================================================================
+// PACK OPENING LOTTERY CEREMONY & 3D CARD FLIP ANIMATION
+// ===========================================================================
+
+const LOTTERY_STRIP_RARITIES: readonly Rarity[] = [
+  'common', 'uncommon', 'common', 'rare', 'common', 'uncommon', 'common', 'epic',
+  'common', 'uncommon', 'rare', 'common', 'uncommon', 'common', 'legendary', 'common',
+  'uncommon', 'rare', 'common', 'uncommon'
+]
+
+export function drawPackCeremonyBackdrop(
+  ctx: CanvasRenderingContext2D,
+  rect: LayoutRect,
+  opts: {
+    pack: PackSpec
+    bestRarity: Rarity
+    elapsed: number
+    phase: 'spin' | 'reveal'
+    cards: readonly PackRevealItem[]
+  }
+) {
+  const { x, y, width: w, height: h } = rect
+  const cx = x + w / 2
+  const cy = y + h * 0.44
+  const bestMeta = RARITY_META[opts.bestRarity]
+  const spinDur = 1.35
+  const u = Math.min(1, opts.elapsed / spinDur)
+
+  ctx.save()
+  // Dramatic dark velvet backdrop
+  ctx.fillStyle = 'rgba(7, 10, 22, 0.95)'
+  ctx.fillRect(x, y, w, h)
+
+  // Rotating celebratory sunburst rays tinted by pack / best pulled rarity!
+  const rayAlpha = opts.phase === 'reveal'
+    ? 0.24
+    : 0.08 + u * 0.28
+  const rayColor = u > 0.65 || opts.phase === 'reveal' ? bestMeta.hex : opts.pack.accentHex
+  ctx.save()
+  ctx.translate(cx, cy)
+  ctx.rotate(opts.elapsed * (opts.phase === 'spin' ? 1.4 : 0.35))
+  const rayCount = opts.bestRarity === 'legendary' ? 16 : opts.bestRarity === 'epic' ? 12 : 10
+  const maxR = Math.hypot(w, h) * 0.65
+  for (let i = 0; i < rayCount; i++) {
+    const a0 = (i / rayCount) * Math.PI * 2
+    const a1 = a0 + (Math.PI / rayCount) * 0.72
+    ctx.beginPath()
+    ctx.moveTo(0, 0)
+    ctx.arc(0, 0, maxR, a0, a1)
+    ctx.closePath()
+    const rg = ctx.createRadialGradient(0, 0, 12, 0, 0, maxR)
+    rg.addColorStop(0, rayColor)
+    rg.addColorStop(1, 'rgba(0,0,0,0)')
+    ctx.globalAlpha = rayAlpha
+    ctx.fillStyle = rg
+    ctx.fill()
+  }
+  ctx.restore()
+
+  // Phase 1: Pack Seal Charge + Lottery Rarity Reel!
+  if (opts.phase === 'spin') {
+    const ease = easeOutCubic(u)
+    const shakeAmt = (2 + u * 11) * (1 - Math.max(0, (u - 0.92) / 0.08))
+    const sx = Math.sin(opts.elapsed * 58) * shakeAmt
+    const sy = Math.cos(opts.elapsed * 64) * shakeAmt * 0.6
+
+    // Charging booster pack emblem above the lottery reel
+    const packW = 92
+    const packH = 114
+    const packScale = 1 + Math.sin(u * Math.PI) * 0.16 + (u > 0.88 ? (u - 0.88) * 3.5 : 0)
+    ctx.save()
+    ctx.translate(cx + sx, cy - 86 + sy)
+    ctx.scale(packScale, packScale)
+    ctx.shadowColor = rayColor
+    ctx.shadowBlur = 18 + u * 30
+    rr(ctx, -packW / 2, -packH / 2, packW, packH, 14)
+    const pg = ctx.createLinearGradient(0, -packH / 2, 0, packH / 2)
+    pg.addColorStop(0, opts.pack.accentHex)
+    pg.addColorStop(1, '#18223d')
+    ctx.fillStyle = pg
+    ctx.fill()
+    ctx.lineWidth = 3
+    ctx.strokeStyle = COLOR.outline
+    ctx.stroke()
+    // Foil crimp stripes
+    ctx.fillStyle = '#ffffff44'
+    ctx.fillRect(-packW / 2 + 8, -packH / 2 + 8, packW - 16, 6)
+    ctx.fillRect(-packW / 2 + 8, packH / 2 - 14, packW - 16, 6)
+    drawShardMark(ctx, 0, -4, 24)
+    drawText(ctx, 'UNSEALING...', 0, 34, { size: 10, weight: 900, color: '#ffffff', align: 'center', display: true, stroke: true })
+    ctx.restore()
+
+    // Horizontal Lottery Rarity Reel!
+    const reelW = Math.min(w - 48, 520)
+    const reelH = 74
+    const reelX = cx - reelW / 2
+    const reelY = cy + 16
+    drawSurface(ctx, { x: reelX, y: reelY, width: reelW, height: reelH }, {
+      r: RADIUS.lg,
+      lipH: 4,
+      fill: '#1b2644',
+      fillBot: '#0f162a',
+      glow: rayColor + '88'
+    })
+
+    const tileW = 86
+    const tileGap = 8
+    const stride = tileW + tileGap
+    const targetIdx = 22
+    const scrollTiles = ease * targetIdx
+    const bestIndex = RARITY_ORDER.indexOf(opts.bestRarity)
+
+    ctx.save()
+    rr(ctx, reelX + 5, reelY + 5, reelW - 10, reelH - 13, RADIUS.md)
+    ctx.clip()
+
+    for (let i = -4; i <= targetIdx + 5; i++) {
+      const tx = cx + (i - scrollTiles) * stride - tileW / 2
+      if (tx + tileW < reelX || tx > reelX + reelW) continue
+      const tileRarity: Rarity = i === targetIdx
+        ? opts.bestRarity
+        : LOTTERY_STRIP_RARITIES[((i % LOTTERY_STRIP_RARITIES.length) + LOTTERY_STRIP_RARITIES.length) % LOTTERY_STRIP_RARITIES.length]
+      const meta = RARITY_META[tileRarity]
+      const distFromCenter = Math.abs((tx + tileW / 2) - cx)
+      const centered = distFromCenter < tileW * 0.55
+
+      rr(ctx, tx, reelY + 10, tileW, reelH - 22, 9)
+      const tg = ctx.createLinearGradient(0, reelY + 10, 0, reelY + reelH - 12)
+      tg.addColorStop(0, centered ? meta.hex : meta.bgHex)
+      tg.addColorStop(1, '#121a30')
+      ctx.fillStyle = tg
+      ctx.fill()
+      ctx.strokeStyle = centered ? '#ffffff' : meta.hex
+      ctx.lineWidth = centered ? 2.4 : 1.6
+      ctx.stroke()
+
+      drawIcon(ctx, tileRarity === 'legendary' ? 'crown' : tileRarity === 'epic' ? 'sparkle' : 'gem', tx + tileW / 2, reelY + 26, 16, centered ? '#ffffff' : meta.hex)
+      drawText(ctx, meta.short, tx + tileW / 2, reelY + 47, {
+        size: 11,
+        weight: 900,
+        color: centered ? '#ffffff' : meta.hex,
+        align: 'center',
+        display: true,
+        stroke: centered
+      })
+    }
+
+    // Left/right drum vignette fade
+    const lf = ctx.createLinearGradient(reelX, 0, reelX + 64, 0)
+    lf.addColorStop(0, '#0b1020ee'); lf.addColorStop(1, '#0b102000')
+    ctx.fillStyle = lf; ctx.fillRect(reelX, reelY, 64, reelH)
+    const rf = ctx.createLinearGradient(reelX + reelW - 64, 0, reelX + reelW, 0)
+    rf.addColorStop(0, '#0b102000'); rf.addColorStop(1, '#0b1020ee')
+    ctx.fillStyle = rf; ctx.fillRect(reelX + reelW - 64, reelY, 64, reelH)
+    ctx.restore()
+
+    // Golden center lottery needle pointers (top & bottom)
+    ctx.fillStyle = COLOR.accentHi
+    ctx.strokeStyle = COLOR.outline
+    ctx.lineWidth = 2
+    ctx.beginPath()
+    ctx.moveTo(cx, reelY + 14); ctx.lineTo(cx - 10, reelY - 3); ctx.lineTo(cx + 10, reelY - 3); ctx.closePath()
+    ctx.fill(); ctx.stroke()
+    ctx.beginPath()
+    ctx.moveTo(cx, reelY + reelH - 16); ctx.lineTo(cx - 10, reelY + reelH + 1); ctx.lineTo(cx + 10, reelY + reelH + 1); ctx.closePath()
+    ctx.fill(); ctx.stroke()
+
+    // Teaser text underneath
+    const hint = u > 0.78 && bestIndex >= 2
+      ? `${bestMeta.label.toUpperCase()} PULL INCOMING!`
+      : `Drawing ${opts.cards.length} cards from ${opts.pack.name}...`
+    drawText(ctx, hint, cx, reelY + reelH + 24, {
+      size: 14,
+      weight: 900,
+      color: u > 0.78 && bestIndex >= 2 ? bestMeta.hex : COLOR.muted,
+      align: 'center',
+      display: true,
+      stroke: true
+    })
+  } else {
+    // Phase 2: Burst flash fading out smoothly after unseal!
+    const revealElapsed = Math.max(0, opts.elapsed - spinDur)
+    if (revealElapsed < 0.38) {
+      const flash = (1 - revealElapsed / 0.38) * 0.36
+      ctx.fillStyle = bestMeta.hex
+      ctx.globalAlpha = flash
+      ctx.fillRect(x, y, w, h)
+      ctx.globalAlpha = 1
+    }
+    // Floating celebration sparkles matching best pulled rarity
+    const sparkCount = opts.bestRarity === 'legendary' ? 28 : opts.bestRarity === 'epic' ? 20 : 12
+    for (let i = 0; i < sparkCount; i++) {
+      const spx = x + hash1(i * 4.7) * w
+      const spy = y + ((hash1(i * 9.3) - opts.elapsed * (0.08 + hash1(i * 2.1) * 0.08)) % 1 + 1) % 1 * h
+      const sz = 3 + (i % 3) * 1.8
+      ctx.save()
+      ctx.globalAlpha = 0.45 + Math.sin(opts.elapsed * 5 + i) * 0.35
+      drawStarShape(ctx, spx, spy, sz, sz * 0.42, 4)
+      ctx.fillStyle = i % 2 === 0 ? bestMeta.hex : '#ffffff'
+      ctx.fill()
+      ctx.restore()
+    }
+  }
+  ctx.restore()
+}
+
+export function drawAnimatedRevealCard(
+  ctx: CanvasRenderingContext2D,
+  rect: LayoutRect,
+  o: {
+    rarity: Rarity
+    kind: 'hero' | 'weapon' | 'armor' | 'relic' | 'tactic'
+    refId: string
+    name: string
+    detail: string
+    value: number
+    isNew: boolean
+    portrait?: CanvasImageSource
+    tacticSpec?: TacticCardSpec
+    equipAccent?: string
+  },
+  anim: {
+    enterT: number   // 0..1 spring arrival
+    flipT: number    // 0 = face down, 0..1 = flipping, 1 = face up
+    elapsed: number
+    hovered?: boolean
+  }
+) {
+  const meta = RARITY_META[o.rarity]
+  const rarityIdx = RARITY_ORDER.indexOf(o.rarity)
+  const enterScale = anim.enterT < 1 ? 0.25 + 0.75 * easeOutBack(anim.enterT) : 1
+  const flipClamped = Math.max(0, Math.min(1, anim.flipT))
+  const scaleX = Math.max(0.03, Math.abs(Math.cos(flipClamped * Math.PI)))
+  const faceUp = flipClamped >= 0.5
+  const liftY = (1 - Math.min(1, anim.enterT)) * 36 + (anim.hovered && !faceUp ? -5 : 0)
+
+  const cx = rect.x + rect.width / 2
+  const cy = rect.y + rect.height / 2 + liftY
+
+  ctx.save()
+  ctx.translate(cx, cy)
+  ctx.scale(enterScale * scaleX, enterScale)
+  const localRect: LayoutRect = { x: -rect.width / 2, y: -rect.height / 2, width: rect.width, height: rect.height }
+
+  if (!faceUp) {
+    // Face-down ornate Crownshard card back with teasing rarity aura!
+    const { x, y, width: w, height: h } = localRect
+    const r = RADIUS.lg
+    const auraPulse = 10 + Math.sin(anim.elapsed * 6.5) * 6
+    ctx.save()
+    ctx.shadowColor = rarityIdx >= 2 ? meta.hex : '#5ca8ff88'
+    ctx.shadowBlur = rarityIdx >= 3 ? 28 + auraPulse : rarityIdx >= 2 ? 18 + auraPulse * 0.5 : 10
+    rr(ctx, x, y, w, h, r)
+    ctx.fillStyle = rarityIdx >= 2 ? meta.hex : '#4e6396'
+    ctx.fill()
+    ctx.restore()
+
+    rr(ctx, x + 4, y + 4, w - 8, h - 8, Math.max(3, r - 3))
+    const bg = ctx.createLinearGradient(0, y, 0, y + h)
+    bg.addColorStop(0, '#2a3a66')
+    bg.addColorStop(1, '#121a30')
+    ctx.fillStyle = bg
+    ctx.fill()
+
+    // Ornate diamond filigree inside card back
+    ctx.strokeStyle = (rarityIdx >= 2 ? meta.hex : COLOR.accent) + '88'
+    ctx.lineWidth = 2
+    ctx.beginPath()
+    ctx.moveTo(0, y + 18); ctx.lineTo(x + w - 16, 0); ctx.lineTo(0, y + h - 18); ctx.lineTo(x + 16, 0); ctx.closePath()
+    ctx.stroke()
+
+    drawShardMark(ctx, 0, -6, Math.min(w, h) * 0.16)
+    drawText(ctx, 'TAP TO FLIP', 0, y + h - 22, {
+      size: 10,
+      weight: 900,
+      color: rarityIdx >= 2 ? meta.hex : COLOR.accentHi,
+      align: 'center',
+      display: true
+    })
+
+    rr(ctx, x + 1, y + 1, w - 2, h - 2, Math.max(1, r - 1))
+    ctx.strokeStyle = COLOR.outline
+    ctx.lineWidth = 2.4
+    ctx.stroke()
+  } else {
+    drawRevealCard(ctx, localRect, o)
+    // Bright diagonal sheen sweep right after flipping face-up!
+    const sweepT = (flipClamped - 0.5) * 2
+    if (sweepT > 0 && sweepT < 1) {
+      ctx.save()
+      rr(ctx, localRect.x + 2, localRect.y + 2, localRect.width - 4, localRect.height - 4, RADIUS.lg - 2)
+      ctx.clip()
+      const sx = localRect.x - localRect.width * 0.6 + sweepT * localRect.width * 2.2
+      const sg = ctx.createLinearGradient(sx - 28, localRect.y, sx + 28, localRect.y + localRect.height)
+      sg.addColorStop(0, 'rgba(255,255,255,0)')
+      sg.addColorStop(0.5, 'rgba(255,255,255,0.62)')
+      sg.addColorStop(1, 'rgba(255,255,255,0)')
+      ctx.fillStyle = sg
+      ctx.fillRect(localRect.x, localRect.y, localRect.width, localRect.height)
+      ctx.restore()
+    }
+  }
+  ctx.restore()
+
+  // Radial flip burst particles around the card when it flips open!
+  if (flipClamped >= 0.5 && flipClamped < 0.99) {
+    const bt = (flipClamped - 0.5) * 2
+    const pCount = rarityIdx >= 4 ? 18 : rarityIdx >= 3 ? 14 : rarityIdx >= 2 ? 10 : 6
+    const maxDist = Math.max(rect.width, rect.height) * (0.48 + rarityIdx * 0.08)
+    ctx.save()
+    for (let i = 0; i < pCount; i++) {
+      const a = (i / pCount) * Math.PI * 2 + 0.3
+      const dist = maxDist * easeOutCubic(bt)
+      const px = cx + Math.cos(a) * dist
+      const py = cy + Math.sin(a) * dist
+      const sz = (1 - bt) * (4 + rarityIdx * 1.4)
+      ctx.globalAlpha = 1 - bt
+      drawStarShape(ctx, px, py, sz, sz * 0.45, 4)
+      ctx.fillStyle = i % 2 === 0 ? meta.hex : '#ffffff'
+      ctx.fill()
+    }
+    ctx.restore()
+  }
+}
+
+// ===========================================================================
+// VICTORY CELEBRATION & DEFEAT GRIM ANIMATIONS
+// ===========================================================================
+
+const CONFETTI_COLORS = ['#ffe680', '#ffc83b', '#42c2ff', '#5cf294', '#ff7096', '#c87dff'] as const
+
+export function drawVictoryBackdrop(ctx: CanvasRenderingContext2D, rect: LayoutRect, elapsed: number) {
+  const { x, y, width: w, height: h } = rect
+  const cx = x + w / 2
+  const cy = y + h * 0.46
+  const fadeIn = Math.min(1, elapsed / 0.35)
+
+  ctx.save()
+  // Warm golden-tinted dark scrim
+  ctx.fillStyle = `rgba(10, 14, 28, ${0.68 * fadeIn})`
+  ctx.fillRect(x, y, w, h)
+
+  // Rotating golden sunburst rays behind the Victory modal
+  ctx.save()
+  ctx.translate(cx, cy)
+  ctx.rotate(elapsed * 0.24)
+  const rayCount = 14
+  const maxR = Math.hypot(w, h) * 0.65
+  for (let i = 0; i < rayCount; i++) {
+    const a0 = (i / rayCount) * Math.PI * 2
+    const a1 = a0 + (Math.PI / rayCount) * 0.65
+    ctx.beginPath()
+    ctx.moveTo(0, 0)
+    ctx.arc(0, 0, maxR, a0, a1)
+    ctx.closePath()
+    const rg = ctx.createRadialGradient(0, 0, 20, 0, 0, maxR)
+    rg.addColorStop(0, 'rgba(255, 224, 112, 0.32)')
+    rg.addColorStop(0.55, 'rgba(255, 190, 58, 0.10)')
+    rg.addColorStop(1, 'rgba(255, 190, 58, 0)')
+    ctx.globalAlpha = fadeIn
+    ctx.fillStyle = rg
+    ctx.fill()
+  }
+  ctx.restore()
+
+  // Cascading festive confetti ribbons & golden rising stars!
+  for (let i = 0; i < 42; i++) {
+    const seedX = hash1(i * 11.3)
+    const speedY = 0.14 + hash1(i * 5.9) * 0.18
+    const phase = hash1(i * 17.1)
+    const py = y + ((phase + elapsed * speedY) % 1.15 - 0.1) * h
+    const px = x + seedX * w + Math.sin(elapsed * 2.6 + i * 1.9) * 24
+    const rot = elapsed * (2.5 + (i % 4)) + i
+    const col = CONFETTI_COLORS[i % CONFETTI_COLORS.length]
+    const cw = 6 + (i % 4) * 2
+    const ch = 3 + (i % 3) * 1.5
+
+    ctx.save()
+    ctx.globalAlpha = fadeIn * 0.85
+    ctx.translate(px, py)
+    ctx.rotate(rot)
+    ctx.scale(1, Math.cos(elapsed * 6 + i))
+    ctx.fillStyle = col
+    ctx.fillRect(-cw / 2, -ch / 2, cw, ch)
+    ctx.restore()
+  }
+
+  for (let i = 0; i < 14; i++) {
+    const sx = x + hash1(i * 23.7) * w
+    const sy = y + (1 - ((hash1(i * 13.1) + elapsed * 0.12) % 1)) * h
+    const sz = 4 + (i % 3) * 2
+    ctx.save()
+    ctx.globalAlpha = fadeIn * (0.4 + Math.sin(elapsed * 4 + i) * 0.35)
+    drawStarShape(ctx, sx, sy, sz, sz * 0.42, 4)
+    ctx.fillStyle = '#fff2a6'
+    ctx.fill()
+    ctx.restore()
+  }
+  ctx.restore()
+}
+
+export function drawDefeatBackdrop(ctx: CanvasRenderingContext2D, rect: LayoutRect, elapsed: number) {
+  const { x, y, width: w, height: h } = rect
+  const cx = x + w / 2
+  const cy = y + h * 0.5
+  const creep = easeOutCubic(Math.min(1, elapsed / 0.75))
+  const pulse = 0.5 + 0.5 * Math.sin(elapsed * 2.4)
+
+  ctx.save()
+  // Heavy grim slate-obsidian darkness
+  ctx.fillStyle = `rgba(7, 6, 14, ${0.78 * creep})`
+  ctx.fillRect(x, y, w, h)
+
+  // Creeping crimson dread vignette pulsing from screen edges
+  const vig = ctx.createRadialGradient(cx, cy, Math.min(w, h) * 0.16, cx, cy, Math.hypot(w, h) * 0.62)
+  vig.addColorStop(0, 'rgba(20, 8, 16, 0)')
+  vig.addColorStop(0.68, `rgba(92, 14, 28, ${(0.24 + pulse * 0.08) * creep})`)
+  vig.addColorStop(1, `rgba(145, 16, 36, ${(0.58 + pulse * 0.12) * creep})`)
+  ctx.fillStyle = vig
+  ctx.fillRect(x, y, w, h)
+
+  // Slow creeping bottom ash mist wave
+  const fogH = h * 0.28
+  const fog = ctx.createLinearGradient(0, y + h - fogH, 0, y + h)
+  fog.addColorStop(0, 'rgba(18, 8, 18, 0)')
+  fog.addColorStop(1, `rgba(38, 10, 18, ${0.78 * creep})`)
+  ctx.fillStyle = fog
+  ctx.fillRect(x, y + h - fogH, w, fogH)
+
+  // Sinking ash flakes and dying red embers drifting downward
+  for (let i = 0; i < 36; i++) {
+    const isEmber = i % 5 === 0
+    const speedY = isEmber ? 0.06 + hash1(i * 7.7) * 0.07 : 0.08 + hash1(i * 4.3) * 0.1
+    const py = y + ((hash1(i * 19.3) + elapsed * speedY) % 1.1 - 0.05) * h
+    const px = x + hash1(i * 8.1) * w + Math.sin(elapsed * 1.1 + i * 2.3) * 18
+    const r = isEmber ? 2.2 : 2.5 + (i % 3) * 1.1
+
+    ctx.save()
+    ctx.globalAlpha = creep * (isEmber ? 0.55 + Math.sin(elapsed * 5 + i) * 0.3 : 0.34)
+    ctx.beginPath()
+    ctx.arc(px, py, r, 0, Math.PI * 2)
+    ctx.fillStyle = isEmber ? '#ff5247' : '#8a8499'
+    ctx.fill()
+    ctx.restore()
+  }
+  ctx.restore()
+}
+
+export function drawResultHeadlineAnimated(
+  ctx: CanvasRenderingContext2D,
+  rect: LayoutRect,
+  title: string,
+  sub: string,
+  won: boolean,
+  elapsed: number
+) {
+  const cx = rect.x + rect.width / 2
+  const pop = won ? easeOutBack(Math.min(1, elapsed / 0.42)) : easeOutCubic(Math.min(1, elapsed / 0.5))
+  const shakeX = !won && elapsed < 0.35 ? Math.sin(elapsed * 65) * (1 - elapsed / 0.35) * 6 : 0
+
+  ctx.save()
+  ctx.translate(cx + shakeX, rect.y + rect.height * 0.5)
+  ctx.scale(won ? pop : 1, won ? pop : 1)
+  ctx.translate(-cx, -(rect.y + rect.height * 0.5))
+
+  if (won) {
+    // Gleaming golden crown emblem above victory text
+    drawShardMark(ctx, cx, rect.y - 10, 15)
+  } else {
+    // Cracked somber crimson emblem above defeat text
+    ctx.save()
+    const ey = rect.y - 8
+    ctx.beginPath()
+    ctx.arc(cx, ey, 14, 0, Math.PI * 2)
+    ctx.fillStyle = '#38121d'
+    ctx.fill()
+    ctx.strokeStyle = COLOR.enemy
+    ctx.lineWidth = 2.2
+    ctx.stroke()
+    drawIcon(ctx, 'skull', cx, ey, 14, '#ff8d99')
+    // Fracture lightning crack across emblem
+    ctx.beginPath()
+    ctx.moveTo(cx - 10, ey - 12); ctx.lineTo(cx - 2, ey - 2); ctx.lineTo(cx + 3, ey + 2); ctx.lineTo(cx + 9, ey + 13)
+    ctx.strokeStyle = '#ff4d63'
+    ctx.lineWidth = 1.8
+    ctx.stroke()
+    ctx.restore()
+  }
+
+  drawResultHeadline(ctx, rect, title, sub, won)
+  ctx.restore()
+}
+
+export function drawRewardRowAnimated(
+  ctx: CanvasRenderingContext2D,
+  rect: LayoutRect,
+  o: { icon?: IconName; portrait?: CanvasImageSource; title: string; detail: string; color: string; badge?: string },
+  revealT: number
+) {
+  const t = Math.max(0, Math.min(1, revealT))
+  if (t <= 0.01) return
+  const slide = (1 - easeOutCubic(t)) * 22
+  ctx.save()
+  ctx.globalAlpha = Math.min(1, t * 1.4)
+  ctx.translate(slide, 0)
+  drawRewardRow(ctx, rect, o)
+  // Brief celebratory gleam sweep as the reward locks in
+  if (t > 0.2 && t < 0.95) {
+    const u = (t - 0.2) / 0.75
+    ctx.save()
+    rr(ctx, rect.x + 1, rect.y + 1, rect.width - 2, rect.height - 4, RADIUS.md)
+    ctx.clip()
+    const sx = rect.x - 40 + u * (rect.width + 80)
+    const g = ctx.createLinearGradient(sx - 24, rect.y, sx + 24, rect.y + rect.height)
+    g.addColorStop(0, 'rgba(255,255,255,0)')
+    g.addColorStop(0.5, 'rgba(255,255,255,0.34)')
+    g.addColorStop(1, 'rgba(255,255,255,0)')
+    ctx.fillStyle = g
+    ctx.fillRect(rect.x, rect.y, rect.width, rect.height)
+    ctx.restore()
   }
   ctx.restore()
 }

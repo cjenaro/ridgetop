@@ -175,7 +175,7 @@ export function createCrownshardScene(renderer: LowPolyRenderer) {
   let cameraPanZ = 0
   const MIN_CAMERA_ZOOM = 0.58
   const MAX_CAMERA_ZOOM = 1.38
-  let campFraming: 'title' | 'camp' | 'story' = 'title'
+  let campFraming: 'title' | 'camp' | 'story' | 'world' = 'title'
   let campShift = 0
   let fireTimer = 0
   let lastBattle: BattleState | null = null
@@ -246,7 +246,7 @@ export function createCrownshardScene(renderer: LowPolyRenderer) {
   }
 
   function ensureBoard(battle: BattleState) {
-    const key = `${battle.chapterIndex}:${battle.biome}:${battle.endlessWave}`
+    const key = `${battle.stageId}:${battle.biome}:${battle.cols}x${battle.rows}:${battle.endlessWave}`
     if (key === cachedBoardKey) return
     for (const b of boardBatches) renderer.release(b)
     const built = buildStaticBoardBatches(battle.biome, battle.cells)
@@ -272,6 +272,7 @@ export function createCrownshardScene(renderer: LowPolyRenderer) {
       })
     }
 
+    const shadowScale = Math.max(1, battle.cols / 8, battle.rows / 6)
     renderer.setLighting({
       direction: style.lightDir,
       ambient: style.ambient,
@@ -282,12 +283,12 @@ export function createCrownshardScene(renderer: LowPolyRenderer) {
       rimStrength: 0.28,
       fogColor: style.fog,
       fogNear: 28,
-      fogFar: 78,
+      fogFar: 88,
       points,
       shadows: {
         enabled: true,
         center: [0, 0, 0],
-        extent: 12.5,
+        extent: 12.5 * shadowScale,
         strength: 0.38,
         color: style.shadowTint
       }
@@ -661,7 +662,7 @@ export function createCrownshardScene(renderer: LowPolyRenderer) {
     if (isForecastAttacker && activeForecast) {
       const tCell = battle.cells[activeForecast.targetRow]?.[activeForecast.targetCol]
       if (tCell) {
-        const [tx, , tz] = gridToWorld(activeForecast.targetCol, activeForecast.targetRow, tCell.elevation)
+        const [tx, , tz] = gridToWorld(activeForecast.targetCol, activeForecast.targetRow, tCell.elevation, battle.cols, battle.rows)
         if (Math.hypot(tx - unit.x, tz - unit.z) > 0.05) {
           desiredYaw = Math.atan2(tx - unit.x, tz - unit.z)
         }
@@ -817,12 +818,13 @@ export function createCrownshardScene(renderer: LowPolyRenderer) {
     const aspect = Math.max(0.32, w / Math.max(1, h))
     const isPhonePortrait = aspect < 0.85
     const isPhoneLandscape = !isPhonePortrait && h < 480
-    const baseDist = isPhonePortrait
+    const boardScale = Math.max(0.86, Math.max(battle.cols / 8, battle.rows / 6))
+    const baseDist = (isPhonePortrait
       ? 14.4 / Math.max(0.40, aspect)
       : isPhoneLandscape ? 15.0
-      : aspect < 1.15 ? 16.5 : 14.2
+      : aspect < 1.15 ? 16.5 : 14.2) * boardScale
     const camDist = baseDist * cameraZoomActual
-    const baseEyeY = isPhonePortrait ? baseDist * 0.78 : isPhoneLandscape ? 12.2 : 11.8
+    const baseEyeY = (isPhonePortrait ? baseDist * 0.78 : (isPhoneLandscape ? 12.2 : 11.8) * boardScale)
     const eyeY = baseEyeY * cameraZoomActual
     const camYaw = cameraYawOffset
     const baseTargetZ = isPhonePortrait ? 0.9 : isPhoneLandscape ? 0.72 : 0.35
@@ -832,11 +834,11 @@ export function createCrownshardScene(renderer: LowPolyRenderer) {
       cameraPanZ + Math.cos(camYaw) * camDist * 0.92 + (isPhonePortrait ? 2.0 : 1.2) * cameraZoomActual
     ]
     const target: Vec3 = [cameraPanX, -0.2, cameraPanZ + baseTargetZ]
-    lastMatrix = multiply(perspective(Math.PI / 3.9, aspect, 0.5, 180), view(eye, target))
+    lastMatrix = multiply(perspective(Math.PI / 3.9, aspect, 0.5, 220), view(eye, target))
 
     for (const tile of battle.moveTiles) {
       const cell = battle.cells[tile.row][tile.col]
-      const [wx, wy, wz] = gridToWorld(tile.col, tile.row, cell.elevation)
+      const [wx, wy, wz] = gridToWorld(tile.col, tile.row, cell.elevation, battle.cols, battle.rows)
       pool.add(tileQuad, [wx, wy + 0.025, wz], [TILE_SIZE * 0.84, 1, TILE_SIZE * 0.84], 0, C_MOVE_TILE, 0.92, 'alpha')
     }
 
@@ -857,7 +859,7 @@ export function createCrownshardScene(renderer: LowPolyRenderer) {
 
     for (const tile of battle.targetTiles) {
       const cell = battle.cells[tile.row][tile.col]
-      const [wx, wy, wz] = gridToWorld(tile.col, tile.row, cell.elevation)
+      const [wx, wy, wz] = gridToWorld(tile.col, tile.row, cell.elevation, battle.cols, battle.rows)
       pool.add(
         tileQuad,
         [wx, wy + 0.032, wz],
@@ -872,7 +874,7 @@ export function createCrownshardScene(renderer: LowPolyRenderer) {
     // Move+Attack reachable targets: distinct amber-orange tile + pulsing outer ring
     for (const tile of battle.moveAttackTiles) {
       const cell = battle.cells[tile.row][tile.col]
-      const [wx, wy, wz] = gridToWorld(tile.col, tile.row, cell.elevation)
+      const [wx, wy, wz] = gridToWorld(tile.col, tile.row, cell.elevation, battle.cols, battle.rows)
       pool.add(
         tileQuad,
         [wx, wy + 0.030, wz],
@@ -890,9 +892,9 @@ export function createCrownshardScene(renderer: LowPolyRenderer) {
       ? { col: activeForecast.targetCol, row: activeForecast.targetRow }
       : hoveredCell
 
-    if (previewCell && battle.phase === 'player') {
+    if (previewCell && battle.phase === 'player' && previewCell.row < battle.rows && previewCell.col < battle.cols) {
       const hCell = battle.cells[previewCell.row][previewCell.col]
-      const [hx, hy, hz] = gridToWorld(previewCell.col, previewCell.row, hCell.elevation)
+      const [hx, hy, hz] = gridToWorld(previewCell.col, previewCell.row, hCell.elevation, battle.cols, battle.rows)
       pool.add(tileQuad, [hx, hy + 0.042, hz], [TILE_SIZE * 0.90, 1, TILE_SIZE * 0.90], 0, C_HOVER_TILE, 0.95, 'alpha')
 
       const isValidPreviewTarget =
@@ -901,9 +903,9 @@ export function createCrownshardScene(renderer: LowPolyRenderer) {
       if (isValidPreviewTarget && (armedSkill || armedTactic)) {
         const pattern = armedSkill ? armedSkill.pattern : armedTactic ? armedTactic.pattern : 'single'
         if (pattern === 'cross' || pattern === 'area3' || pattern === 'aura') {
-          for (const pc of getPatternCells(previewCell.col, previewCell.row, pattern)) {
+          for (const pc of getPatternCells(previewCell.col, previewCell.row, pattern, battle.cols, battle.rows)) {
             const c = battle.cells[pc.row][pc.col]
-            const [px, py, pz] = gridToWorld(pc.col, pc.row, c.elevation)
+            const [px, py, pz] = gridToWorld(pc.col, pc.row, c.elevation, battle.cols, battle.rows)
             pool.add(tileQuad, [px, py + 0.048, pz], [TILE_SIZE * 0.88, 1, TILE_SIZE * 0.88], 0, C_AOE_PREVIEW, 0.98, 'additive')
           }
         }
@@ -917,7 +919,7 @@ export function createCrownshardScene(renderer: LowPolyRenderer) {
       const arcCol = isFriendly ? C_FORECAST_ALLY_ARC : C_FORECAST_ARC
       const reticleCol = isFriendly ? C_ALLY_TARGET : C_TARGET_RETICLE
       const tCell = battle.cells[fc.targetRow][fc.targetCol]
-      const [tx, ty, tz] = gridToWorld(fc.targetCol, fc.targetRow, tCell.elevation)
+      const [tx, ty, tz] = gridToWorld(fc.targetCol, fc.targetRow, tCell.elevation, battle.cols, battle.rows)
 
       // Pulsing lock-on reticle & hovering diamond above target
       const rPulse = 0.72 + Math.sin(state.time * 7.5) * 0.08
@@ -934,13 +936,13 @@ export function createCrownshardScene(renderer: LowPolyRenderer) {
       // Move+Attack approach path breadcrumbs + landing ring
       if (fc.requiresMove && fc.path.length > 0) {
         const aCell = battle.cells[fc.approachRow][fc.approachCol]
-        const [ax, ay, az] = gridToWorld(fc.approachCol, fc.approachRow, aCell.elevation)
+        const [ax, ay, az] = gridToWorld(fc.approachCol, fc.approachRow, aCell.elevation, battle.cols, battle.rows)
         const landPulse = 0.62 + Math.sin(state.time * 6.0) * 0.06
         pool.add(flatRing, [ax, ay + 0.052, az], [landPulse, 1, landPulse], state.time * 1.8, C_APPROACH_RING, 0.98, 'additive')
         for (let i = 0; i < fc.path.length; i++) {
           const step = fc.path[i]
           const sc = battle.cells[step.row][step.col]
-          const [sx, sy, sz] = gridToWorld(step.col, step.row, sc.elevation)
+          const [sx, sy, sz] = gridToWorld(step.col, step.row, sc.elevation, battle.cols, battle.rows)
           const bob = Math.sin(state.time * 6 - i * 0.9) * 0.05
           pool.add(crystalMesh, [sx, sy + 0.24 + bob, sz], [0.12, 0.12, 0.12], state.time * 2.5 + i, C_APPROACH_RING, 0.98, 'additive')
         }
@@ -948,7 +950,7 @@ export function createCrownshardScene(renderer: LowPolyRenderer) {
 
       // Animated parabolic targeting arc from approach (or current) position to target
       const fromCell = battle.cells[fc.approachRow][fc.approachCol]
-      const [fx, fy, fz] = gridToWorld(fc.approachCol, fc.approachRow, fromCell.elevation)
+      const [fx, fy, fz] = gridToWorld(fc.approachCol, fc.approachRow, fromCell.elevation, battle.cols, battle.rows)
       const dx = tx - fx
       const dz = tz - fz
       const dist = Math.hypot(dx, dz)
@@ -1122,12 +1124,12 @@ export function createCrownshardScene(renderer: LowPolyRenderer) {
     if (!ray) return null
     const highHit = intersectRayPlane(ray.origin, ray.direction, 0.45)
     if (highHit) {
-      const cell = worldToGrid(highHit[0], highHit[2])
+      const cell = worldToGrid(highHit[0], highHit[2], battle.cols, battle.rows)
       if (cell && battle.cells[cell.row][cell.col].elevation >= 0.35) return cell
     }
     const baseHit = intersectRayPlane(ray.origin, ray.direction, 0.0)
     if (!baseHit) return null
-    return worldToGrid(baseHit[0], baseHit[2])
+    return worldToGrid(baseHit[0], baseHit[2], battle.cols, battle.rows)
   }
 
   function project(x: number, y: number, z: number, width: number, height: number) {
@@ -1139,7 +1141,7 @@ export function createCrownshardScene(renderer: LowPolyRenderer) {
       if (state.battle) return renderBattle(state, dt, width, height)
       return renderCamp(state, dt, width, height)
     },
-    setCampFraming(mode: 'title' | 'camp' | 'story') {
+    setCampFraming(mode: 'title' | 'camp' | 'story' | 'world') {
       campFraming = mode
     },
     pickCellAt,

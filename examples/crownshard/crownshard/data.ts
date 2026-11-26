@@ -1,7 +1,20 @@
 import type {
-  ChapterSpec, EnemyArchetypeId, EnemySpec, EquipmentSpec, HeroClassId, HeroSpec,
+  ChapterSpec, DifficultyLevel, EnemyArchetypeId, EnemySpec, EquipmentSpec, HeroClassId, HeroSpec,
   PackId, PackSpec, Rarity, TacticCardSpec, TileTerrain
 } from './types.ts'
+
+export const DIFFICULTY_META: Record<DifficultyLevel, {
+  readonly label: string
+  readonly short: string
+  readonly hex: string
+  readonly bgHex: string
+}> = {
+  1: { label: 'Skirmish', short: 'I', hex: '#4cd48c', bgHex: '#153828' },
+  2: { label: 'Standard', short: 'II', hex: '#5ca8ff', bgHex: '#172c4d' },
+  3: { label: 'Challenging', short: 'III', hex: '#ffcb57', bgHex: '#3b2c12' },
+  4: { label: 'Hard', short: 'IV', hex: '#ff8a47', bgHex: '#422214' },
+  5: { label: 'Brutal Boss', short: 'V', hex: '#ff5266', bgHex: '#421622' }
+}
 
 export const RARITY_ORDER: readonly Rarity[] = ['common', 'uncommon', 'rare', 'epic', 'legendary']
 
@@ -493,31 +506,33 @@ export const PACK_LIST: readonly PackSpec[] = [
   {
     id: 'recruit',
     name: 'Recruit Deck',
-    subtitle: '3 Cards · Best for 3x Hero Merges',
-    cost: 60,
+    subtitle: '3 Cards · Hero Copies & Starter Gear',
+    cost: 75,
     cardsPerPack: 3,
     guaranteedMinRarity: 'common',
-    weights: { common: 64, uncommon: 26, rare: 8, epic: 1.7, legendary: 0.3 },
+    weights: { common: 75, uncommon: 20, rare: 4.5, epic: 0.45, legendary: 0.05 },
     accentHex: '#7fb5cf'
   },
   {
     id: 'vanguard',
     name: 'Vanguard Deck',
-    subtitle: '4 Cards · 1+ Rare Guaranteed',
-    cost: 130,
+    subtitle: '4 Cards · 1+ Rare, Slim Epic Odds',
+    cost: 190,
     cardsPerPack: 4,
     guaranteedMinRarity: 'rare',
-    weights: { common: 34, uncommon: 34, rare: 22, epic: 8, legendary: 2 },
+    weights: { common: 56, uncommon: 31, rare: 11.4, epic: 1.45, legendary: 0.15 },
+    featuredWeights: { common: 0, uncommon: 0, rare: 91, epic: 8.2, legendary: 0.8 },
     accentHex: '#5ca8ff'
   },
   {
     id: 'sovereign',
     name: 'Sovereign Deck',
-    subtitle: '4 Cards · 1+ Epic, High Legendary',
-    cost: 240,
+    subtitle: '4 Cards · 1+ Rare, Best Epic/Leg Odds',
+    cost: 520,
     cardsPerPack: 4,
-    guaranteedMinRarity: 'epic',
-    weights: { common: 10, uncommon: 22, rare: 34, epic: 23, legendary: 11 },
+    guaranteedMinRarity: 'rare',
+    weights: { common: 32, uncommon: 36, rare: 26, epic: 5.2, legendary: 0.8 },
+    featuredWeights: { common: 0, uncommon: 0, rare: 82, epic: 15.5, legendary: 2.5 },
     accentHex: '#ffcb57'
   }
 ]
@@ -565,42 +580,58 @@ const D: TileTerrain = 'darkstone'
 
 export const CHAPTERS: readonly ChapterSpec[] = [
   {
+    id: 'border_watch',
     index: 0,
-    title: 'Chapter I: Border Watch',
-    subtitle: 'Sunlit Meadow Courtyard',
+    kind: 'story',
+    difficulty: 1,
+    recommendedPower: 420,
+    mapX: 0.08,
+    mapY: 0.50,
+    requires: [],
+    title: 'Border Watch',
+    subtitle: 'Sunlit Meadow Outpost',
     biome: 'meadow',
     introSpeaker: 'Sir Aldric',
     introText: 'The Eclipse raiders seized the Watchtower road! Hold the high hill, let Lyra loose from cover, and reclaim our first Crownshard.',
     outroSpeaker: 'Lyra',
-    outroText: 'The road is clear! Take their war-chest to Camp: buy card decks, equip looted weapons, and merge 3 identical heroes to unlock Tier 2 skills.',
-    rewardGold: 95,
+    outroText: 'The road is clear! Visit the World Map to chart our next march, or gear up in Vanguard Camp.',
+    rewardGold: 85,
+    replayGold: 45,
     rewardEquipId: 'iron_plate',
     rewardHeroId: 'knight',
     grid: [
-      [G, G, G, H, H, G, G, G],
-      [G, S, G, G, G, P, G, G],
-      [G, S, S, R, G, G, H, G],
-      [G, G, G, G, P, G, G, G],
-      [G, H, G, G, G, S, G, G],
-      [G, G, G, W, W, G, G, G]
+      [G, G, H, H, G, G, G],
+      [G, S, G, G, P, G, G],
+      [G, S, R, G, G, H, G],
+      [G, H, G, P, G, S, G],
+      [G, G, G, W, W, G, G]
     ],
-    heroSpawns: [[1, 1], [0, 3], [2, 4], [0, 2]],
+    heroSpawns: [[0, 1], [1, 2], [0, 3], [1, 1]],
     enemies: [
-      { id: 'goblin', col: 5, row: 2 },
-      { id: 'goblin', col: 6, row: 4 },
-      { id: 'bone_archer', col: 7, row: 1 }
+      { id: 'goblin', col: 4, row: 2 },
+      { id: 'goblin', col: 5, row: 3 },
+      { id: 'bone_archer', col: 6, row: 1 }
     ]
   },
   {
+    id: 'sunken_bridge',
     index: 1,
-    title: 'Chapter II: Sunken Bridge',
+    kind: 'story',
+    difficulty: 2,
+    recommendedPower: 520,
+    mapX: 0.24,
+    mapY: 0.50,
+    requires: ['border_watch'],
+    unlocksSlot4: true,
+    title: 'Sunken Bridge',
     subtitle: 'Misty River Crossing',
     biome: 'river',
     introSpeaker: 'Vesper',
     introText: 'Ironclad Orcs hold the old stone arches while their Shaman channels from the far bank. Control the bridges or blast across the water!',
     outroSpeaker: 'Sir Aldric',
-    outroText: 'A second Crownshard glows bright! Reinforcements reached our banner — you can now deploy 4 Heroes into battle.',
-    rewardGold: 125,
+    outroText: 'The crossing is ours! Reinforcements joined our banner — you can now deploy 4 Heroes, and two routes open ahead.',
+    rewardGold: 110,
+    replayGold: 60,
     rewardEquipId: 'ember_wand',
     rewardHeroId: 'archer',
     grid: [
@@ -620,16 +651,64 @@ export const CHAPTERS: readonly ChapterSpec[] = [
     ]
   },
   {
+    id: 'sunwell_glade',
     index: 2,
-    title: 'Chapter III: Lantern Crypt',
+    kind: 'special',
+    difficulty: 2,
+    recommendedPower: 620,
+    mapX: 0.42,
+    mapY: 0.24,
+    requires: ['sunken_bridge'],
+    specialTag: 'Shrine Trial',
+    modifierDesc: '7x7 Sacred Grove · 3 Sun Shrines · Flanking Archers',
+    title: 'Sunwell Glade',
+    subtitle: 'Special: Sacred Shrine Trial',
+    biome: 'meadow',
+    introSpeaker: 'Lyra',
+    introText: 'Raiders are desecrating the Sunwell shrines! Hold the healing altars on this square ridge and Sera of the Sun Order will pledge to our banner.',
+    outroSpeaker: 'Lyra',
+    outroText: 'The shrines glow again and Sera rides with us! The high trail now leads straight to Frostspire Pass.',
+    rewardGold: 120,
+    replayGold: 68,
+    rewardEquipId: 'swift_boots',
+    rewardHeroId: 'cleric',
+    grid: [
+      [G, H, G, R, G, H, G],
+      [G, G, P, G, P, G, G],
+      [G, S, G, H, G, S, G],
+      [G, R, G, G, G, R, G],
+      [G, S, G, H, G, S, G],
+      [G, G, P, G, P, G, G],
+      [G, H, G, W, G, H, G]
+    ],
+    heroSpawns: [[0, 2], [1, 3], [0, 4], [1, 2]],
+    enemies: [
+      { id: 'goblin', col: 5, row: 2 },
+      { id: 'goblin', col: 5, row: 4 },
+      { id: 'bone_archer', col: 5, row: 0 },
+      { id: 'bone_archer', col: 5, row: 6 },
+      { id: 'bog_shaman', col: 6, row: 3 }
+    ]
+  },
+  {
+    id: 'lantern_crypt',
+    index: 3,
+    kind: 'story',
+    difficulty: 2,
+    recommendedPower: 660,
+    mapX: 0.42,
+    mapY: 0.76,
+    requires: ['sunken_bridge'],
+    title: 'Lantern Crypt',
     subtitle: 'Torchlit Catacomb Vault',
     biome: 'crypt',
     introSpeaker: 'Vesper',
-    introText: 'Ancient Dread Knights awaken in the blue lantern mist. Use the pillars to break Bone Archer sightlines and focus down the Shaman.',
+    introText: 'Ancient Dread Knights awaken in the blue lantern mist. Use the stone pillars to break archer sightlines and focus down their Shaman.',
     outroSpeaker: 'Vesper',
-    outroText: 'Three Crownshards united! Their light reveals the Eclipse legion marching north toward Frostspire Pass.',
-    rewardGold: 160,
-    rewardEquipId: 'sunsteel_blade',
+    outroText: 'The catacombs are silent! Beyond these halls lie both the northern mountain pass and a sealed Cursed Vault.',
+    rewardGold: 130,
+    replayGold: 72,
+    rewardEquipId: 'ranger_cloak',
     rewardHeroId: 'mage',
     grid: [
       [D, S, S, D, D, S, S, D],
@@ -648,88 +727,200 @@ export const CHAPTERS: readonly ChapterSpec[] = [
     ]
   },
   {
-    index: 3,
-    title: 'Chapter IV: Frostspire Pass',
+    id: 'frostspire_pass',
+    index: 4,
+    kind: 'story',
+    difficulty: 3,
+    recommendedPower: 790,
+    mapX: 0.60,
+    mapY: 0.28,
+    requires: ['sunwell_glade', 'lantern_crypt'],
+    unlockMode: 'any',
+    title: 'Frostspire Pass',
     subtitle: 'Glacial Alpine Ridge',
     biome: 'frost',
     introSpeaker: 'Lyra',
-    introText: 'Massive Frost Golems guard the mountain stairs. Armor-piercing skills and magic cut right through their icy hide!',
+    introText: 'Massive Frost Golems guard the broad mountain stairs. Armor-piercing skills and magic cut right through their icy hide!',
     outroSpeaker: 'Sir Aldric',
-    outroText: 'The pass is ours! Ahead smolders the Obsidian Gate. Sharpen every blade and forge 2-star or 3-star champions before we descend.',
-    rewardGold: 205,
+    outroText: 'The ridge is ours! From here we can assault the Obsidian Gate, or detour to the Glacial Citadel for an elite relic.',
+    rewardGold: 165,
+    replayGold: 90,
     rewardEquipId: 'runed_mail',
-    rewardHeroId: 'knight',
+    rewardHeroId: 'rogue',
     grid: [
-      [N, N, H, H, N, N, N, N],
-      [N, S, N, P, N, H, N, N],
-      [N, S, R, N, N, N, S, N],
-      [W, W, N, N, P, N, S, N],
-      [N, N, H, N, N, H, N, N],
-      [N, N, N, N, W, W, N, N]
+      [N, N, H, H, N, N, H, N, N],
+      [N, S, N, P, N, H, N, S, N],
+      [N, S, R, N, N, N, S, N, N],
+      [W, W, N, N, P, N, S, N, N],
+      [N, N, H, N, N, H, N, S, N],
+      [N, N, N, N, W, W, N, N, N]
     ],
     heroSpawns: [[0, 1], [1, 2], [0, 4], [1, 4]],
     enemies: [
       { id: 'frost_golem', col: 5, row: 2 },
-      { id: 'frost_golem', col: 5, row: 4 },
-      { id: 'bone_archer', col: 7, row: 1, levelScale: 1.2 },
-      { id: 'bog_shaman', col: 7, row: 3, levelScale: 1.2 }
+      { id: 'frost_golem', col: 6, row: 4 },
+      { id: 'bone_archer', col: 8, row: 1, levelScale: 1.15 },
+      { id: 'bog_shaman', col: 8, row: 3, levelScale: 1.15 }
     ]
   },
   {
-    index: 4,
-    title: 'Chapter V: Obsidian Gate',
+    id: 'cursed_vault',
+    index: 5,
+    kind: 'treasure',
+    difficulty: 3,
+    recommendedPower: 830,
+    mapX: 0.60,
+    mapY: 0.76,
+    requires: ['lantern_crypt'],
+    specialTag: 'Treasure Vault',
+    modifierDesc: '6x6 Close-Quarters Ambush · War-Chest Bounty',
+    title: 'Cursed Vault',
+    subtitle: 'Special: Sealed Reliquary',
+    biome: 'crypt',
+    introSpeaker: 'Vesper',
+    introText: 'A cramped obsidian reliquary overflowing with stolen Solis gold! Two Dread Knights guard the tight floor — strike fast before they box us in.',
+    outroSpeaker: 'Vesper',
+    outroText: 'The war-chest is cracked open and Sunsteel steel gleams inside! A tunnel here also climbs straight to the Obsidian Gate.',
+    rewardGold: 220,
+    replayGold: 95,
+    rewardEquipId: 'sunsteel_blade',
+    rewardHeroId: null,
+    grid: [
+      [D, S, D, D, S, D],
+      [S, P, S, S, P, S],
+      [S, S, R, H, S, S],
+      [S, S, H, S, S, S],
+      [S, P, S, S, P, S],
+      [D, S, D, D, S, D]
+    ],
+    heroSpawns: [[0, 2], [0, 3], [1, 2], [1, 3]],
+    enemies: [
+      { id: 'crypt_knight', col: 4, row: 2, levelScale: 1.08 },
+      { id: 'crypt_knight', col: 4, row: 3, levelScale: 1.08 },
+      { id: 'bone_archer', col: 5, row: 1, levelScale: 1.1 },
+      { id: 'bone_archer', col: 5, row: 4, levelScale: 1.1 }
+    ]
+  },
+  {
+    id: 'obsidian_gate',
+    index: 6,
+    kind: 'story',
+    difficulty: 4,
+    recommendedPower: 960,
+    mapX: 0.77,
+    mapY: 0.66,
+    requires: ['frostspire_pass', 'cursed_vault'],
+    unlockMode: 'any',
+    title: 'Obsidian Gate',
     subtitle: 'Volcanic Ember Bastion',
     biome: 'volcano',
     introSpeaker: 'Sir Aldric',
-    introText: 'Molten rifts split the basalt causeway. Cross the ember bridges together and shatter Malakor\'s royal guard!',
+    introText: 'Molten rifts split the wide basalt causeway. Cross the ember bridges together and shatter Malakor\'s royal guard!',
     outroSpeaker: 'Vesper',
-    outroText: 'Four shards blaze as one! Only the Throne of the Eclipse remains. Archon Malakor awaits beyond the inner doors.',
-    rewardGold: 260,
-    rewardEquipId: 'dragonfang_spear',
-    rewardHeroId: 'archer',
+    outroText: 'The outer bastion falls and Dame Isolde joins our vanguard! Only the Eclipse Throne stands beyond these doors.',
+    rewardGold: 210,
+    replayGold: 115,
+    rewardEquipId: 'blood_amulet',
+    rewardHeroId: 'paladin',
     grid: [
-      [D, D, L, L, D, H, D, D],
-      [D, S, B, B, S, D, D, D],
-      [D, R, L, P, D, D, H, D],
-      [D, S, B, B, S, D, D, D],
-      [D, D, L, L, D, P, D, D],
-      [D, H, D, D, D, D, D, D]
+      [D, D, L, L, D, H, D, D, D],
+      [D, S, B, B, S, D, D, H, D],
+      [D, R, L, P, D, D, H, D, D],
+      [D, S, B, B, S, D, D, D, D],
+      [D, D, L, L, D, P, D, H, D],
+      [D, H, D, D, D, D, D, D, D]
     ],
     heroSpawns: [[0, 1], [1, 1], [0, 3], [1, 3]],
     enemies: [
       { id: 'crypt_knight', col: 4, row: 1, levelScale: 1.15 },
       { id: 'frost_golem', col: 4, row: 3, levelScale: 1.15 },
       { id: 'orc_brute', col: 6, row: 2, levelScale: 1.2 },
-      { id: 'bog_shaman', col: 7, row: 1, levelScale: 1.25 },
-      { id: 'bone_archer', col: 7, row: 4, levelScale: 1.25 }
+      { id: 'bog_shaman', col: 8, row: 1, levelScale: 1.2 },
+      { id: 'bone_archer', col: 8, row: 4, levelScale: 1.2 }
     ]
   },
   {
-    index: 5,
-    title: 'Chapter VI: Eclipse Throne',
+    id: 'glacial_citadel',
+    index: 7,
+    kind: 'elite',
+    difficulty: 4,
+    recommendedPower: 1080,
+    mapX: 0.77,
+    mapY: 0.22,
+    requires: ['frostspire_pass'],
+    specialTag: 'Elite Siege',
+    modifierDesc: '10x6 Twin-Bridge Siege · Epic Halberd Bounty',
+    title: 'Glacial Citadel',
+    subtitle: 'Special: Elite Ice Stronghold',
+    biome: 'frost',
+    introSpeaker: 'Sir Aldric',
+    introText: 'An optional elite stronghold perched over twin ice chasms. Breaking this garrison will claim the rare Dragonfang Halberd!',
+    outroSpeaker: 'Lyra',
+    outroText: 'The Glacial Citadel yields its Dragonfang Halberd! Our champions are truly forged for the Throne.',
+    rewardGold: 240,
+    replayGold: 130,
+    rewardEquipId: 'dragonfang_spear',
+    rewardHeroId: null,
+    grid: [
+      [N, H, N, W, W, N, N, H, N, N],
+      [N, S, S, B, B, S, P, N, S, N],
+      [N, R, N, W, W, N, N, H, N, N],
+      [N, N, N, W, W, N, H, N, S, N],
+      [N, S, S, B, B, S, P, N, S, N],
+      [N, H, N, W, W, N, N, H, N, N]
+    ],
+    heroSpawns: [[0, 1], [1, 1], [0, 4], [1, 4]],
+    enemies: [
+      { id: 'frost_golem', col: 5, row: 1, levelScale: 1.2 },
+      { id: 'frost_golem', col: 5, row: 4, levelScale: 1.2 },
+      { id: 'crypt_knight', col: 7, row: 2, levelScale: 1.2 },
+      { id: 'bone_archer', col: 9, row: 1, levelScale: 1.25 },
+      { id: 'bog_shaman', col: 9, row: 4, levelScale: 1.25 }
+    ]
+  },
+  {
+    id: 'eclipse_throne',
+    index: 8,
+    kind: 'boss',
+    difficulty: 5,
+    recommendedPower: 1240,
+    mapX: 0.93,
+    mapY: 0.50,
+    requires: ['obsidian_gate'],
+    specialTag: 'Final Boss',
+    modifierDesc: '10x7 Grand Cathedral · Boss: Archon Malakor',
+    unlocksEndless: true,
+    title: 'Eclipse Throne',
     subtitle: 'Boss: Archon Malakor',
     biome: 'throne',
     introSpeaker: 'Archon Malakor',
     introText: 'Fools of Solis! Your fragile vanguard dares challenge the Eclipse? Watch your precious Crown turn to cinders!',
     outroSpeaker: 'Sir Aldric',
     outroText: 'The Sunstone Crown is reforged and the Ashen Rift seals at last! Solis stands free — and Endless Arena skirmishes now await your champions.',
-    rewardGold: 420,
+    rewardGold: 360,
+    replayGold: 175,
     rewardEquipId: 'solis_crownblade',
     rewardHeroId: 'champion',
     grid: [
-      [D, D, S, H, H, S, D, D],
-      [D, S, P, S, S, P, S, D],
-      [D, R, S, S, S, S, H, D],
-      [D, S, S, S, S, S, H, D],
-      [D, S, P, S, S, P, S, D],
-      [D, D, S, L, L, S, D, D]
+      [D, D, S, H, H, H, S, D, D, D],
+      [D, S, P, S, S, S, P, S, D, D],
+      [D, R, S, S, H, S, S, H, S, D],
+      [D, S, S, S, S, S, S, H, S, D],
+      [D, S, S, S, H, S, S, H, S, D],
+      [D, S, P, S, S, S, P, S, D, D],
+      [D, D, S, L, L, L, S, D, D, D]
     ],
-    heroSpawns: [[0, 2], [1, 1], [1, 3], [0, 4]],
+    heroSpawns: [[0, 2], [1, 2], [0, 4], [1, 4]],
     enemies: [
-      { id: 'eclipse_archon', col: 6, row: 2 },
-      { id: 'crypt_knight', col: 5, row: 1 },
-      { id: 'crypt_knight', col: 5, row: 4 },
-      { id: 'bog_shaman', col: 7, row: 3, levelScale: 1.25 }
+      { id: 'eclipse_archon', col: 7, row: 3 },
+      { id: 'crypt_knight', col: 6, row: 2 },
+      { id: 'crypt_knight', col: 6, row: 4 },
+      { id: 'bog_shaman', col: 8, row: 2, levelScale: 1.2 },
+      { id: 'bone_archer', col: 8, row: 4, levelScale: 1.2 }
     ]
   }
 ]
+
+export const CHAPTER_BY_ID: Readonly<Record<string, ChapterSpec>> = Object.fromEntries(
+  CHAPTERS.map(ch => [ch.id, ch])
+)
