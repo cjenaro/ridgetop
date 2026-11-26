@@ -372,6 +372,9 @@ async function start() {
       scene.setCampFraming(next)
       scene.setForecast(null)
     }
+    if (next === 'world') audio.setMusicMode('world')
+    else if (next === 'battle' && state.battle) audio.setMusicMode('battle', state.battle.biome)
+    else if (next === 'camp' || next === 'title' || next === 'story') audio.setMusicMode('camp')
     uiDirty = true
     hudRev++
   }
