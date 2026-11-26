@@ -17,19 +17,22 @@ import {
 import { cameraAlignedFacing, cameraCardinalHeading, createCrownshardScene, facingPickerAnchor } from './scene.ts'
 import {
   MAX_TACTIC_DECK, MIN_TACTIC_DECK,
-  abandonBattle, armSkill, armTacticCard, autoBuildTacticDeck, autoEquipBestFit, beginWaitFacingPicker, buyPack, canBuyPack,
-  canCraftEquipment, canCraftHero, canMergeHero, canUndoMove, cancelWaitFacingPicker, clearSave, computeCombatForecast, computeDangerZone,
-  computeDeckValue, computeEnemyThreat, computeHeroStats, computeSquadPower, computeTacticDeckCurve, computeZocPerimeterTiles,
-  confirmDeployment, confirmWaitFacingPicker, craftEquipment, craftHero, createInitialState, createTurnBoundaryTracker, effectiveSpeed,
-  equipItem, evaluateAllFacingExposures, evaluateFacingExposure, findBestFitUpgrades, findEquipOwner, findGridPath,
-  formatOpportunityWarning, getActiveTacticDeckUids, getChapterObjectiveSummary, getCraftableEquipment, getCraftableHeroes,
-  getEquipCraftCost, getEquipEffect, getEquipSalvageDust, getEquipmentByUid, getHeroByUid, getHeroCraftCost,
-  getHeroPassive, getHeroSalvageShards, getHeroSkill, getMergeCandidates, getNextRecommendedStage, getObjectiveProgressText,
-  getPackPityStatus, getStageUnlockHint, getTacticByUid, getUnitByUid, hasMaxedHero, heroLevelProgress, isChestClaimed,
-  isDeployTile, isEndlessUnlocked, isStageCleared, isStageUnlocked, loadSave, maxSquadSize, mergeHero, moveDeployUnit,
-  persistSave, previewPathOpportunityAttacks, previewTurnOrderAfterAction, previewWaitFacing, restoreBattleState,
-  rotateDeployUnit, salvageEquipCard, salvageHeroCard, selectHeroByUid, selectTile, serializeBattleState,
-  shouldAutoSaveOnTurnBoundary, startChapterBattle, stepGame, swapDeployUnit, syncTurnBoundaryTracker,
+  abandonBattle, armSkill, armTacticCard, autoBuildTacticDeck, autoEquipBestFit, beginWaitFacingPicker,
+  bulkSalvageCommonDupes, buyPack, canBuyPack, canCraftEquipment, canCraftHero, canMergeHero, canUndoMove,
+  cancelWaitFacingPicker, clearSave, computeCombatForecast, computeDangerZone, computeDeckValue,
+  computeEnemyThreat, computeHeroStats, computeSquadPower, computeTacticDeckCurve, computeZocPerimeterTiles,
+  confirmDeployment, confirmWaitFacingPicker, craftEquipment, craftHero, createInitialState,
+  createTurnBoundaryTracker, effectiveSpeed, equipItem, evaluateAllFacingExposures, evaluateFacingExposure,
+  findBestFitUpgrades, findEquipOwner, findGridPath, formatOpportunityWarning, getActiveTacticDeckUids,
+  getChapterObjectiveSummary, getCraftableEquipment, getCraftableHeroes, getEquipCraftCost, getEquipEffect,
+  getEquipSalvageDust, getEquipmentByUid, getHeroByUid, getHeroCraftCost, getHeroPassive, getHeroSalvageShards,
+  getHeroSkill, getMergeCandidates, getNextRecommendedStage, getObjectiveProgressText, getPackPityStatus,
+  getStageUnlockHint, getTacticByUid, getUnitByUid, hasMaxedHero, heroLevelProgress, isChestClaimed,
+  isDeployTile, isEndlessUnlocked, isStageCleared, isStageUnlocked, loadSave, maxSquadSize, mergeHero,
+  moveDeployUnit, persistSave, previewBulkSalvageCommonDupes, previewPathOpportunityAttacks,
+  previewTurnOrderAfterAction, previewWaitFacing, restoreBattleState, rotateDeployUnit, salvageEquipCard,
+  salvageHeroCard, selectHeroByUid, selectTile, serializeBattleState, shouldAutoSaveOnTurnBoundary,
+  startChapterBattle, stepGame, swapDeployUnit, syncTurnBoundaryTracker, toggleEquipLock, toggleHeroLock,
   toggleSquadMember, toggleTacticInDeck, undoMove, unequipItem, unitAt
 } from './simulation.ts'
 import { FACING_DIRS, cellHeightLevel, gridToWorld, isUnitDowned } from './types.ts'
@@ -3573,7 +3576,8 @@ async function start() {
               rarity: spec.rarity,
               power: stats.powerScore,
               portrait: heroPortrait,
-              inSquad
+              inSquad,
+              locked: Boolean(selHero.locked)
             })
           }
         })
@@ -3627,11 +3631,31 @@ async function start() {
             }
           }),
           boxNode({
-            id: 'cs-salvage-hero', style: { width: mobile ? 92 : 112, height: actRowH },
+            id: 'cs-lock-hero', style: { width: mobile ? 36 : 40, height: actRowH },
             widget: {
               type: 'button',
-              label: `+${salvageVal}g +${getHeroSalvageShards(HERO_SPECS[selHero.heroId].rarity, selHero.stars)} Shards`,
-              disabled: camp.heroes.length <= 1 || (inSquad && camp.squadUids.length <= 1),
+              label: selHero.locked ? 'Unlock Hero' : 'Lock Hero',
+              selected: Boolean(selHero.locked),
+              onPress: () => {
+                audio.unlock()
+                if (toggleHeroLock(state, selHero.uid)) {
+                  saveNow()
+                  showToast(selHero.locked ? `Locked ${spec.name}.` : `Unlocked ${spec.name}.`)
+                }
+              },
+              draw: (ctx: CanvasRenderingContext2D, rect: LayoutRect, st: CanvasWidgetDrawState) => drawIconButton(
+                ctx, rect, selHero.locked ? 'lock' : 'unlock', st, { active: Boolean(selHero.locked) }
+              )
+            }
+          }),
+          boxNode({
+            id: 'cs-salvage-hero', style: { width: mobile ? 86 : 104, height: actRowH },
+            widget: {
+              type: 'button',
+              label: selHero.locked
+                ? 'Locked'
+                : `+${salvageVal}g +${getHeroSalvageShards(HERO_SPECS[selHero.heroId].rarity, selHero.stars)} Shards`,
+              disabled: Boolean(selHero.locked) || camp.heroes.length <= 1 || (inSquad && camp.squadUids.length <= 1),
               onPress: () => {
                 audio.unlock()
                 const heroSpec = HERO_SPECS[selHero.heroId]
@@ -3643,12 +3667,15 @@ async function start() {
                 }
               },
               draw: (ctx: CanvasRenderingContext2D, rect: LayoutRect, st: CanvasWidgetDrawState) => drawButton(
-                ctx, rect, `+${salvageVal}g`, st, {
-                  variant: 'danger',
-                  icon: 'sell',
-                  sub: `+${getHeroSalvageShards(HERO_SPECS[selHero.heroId].rarity, selHero.stars)} Shards`,
-                  size: 10.5
-                }
+                ctx, rect, selHero.locked ? 'Locked' : `+${salvageVal}g`, st,
+                selHero.locked
+                  ? { variant: 'secondary', icon: 'lock', size: 10.5 }
+                  : {
+                      variant: 'danger',
+                      icon: 'sell',
+                      sub: `+${getHeroSalvageShards(HERO_SPECS[selHero.heroId].rarity, selHero.stars)} Shards`,
+                      size: 10.5
+                    }
               )
             }
           })
@@ -3693,7 +3720,7 @@ async function start() {
                 if (wSpec) { unequipItem(state, selHero.uid, 'weapon'); saveNow(); uiDirty = true }
                 else { setCampTab('armory'); armorySlotFilter = 'weapon'; uiDirty = true }
               },
-              draw: (ctx: CanvasRenderingContext2D, rect: LayoutRect, st: CanvasWidgetDrawState) => drawEquipCard(ctx, rect, { slot: 'weapon', spec: wSpec }, st)
+              draw: (ctx: CanvasRenderingContext2D, rect: LayoutRect, st: CanvasWidgetDrawState) => drawEquipCard(ctx, rect, { slot: 'weapon', spec: wSpec, locked: Boolean(weapon?.locked) }, st)
             }
           }),
           boxNode({
@@ -3705,7 +3732,7 @@ async function start() {
                 if (aSpec) { unequipItem(state, selHero.uid, 'armor'); saveNow(); uiDirty = true }
                 else { setCampTab('armory'); armorySlotFilter = 'armor'; uiDirty = true }
               },
-              draw: (ctx: CanvasRenderingContext2D, rect: LayoutRect, st: CanvasWidgetDrawState) => drawEquipCard(ctx, rect, { slot: 'armor', spec: aSpec }, st)
+              draw: (ctx: CanvasRenderingContext2D, rect: LayoutRect, st: CanvasWidgetDrawState) => drawEquipCard(ctx, rect, { slot: 'armor', spec: aSpec, locked: Boolean(armor?.locked) }, st)
             }
           }),
           boxNode({
@@ -3717,7 +3744,7 @@ async function start() {
                 if (rSpec) { unequipItem(state, selHero.uid, 'relic'); saveNow(); uiDirty = true }
                 else { setCampTab('armory'); armorySlotFilter = 'relic'; uiDirty = true }
               },
-              draw: (ctx: CanvasRenderingContext2D, rect: LayoutRect, st: CanvasWidgetDrawState) => drawEquipCard(ctx, rect, { slot: 'relic', spec: rSpec }, st)
+              draw: (ctx: CanvasRenderingContext2D, rect: LayoutRect, st: CanvasWidgetDrawState) => drawEquipCard(ctx, rect, { slot: 'relic', spec: rSpec, locked: Boolean(relic?.locked) }, st)
             }
           })
         ])
@@ -3954,15 +3981,37 @@ async function start() {
                   spec,
                   effect: spec ? getEquipEffect(spec.id) ?? undefined : undefined,
                   ownerText: equippedOnSel ? undefined : ownerLabel,
-                  equippedOnSelected: equippedOnSel
+                  equippedOnSelected: equippedOnSel,
+                  locked: Boolean(item.locked)
                 }, st)
               }
             }),
             boxNode({
-              id: `arm-sell-${i + j}`, style: { width: 76, height: cardH },
+              id: `arm-lock-${i + j}`, style: { width: mobile ? 36 : 40, height: cardH },
               widget: {
                 type: 'button',
-                label: `Salvage +${meta.salvage}g +${spec ? getEquipSalvageDust(spec.rarity) : 0} Dust`,
+                label: item.locked ? `Unlock ${spec?.name ?? item.equipId}` : `Lock ${spec?.name ?? item.equipId}`,
+                selected: Boolean(item.locked),
+                onPress: () => {
+                  audio.unlock()
+                  if (toggleEquipLock(state, item.uid)) {
+                    saveNow()
+                    showToast(item.locked ? `Locked ${spec?.name ?? 'item'}.` : `Unlocked ${spec?.name ?? 'item'}.`)
+                  }
+                },
+                draw: (ctx: CanvasRenderingContext2D, rect: LayoutRect, st: CanvasWidgetDrawState) => drawIconButton(
+                  ctx, rect, item.locked ? 'lock' : 'unlock', st, { active: Boolean(item.locked) }
+                )
+              }
+            }),
+            boxNode({
+              id: `arm-sell-${i + j}`, style: { width: mobile ? 64 : 74, height: cardH },
+              widget: {
+                type: 'button',
+                label: item.locked
+                  ? 'Locked'
+                  : `Salvage +${meta.salvage}g +${spec ? getEquipSalvageDust(spec.rarity) : 0} Dust`,
+                disabled: Boolean(item.locked),
                 onPress: () => {
                   audio.unlock()
                   const dustYield = spec ? getEquipSalvageDust(spec.rarity) : 0
@@ -3975,11 +4024,14 @@ async function start() {
                   }
                 },
                 draw: (ctx: CanvasRenderingContext2D, rect: LayoutRect, st: CanvasWidgetDrawState) => drawButton(
-                  ctx, rect, `+${meta.salvage}g`, st, {
-                    variant: 'danger',
-                    sub: `+${spec ? getEquipSalvageDust(spec.rarity) : 0} Dust`,
-                    size: 10.5
-                  }
+                  ctx, rect, item.locked ? 'Locked' : `+${meta.salvage}g`, st,
+                  item.locked
+                    ? { variant: 'secondary', icon: 'lock', size: 10 }
+                    : {
+                        variant: 'danger',
+                        sub: `+${spec ? getEquipSalvageDust(spec.rarity) : 0} Dust`,
+                        size: 10.5
+                      }
                 )
               }
             })
@@ -4035,7 +4087,7 @@ async function start() {
       }))
       const armFilterStrip = row({
         id: 'arm-filters',
-        style: mobile ? { height: 34, padding: 3, gap: 4 } : { grow: 1, height: 34, padding: 3, gap: 4 },
+        style: { grow: 1, height: 34, padding: 3, gap: 4 },
         widget: { type: 'panel', draw: (ctx: CanvasRenderingContext2D, rect: LayoutRect) => drawSegmentTrack(ctx, rect) }
       }, ARMORY_FILTERS.map(slot => {
         const label = slot === 'all' ? 'All' : slot[0].toUpperCase() + slot.slice(1)
@@ -4065,6 +4117,42 @@ async function start() {
           },
           draw: (ctx: CanvasRenderingContext2D, rect: LayoutRect, st: CanvasWidgetDrawState) => drawButton(
             ctx, rect, armBestLabel, st, { variant: armBestCount > 0 ? 'success' : 'secondary', icon: 'sparkle', size: 11 }
+          )
+        }
+      })
+      const bulkPreview = previewBulkSalvageCommonDupes(camp)
+      const bulkLabel = bulkPreview.count > 0
+        ? `Salvage ${bulkPreview.count} ${bulkPreview.count === 1 ? 'Dupe' : 'Dupes'} (+${bulkPreview.totalGold}g)`
+        : 'Salvage Common Dupes'
+      const armBulkSalvageBtn = boxNode({
+        id: 'cs-bulk-salvage',
+        style: { width: mobile ? (bulkPreview.count > 0 ? 156 : 138) : wide ? (bulkPreview.count > 0 ? 184 : 162) : (bulkPreview.count > 0 ? 164 : 146), height: 34 },
+        widget: {
+          type: 'button',
+          label: bulkLabel,
+          disabled: bulkPreview.count === 0,
+          onPress: () => {
+            audio.unlock()
+            const dustBefore = state.campaign.dust
+            const res = bulkSalvageCommonDupes(state)
+            if (res.salvagedCount > 0) {
+              if (hoveredArmoryEquipUid && !getEquipmentByUid(state.campaign, hoveredArmoryEquipUid)) {
+                hoveredArmoryEquipUid = null
+              }
+              if (inspectedArmoryEquipUid && !getEquipmentByUid(state.campaign, inspectedArmoryEquipUid)) {
+                inspectedArmoryEquipUid = null
+              }
+              const dustGained = state.campaign.dust - dustBefore
+              saveNow()
+              showToast(
+                dustGained > 0
+                  ? `Salvaged ${res.salvagedCount} common ${res.salvagedCount === 1 ? 'dupe' : 'dupes'} for +${res.totalGold}g & +${dustGained} Arcane Dust.`
+                  : `Salvaged ${res.salvagedCount} common ${res.salvagedCount === 1 ? 'dupe' : 'dupes'} for +${res.totalGold}g.`
+              )
+            }
+          },
+          draw: (ctx: CanvasRenderingContext2D, rect: LayoutRect, st: CanvasWidgetDrawState) => drawButton(
+            ctx, rect, bulkLabel, st, { variant: bulkPreview.count > 0 ? 'danger' : 'secondary', icon: 'sell', size: mobile ? 10 : 10.5 }
           )
         }
       })
@@ -4125,10 +4213,10 @@ async function start() {
         ...(mobile
           ? [
               row({ id: 'arm-top-m1', style: { height: 34, gap: 6, align: 'center' } }, [armHeroPortraitNode, armHeroStrip, armBestBtn]),
-              armFilterStrip
+              row({ id: 'arm-top-m2', style: { height: 34, gap: 6, align: 'center' } }, [armFilterStrip, armBulkSalvageBtn])
             ]
           : [
-              row({ id: 'arm-top-controls', style: { height: 34, gap: 8, align: 'center' } }, [armHeroPortraitNode, armHeroStrip, armFilterStrip, armBestBtn])
+              row({ id: 'arm-top-controls', style: { height: 34, gap: 6, align: 'center' } }, [armHeroPortraitNode, armHeroStrip, armFilterStrip, armBestBtn, armBulkSalvageBtn])
             ]),
         ...armHeroStatsNode,
         ...itemRows,
