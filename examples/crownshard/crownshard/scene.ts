@@ -1,6 +1,6 @@
 import {
   color, createAnimator, createMeshPool, createParticles, createShadowBatch,
-  intersectRayPlane, mesh, multiply, perspective, quaternionFromEuler, renderRig, screenToRay,
+  mesh, multiply, perspective, quaternionFromEuler, renderRig, screenToRay,
   view, worldToScreen
 } from 'ridgetop'
 import type { Color, InstanceBatch, JointPose, LowPolyRenderer, Matrix, PointLight, RenderStats, Vec3 } from 'ridgetop'
@@ -18,7 +18,7 @@ import { VFX_COLORS, arrowMesh, createBattleVfx } from './vfx.ts'
 import type { StrikeShape } from './vfx.ts'
 import { getEquipmentByUid, getHeroByUid, getPatternCells, getHeroSkill, getUnitByUid, getTacticByUid, unitAt } from './simulation.ts'
 import { TACTIC_BY_ID } from './data.ts'
-import { TILE_SIZE, facingToYaw, gridToWorld, worldToGrid } from './types.ts'
+import { TILE_SIZE, facingToYaw, gridToWorld } from './types.ts'
 import type { AttackArc, BattleState, BattleUnit, CombatForecast, GameState, OwnedHeroCard } from './types.ts'
 
 const C_MOVE_TILE: Color = [0.22, 0.80, 1.0, 0.34]
@@ -257,6 +257,72 @@ interface Shot {
   life: number
   trail: number
   delay: number
+}
+
+function intersectRayAABB(
+  origin: Vec3,
+  dir: Vec3,
+  minX: number,
+  minY: number,
+  minZ: number,
+  maxX: number,
+  maxY: number,
+  maxZ: number
+): number | null {
+  let tMin = 0
+  let tMax = Infinity
+
+  const axes: readonly (readonly [number, number, number, number])[] = [
+    [origin[0], dir[0], minX, maxX],
+    [origin[1], dir[1], minY, maxY],
+    [origin[2], dir[2], minZ, maxZ]
+  ]
+  for (const [o, d, lo, hi] of axes) {
+    if (Math.abs(d) < 1e-8) {
+      if (o < lo || o > hi) return null
+      continue
+    }
+    const inv = 1 / d
+    let t1 = (lo - o) * inv
+    let t2 = (hi - o) * inv
+    if (t1 > t2) {
+      const tmp = t1
+      t1 = t2
+      t2 = tmp
+    }
+    if (t1 > tMin) tMin = t1
+    if (t2 < tMax) tMax = t2
+    if (tMin > tMax) return null
+  }
+  return tMin >= 0 ? tMin : null
+}
+
+/** Exact multi-height ray vs tile-AABB picking across height levels 0..4 (skips void chasms). */
+export function pickCellFromRay(
+  battle: Pick<BattleState, 'cells' | 'cols' | 'rows'>,
+  origin: Vec3,
+  direction: Vec3
+): { col: number; row: number } | null {
+  const half = TILE_SIZE * 0.5
+  let bestT = Infinity
+  let bestCell: { col: number; row: number } | null = null
+
+  for (let row = 0; row < battle.rows; row++) {
+    const line = battle.cells[row]
+    if (!line) continue
+    for (let col = 0; col < battle.cols; col++) {
+      const cell = line[col]
+      if (!cell || cell.terrain === 'void') continue
+      const [wx, wy, wz] = gridToWorld(col, row, cell.elevation, battle.cols, battle.rows)
+      const minY = Math.min(-0.35, wy - 0.35)
+      const t = intersectRayAABB(origin, direction, wx - half, minY, wz - half, wx + half, wy, wz + half)
+      if (t !== null && t < bestT) {
+        bestT = t
+        bestCell = { col, row }
+      }
+    }
+  }
+  return bestCell
 }
 
 export function createCrownshardScene(renderer: LowPolyRenderer) {
@@ -1288,9 +1354,11 @@ export function createCrownshardScene(renderer: LowPolyRenderer) {
 
     if (previewCell && battle.phase === 'player' && previewCell.row < battle.rows && previewCell.col < battle.cols) {
       const hCell = battle.cells[previewCell.row][previewCell.col]
-      const [hx, hy, hz] = gridToWorld(previewCell.col, previewCell.row, hCell.elevation, battle.cols, battle.rows)
-      pool.add(tileQuad, [hx, hy + 0.042, hz], [TILE_SIZE * 0.90, 1, TILE_SIZE * 0.90], 0, C_HOVER_TILE, 0.95, 'alpha')
-      pool.add(tileFrameMesh, [hx, hy + 0.054, hz], [TILE_SIZE * 0.94, 1, TILE_SIZE * 0.94], 0, C_HOVER_BORDER, 0.98, 'alpha')
+      if (hCell.terrain !== 'void') {
+        const [hx, hy, hz] = gridToWorld(previewCell.col, previewCell.row, hCell.elevation, battle.cols, battle.rows)
+        pool.add(tileQuad, [hx, hy + 0.042, hz], [TILE_SIZE * 0.90, 1, TILE_SIZE * 0.90], 0, C_HOVER_TILE, 0.95, 'alpha')
+        pool.add(tileFrameMesh, [hx, hy + 0.054, hz], [TILE_SIZE * 0.94, 1, TILE_SIZE * 0.94], 0, C_HOVER_BORDER, 0.98, 'alpha')
+      }
 
       const isValidPreviewTarget =
         battle.targetTiles.some(t => t.col === previewCell.col && t.row === previewCell.row) ||
@@ -1303,6 +1371,7 @@ export function createCrownshardScene(renderer: LowPolyRenderer) {
         const isOffensiveSkill = Boolean(armedSkill && armedSkill.powerMul > 0)
         for (const pc of previewCells) {
           const c = battle.cells[pc.row][pc.col]
+          if (c.terrain === 'void') continue
           const [px, py, pz] = gridToWorld(pc.col, pc.row, c.elevation, battle.cols, battle.rows)
           const occ = unitAt(battle, pc.col, pc.row)
           const isFriendlyHit = isOffensiveSkill && Boolean(
@@ -1534,14 +1603,7 @@ export function createCrownshardScene(renderer: LowPolyRenderer) {
     if (!battle) return null
     const ray = screenToRay(lastMatrix, cssX, cssY, width, height)
     if (!ray) return null
-    const highHit = intersectRayPlane(ray.origin, ray.direction, 0.45)
-    if (highHit) {
-      const cell = worldToGrid(highHit[0], highHit[2], battle.cols, battle.rows)
-      if (cell && battle.cells[cell.row][cell.col].elevation >= 0.35) return cell
-    }
-    const baseHit = intersectRayPlane(ray.origin, ray.direction, 0.0)
-    if (!baseHit) return null
-    return worldToGrid(baseHit[0], baseHit[2], battle.cols, battle.rows)
+    return pickCellFromRay(battle, ray.origin, ray.direction)
   }
 
   function project(x: number, y: number, z: number, width: number, height: number) {

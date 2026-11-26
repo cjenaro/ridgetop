@@ -6,7 +6,7 @@ import {
 } from 'ridgetop'
 import type { Color, InstanceBatch, JointPose, LightingOptions, Rig, Vec3 } from 'ridgetop'
 import {
-  GRID_COLS, GRID_ROWS, TILE_SIZE, gridToWorld
+  GRID_COLS, GRID_ROWS, HEIGHT_STEP, TILE_SIZE, cellHeightLevel, gridToWorld
 } from './types.ts'
 import type { BiomeId, EnemyArchetypeId, GridCell, HeroClassId, TileTerrain } from './types.ts'
 import { ENEMY_RIGS, HERO_RIGS } from './characters.ts'
@@ -275,7 +275,9 @@ export const BIOME_STYLES: Record<BiomeId, BiomeStyle> = {
       pillar: [color('9da5ba'), color('8c94aa')],
       lava: [color('eb632d'), color('d65322')],
       snow: [color('e0edf7'), color('d0e1f0')],
-      darkstone: [color('5b6278'), color('50576b')]
+      darkstone: [color('5b6278'), color('50576b')],
+      stairs: [color('c2b7a3'), color('b0a591')],
+      void: [color('1c202e'), color('161a26')]
     },
     treeColor: C_FOREST_MID,
     treeTiers: [C_FOREST, C_FOREST_MID, C_FOREST_LIGHT],
@@ -304,7 +306,9 @@ export const BIOME_STYLES: Record<BiomeId, BiomeStyle> = {
       pillar: [color('8f9bad'), color('808c9e')],
       lava: [color('eb632d'), color('d65322')],
       snow: [color('e0edf7'), color('d0e1f0')],
-      darkstone: [color('535f73'), color('485366')]
+      darkstone: [color('535f73'), color('485366')],
+      stairs: [color('b5ad9c'), color('a39b8a')],
+      void: [color('18232e'), color('131c26')]
     },
     treeColor: C_AUTUMN_MID,
     treeTiers: [C_AUTUMN_DEEP, C_AUTUMN_MID, C_AUTUMN_LIGHT],
@@ -333,7 +337,9 @@ export const BIOME_STYLES: Record<BiomeId, BiomeStyle> = {
       pillar: [color('7a8296'), color('6c7487')],
       lava: [color('eb632d'), color('d65322')],
       snow: [color('a8bed1'), color('98afc2')],
-      darkstone: [color('555c70'), color('4b5163')]
+      darkstone: [color('555c70'), color('4b5163')],
+      stairs: [color('8d94a8'), color('7b8296')],
+      void: [color('131624'), color('0f121e')]
     },
     treeColor: color('3b5c5e'),
     treeTiers: [color('2e4a52'), color('3c6166'), color('4f7a7a')],
@@ -362,7 +368,9 @@ export const BIOME_STYLES: Record<BiomeId, BiomeStyle> = {
       pillar: [color('78add4'), color('689cc4')],
       lava: [color('eb632d'), color('d65322')],
       snow: [color('e3eff7'), color('d4e4f0')],
-      darkstone: [color('62738a'), color('56667c')]
+      darkstone: [color('62738a'), color('56667c')],
+      stairs: [color('a3bdd4'), color('91acc4')],
+      void: [color('1c2838'), color('16202e')]
     },
     treeColor: color('3d787a'),
     treeTiers: [color('306369'), color('478287'), color('d8eaf5')],
@@ -391,7 +399,9 @@ export const BIOME_STYLES: Record<BiomeId, BiomeStyle> = {
       pillar: [color('5e505e'), color('524552')],
       lava: [color('ff702e'), color('eb5c20')],
       snow: [color('9c8f99'), color('8a7d87')],
-      darkstone: [color('4d424f'), color('423845')]
+      darkstone: [color('4d424f'), color('423845')],
+      stairs: [color('856f6c'), color('735f5c')],
+      void: [color('1a1118'), color('140d13')]
     },
     treeColor: color('664642'),
     treeTiers: [color('573d3d'), color('754b42'), color('9e5a44')],
@@ -420,7 +430,9 @@ export const BIOME_STYLES: Record<BiomeId, BiomeStyle> = {
       pillar: [color('62527d'), color('54466e')],
       lava: [color('eb4c3d'), color('d43e31')],
       snow: [color('9482ad'), color('83729c')],
-      darkstone: [color('473a5e'), color('3d3152')]
+      darkstone: [color('473a5e'), color('3d3152')],
+      stairs: [color('8f7ab0'), color('7c689c')],
+      void: [color('140e24'), color('100b1d')]
     },
     treeColor: color('543c70'),
     treeTiers: [color('3e2d59'), color('563e78'), color('76589e')],
@@ -500,6 +512,114 @@ function addRockCluster(
   pebbles.add([x - 0.20 * scale, y + 0.07 * scale, z + 0.18 * scale], [0.22 * scale, 0.16 * scale, 0.20 * scale], seed + 1.2, rockCol)
 }
 
+function addTerracedColumn(
+  tileBases: InstanceBatch,
+  copings: InstanceBatch,
+  wx: number,
+  topY: number,
+  wz: number,
+  heightLevel: number,
+  underCol: Color,
+  cliffCol: Color,
+  copingCol: Color
+) {
+  const bottomY = -1.42
+  const totalH = Math.max(0.28, topY - 0.08 - bottomY)
+  // Upper earth/masonry collar + deep terraced bedrock skirt down to plinth base
+  if (heightLevel >= 1) {
+    const upperH = Math.min(totalH * 0.48, 0.42 + heightLevel * 0.14)
+    const lowerH = Math.max(0.22, totalH - upperH)
+    tileBases.add([wx, topY - 0.08 - upperH * 0.5, wz], [TILE_SIZE * 0.96, upperH, TILE_SIZE * 0.96], 0, underCol)
+    tileBases.add([wx, bottomY + lowerH * 0.5, wz], [TILE_SIZE * 0.92, lowerH, TILE_SIZE * 0.92], 0, cliffCol)
+    // Crisp stone coping lip at terrace crest & strata ledge every 2 height levels
+    copings.add([wx, topY - 0.13, wz], [TILE_SIZE * 0.99, 0.08, TILE_SIZE * 0.99], 0, copingCol)
+    for (let lvl = 1; lvl < heightLevel; lvl++) {
+      const bandY = lvl * HEIGHT_STEP - 0.12
+      copings.add([wx, bandY, wz], [TILE_SIZE * 0.97, 0.06, TILE_SIZE * 0.97], 0, underCol)
+    }
+  } else {
+    const upperH = Math.min(0.32, totalH * 0.35)
+    const lowerH = Math.max(0.24, totalH - upperH)
+    tileBases.add([wx, topY - 0.08 - upperH * 0.5, wz], [TILE_SIZE * 0.95, upperH, TILE_SIZE * 0.95], 0, underCol)
+    tileBases.add([wx, bottomY + lowerH * 0.5, wz], [TILE_SIZE * 0.91, lowerH, TILE_SIZE * 0.91], 0, cliffCol)
+  }
+}
+
+function addSculptedStairs(
+  tileBases: InstanceBatch,
+  tileCaps: InstanceBatch,
+  copings: InstanceBatch,
+  cells: GridCell[][],
+  col: number,
+  row: number,
+  wx: number,
+  wy: number,
+  wz: number,
+  hLvl: number,
+  style: BiomeStyle,
+  tint: Color
+) {
+  const rows = cells.length
+  const cols = cells[0]?.length ?? GRID_COLS
+  // Orient stairs ascending toward the highest adjacent walkable neighbor
+  const dirs: readonly (readonly [number, number, number])[] = [
+    [1, 0, Math.PI * 0.5],
+    [-1, 0, -Math.PI * 0.5],
+    [0, -1, Math.PI],
+    [0, 1, 0]
+  ]
+  let bestYaw = 0
+  let bestHigh = hLvl
+  let lowestAdj = hLvl
+  for (const [dc, dr, yaw] of dirs) {
+    const nc = col + dc
+    const nr = row + dr
+    if (nr < 0 || nr >= rows || nc < 0 || nc >= cols) continue
+    const nCell = cells[nr][nc]
+    if (!nCell || nCell.terrain === 'void') continue
+    const nh = cellHeightLevel(nCell)
+    if (nh > bestHigh) {
+      bestHigh = nh
+      bestYaw = yaw
+    }
+    if (nh < lowestAdj) lowestAdj = nh
+  }
+
+  addTerracedColumn(tileBases, copings, wx, wy, wz, hLvl, style.baseStone, style.cliff, C_STONE_LIGHT)
+
+  const lowY = Math.max(0, lowestAdj) * HEIGHT_STEP
+  const highY = Math.max(wy + 0.02, bestHigh > hLvl ? (hLvl + 0.65) * HEIGHT_STEP : wy + 0.06)
+  const rise = Math.max(0.18, highY - lowY)
+  const steps = 4
+  const cos = Math.cos(bestYaw)
+  const sin = Math.sin(bestYaw)
+  const stepDepth = (TILE_SIZE * 0.88) / steps
+
+  for (let i = 0; i < steps; i++) {
+    const frac = (i + 0.5) / steps - 0.5
+    const forward = frac * TILE_SIZE * 0.88
+    const sx = wx + sin * forward
+    const sz = wz + cos * forward
+    const stepTop = lowY + ((i + 1) / steps) * rise
+    const stepH = Math.max(0.08, stepTop - (lowY - 0.06))
+    const stepCol = i % 2 === 0 ? tint : C_STONE_LIGHT
+    tileCaps.add(
+      [sx, stepTop - stepH * 0.5, sz],
+      [TILE_SIZE * 0.78, stepH, stepDepth * 1.04],
+      bestYaw,
+      stepCol
+    )
+  }
+
+  // Carved stone side stringers / cheek-walls
+  const sideOffset = TILE_SIZE * 0.42
+  for (const side of [-1, 1]) {
+    const rx = wx + cos * sideOffset * side
+    const rz = wz - sin * sideOffset * side
+    copings.add([rx, lowY + rise * 0.52, rz], [0.14, Math.max(0.18, rise + 0.14), TILE_SIZE * 0.90], bestYaw, style.baseStone)
+  }
+}
+
 export function buildStaticBoardBatches(biome: BiomeId, cells: GridCell[][]): {
   batches: InstanceBatch[]
   brazierPositions: Vec3[]
@@ -507,34 +627,32 @@ export function buildStaticBoardBatches(biome: BiomeId, cells: GridCell[][]): {
   const rows = cells.length || GRID_ROWS
   const cols = cells[0]?.length ?? GRID_COLS
   const style = BIOME_STYLES[biome]
-  const tileCaps = instances(tileCapMesh, 224)
-  const tileBases = instances(tileBaseMesh, 200)
-  const bevelProps = instances(softBevel, 168)
-  const copings = instances(crispBevel, 84)
-  const trunks = instances(taperTrunk, 32)
-  const foliageTiers = instances(foliageTier, 64)
-  const foliageTips = instances(foliageTip, 28)
-  const cyls = instances(smoothCyl, 80)
-  const hooks = instances(lanternHookMesh, 8)
-  const pills = instances(chunkyPill, 56)
-  const pebbles = instances(roundPebble, 96)
-  const rings = instances(collarRing, 32)
-  const cones = instances(smoothCone, 32)
-  const crystals = instances(crystalMesh, 40)
-  const arches = instances(archProp, 24)
-  const gables = instances(gableRoof, 16)
+  const tileCaps = instances(tileCapMesh, 384)
+  const tileBases = instances(tileBaseMesh, 448)
+  const bevelProps = instances(softBevel, 320)
+  const copings = instances(crispBevel, 288)
+  const trunks = instances(taperTrunk, 48)
+  const foliageTiers = instances(foliageTier, 96)
+  const foliageTips = instances(foliageTip, 40)
+  const cyls = instances(smoothCyl, 144)
+  const hooks = instances(lanternHookMesh, 16)
+  const pills = instances(chunkyPill, 96)
+  const pebbles = instances(roundPebble, 160)
+  const rings = instances(collarRing, 48)
+  const cones = instances(smoothCone, 64)
+  const crystals = instances(crystalMesh, 96)
+  const arches = instances(archProp, 40)
+  const gables = instances(gableRoof, 24)
+  const crowns = instances(crownMesh, 8)
   const brazierPositions: Vec3[] = []
 
-  const boardW = cols * TILE_SIZE + 1.85
-  const boardD = rows * TILE_SIZE + 1.85
-  tileBases.add([0, -0.64, 0], [boardW, 0.72, boardD], 0, style.baseStone)
-  tileBases.add([0, -1.26, 0], [boardW * 0.90, 0.76, boardD * 0.90], 0, style.cliff)
-  copings.add([0, -0.26, -(boardD * 0.5 - 0.14)], [boardW * 0.96, 0.16, 0.28], 0, C_STONE_LIGHT)
-  copings.add([0, -0.26, boardD * 0.5 - 0.14], [boardW * 0.96, 0.16, 0.28], 0, style.baseStone)
-
+  // Build per-cell terraced diorama tiles (void cells emit ZERO geometry for irregular silhouettes!)
   for (let row = 0; row < rows; row++) {
     for (let col = 0; col < cols; col++) {
       const cell = cells[row][col]
+      if (cell.terrain === 'void') continue
+      const hLvl = cellHeightLevel(cell)
+      const baseY = hLvl * HEIGHT_STEP
       const [wx, wy, wz] = gridToWorld(col, row, cell.elevation, cols, rows)
       const checker = (col + row) % 2
       const tint = style.tiles[cell.terrain][checker]
@@ -543,24 +661,39 @@ export function buildStaticBoardBatches(biome: BiomeId, cells: GridCell[][]): {
       const h = hash2(col + 3.1, row + 7.4)
 
       if (cell.terrain === 'pillar') {
-        tileBases.add([wx, -0.20, wz], [TILE_SIZE * 0.95, 0.30, TILE_SIZE * 0.95], 0, style.baseStone)
-        tileCaps.add([wx, -0.02, wz], [TILE_SIZE * 0.91, 0.14, TILE_SIZE * 0.91], 0, style.tiles.stone[checker])
-        bevelProps.add([wx, 0.17, wz], [1.06, 0.26, 1.06], 0, style.baseStone)
+        addTerracedColumn(tileBases, copings, wx, baseY, wz, hLvl, style.baseStone, style.cliff, C_STONE_LIGHT)
+        tileCaps.add([wx, baseY - 0.02, wz], [TILE_SIZE * 0.91, 0.14, TILE_SIZE * 0.91], 0, style.tiles.stone[checker])
+        bevelProps.add([wx, baseY + 0.17, wz], [1.06, 0.26, 1.06], 0, style.baseStone)
         if (biome === 'frost') {
-          cones.add([wx, 0.86, wz], [0.54, 1.24, 0.54], h * 1.2, C_ICE)
-          cones.add([wx + 0.24, 0.54, wz + 0.18], [0.24, 0.62, 0.24], 0.4, C_ICE_DEEP)
-          crystals.add([wx, 1.56, wz], [0.24, 0.36, 0.24], 0, C_CYAN, 0.85)
+          cones.add([wx, baseY + 0.86, wz], [0.54, 1.24, 0.54], h * 1.2, C_ICE)
+          cones.add([wx + 0.24, baseY + 0.54, wz + 0.18], [0.24, 0.62, 0.24], 0.4, C_ICE_DEEP)
+          crystals.add([wx, baseY + 1.56, wz], [0.24, 0.36, 0.24], 0, C_CYAN, 0.85)
         } else {
-          cyls.add([wx, 0.78, wz], [0.38, 1.02, 0.38], 0, tint)
-          rings.add([wx, 0.78, wz], [0.46, 0.14, 0.46], 0, style.baseStone)
-          tileCaps.add([wx, 1.36, wz], [0.96, 0.20, 0.96], 0, C_STONE_LIGHT)
+          cyls.add([wx, baseY + 0.78, wz], [0.38, 1.02, 0.38], 0, tint)
+          rings.add([wx, baseY + 0.78, wz], [0.46, 0.14, 0.46], 0, style.baseStone)
+          tileCaps.add([wx, baseY + 1.36, wz], [0.96, 0.20, 0.96], 0, C_STONE_LIGHT)
           if (biome === 'crypt' || biome === 'throne') {
-            crystals.add([wx, 1.62, wz], [0.18, 0.28, 0.18], h, style.propGlow, 0.85)
+            crystals.add([wx, baseY + 1.62, wz], [0.18, 0.28, 0.18], h, style.propGlow, 0.85)
           }
         }
       } else if (cell.terrain === 'bridge') {
-        const underTint = biome === 'volcano' ? style.tiles.lava[0] : style.tiles.water[0]
-        tileCaps.add([wx, -0.32, wz], [TILE_SIZE * 0.97, 0.18, TILE_SIZE * 0.97], 0, underTint, biome === 'volcano' ? 0.82 : 0.12)
+        // Check if neighboring cells are void (chasm sky-bridge) vs water/lava
+        const adjVoid =
+          cells[row - 1]?.[col]?.terrain === 'void' ||
+          cells[row + 1]?.[col]?.terrain === 'void' ||
+          cells[row]?.[col - 1]?.terrain === 'void' ||
+          cells[row]?.[col + 1]?.terrain === 'void'
+        if (!adjVoid) {
+          const underTint = biome === 'volcano' ? style.tiles.lava[0] : style.tiles.water[0]
+          tileBases.add([wx, -0.96, wz], [TILE_SIZE * 0.94, 0.92, TILE_SIZE * 0.94], 0, style.cliff)
+          tileCaps.add([wx, -0.32, wz], [TILE_SIZE * 0.97, 0.18, TILE_SIZE * 0.97], 0, underTint, biome === 'volcano' ? 0.82 : 0.12)
+        }
+        // Sturdy bridge support piers down into the chasm or river
+        const pierBottom = -1.42
+        const pierH = Math.max(0.32, wy - 0.14 - pierBottom)
+        for (const pxOff of [-TILE_SIZE * 0.34, TILE_SIZE * 0.34]) {
+          bevelProps.add([wx + pxOff, pierBottom + pierH * 0.5, wz], [0.24, pierH, TILE_SIZE * 0.74], 0, style.baseStone)
+        }
         tileCaps.add([wx, wy - 0.08, wz], [TILE_SIZE * 0.95, 0.18, TILE_SIZE * 0.86], 0, tint)
         bevelProps.add([wx, wy + 0.11, wz - TILE_SIZE * 0.39], [TILE_SIZE * 0.90, 0.11, 0.11], 0, C_WOOD_WARM)
         bevelProps.add([wx, wy + 0.11, wz + TILE_SIZE * 0.39], [TILE_SIZE * 0.90, 0.11, 0.11], 0, C_WOOD_WARM)
@@ -568,8 +701,10 @@ export function buildStaticBoardBatches(biome: BiomeId, cells: GridCell[][]): {
         bevelProps.add([wx + TILE_SIZE * 0.38, wy + 0.14, wz - TILE_SIZE * 0.39], [0.15, 0.26, 0.15], 0, C_WOOD_DARK)
         bevelProps.add([wx - TILE_SIZE * 0.38, wy + 0.14, wz + TILE_SIZE * 0.39], [0.15, 0.26, 0.15], 0, C_WOOD_DARK)
         bevelProps.add([wx + TILE_SIZE * 0.38, wy + 0.14, wz + TILE_SIZE * 0.39], [0.15, 0.26, 0.15], 0, C_WOOD_DARK)
+      } else if (cell.terrain === 'stairs') {
+        addSculptedStairs(tileBases, tileCaps, copings, cells, col, row, wx, wy, wz, hLvl, style, tint)
       } else if (cell.terrain === 'shrine') {
-        tileBases.add([wx, wy - 0.26, wz], [TILE_SIZE * 0.95, 0.36 + wy, TILE_SIZE * 0.95], 0, style.baseStone)
+        addTerracedColumn(tileBases, copings, wx, wy, wz, hLvl, style.baseStone, style.cliff, C_GOLD)
         tileCaps.add([wx, wy - 0.05, wz], [TILE_SIZE * 0.91, 0.14, TILE_SIZE * 0.91], 0, style.tiles.stone[0])
         cyls.add([wx, wy + 0.05, wz], [0.58, 0.09, 0.58], 0, tint, 0.38)
         bevelProps.add([wx, wy + 0.16, wz - 0.54], [1.10, 0.22, 0.38], 0, C_STONE_LIGHT)
@@ -578,7 +713,8 @@ export function buildStaticBoardBatches(biome: BiomeId, cells: GridCell[][]): {
         crystals.add([wx, wy + 0.86, wz - 0.54], [0.20, 0.32, 0.20], 0, style.propGlow, 0.96)
         brazierPositions.push([wx, wy + 1.05, wz - 0.50])
       } else if (isWater || isLava) {
-        tileBases.add([wx, -0.34, wz], [TILE_SIZE * 0.96, 0.20, TILE_SIZE * 0.96], 0, style.cliff)
+        const bedH = Math.max(0.32, wy - 0.06 - (-1.42))
+        tileBases.add([wx, -1.42 + bedH * 0.5, wz], [TILE_SIZE * 0.95, bedH, TILE_SIZE * 0.95], 0, style.cliff)
         tileCaps.add([wx, wy - 0.06, wz], [TILE_SIZE * 0.93, 0.14, TILE_SIZE * 0.93], 0, tint, isLava ? 0.88 : 0.14)
         if (h > 0.62) {
           pebbles.add(
@@ -588,91 +724,239 @@ export function buildStaticBoardBatches(biome: BiomeId, cells: GridCell[][]): {
             isLava ? C_OBSIDIAN : C_STONE_MID
           )
         }
-      } else if (cell.terrain === 'hill') {
-        const baseH = 0.42 + wy * 0.78
-        tileBases.add([wx, wy - 0.14 - baseH * 0.5, wz], [TILE_SIZE * 0.96, baseH, TILE_SIZE * 0.96], 0, style.baseStone)
-        copings.add([wx, wy - 0.16, wz], [TILE_SIZE * 0.98, 0.08, TILE_SIZE * 0.98], 0, C_STONE_LIGHT)
-        tileCaps.add([wx, wy - 0.07, wz], [TILE_SIZE * 0.92, 0.16, TILE_SIZE * 0.92], 0, tint)
       } else {
-        const capCol = tint
-        const underCol = cell.terrain === 'grass' || cell.terrain === 'snow' ? style.tileEarth : style.baseStone
-        tileBases.add([wx, -0.22, wz], [TILE_SIZE * 0.95, 0.30, TILE_SIZE * 0.95], 0, underCol)
-        tileCaps.add([wx, -0.06, wz], [TILE_SIZE * 0.92, 0.14, TILE_SIZE * 0.92], 0, capCol)
-        if ((row === 0 || row === rows - 1 || col === 0 || col === cols - 1) && h > 0.68) {
-          const ox = col === 0 ? -0.56 : 0.56
-          const oz = row === 0 ? -0.56 : 0.56
-          pebbles.add([wx + ox, 0.04, wz + oz], [0.18, 0.10, 0.16], h * 4, C_STONE_LIGHT)
-          pebbles.add([wx + ox * 0.78, 0.03, wz + oz * 0.88], [0.12, 0.08, 0.11], h * 2, C_STONE_MID)
+        const isSoftSoil = cell.terrain === 'grass' || cell.terrain === 'snow' || cell.terrain === 'hill'
+        const underCol = isSoftSoil ? style.tileEarth : style.baseStone
+        const copingCol = cell.terrain === 'darkstone' ? style.baseStone : C_STONE_LIGHT
+        addTerracedColumn(tileBases, copings, wx, wy, wz, hLvl, underCol, style.cliff, copingCol)
+        tileCaps.add([wx, wy - 0.06, wz], [TILE_SIZE * 0.92, 0.15, TILE_SIZE * 0.92], 0, tint)
+        if (cell.terrain === 'darkstone') {
+          copings.add([wx, wy + 0.01, wz], [TILE_SIZE * 0.76, 0.04, TILE_SIZE * 0.76], 0, style.baseStone)
+        } else if (cell.terrain === 'snow' && h > 0.52) {
+          pebbles.add([wx + (h - 0.72) * 0.5, wy + 0.03, wz + (hash2(row, col) - 0.5) * 0.45], [0.34, 0.10, 0.28], h * 2.5, C_IVORY)
+        } else if ((row === 0 || row === rows - 1 || col === 0 || col === cols - 1) && h > 0.72) {
+          const ox = col === 0 ? -0.54 : 0.54
+          const oz = row === 0 ? -0.54 : 0.54
+          pebbles.add([wx + ox, wy + 0.04, wz + oz], [0.18, 0.10, 0.16], h * 4, C_STONE_LIGHT)
         }
       }
     }
   }
 
-  const edgeX = (cols * 0.5 + 0.38) * TILE_SIZE
-  const edgeZ = (rows * 0.5 + 0.35) * TILE_SIZE
-  const corners: [number, number, number][] = [
-    [-edgeX, -edgeZ, 0.78],
-    [edgeX, -edgeZ, -0.78],
-    [-edgeX, edgeZ, 2.35],
-    [edgeX, edgeZ, -2.35]
-  ]
-  for (const [cx, cz, yaw] of corners) {
-    addOrnateLantern(bevelProps, cyls, hooks, pills, copings, cx, -0.24, cz, yaw, style.baseStone, style.propGlow)
-    brazierPositions.push([cx, 1.35, cz])
-  }
+  // =========================================================================
+  // BIOME-SPECIFIC PERIMETER ARCHITECTURE & SIGNATURE LANDMARKS
+  // =========================================================================
+  const halfW = (cols * 0.5) * TILE_SIZE
+  const halfD = (rows * 0.5) * TILE_SIZE
+  const backZ = -(halfD + 1.05)
+  const sideX = halfW + 1.05
 
-  const backWallZ = -(rows * 0.5 + 0.34) * TILE_SIZE
-  const wallCount = Math.max(3, Math.round(cols / 2))
-  const wallSpan = (cols - 1.6) * TILE_SIZE
-  for (let i = 0; i < wallCount; i++) {
-    const u = wallCount <= 1 ? 0 : i / (wallCount - 1) - 0.5
-    const wx = u * wallSpan
-    const wallAccent = biome === 'meadow' ? C_WOOD_WARM : biome === 'throne' ? C_VIOLET : biome === 'volcano' ? C_EMBER : style.cliff
-    bevelProps.add([wx, 0.02, backWallZ], [1.65, 0.44, 0.34], 0, style.baseStone)
-    copings.add([wx, 0.28, backWallZ], [1.74, 0.12, 0.40], 0, C_STONE_LIGHT)
-    copings.add([wx, 0.02, backWallZ + 0.16], [1.30, 0.22, 0.06], 0, wallAccent)
-    bevelProps.add([wx - 0.84, 0.12, backWallZ], [0.34, 0.62, 0.40], 0, C_STONE_LIGHT)
-    bevelProps.add([wx + 0.84, 0.12, backWallZ], [0.34, 0.62, 0.40], 0, C_STONE_LIGHT)
-  }
+  if (biome === 'meadow') {
+    // Signature Watchtower on the northwest ridge
+    const twX = -(halfW + 0.75)
+    const twZ = -(halfD + 0.72)
+    tileBases.add([twX, -0.62, twZ], [2.05, 1.60, 2.05], 0, style.baseStone)
+    copings.add([twX, 0.22, twZ], [2.16, 0.12, 2.16], 0, C_STONE_LIGHT)
+    for (const [px, pz] of [[-0.68, -0.68], [0.68, -0.68], [-0.68, 0.68], [0.68, 0.68]] as const) {
+      cyls.add([twX + px, 1.15, twZ + pz], [0.12, 1.85, 0.12], 0, C_WOOD_DARK)
+    }
+    bevelProps.add([twX, 1.85, twZ], [1.82, 0.18, 1.82], 0, C_WOOD_WARM)
+    bevelProps.add([twX, 2.16, twZ - 0.78], [1.72, 0.44, 0.14], 0, C_WOOD)
+    bevelProps.add([twX, 2.16, twZ + 0.78], [1.72, 0.44, 0.14], 0, C_WOOD)
+    bevelProps.add([twX - 0.78, 2.16, twZ], [0.14, 0.44, 1.56], 0, C_WOOD)
+    bevelProps.add([twX + 0.78, 2.16, twZ], [0.14, 0.44, 1.56], 0, C_WOOD)
+    gables.add([twX, 2.88, twZ], [2.20, 0.74, 2.20], 0, C_AUTUMN_DEEP)
+    crystals.add([twX, 2.28, twZ + 0.94], [0.18, 0.28, 0.18], 0, C_LANTERN_GLOW, 0.96)
+    brazierPositions.push([twX, 2.28, twZ + 0.94])
 
-  const backZ = -(rows * 0.5 + 0.68) * TILE_SIZE
-  const halfW = (cols * 0.5 - 0.3) * TILE_SIZE
-  const treeSpots: [number, number, number, boolean, boolean][] = [
-    [-halfW, backZ, 1.18, true, false],
-    [-halfW * 0.52, backZ - 0.25, 1.02, false, true],
-    [0.0, backZ - 0.32, 1.24, true, false],
-    [halfW * 0.52, backZ - 0.22, 1.06, false, true],
-    [halfW, backZ, 1.15, true, false],
-    [-(cols * 0.5 + 0.66) * TILE_SIZE, -0.8 * TILE_SIZE, 0.96, false, false],
-    [(cols * 0.5 + 0.66) * TILE_SIZE, -0.6 * TILE_SIZE, 1.0, false, true]
-  ]
-  for (let i = 0; i < treeSpots.length; i++) {
-    const [tx, tz, sc, tall, useAccent] = treeSpots[i]
-    const yaw = i * 0.72
-    if (biome === 'meadow' || biome === 'river' || biome === 'frost') {
-      const pal = useAccent ? style.treeAccentTiers : style.treeTiers
-      addLayeredTree(trunks, foliageTiers, foliageTips, tx, -0.24, tz, sc, pal, C_WOOD, yaw, tall)
-      addRockCluster(pills, pebbles, tx + 0.48 * sc, -0.24, tz + 0.34, 0.68, C_STONE_MID, C_STONE_LIGHT, i + 1)
-    } else if (biome === 'crypt' || biome === 'throne') {
-      if (i % 2 === 0) {
-        bevelProps.add([tx, 0.06, tz], [0.84 * sc, 0.52, 0.68 * sc], yaw * 0.15, style.baseStone)
-        arches.add([tx, 0.74, tz], [0.84 * sc, 0.96 * sc, 0.28], yaw * 0.15, C_STONE_LIGHT)
-        crystals.add([tx, 0.84, tz], [0.18, 0.30, 0.18], yaw, style.propGlow, 0.92)
-      } else {
-        const pal = useAccent ? style.treeAccentTiers : style.treeTiers
-        addLayeredTree(trunks, foliageTiers, foliageTips, tx, -0.24, tz, sc, pal, C_OBSIDIAN, yaw, tall)
+    // Timber Palisade fence along northern perimeter
+    const stakes = Math.max(8, cols * 2)
+    for (let i = 0; i < stakes; i++) {
+      const u = i / Math.max(1, stakes - 1) - 0.5
+      const sx = u * (cols * TILE_SIZE - 0.4)
+      if (sx < twX + 1.35) continue
+      const stakeH = 0.92 + (i % 3) * 0.14
+      trunks.add([sx, -0.35 + stakeH * 0.5, backZ + 0.12], [0.14, stakeH, 0.14], i * 0.5, i % 2 === 0 ? C_WOOD : C_WOOD_DARK)
+    }
+    bevelProps.add([0.75, 0.16, backZ + 0.14], [cols * TILE_SIZE - 1.8, 0.12, 0.10], 0, C_WOOD_WARM)
+    addOrnateLantern(bevelProps, cyls, hooks, pills, copings, halfW + 0.55, -0.24, -(halfD + 0.42), -0.78, style.baseStone, C_LANTERN_GLOW)
+    brazierPositions.push([halfW + 0.55, 1.35, -(halfD + 0.42)])
+
+    // Sunlit oak & autumn treeline behind the palisade
+    const spots: readonly [number, number, number, boolean, boolean][] = [
+      [-halfW * 0.42, backZ - 0.55, 1.18, true, false],
+      [0.15, backZ - 0.62, 1.26, true, true],
+      [halfW * 0.52, backZ - 0.48, 1.12, false, false],
+      [halfW + 0.95, -0.5 * TILE_SIZE, 1.05, true, true],
+      [-sideX, 0.35 * TILE_SIZE, 0.96, false, false]
+    ]
+    for (let i = 0; i < spots.length; i++) {
+      const [tx, tz, sc, tall, accent] = spots[i]
+      addLayeredTree(trunks, foliageTiers, foliageTips, tx, -0.28, tz, sc, accent ? style.treeAccentTiers : style.treeTiers, C_WOOD, i * 0.8, tall)
+      addRockCluster(pills, pebbles, tx + 0.55 * sc, -0.28, tz + 0.42, 0.72, C_STONE_MID, C_STONE_LIGHT, i + 1.4)
+    }
+  } else if (biome === 'river') {
+    // Twin Stone River Piers, Aqueduct Arches & Cascading Waterfalls
+    const pierXs = [-halfW * 0.56, halfW * 0.56]
+    for (let i = 0; i < pierXs.length; i++) {
+      const px = pierXs[i]
+      tileBases.add([px, -0.58, backZ - 0.18], [2.15, 1.72, 1.55], 0, style.baseStone)
+      copings.add([px, 0.32, backZ - 0.18], [2.26, 0.14, 1.66], 0, C_STONE_LIGHT)
+      arches.add([px, 1.02, backZ - 0.18], [1.75, 1.35, 0.42], 0, C_STONE_LIGHT)
+      copings.add([px, 1.74, backZ - 0.18], [2.05, 0.16, 0.52], 0, style.baseStone)
+      // Cascading waterfall chute spilling down the pier face
+      bevelProps.add([px, 0.04, backZ + 0.48], [0.78, 1.85, 0.24], 0, style.tiles.water[0], 0.32)
+      bevelProps.add([px, -0.05, backZ + 0.54], [0.46, 1.78, 0.14], 0, C_CYAN, 0.52)
+      for (let m = 0; m < 4; m++) {
+        pebbles.add([px + (m - 1.5) * 0.28, -0.82, backZ + 0.72 + (m % 2) * 0.18], [0.28, 0.18, 0.26], m * 1.1, C_IVORY, 0.45)
       }
-    } else {
-      bevelProps.add([tx, 0.34 * sc, tz], [0.68 * sc, 1.18 * sc, 0.62 * sc], yaw * 0.3, style.cliff)
-      trunks.add([tx + 0.42, 0.02, tz + 0.25], [0.16, 0.56, 0.16], yaw, C_WOOD_DARK)
-      crystals.add([tx, 1.06 * sc, tz], [0.22, 0.38, 0.22], yaw, style.propGlow, 0.94)
+      addOrnateLantern(bevelProps, cyls, hooks, pills, copings, px + (i === 0 ? -0.92 : 0.92), 0.36, backZ + 0.45, i === 0 ? 0.5 : -0.5, style.baseStone, C_LANTERN_GLOW)
+      brazierPositions.push([px + (i === 0 ? -0.92 : 0.92), 1.88, backZ + 0.45])
+    }
+    // Center aqueduct bridge span & riverside willow/autumn trees
+    arches.add([0, 0.85, backZ - 0.28], [2.4, 1.4, 0.38], 0, style.baseStone)
+    copings.add([0, 1.60, backZ - 0.28], [2.7, 0.16, 0.48], 0, C_STONE_LIGHT)
+    const bankTrees: readonly [number, number, number, boolean][] = [
+      [-sideX, -halfD * 0.4, 1.15, false],
+      [sideX, -halfD * 0.35, 1.18, true],
+      [-sideX, halfD * 0.45, 0.94, true],
+      [sideX, halfD * 0.5, 0.98, false]
+    ]
+    for (let i = 0; i < bankTrees.length; i++) {
+      const [tx, tz, sc, accent] = bankTrees[i]
+      addLayeredTree(trunks, foliageTiers, foliageTips, tx, -0.32, tz, sc, accent ? style.treeAccentTiers : style.treeTiers, C_WOOD_DARK, i * 0.9, true)
+    }
+  } else if (biome === 'crypt') {
+    // Vaulted Gothic Crypt Alcoves & Spectral Cyan Bone Braziers
+    const alcoveCount = Math.max(3, Math.floor(cols / 2))
+    const span = (cols - 1.2) * TILE_SIZE
+    for (let i = 0; i < alcoveCount; i++) {
+      const u = alcoveCount <= 1 ? 0 : i / (alcoveCount - 1) - 0.5
+      const ax = u * span
+      tileBases.add([ax, -0.45, backZ - 0.20], [2.10, 1.95, 1.10], 0, style.cliff)
+      bevelProps.add([ax, 0.45, backZ - 0.48], [1.90, 1.45, 0.34], 0, C_OBSIDIAN)
+      arches.add([ax, 1.18, backZ - 0.04], [1.82, 1.62, 0.36], 0, style.baseStone)
+      gables.add([ax, 2.18, backZ - 0.10], [2.12, 0.48, 0.58], 0, C_STONE_MID)
+      crystals.add([ax, 1.15, backZ - 0.18], [0.22, 0.44, 0.22], i * 0.7, C_CYAN, 0.95)
+    }
+    // Bone Braziers flanking the catacombs
+    const brazierSpots: readonly [number, number][] = [
+      [-(halfW + 0.55), -(halfD + 0.35)],
+      [halfW + 0.55, -(halfD + 0.35)],
+      [-(halfW + 0.65), halfD * 0.42],
+      [halfW + 0.65, halfD * 0.42]
+    ]
+    for (let i = 0; i < brazierSpots.length; i++) {
+      const [bx, bz] = brazierSpots[i]
+      bevelProps.add([bx, -0.22, bz], [0.76, 0.68, 0.76], 0, C_OBSIDIAN)
+      cyls.add([bx, 0.42, bz], [0.24, 0.68, 0.24], 0, C_IVORY)
+      rings.add([bx, 0.80, bz], [0.46, 0.18, 0.46], 0, C_STONE_DARK)
+      crystals.add([bx, 1.06, bz], [0.24, 0.38, 0.24], i * 0.8, C_CYAN, 0.98)
+      brazierPositions.push([bx, 1.15, bz])
+    }
+    // Twisted crypt cypresses on flanks
+    addLayeredTree(trunks, foliageTiers, foliageTips, -sideX - 0.2, -0.30, -0.6, 1.12, style.treeTiers, C_OBSIDIAN, 0.4, true)
+    addLayeredTree(trunks, foliageTiers, foliageTips, sideX + 0.2, -0.30, -0.4, 1.16, style.treeTiers, C_OBSIDIAN, 1.6, true)
+  } else if (biome === 'frost') {
+    // Towering Icy Crystal Spires & Stacked Stone Rune Cairns
+    const spireXs = [-halfW * 0.82, -halfW * 0.28, halfW * 0.28, halfW * 0.82]
+    for (let i = 0; i < spireXs.length; i++) {
+      const sx = spireXs[i]
+      const tall = i === 1 || i === 2 ? 2.85 : 2.15
+      tileBases.add([sx, -0.68, backZ - 0.22], [1.65, 1.45, 1.45], 0, style.cliff)
+      cones.add([sx, 0.15 + tall * 0.5, backZ - 0.22], [0.82, tall, 0.82], i * 0.7, C_ICE)
+      cones.add([sx + 0.46, 0.05 + tall * 0.32, backZ + 0.10], [0.44, tall * 0.64, 0.44], i * 1.1, C_ICE_DEEP)
+      crystals.add([sx, 0.22 + tall, backZ - 0.22], [0.28, 0.52, 0.28], i, C_CYAN, 0.90)
+    }
+    // Stacked Rune Cairns flanking the pass
+    const cairnSpots: readonly [number, number][] = [
+      [-(halfW + 0.60), -(halfD * 0.55)],
+      [halfW + 0.60, -(halfD * 0.55)],
+      [-(halfW + 0.65), halfD * 0.45],
+      [halfW + 0.65, halfD * 0.45]
+    ]
+    for (let i = 0; i < cairnSpots.length; i++) {
+      const [cx, cz] = cairnSpots[i]
+      pebbles.add([cx, -0.18, cz], [0.76, 0.38, 0.72], i * 0.5, C_STONE_DARK)
+      pebbles.add([cx, 0.18, cz], [0.56, 0.32, 0.54], i * 1.1, C_STONE_MID)
+      pebbles.add([cx, 0.48, cz], [0.38, 0.24, 0.36], i * 1.7, C_STONE_LIGHT)
+      crystals.add([cx, 0.84, cz], [0.22, 0.44, 0.22], i * 0.4, C_ICE, 0.96)
+      brazierPositions.push([cx, 0.95, cz])
+    }
+    addLayeredTree(trunks, foliageTiers, foliageTips, -halfW * 0.55, -0.25, backZ - 0.65, 1.20, style.treeTiers, C_WOOD_DARK, 0.6, true)
+    addLayeredTree(trunks, foliageTiers, foliageTips, halfW * 0.55, -0.25, backZ - 0.65, 1.16, style.treeAccentTiers, C_WOOD_DARK, 2.1, true)
+  } else if (biome === 'volcano') {
+    // Iron-Banded Forge Crucibles & Pouring Molten Lava Falls
+    const crucibleXs = [-halfW * 0.62, 0, halfW * 0.62]
+    for (let i = 0; i < crucibleXs.length; i++) {
+      const fx = crucibleXs[i]
+      const fz = backZ - 0.16
+      tileBases.add([fx, -0.42, fz], [1.95, 2.05, 1.55], 0, style.cliff)
+      cyls.add([fx, 0.92, fz], [0.68, 0.92, 0.68], 0, C_OBSIDIAN)
+      rings.add([fx, 0.78, fz], [0.78, 0.14, 0.78], 0, C_STEEL_DARK)
+      rings.add([fx, 1.18, fz], [0.78, 0.14, 0.78], 0, C_STEEL_DARK)
+      // Glowing molten vat top & pouring lava fall down the cliff face
+      cyls.add([fx, 1.38, fz], [0.58, 0.14, 0.58], 0, C_EMBER, 0.96)
+      bevelProps.add([fx, 0.22, fz + 0.68], [0.54, 2.15, 0.20], 0, C_EMBER, 0.94)
+      bevelProps.add([fx, 0.14, fz + 0.74], [0.28, 2.05, 0.12], 0, C_GOLD_BRIGHT, 0.98)
+      pebbles.add([fx, -0.82, fz + 0.85], [0.78, 0.16, 0.56], i, C_EMBER, 0.92)
+      brazierPositions.push([fx, 1.55, fz])
+    }
+    // Jagged basalt crags along the flanks
+    const crags: readonly [number, number, number][] = [
+      [-sideX - 0.15, -halfD * 0.55, 1.35],
+      [sideX + 0.15, -halfD * 0.50, 1.42],
+      [-sideX - 0.10, halfD * 0.35, 1.05],
+      [sideX + 0.10, halfD * 0.40, 1.10]
+    ]
+    for (let i = 0; i < crags.length; i++) {
+      const [cx, cz, sc] = crags[i]
+      bevelProps.add([cx, 0.28 * sc, cz], [0.85 * sc, 1.65 * sc, 0.78 * sc], i * 0.45, style.cliff)
+      crystals.add([cx, 1.25 * sc, cz], [0.24, 0.44, 0.24], i, C_EMBER, 0.96)
+    }
+  } else {
+    // THRONE: Grand Obsidian Throne Dais, Gothic Spires, Floating Eclipse Crown & Royal Banners
+    const daisZ = backZ - 0.28
+    tileBases.add([0, -0.25, daisZ], [5.4, 2.35, 2.4], 0, C_OBSIDIAN)
+    copings.add([0, 0.94, daisZ], [5.55, 0.14, 2.52], 0, C_VIOLET)
+    tileBases.add([0, 1.16, daisZ - 0.18], [3.2, 0.42, 1.7], 0, style.baseStone)
+    copings.add([0, 1.40, daisZ - 0.18], [3.35, 0.10, 1.82], 0, C_GOLD)
+    // Towering gothic throne backdrop & spires
+    arches.add([0, 2.55, daisZ - 0.55], [2.75, 2.35, 0.48], 0, C_OBSIDIAN)
+    for (const sx of [-1.55, 1.55]) {
+      cyls.add([sx, 2.25, daisZ - 0.45], [0.28, 2.55, 0.28], 0, C_OBSIDIAN)
+      cones.add([sx, 3.85, daisZ - 0.45], [0.36, 0.85, 0.36], 0, C_VIOLET)
+      crystals.add([sx, 4.42, daisZ - 0.45], [0.20, 0.36, 0.20], 0, C_SHADOW_GLOW, 0.96)
+    }
+    // Throne seat & hovering Sovereign Eclipse Crown
+    bevelProps.add([0, 1.88, daisZ - 0.38], [1.18, 0.96, 0.72], 0, C_OBSIDIAN)
+    bevelProps.add([0, 2.38, daisZ - 0.62], [1.12, 1.24, 0.22], 0, C_VIOLET)
+    crowns.add([0, 3.22, daisZ - 0.35], [0.78, 0.62, 0.78], 0, C_GOLD_BRIGHT, 0.94)
+    crystals.add([0, 3.68, daisZ - 0.35], [0.24, 0.42, 0.24], 0, C_SHADOW_GLOW, 0.98)
+    brazierPositions.push([0, 3.55, daisZ - 0.20])
+
+    // Flanking Royal Banners & Obsidian Obelisk Braziers
+    const bannerSpots: readonly [number, number][] = [
+      [-(halfW + 0.55), -(halfD * 0.52)],
+      [halfW + 0.55, -(halfD * 0.52)],
+      [-(halfW + 0.55), halfD * 0.42],
+      [halfW + 0.55, halfD * 0.42]
+    ]
+    for (let i = 0; i < bannerSpots.length; i++) {
+      const [bx, bz] = bannerSpots[i]
+      bevelProps.add([bx, -0.18, bz], [0.78, 0.84, 0.78], 0, C_OBSIDIAN)
+      cyls.add([bx, 1.28, bz], [0.09, 2.45, 0.09], 0, C_GOLD)
+      bevelProps.add([bx, 1.72, bz + 0.14], [0.68, 1.18, 0.08], 0, i % 2 === 0 ? C_CRIMSON : C_VIOLET)
+      copings.add([bx, 2.36, bz + 0.12], [0.84, 0.10, 0.14], 0, C_GOLD_BRIGHT)
+      crystals.add([bx, 2.68, bz], [0.20, 0.34, 0.20], i, C_SHADOW_GLOW, 0.96)
+      brazierPositions.push([bx, 2.65, bz])
     }
   }
 
   return {
     batches: [
       tileCaps, tileBases, bevelProps, copings, trunks, foliageTiers, foliageTips,
-      cyls, hooks, pills, pebbles, rings, cones, crystals, arches, gables
+      cyls, hooks, pills, pebbles, rings, cones, crystals, arches, gables, crowns
     ].filter(b => b.count > 0),
     brazierPositions
   }

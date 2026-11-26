@@ -5,7 +5,9 @@ import {
   MERGE_COPIES_REQUIRED, PACK_BY_ID, PLAYABLE_CHAPTERS, RARITY_META, RARITY_ORDER, TACTIC_BY_ID, TACTIC_LIST
 } from './data.ts'
 import {
-  GRID_COLS, GRID_ROWS, facingToYaw, facingVector, gridToWorld, terrainElevation, terrainWalkable, vectorToFacing
+  GRID_COLS, GRID_ROWS, cellHeightAt, cellHeightLevel, defaultTerrainHeightLevel,
+  facingToYaw, facingVector, gridToWorld, terrainDefBonus, terrainElevation, terrainMoveCost,
+  terrainWalkable, vectorToFacing
 } from './types.ts'
 import type {
   AttackArc, BattleReward, BattleState, BattleUnit, BiomeId, CampaignState, ChapterSpec, CombatForecast,
@@ -28,6 +30,7 @@ export interface ComputedHeroStats {
   readonly def: number
   readonly speed: number
   readonly move: number
+  readonly jump: number
   readonly range: number
   readonly crit: number
   readonly lifesteal: number
@@ -140,6 +143,7 @@ export function computeHeroStats(campaign: CampaignState, hero: OwnedHeroCard): 
   let def = spec.def + defBonus
   let speed = spec.speed + (hero.stars - 1)
   let move = spec.move
+  let jump = spec.jump
   let range = spec.range
   let crit = spec.crit
   let lifesteal = 0
@@ -156,6 +160,7 @@ export function computeHeroStats(campaign: CampaignState, hero: OwnedHeroCard): 
     def += item.def
     speed += item.speed
     move += item.move
+    jump += item.jump ?? 0
     range += item.range
     crit += item.crit
     lifesteal += item.lifesteal
@@ -166,9 +171,10 @@ export function computeHeroStats(campaign: CampaignState, hero: OwnedHeroCard): 
   lifesteal = clamp(lifesteal, 0, 0.75)
   speed = clamp(speed, 4, 24)
   move = clamp(move, 2, 6)
+  jump = clamp(jump, 1, 4)
   range = clamp(range, 1, 6)
   const powerScore = Math.round(maxHp * 0.6 + atk * 3.2 + def * 2.5 + speed * 4 + move * 6 + range * 5 + crit * 40 + hero.stars * 25)
-  return { maxHp, atk, def, speed, move, range, crit, lifesteal, shieldStart, powerScore }
+  return { maxHp, atk, def, speed, move, jump, range, crit, lifesteal, shieldStart, powerScore }
 }
 
 export function computeCardValue(rarity: Rarity, stars: 1 | 2 | 3 = 1): number {
@@ -748,7 +754,10 @@ export function clearSave(storage: StorageLike | null | undefined): void {
 // TACTICAL GRID BATTLE ENGINE
 // =========================================================================
 
-function buildCells(grid: readonly (readonly TileTerrain[])[]): GridCell[][] {
+function buildCells(
+  grid: readonly (readonly TileTerrain[])[],
+  heights?: readonly (readonly number[])[]
+): GridCell[][] {
   const rows = grid.length
   const cols = grid[0]?.length ?? GRID_COLS
   const cells: GridCell[][] = []
@@ -756,12 +765,19 @@ function buildCells(grid: readonly (readonly TileTerrain[])[]): GridCell[][] {
     const line: GridCell[] = []
     for (let col = 0; col < cols; col++) {
       const terrain = grid[row]?.[col] ?? 'grass'
+      const rawHeight = heights?.[row]?.[col]
+      const heightLevel = terrain === 'void'
+        ? -1
+        : rawHeight !== undefined
+          ? clamp(Math.round(rawHeight), 0, 4)
+          : defaultTerrainHeightLevel(terrain)
       line.push({
         col,
         row,
         terrain,
-        elevation: terrainElevation(terrain),
-        walkable: terrainWalkable(terrain)
+        elevation: terrainElevation(terrain, heightLevel),
+        walkable: terrainWalkable(terrain),
+        heightLevel
       })
     }
     cells.push(line)
@@ -817,7 +833,7 @@ export function startChapterBattle(state: GameState, chapterIndex: number, endle
   const chapter = CHAPTERS[safeIdx]
   campaign.selectedStageId = chapter.id
   const biome: BiomeId = chapter.biome
-  const cells = buildCells(chapter.grid)
+  const cells = buildCells(chapter.grid, chapter.heights)
   const rows = cells.length
   const cols = cells[0]?.length ?? GRID_COLS
 
@@ -871,6 +887,7 @@ export function startChapterBattle(state: GameState, chapterIndex: number, endle
       speed: stats.speed,
       ct: stats.speed * 3,
       move: stats.move,
+      jump: stats.jump,
       range: stats.range,
       crit: stats.crit,
       lifesteal: stats.lifesteal,
@@ -921,6 +938,7 @@ export function startChapterBattle(state: GameState, chapterIndex: number, endle
       speed: spec.speed,
       ct: spec.speed * 3,
       move: spec.move,
+      jump: spec.jump,
       range: spec.range,
       crit: 0.08,
       lifesteal: 0,
@@ -1047,6 +1065,148 @@ export function computeTurnOrderPreview(battle: BattleState, count = 8): TurnPre
   return out
 }
 
+export function canTraverseStep(fromCell: GridCell, toCell: GridCell, jump: number): boolean {
+  if (!toCell.walkable) return false
+  const hFrom = cellHeightLevel(fromCell)
+  const hTo = cellHeightLevel(toCell)
+  const diff = Math.abs(hTo - hFrom)
+  const isRamp = fromCell.terrain === 'stairs' || toCell.terrain === 'stairs'
+  const limit = isRamp ? jump + 1 : jump
+  return diff <= limit
+}
+
+export function elevationDamageMultiplier(attackerLevel: number, defenderLevel: number): number {
+  const diff = attackerLevel - defenderLevel
+  if (diff >= 3) return 1.35
+  if (diff === 2) return 1.28
+  if (diff === 1) return 1.2
+  if (diff === -1) return 0.92
+  if (diff <= -2) return 0.85
+  return 1.0
+}
+
+export function effectiveAttackRange(
+  battle: Pick<BattleState, 'cells' | 'cols' | 'rows'>,
+  fromCol: number,
+  fromRow: number,
+  toCol: number,
+  toRow: number,
+  baseRange: number
+): number {
+  if (baseRange <= 1) return baseRange
+  const diff = cellHeightAt(battle, fromCol, fromRow) - cellHeightAt(battle, toCol, toRow)
+  if (diff >= 1) return baseRange + 1
+  if (diff <= -2) return Math.max(1, baseRange - 1)
+  return baseRange
+}
+
+export function isIndirectSkill(skill: SkillSpec | null): boolean {
+  if (!skill) return false
+  if (skill.target === 'self' || skill.target === 'ally') return true
+  if (skill.pattern === 'area3' || skill.pattern === 'cross' || skill.pattern === 'aura' || skill.pattern === 'self') return true
+  if (skill.id === 'shadowstep' || skill.id === 'phantom_exec') return true
+  return false
+}
+
+export function hasLineOfSight(
+  battle: Pick<BattleState, 'cells' | 'cols' | 'rows'>,
+  fromCol: number,
+  fromRow: number,
+  toCol: number,
+  toRow: number,
+  indirect = false
+): boolean {
+  if (indirect) return true
+  const dx = toCol - fromCol
+  const dy = toRow - fromRow
+  if (Math.abs(dx) + Math.abs(dy) <= 1) return true
+
+  const eyeH = cellHeightAt(battle, fromCol, fromRow) + 1.0
+  const targetH = cellHeightAt(battle, toCol, toRow) + 0.8
+
+  const cellBlocks = (col: number, row: number, t: number): boolean => {
+    if (!isCellInBounds(col, row, battle.cols, battle.rows)) return false
+    const cell = battle.cells[row][col]
+    if (!cell || cell.terrain === 'void') return false
+    const sightH = eyeH * (1 - t) + targetH * t
+    const lvl = cellHeightLevel(cell)
+    if (cell.terrain === 'pillar') return lvl + 2.5 > sightH
+    if (lvl > sightH + 0.05) return true
+    return false
+  }
+
+  const stepX = dx > 0 ? 1 : dx < 0 ? -1 : 0
+  const stepY = dy > 0 ? 1 : dy < 0 ? -1 : 0
+  const tDeltaX = dx !== 0 ? Math.abs(1 / dx) : Infinity
+  const tDeltaY = dy !== 0 ? Math.abs(1 / dy) : Infinity
+  let tMaxX = dx !== 0 ? 0.5 * tDeltaX : Infinity
+  let tMaxY = dy !== 0 ? 0.5 * tDeltaY : Infinity
+  let cx = fromCol
+  let cy = fromRow
+  let tPrev = 0
+  let guard = 0
+
+  while ((cx !== toCol || cy !== toRow) && guard++ < 64) {
+    if (Math.abs(tMaxX - tMaxY) < 1e-6) {
+      const tCorner = Math.min(1, tMaxX)
+      if (cellBlocks(cx + stepX, cy, tCorner) && cellBlocks(cx, cy + stepY, tCorner)) {
+        return false
+      }
+      tPrev = tCorner
+      cx += stepX
+      cy += stepY
+      tMaxX += tDeltaX
+      tMaxY += tDeltaY
+    } else if (tMaxX < tMaxY) {
+      tPrev = Math.min(1, tMaxX)
+      cx += stepX
+      tMaxX += tDeltaX
+    } else {
+      tPrev = Math.min(1, tMaxY)
+      cy += stepY
+      tMaxY += tDeltaY
+    }
+    if (cx === toCol && cy === toRow) break
+    const tNext = Math.min(tMaxX, tMaxY, 1)
+    const tMid = (tPrev + tNext) * 0.5
+    if (cellBlocks(cx, cy, tMid)) return false
+  }
+  return true
+}
+
+export function computeCoverBonus(
+  battle: Pick<BattleState, 'cells' | 'cols' | 'rows'>,
+  fromCol: number,
+  fromRow: number,
+  toCol: number,
+  toRow: number
+): number {
+  const dist = manhattan(fromCol, fromRow, toCol, toRow)
+  if (dist < 2) return 0
+  const ac = fromCol - toCol
+  const ar = fromRow - toRow
+  const defLvl = cellHeightAt(battle, toCol, toRow)
+  const dirs = [[1, 0], [-1, 0], [0, 1], [0, -1]] as const
+  let best = 0
+  for (const [dc, dr] of dirs) {
+    const nc = toCol + dc
+    const nr = toRow + dr
+    if (!isCellInBounds(nc, nr, battle.cols, battle.rows)) continue
+    const neighbor = battle.cells[nr][nc]
+    if (!neighbor || neighbor.terrain === 'void') continue
+    const isPillar = neighbor.terrain === 'pillar'
+    const isCliffWall = !isPillar && cellHeightLevel(neighbor) >= defLvl + 2
+    if (!isPillar && !isCliffWall) continue
+    const facingAttacker = ac * dc + ar * dr > 0
+    if (facingAttacker) {
+      best = Math.max(best, 4)
+    } else if (isPillar) {
+      best = Math.max(best, 2)
+    }
+  }
+  return best
+}
+
 export function computeMoveTiles(battle: BattleState, unit: BattleUnit): { col: number; row: number }[] {
   if (!unit.alive || unit.moved || unit.stunTurns > 0) return []
   const maxMove = Math.max(1, unit.move - (unit.slowTurns > 0 ? 1 : 0))
@@ -1057,23 +1217,32 @@ export function computeMoveTiles(battle: BattleState, unit: BattleUnit): { col: 
   const dirs = [[1, 0], [-1, 0], [0, 1], [0, -1]] as const
 
   while (queue.length > 0) {
-    const cur = queue.shift()
+    let bestIdx = 0
+    for (let i = 1; i < queue.length; i++) {
+      if (queue[i].dist < queue[bestIdx].dist) bestIdx = i
+    }
+    const cur = queue.splice(bestIdx, 1)[0]
     if (!cur) break
+    const curBest = visited.get(`${cur.col},${cur.row}`)
+    if (curBest !== undefined && cur.dist > curBest) continue
     if (cur.dist > 0) {
       const occ = unitAt(battle, cur.col, cur.row)
       if (!occ) result.push({ col: cur.col, row: cur.row })
     }
     if (cur.dist >= maxMove) continue
+    const fromCell = battle.cells[cur.row][cur.col]
     for (const [dc, dr] of dirs) {
       const nc = cur.col + dc
       const nr = cur.row + dr
       if (!isCellInBounds(nc, nr, battle.cols, battle.rows)) continue
       const cell = battle.cells[nr][nc]
-      if (!cell.walkable) continue
+      if (!canTraverseStep(fromCell, cell, unit.jump)) continue
       const occ = unitAt(battle, nc, nr)
       if (occ && occ.team !== unit.team) continue
+      const stepCost = terrainMoveCost(cell.terrain)
+      const nextDist = cur.dist + stepCost
+      if (nextDist > maxMove) continue
       const key = `${nc},${nr}`
-      const nextDist = cur.dist + 1
       const prev = visited.get(key)
       if (prev === undefined || nextDist < prev) {
         visited.set(key, nextDist)
@@ -1101,23 +1270,35 @@ export function findGridPath(
   const dirs = [[1, 0], [-1, 0], [0, 1], [0, -1]] as const
 
   while (queue.length > 0) {
-    const cur = queue.shift()
+    let bestIdx = 0
+    for (let i = 1; i < queue.length; i++) {
+      if (queue[i].dist < queue[bestIdx].dist) bestIdx = i
+    }
+    const cur = queue.splice(bestIdx, 1)[0]
     if (!cur) break
+    const curBest = distMap.get(`${cur.col},${cur.row}`)
+    if (curBest !== undefined && cur.dist > curBest) continue
     if (cur.col === goalCol && cur.row === goalRow) break
     if (cur.dist >= maxMove) continue
+    const fromCell = battle.cells[cur.row][cur.col]
     for (const [dc, dr] of dirs) {
       const nc = cur.col + dc
       const nr = cur.row + dr
       if (!isCellInBounds(nc, nr, battle.cols, battle.rows)) continue
       const cell = battle.cells[nr][nc]
-      if (!cell.walkable) continue
+      if (!canTraverseStep(fromCell, cell, unit.jump)) continue
       const occ = unitAt(battle, nc, nr)
       if (occ && occ.team !== unit.team) continue
+      const stepCost = terrainMoveCost(cell.terrain)
+      const nextDist = cur.dist + stepCost
+      if (nextDist > maxMove) continue
       const key = `${nc},${nr}`
-      if (parent.has(key)) continue
-      parent.set(key, { col: cur.col, row: cur.row })
-      distMap.set(key, cur.dist + 1)
-      queue.push({ col: nc, row: nr, dist: cur.dist + 1 })
+      const prev = distMap.get(key)
+      if (prev === undefined || nextDist < prev) {
+        parent.set(key, { col: cur.col, row: cur.row })
+        distMap.set(key, nextDist)
+        queue.push({ col: nc, row: nr, dist: nextDist })
+      }
     }
   }
 
@@ -1192,10 +1373,14 @@ export function computeTargetTiles(
   const targets: { col: number; row: number }[] = []
 
   if (skillIndex === null || skillIndex === -1) {
-    // Basic attack targets all enemies within unit.range
+    // Basic attack targets all enemies within effective elevation-adjusted range & direct LoS
     for (const other of battle.units) {
       if (!other.alive || other.team === unit.team) continue
-      if (manhattan(unit.col, unit.row, other.col, other.row) <= unit.range) {
+      const effRange = effectiveAttackRange(battle, unit.col, unit.row, other.col, other.row, unit.range)
+      if (
+        manhattan(unit.col, unit.row, other.col, other.row) <= effRange &&
+        hasLineOfSight(battle, unit.col, unit.row, other.col, other.row, false)
+      ) {
         targets.push({ col: other.col, row: other.row })
       }
     }
@@ -1210,13 +1395,17 @@ export function computeTargetTiles(
   }
 
   // Free-tile & friendly-fire skill targeting:
-  // Any non-pillar tile within skill.range can be targeted (empty spaces, enemies, or allies!).
+  // Any non-pillar, non-void tile within elevation-adjusted skill range & LoS can be targeted.
   // Offensive skills start at distance 1 so clicking your own tile doesn't accidentally self-hit.
   const minDist = skill.target === 'ally' ? 0 : 1
+  const indirect = isIndirectSkill(skill)
   for (let row = 0; row < battle.rows; row++) {
     for (let col = 0; col < battle.cols; col++) {
+      const terrain = battle.cells[row][col].terrain
+      if (terrain === 'pillar' || terrain === 'void') continue
       const d = manhattan(unit.col, unit.row, col, row)
-      if (d >= minDist && d <= skill.range && battle.cells[row][col].terrain !== 'pillar') {
+      const effRange = effectiveAttackRange(battle, unit.col, unit.row, col, row, skill.range)
+      if (d >= minDist && d <= effRange && hasLineOfSight(battle, unit.col, unit.row, col, row, indirect)) {
         targets.push({ col, row })
       }
     }
@@ -1249,7 +1438,8 @@ export function computeTacticTargetTiles(
   }
   for (let row = 0; row < battle.rows; row++) {
     for (let col = 0; col < battle.cols; col++) {
-      if (battle.cells[row][col].terrain !== 'pillar') out.push({ col, row })
+      const terrain = battle.cells[row][col].terrain
+      if (terrain !== 'pillar' && terrain !== 'void') out.push({ col, row })
     }
   }
   return out
@@ -1292,24 +1482,30 @@ function pickBestApproachTile(
   moveTiles: readonly { col: number; row: number }[],
   targetCol: number,
   targetRow: number,
-  range: number
+  range: number,
+  indirect = false
 ): { col: number; row: number } | null {
-  const targetElev = battle.cells[targetRow][targetCol].elevation
+  const targetLvl = cellHeightAt(battle, targetCol, targetRow)
   const targetUnit = unitAt(battle, targetCol, targetRow)
   const offensive = Boolean(targetUnit && targetUnit.team !== unit.team)
   let best: { col: number; row: number } | null = null
   let bestScore = -1e9
   for (const m of moveTiles) {
     const d = manhattan(m.col, m.row, targetCol, targetRow)
-    if (d < 1 || d > range) continue
+    const effRange = effectiveAttackRange(battle, m.col, m.row, targetCol, targetRow, range)
+    if (d < 1 || d > effRange) continue
+    if (!hasLineOfSight(battle, m.col, m.row, targetCol, targetRow, indirect)) continue
     const cell = battle.cells[m.row][m.col]
-    let score = 0
-    if (cell.elevation > targetElev + 0.1) score += 1000
+    const elevDiff = cellHeightLevel(cell) - targetLvl
+    let score = elevDiff * 480
+    if (elevDiff > 0) score += 600
     if (cell.terrain === 'shrine') score += 250
+    score += terrainDefBonus(cell.terrain) * 60
     if (offensive && targetUnit) {
       const arc = computeAttackArc(m.col, m.row, targetCol, targetRow, targetUnit.facing)
       if (arc === 'back') score += 850
       else if (arc === 'flank') score += 420
+      score -= computeCoverBonus(battle, m.col, m.row, targetCol, targetRow) * 45
     }
     const walkDist = manhattan(unit.col, unit.row, m.col, m.row)
     // Ranged heroes prefer staying at max safe distance; melee prefers shortest approach
@@ -1336,12 +1532,14 @@ export function computeMoveAttackTiles(
   if (!unit.alive || unit.moved || unit.acted || unit.stunTurns > 0 || moveTiles.length === 0) return []
   let range = unit.range
   let targetKind: SkillSpec['target'] = 'enemy'
+  let indirect = false
   if (skillIndex >= 0) {
     const skill = getHeroSkill(unit, skillIndex)
     if (!skill || unit.cooldowns[skillIndex] > 0) return []
     if (skill.target === 'self') return []
     range = skill.range
     targetKind = skill.target
+    indirect = isIndirectSkill(skill)
   }
 
   const out: MoveAttackTile[] = []
@@ -1350,7 +1548,7 @@ export function computeMoveAttackTiles(
     if (targetKind === 'ally' && u.team !== unit.team) continue
     if ((targetKind === 'enemy' || targetKind === 'tile') && u.team === unit.team) continue
     if (directTargets.some(t => t.col === u.col && t.row === u.row)) continue
-    const approach = pickBestApproachTile(battle, unit, moveTiles, u.col, u.row, range)
+    const approach = pickBestApproachTile(battle, unit, moveTiles, u.col, u.row, range, indirect)
     if (approach) {
       out.push({ col: u.col, row: u.row, fromCol: approach.col, fromRow: approach.row })
     }
@@ -1397,6 +1595,9 @@ function previewDamageMath(
   critDmg: number
   critChance: number
   highGround: boolean
+  elevationDiff: number
+  coverBonus: number
+  terrainDef: number
   empowered: boolean
   attackArc: AttackArc
   hpAfterNormal: number
@@ -1404,16 +1605,19 @@ function previewDamageMath(
 } {
   let dmg = rawDamage
   let highGround = false
+  let elevationDiff = 0
+  let coverBonus = 0
   let empowered = false
   let attackArc: AttackArc = 'front'
   let arcCritBonus = 0
+  const terrainDef = terrainDefBonus(battle.cells[defender.row][defender.col].terrain)
   if (attacker) {
-    const aElev = battle.cells[fromRow][fromCol].elevation
-    const dElev = battle.cells[defender.row][defender.col].elevation
-    if (aElev > dElev + 0.1) {
-      dmg *= 1.2
-      highGround = true
-    }
+    const aLvl = cellHeightAt(battle, fromCol, fromRow)
+    const dLvl = cellHeightAt(battle, defender.col, defender.row)
+    elevationDiff = aLvl - dLvl
+    dmg *= elevationDamageMultiplier(aLvl, dLvl)
+    highGround = elevationDiff > 0
+    coverBonus = computeCoverBonus(battle, fromCol, fromRow, defender.col, defender.row)
     attackArc = computeAttackArc(fromCol, fromRow, defender.col, defender.row, defender.facing)
     const arcMod = attackArcModifiers(attackArc)
     dmg *= arcMod.dmgMul
@@ -1423,7 +1627,7 @@ function previewDamageMath(
       empowered = true
     }
   }
-  const effDef = Math.max(0, defender.def * (1 - clamp(ignoreArmor, 0, 1)))
+  const effDef = Math.max(0, defender.def * (1 - clamp(ignoreArmor, 0, 1)) + terrainDef + coverBonus)
   const baseDmg = Math.max(4, Math.round(dmg - effDef * 0.72))
   const critChance = canCrit && attacker ? clamp(attacker.crit + arcCritBonus, 0, 0.95) : 0
   const critRaw = critChance > 0 ? Math.round(baseDmg * 1.55) : baseDmg
@@ -1434,6 +1638,9 @@ function previewDamageMath(
     critDmg: critRaw,
     critChance,
     highGround,
+    elevationDiff,
+    coverBonus,
+    terrainDef,
     empowered,
     attackArc,
     hpAfterNormal: Math.max(0, defender.hp - normalAfterShield),
@@ -1505,6 +1712,9 @@ export function computeCombatForecast(state: GameState, col: number, row: number
       selfShield: 0,
       status: spec.status,
       highGround: false,
+      elevationDiff: 0,
+      coverBonus: 0,
+      terrainDefBonus: primary.team === 'enemy' ? terrainDefBonus(battle.cells[primary.row][primary.col].terrain) : 0,
       empowered: false,
       attackArc: 'front',
       isOffensive: spec.damage > 0,
@@ -1593,6 +1803,9 @@ export function computeCombatForecast(state: GameState, col: number, row: number
       selfShield: armedSkill.shieldAmount > 0 && armedSkill.pattern !== 'aura' ? armedSkill.shieldAmount : 0,
       status: armedSkill.status,
       highGround: false,
+      elevationDiff: 0,
+      coverBonus: 0,
+      terrainDefBonus: 0,
       empowered: active.empowerTurns > 0,
       attackArc: 'front',
       isOffensive,
@@ -1617,6 +1830,9 @@ export function computeCombatForecast(state: GameState, col: number, row: number
   let critDmg = 0
   let critChance = 0
   let highGround = false
+  let elevationDiff = 0
+  let coverBonus = 0
+  let terrainDef = 0
   let empowered = false
   let attackArc: AttackArc = 'front'
   let ignoreArmor = 0
@@ -1650,6 +1866,9 @@ export function computeCombatForecast(state: GameState, col: number, row: number
         critDmg = m.critDmg
         critChance = m.critChance
         highGround = m.highGround
+        elevationDiff = m.elevationDiff
+        coverBonus = m.coverBonus
+        terrainDef = m.terrainDef
         empowered = m.empowered
         attackArc = m.attackArc
         hpAfterNormal = m.hpAfterNormal
@@ -1662,6 +1881,9 @@ export function computeCombatForecast(state: GameState, col: number, row: number
     critDmg = m.critDmg
     critChance = m.critChance
     highGround = m.highGround
+    elevationDiff = m.elevationDiff
+    coverBonus = m.coverBonus
+    terrainDef = m.terrainDef
     empowered = m.empowered
     attackArc = m.attackArc
     hpAfterNormal = m.hpAfterNormal
@@ -1681,10 +1903,11 @@ export function computeCombatForecast(state: GameState, col: number, row: number
 
   // Basic Strike option (for enemy targets)
   if (primary.team !== active.team) {
-    const strikeDirect = distNow >= 1 && distNow <= active.range
+    const strikeEffRange = effectiveAttackRange(battle, active.col, active.row, primary.col, primary.row, active.range)
+    const strikeDirect = distNow >= 1 && distNow <= strikeEffRange && hasLineOfSight(battle, active.col, active.row, primary.col, primary.row, false)
     const strikeApproach = strikeDirect
       ? { col: active.col, row: active.row }
-      : (!active.moved ? pickBestApproachTile(battle, active, battle.moveTiles, primary.col, primary.row, active.range) : null)
+      : (!active.moved ? pickBestApproachTile(battle, active, battle.moveTiles, primary.col, primary.row, active.range, false) : null)
     if (strikeApproach) {
       const m = previewDamageMath(battle, active, primary, strikeApproach.col, strikeApproach.row, active.atk, 0, true)
       alternatives.push({
@@ -1710,10 +1933,12 @@ export function computeCombatForecast(state: GameState, col: number, row: number
     if (!sk || active.cooldowns[i] > 0 || sk.target === 'self') continue
     if (sk.target === 'ally' && primary.team !== active.team) continue
     if ((sk.target === 'enemy' || sk.target === 'tile') && primary.team === active.team) continue
-    const skDirect = distNow >= 1 && distNow <= sk.range
+    const skIndirect = isIndirectSkill(sk)
+    const skEffRange = effectiveAttackRange(battle, active.col, active.row, primary.col, primary.row, sk.range)
+    const skDirect = distNow >= 1 && distNow <= skEffRange && hasLineOfSight(battle, active.col, active.row, primary.col, primary.row, skIndirect)
     const skApproach = skDirect
       ? { col: active.col, row: active.row }
-      : (!active.moved ? pickBestApproachTile(battle, active, battle.moveTiles, primary.col, primary.row, sk.range) : null)
+      : (!active.moved ? pickBestApproachTile(battle, active, battle.moveTiles, primary.col, primary.row, sk.range, skIndirect) : null)
     if (!skApproach) continue
     if (sk.target === 'ally') {
       alternatives.push({
@@ -1779,6 +2004,9 @@ export function computeCombatForecast(state: GameState, col: number, row: number
     selfShield,
     status,
     highGround,
+    elevationDiff,
+    coverBonus,
+    terrainDefBonus: terrainDef,
     empowered,
     attackArc,
     isOffensive,
@@ -1825,10 +2053,13 @@ function applyDamage(
   let dmg = rawDamage
   let attackArc: AttackArc = 'front'
   let arcCritBonus = 0
+  let coverBonus = 0
+  const terrainDef = terrainDefBonus(battle.cells[defender.row][defender.col].terrain)
   if (attacker) {
-    const aElev = battle.cells[attacker.row][attacker.col].elevation
-    const dElev = battle.cells[defender.row][defender.col].elevation
-    if (aElev > dElev + 0.1) dmg *= 1.2 // High ground advantage!
+    const aLvl = cellHeightAt(battle, attacker.col, attacker.row)
+    const dLvl = cellHeightAt(battle, defender.col, defender.row)
+    dmg *= elevationDamageMultiplier(aLvl, dLvl)
+    coverBonus = computeCoverBonus(battle, attacker.col, attacker.row, defender.col, defender.row)
     attackArc = computeAttackArc(attacker.col, attacker.row, defender.col, defender.row, defender.facing)
     const arcMod = attackArcModifiers(attackArc)
     dmg *= arcMod.dmgMul
@@ -1836,7 +2067,7 @@ function applyDamage(
     if (attacker.empowerTurns > 0) dmg *= 1.35
   }
 
-  const effDef = Math.max(0, defender.def * (1 - clamp(ignoreArmor, 0, 1)))
+  const effDef = Math.max(0, defender.def * (1 - clamp(ignoreArmor, 0, 1)) + terrainDef + coverBonus)
   let finalDmg = Math.max(4, Math.round(dmg - effDef * 0.72))
 
   let isCrit = false
@@ -2665,23 +2896,29 @@ function executeEnemyUnitTurn(state: GameState, enemy: BattleUnit): void {
     })[0]
   if (!target) return
 
-  // Move if not already in ideal range
+  // Move if not already in ideal range or LoS is blocked
   const distNow = manhattan(enemy.col, enemy.row, target.col, target.row)
-  if (distNow > enemy.range || (spec.ai === 'ranged' && distNow === 1)) {
+  const effRangeNow = effectiveAttackRange(battle, enemy.col, enemy.row, target.col, target.row, enemy.range)
+  const hasLoSNow = hasLineOfSight(battle, enemy.col, enemy.row, target.col, target.row, false)
+  if (distNow > effRangeNow || !hasLoSNow || (spec.ai === 'ranged' && distNow === 1)) {
     const moveOptions = computeMoveTiles(battle, enemy)
     let bestTile: { col: number; row: number } | null = null
     let bestScore = -9999
     for (const tile of moveOptions) {
       const d = manhattan(tile.col, tile.row, target.col, target.row)
-      const elev = battle.cells[tile.row][tile.col].elevation
-      let score = -d * 10 + elev * 4
-      if (d <= enemy.range) {
+      const elev = cellHeightAt(battle, tile.col, tile.row)
+      const tileEffRange = effectiveAttackRange(battle, tile.col, tile.row, target.col, target.row, enemy.range)
+      const tileLoS = hasLineOfSight(battle, tile.col, tile.row, target.col, target.row, false)
+      const canHit = d <= tileEffRange && tileLoS
+      let score = -d * 10 + elev * 5 + terrainDefBonus(battle.cells[tile.row][tile.col].terrain) * 3
+      if (canHit) {
+        score += 14
         const arc = computeAttackArc(tile.col, tile.row, target.col, target.row, target.facing)
         if (arc === 'back') score += 18
         else if (arc === 'flank') score += 9
       }
       if (spec.ai === 'ranged') {
-        score = d <= enemy.range && d >= 2 ? 40 - d * 2 + elev * 8 : -Math.abs(d - enemy.range) * 10
+        score = canHit && d >= 2 ? 50 - d * 2 + elev * 10 : -Math.abs(d - enemy.range) * 10 + elev * 4
       }
       if (score > bestScore) {
         bestScore = score
@@ -2707,7 +2944,9 @@ function executeEnemyUnitTurn(state: GameState, enemy: BattleUnit): void {
 function performEnemyAttack(state: GameState, enemy: BattleUnit, target: BattleUnit): void {
   const battle = state.battle
   if (!battle || !enemy.alive || !target.alive) return
-  if (manhattan(enemy.col, enemy.row, target.col, target.row) > enemy.range) return
+  const effRange = effectiveAttackRange(battle, enemy.col, enemy.row, target.col, target.row, enemy.range)
+  if (manhattan(enemy.col, enemy.row, target.col, target.row) > effRange) return
+  if (!enemy.isBoss && !hasLineOfSight(battle, enemy.col, enemy.row, target.col, target.row, false)) return
 
   // Boss special every odd/even turn: Eclipse Nova cross AoE!
   if (enemy.isBoss && battle.turn % 2 === 0) {
@@ -2792,7 +3031,12 @@ export function stepGame(state: GameState, dt: number): void {
                 battle.armedSkillIndex = null
               } else {
                 const target = unitAt(battle, pending.col, pending.row)
-                if (target && target.team === 'enemy' && manhattan(u.col, u.row, target.col, target.row) <= u.range) {
+                if (
+                  target &&
+                  target.team === 'enemy' &&
+                  manhattan(u.col, u.row, target.col, target.row) <= effectiveAttackRange(battle, u.col, u.row, target.col, target.row, u.range) &&
+                  hasLineOfSight(battle, u.col, u.row, target.col, target.row, false)
+                ) {
                   executeBasicAttack(state, u, target)
                 }
               }
@@ -2813,7 +3057,7 @@ export function stepGame(state: GameState, dt: number): void {
         }
       } else {
         const t = u.moveProgress
-        const hop = Math.sin(t * Math.PI) * 0.28
+        const hop = Math.sin(t * Math.PI) * (0.28 + Math.abs(ty - fy) * 0.35)
         u.x = fx + (tx - fx) * t
         u.z = fz + (tz - fz) * t
         u.y = fy + (ty - fy) * t + hop

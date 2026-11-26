@@ -2173,7 +2173,23 @@ export function drawCombatForecast(
     color: '#ffffff'
   })
   if (fc.requiresMove) tags.push({ text: 'MOVE+HIT', bg: '#7d4408', color: '#ffd98a' })
-  if (fc.highGround) tags.push({ text: 'HIGH +20%', bg: '#6e5208', color: COLOR.accentHi })
+  if (fc.elevationDiff > 0) {
+    const pct = fc.elevationDiff >= 3 ? 35 : fc.elevationDiff === 2 ? 28 : 20
+    tags.push({ text: `HIGH +${pct}%`, bg: '#6e5208', color: COLOR.accentHi })
+  } else if (fc.elevationDiff < 0 && fc.isOffensive) {
+    const pct = fc.elevationDiff <= -2 ? -15 : -8
+    tags.push({ text: `UPHILL ${pct}%`, bg: '#5e2c26', color: '#ffb5a8' })
+  }
+  if (fc.coverBonus > 0 && fc.isOffensive) {
+    tags.push({ text: `COVER +${fc.coverBonus} DEF`, bg: '#27466b', color: '#a8dcff' })
+  }
+  if (fc.terrainDefBonus !== 0 && fc.isOffensive) {
+    tags.push({
+      text: fc.terrainDefBonus > 0 ? `TERRAIN +${fc.terrainDefBonus}` : `EXPOSED ${fc.terrainDefBonus}`,
+      bg: fc.terrainDefBonus > 0 ? '#2b4752' : '#69341a',
+      color: fc.terrainDefBonus > 0 ? '#a8e6e2' : '#ffd1a3'
+    })
+  }
   if (fc.empowered) tags.push({ text: 'BUFF +35%', bg: '#6e5208', color: COLOR.accentHi })
   if (fc.aoeTargets > 1) tags.push({ text: `AOE x${fc.aoeTargets}`, bg: '#6e2336', color: '#ffd0d6' })
   if (fc.status) tags.push({ text: fc.status.toUpperCase(), bg: '#452463', color: '#e6c2ff' })

@@ -23,6 +23,7 @@ import {
   selectHeroByUid, selectTile, startChapterBattle, stepGame,
   toggleSquadMember, unequipItem
 } from './simulation.ts'
+import { cellHeightLevel } from './types.ts'
 import type {
   ChapterSpec, CombatForecast, EnemyArchetypeId, GameState, OwnedEquipCard, OwnedHeroCard,
   PackId, PackRevealItem, Rarity
@@ -67,15 +68,17 @@ const ARMORY_FILTERS: readonly ArmoryFilter[] = ['all', 'weapon', 'armor', 'reli
 
 const TERRAIN_LABEL: Record<string, string> = {
   grass: 'Meadow',
-  stone: 'Flagstone',
-  hill: 'High Ground (+20% DMG)',
-  bridge: 'Bridge',
+  stone: 'Flagstone (+1 DEF)',
+  hill: 'Ridge Terrace',
+  bridge: 'Bridge (-1 DEF)',
   water: 'Deep Water (Blocked)',
-  shrine: 'Sun Shrine (+14 HP/Turn)',
-  pillar: 'Stone Pillar (Cover)',
+  shrine: 'Sun Shrine (+14 HP, +1 DEF)',
+  pillar: 'Stone Pillar (LoS · Cover)',
   lava: 'Molten Rift (Blocked)',
-  snow: 'Alpine Snow',
-  darkstone: 'Obsidian Floor'
+  snow: 'Deep Snow (2 Move)',
+  darkstone: 'Obsidian Floor (+2 DEF)',
+  stairs: 'Stone Stairs (Climb)',
+  void: 'Chasm'
 }
 
 const SPEAKER_PORTRAIT: Record<string, string> = {
@@ -3888,13 +3891,16 @@ async function start() {
 
     const hovered = scene.getHoveredCell()
     if (hovered && g.width >= 660) {
-      const cell = battle.cells[hovered.row][hovered.col]
-      const desc = TERRAIN_LABEL[cell.terrain] ?? cell.terrain
-      const text = `${desc} (${hovered.col + 1},${hovered.row + 1})`
-      const pw = Math.min(256, Math.max(136, text.length * 7 + 24))
-      const py = g.height < 480 ? 48 : 58
-      g.panel(10, py, pw, 28, { fill: '#253357', stroke: COLOR.borderHi, radius: 10 })
-      g.text(text, 22, py + 8, { fill: '#ffffff', size: 11.5, weight: 800 })
+      const cell = battle.cells[hovered.row]?.[hovered.col]
+      if (cell && cell.terrain !== 'void') {
+        const desc = TERRAIN_LABEL[cell.terrain] ?? cell.terrain
+        const hLvl = cellHeightLevel(cell)
+        const text = `${desc} · H${hLvl} (${hovered.col + 1},${hovered.row + 1})`
+        const pw = Math.min(284, Math.max(148, text.length * 7 + 24))
+        const py = g.height < 480 ? 48 : 58
+        g.panel(10, py, pw, 28, { fill: '#253357', stroke: COLOR.borderHi, radius: 10 })
+        g.text(text, 22, py + 8, { fill: '#ffffff', size: 11.5, weight: 800 })
+      }
     }
 
     if (battle.bannerTimer > 0 && battle.bannerText) {
