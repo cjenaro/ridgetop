@@ -156,7 +156,6 @@ test('bindActionControls restarts gamepad polling after Testing Mode pause/resum
 
     const controls = bindActionControls({
       keys: { KeyA: 'left' },
-      buttons: [],
       enabled: () => false,
       onPause: () => { pauses++ }
     })
@@ -200,7 +199,6 @@ test('bindActionControls clears held state and ignores keyboard input while test
     let presses = 0
     const controls = bindActionControls<'right'>({
       keys: { ArrowRight: 'right' },
-      buttons: [],
       enabled: () => true,
       gamepad: false,
       onPress() { presses++ }

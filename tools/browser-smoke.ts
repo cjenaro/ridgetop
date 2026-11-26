@@ -58,24 +58,24 @@ async function capturePngBase64(tab: BrowserTab, params: Record<string, unknown>
   return result.data
 }
 
-async function assertGameViewport(tab: BrowserTab, stage: string, hud: string, uiLayer: string) {
+async function assertGameViewport(tab: BrowserTab, stage: string, uiLayer: string) {
   const layout = await tab.evaluate(`(() => {
     const world = document.getElementById('${stage}')
-    const layer = document.getElementById('${hud}')
     const ui = document.getElementById('${uiLayer}')
     const fillsViewport = element => {
       const rect = element.getBoundingClientRect()
       return rect.top === 0 && rect.left === 0 && rect.width === innerWidth && rect.height === innerHeight
     }
     return {
-      playfield: fillsViewport(world), hud: fillsViewport(layer), ui: fillsViewport(ui),
+      playfield: fillsViewport(world), ui: fillsViewport(ui),
+      noSeparateHud: document.querySelectorAll('canvas[id$="-hud"]').length === 0,
       noHtmlMenus: document.querySelectorAll('button, select').length === 0,
       noScroll: document.scrollingElement.scrollHeight === innerHeight,
-      matchingPixels: layer.width === world.width && layer.height === world.height,
-      painted: layer.getContext('2d').getImageData(40, 40, 1, 1).data[3] > 0
+      matchingPixels: ui.width === world.width && ui.height === world.height,
+      painted: ui.getContext('2d').getImageData(40, 40, 1, 1).data[3] > 0
     }
   })()`)
-  assert.deepEqual(layout, { playfield: true, hud: true, ui: true, noHtmlMenus: true, noScroll: true, matchingPixels: true, painted: true }, stage)
+  assert.deepEqual(layout, { playfield: true, ui: true, noSeparateHud: true, noHtmlMenus: true, noScroll: true, matchingPixels: true, painted: true }, stage)
 }
 
 try {
@@ -206,7 +206,7 @@ try {
     const tab = await open('/?mode=practice&renderer=' + backend)
     await until(() => uiState(tab, 'backend'), rendererNames[backend], backend + ' initialized')
     await until(() => uiState(tab, 'connection'), 'Solo practice', 'solo practice loaded')
-    await assertGameViewport(tab, 'stage', 'beacon-hud', 'ui')
+    await assertGameViewport(tab, 'stage', 'ui')
     const hasSprite = await tab.evaluate(`(() => {
       const layer = document.querySelector('#sprites')
       const pixels = layer.getContext('2d').getImageData(0, 0, layer.width, layer.height).data
@@ -247,7 +247,7 @@ try {
       await tab.call('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [point] })
       await until(() => uiState(tab, 'falls'), '1 fall', 'touch movement and respawn')
       await tab.call('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] })
-      await assertGameViewport(tab, 'stage', 'beacon-hud', 'ui')
+      await assertGameViewport(tab, 'stage', 'ui')
     }
     assert.deepEqual(tab.errors, [])
     await tab.close()
@@ -290,7 +290,7 @@ try {
     await uiAct(racer, 'race-start')
     await key(racer, 'keyDown', 'KeyW', 'w')
     await until(() => uiState(racer, 'speed'), label => typeof label === 'string' && Number.parseInt(label) >= 12, 'race accelerated')
-    await assertGameViewport(racer, 'race-stage', 'race-hud', 'race-ui')
+    await assertGameViewport(racer, 'race-stage', 'race-ui')
     await key(racer, 'keyUp', 'KeyW', 'w')
     assert.equal(await uiState(racer, 'shield'), 'Shield 120 / 120')
     await key(racer, 'keyDown', 'KeyJ', 'j')
@@ -314,7 +314,7 @@ try {
       await racer.call('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [point] })
       await until(() => uiState(racer, 'speed'), label => typeof label === 'string' && Number.parseInt(label) >= 12, 'portrait racing touch throttle')
       await racer.call('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] })
-      await assertGameViewport(racer, 'race-stage', 'race-hud', 'race-ui')
+      await assertGameViewport(racer, 'race-stage', 'race-ui')
     }
     if (process.env.RIDGETOP_RACING_SCREENSHOT && backend === selected[0]) {
       await writeFile(process.env.RIDGETOP_RACING_SCREENSHOT, Buffer.from(await capturePngBase64(racer), 'base64'))
@@ -338,7 +338,6 @@ try {
     await until(() => uiState(lh, 'screen'), 'title', backend + ' Tidewatch title screen loaded')
     const titleLayout = await lh.evaluate(`(() => {
       const world = document.getElementById('lh-stage')
-      const layer = document.getElementById('lh-hud')
       const ui = document.getElementById('lh-ui')
       const fillsViewport = el => {
         const r = el.getBoundingClientRect()
@@ -349,19 +348,19 @@ try {
       for (let i = 3; i < uiPixels.length; i += 64) { if (uiPixels[i] > 0) { uiPainted = true; break } }
       return {
         playfield: fillsViewport(world),
-        hud: fillsViewport(layer),
         ui: fillsViewport(ui),
+        noSeparateHud: document.querySelectorAll('canvas[id$="-hud"]').length === 0,
         noHtmlMenus: document.querySelectorAll('button, select').length === 0,
         noScroll: document.scrollingElement.scrollHeight === innerHeight,
         uiPainted
       }
     })()`)
-    assert.deepEqual(titleLayout, { playfield: true, hud: true, ui: true, noHtmlMenus: true, noScroll: true, uiPainted: true }, backend + ' Tidewatch title layout')
+    assert.deepEqual(titleLayout, { playfield: true, ui: true, noSeparateHud: true, noHtmlMenus: true, noScroll: true, uiPainted: true }, backend + ' Tidewatch title layout')
 
     // Start gameplay via Canvas UI action
     await uiAct(lh, 'lh-play')
     await until(() => uiState(lh, 'screen'), 'playing', backend + ' Tidewatch gameplay started')
-    await assertGameViewport(lh, 'lh-stage', 'lh-hud', 'lh-ui')
+    await assertGameViewport(lh, 'lh-stage', 'lh-ui')
 
     // Verify movement / keyboard input updates the rendered viewport and state stays finite
     const stageClip = await lh.evaluate(`(() => {

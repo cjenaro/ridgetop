@@ -1,17 +1,18 @@
 import { createGameHost, isMain, startGameHost } from 'ridgetop/server'
 
-const files = [
-  'index.html', 'game-ui.css',
-  'lighthouse/main.js', 'lighthouse/types.js', 'lighthouse/simulation.js',
-  'lighthouse/art.js', 'lighthouse/scene.js', 'lighthouse/audio.js'
-]
+const files = ['index.html', 'game-ui.css']
 
 export function createLighthouseServer({ testing }: { testing?: boolean } = {}) {
   const source = import.meta.url.endsWith('.ts')
+  const root = new URL(source ? '.' : '../', import.meta.url)
+  const moduleRoot = new URL(source ? 'dist/' : '.', import.meta.url)
   return createGameHost({
-    root: new URL(source ? '.' : '../', import.meta.url),
-    moduleRoot: new URL(source ? 'dist/' : '.', import.meta.url),
+    root,
+    moduleRoot,
     files,
+    mounts: {
+      '/lighthouse/': { dir: new URL('lighthouse/', moduleRoot), extensions: ['js'] }
+    },
     aliases: { '/': 'index.html' },
     testing
   })

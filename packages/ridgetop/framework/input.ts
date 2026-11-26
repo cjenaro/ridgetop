@@ -19,9 +19,10 @@ const defaultGamepadBindings: Record<string, readonly GamepadBinding[]> = {
   recover: [{ button: 8 }]
 }
 
-const EMPTY_PADS: readonly Gamepad[] = []
+const EMPTY_PADS: readonly Gamepad[] = Object.freeze([])
 
-function readPads(): readonly Gamepad[] {
+/** Safely return all currently connected gamepads across browser and non-Array GamepadList implementations. */
+export function readConnectedGamepads(): readonly Gamepad[] {
   const getGamepads = globalThis.navigator?.getGamepads
   if (typeof getGamepads !== 'function') return EMPTY_PADS
   try {
@@ -59,7 +60,7 @@ export function bindActionControls<Action extends string>({
   gamepad, pauseButtons = [9]
 }: {
   keys: Readonly<Record<string, Action>>
-  buttons: Iterable<HTMLElement>
+  buttons?: Iterable<HTMLElement>
   enabled(): boolean
   onPause?(): void
   onGesture?(): void
@@ -69,6 +70,7 @@ export function bindActionControls<Action extends string>({
 }) {
   const down = new Map<string, Action>()
   const pointers = new Map<number, Action>()
+  const holds = new Set<Action>()
   const padDown = new Set<Action>()
   let padPauseDown = false
   let padFrame: number | undefined
@@ -98,9 +100,28 @@ export function bindActionControls<Action extends string>({
     }
   }
 
+  function clearHolds() {
+    holds.clear()
+  }
+
+  function setHold(action: Action, active: boolean) {
+    if (!active) {
+      holds.delete(action)
+      return
+    }
+    if (disposed || isTestingPaused() || !enabled()) return
+    const wasHeld = holds.has(action)
+    holds.add(action)
+    if (!wasHeld) {
+      onGesture()
+      onPress(action)
+    }
+  }
+
   function clear() {
     down.clear()
     pointers.clear()
+    holds.clear()
     padDown.clear()
   }
 
@@ -120,7 +141,7 @@ export function bindActionControls<Action extends string>({
       padPauseDown = false
       return false
     }
-    const pads = readPads()
+    const pads = readConnectedGamepads()
     if (!pads.length) {
       padDown.clear()
       padPauseDown = false
@@ -200,48 +221,52 @@ export function bindActionControls<Action extends string>({
   if (gamepad !== false) {
     window.addEventListener('gamepadconnected', () => ensurePadLoop(), listeners)
     window.addEventListener('gamepaddisconnected', () => {
-      if (!readPads().length) {
+      if (!readConnectedGamepads().length) {
         padDown.clear()
         padPauseDown = false
         stopPadLoop()
       }
     }, listeners)
-    if (readPads().length) ensurePadLoop()
+    if (readConnectedGamepads().length) ensurePadLoop()
   }
 
-  for (const button of buttons) {
-    const control = button.dataset.control
-    const action = control !== undefined ? knownActions.get(control) : undefined
-    if (action === undefined) continue
-    button.addEventListener('pointerdown', event => {
-      if (isTestingPaused() || event.button !== 0 || !enabled()) return
-      event.preventDefault()
-      onGesture()
-      try { button.setPointerCapture?.(event.pointerId) } catch { /* Synthetic or detached pointers cannot be captured. */ }
-      pointers.set(event.pointerId, action)
-      onPress(action)
-    }, listeners)
-    button.addEventListener('click', event => {
-      if (!isTestingPaused() && event.detail === 0 && enabled()) {
+  if (buttons) {
+    for (const button of buttons) {
+      const control = button.dataset.control
+      const action = control !== undefined ? knownActions.get(control) : undefined
+      if (action === undefined) continue
+      button.addEventListener('pointerdown', event => {
+        if (isTestingPaused() || event.button !== 0 || !enabled()) return
+        event.preventDefault()
         onGesture()
+        try { button.setPointerCapture?.(event.pointerId) } catch { /* Synthetic or detached pointers cannot be captured. */ }
+        pointers.set(event.pointerId, action)
         onPress(action)
-      }
-    }, listeners)
-    const releasePointer = (event: PointerEvent) => { pointers.delete(event.pointerId) }
-    button.addEventListener('pointerup', releasePointer, listeners)
-    button.addEventListener('pointercancel', releasePointer, listeners)
-    button.addEventListener('lostpointercapture', releasePointer, listeners)
+      }, listeners)
+      button.addEventListener('click', event => {
+        if (!isTestingPaused() && event.detail === 0 && enabled()) {
+          onGesture()
+          onPress(action)
+        }
+      }, listeners)
+      const releasePointer = (event: PointerEvent) => { pointers.delete(event.pointerId) }
+      button.addEventListener('pointerup', releasePointer, listeners)
+      button.addEventListener('pointercancel', releasePointer, listeners)
+      button.addEventListener('lostpointercapture', releasePointer, listeners)
+    }
   }
 
   return {
     clear,
+    clearHolds,
+    setHold,
     poll,
     active(action: Action) {
       if (isTestingPaused()) return false
       if (gamepad !== false && poll()) ensurePadLoop()
       for (const held of down.values()) if (held === action) return true
       for (const held of pointers.values()) if (held === action) return true
-      return padDown.has(action)
+      return holds.has(action) || padDown.has(action)
     },
     dispose() {
       disposed = true
@@ -254,7 +279,7 @@ export function bindActionControls<Action extends string>({
 }
 
 export function bindPlatformControls(options: {
-  buttons: Iterable<HTMLElement>
+  buttons?: Iterable<HTMLElement>
   enabled(): boolean
   onPause(): void
   onGesture(): void
@@ -275,138 +300,12 @@ export function bindPlatformControls(options: {
   })
   return {
     clear: controls.clear,
+    clearHolds: controls.clearHolds,
+    setHold: controls.setHold,
     poll: controls.poll,
     dispose: controls.dispose,
     read(): RoomInput {
       return { left: controls.active('left'), right: controls.active('right'), jump }
-    }
-  }
-}
-
-function visibleFocusables(root: ParentNode): HTMLElement[] {
-  const selector = 'button:not([disabled]), a[href], select:not([disabled]), summary, input:not([type="hidden"]):not([disabled])'
-  return Array.from(root.querySelectorAll<HTMLElement>(selector)).filter(el => {
-    if (el.hidden || el.closest('[hidden]')) return false
-    const style = globalThis.getComputedStyle?.(el)
-    if (style && (style.display === 'none' || style.visibility === 'hidden')) return false
-    return true
-  })
-}
-
-const menuPrevBindings: readonly GamepadBinding[] = [
-  { button: 12 }, { button: 14 },
-  { axis: 1, direction: -1, threshold: .5 }, { axis: 0, direction: -1, threshold: .5 }
-]
-const menuNextBindings: readonly GamepadBinding[] = [
-  { button: 13 }, { button: 15 },
-  { axis: 1, direction: 1, threshold: .5 }, { axis: 0, direction: 1, threshold: .5 }
-]
-const menuConfirmBinding: GamepadBinding = { button: 0 }
-const menuBackBinding: GamepadBinding = { button: 1 }
-
-/** Enable D-pad / Left Stick menu navigation and A/B confirm/back on gamepads and Steam Deck. */
-export function bindMenuGamepad({
-  enabled, container = () => document, onBack
-}: {
-  enabled(): boolean
-  container?(): ParentNode | null
-  onBack?(): void
-}) {
-  let disposed = false
-  let frame: number | undefined
-  let lastDir = 0
-  let lastMoveAt = 0
-  let confirmDown = false
-  let backDown = false
-  const controller = new AbortController()
-  const listeners = { signal: controller.signal }
-
-  function step(now = performance.now()) {
-    if (disposed || isTestingPaused()) return
-    const pads = readPads()
-    if (!pads.length) {
-      lastDir = 0
-      confirmDown = false
-      backDown = false
-      return
-    }
-    const confirm = pads.some(p => bindingActive(p, menuConfirmBinding))
-    const back = pads.some(p => bindingActive(p, menuBackBinding))
-    if (!enabled()) {
-      lastDir = 0
-      confirmDown = confirm
-      backDown = back
-      return
-    }
-    const prev = pads.some(p => menuPrevBindings.some(b => bindingActive(p, b)))
-    const next = pads.some(p => menuNextBindings.some(b => bindingActive(p, b)))
-    const dir = next ? 1 : prev ? -1 : 0
-    const shouldMove = dir !== 0 && (dir !== lastDir || now - lastMoveAt >= 200)
-    const shouldConfirm = confirm && !confirmDown
-    const shouldBack = back && !backDown
-    lastDir = dir
-    confirmDown = confirm
-    backDown = back
-    if (shouldMove || shouldConfirm) {
-      const root = container()
-      const items = root ? visibleFocusables(root) : []
-      if (shouldMove && items.length) {
-        const current = document.activeElement instanceof HTMLElement ? items.indexOf(document.activeElement) : -1
-        const index = current < 0 ? (dir > 0 ? 0 : items.length - 1) : (current + dir + items.length) % items.length
-        items[index]?.focus()
-        lastMoveAt = now
-      }
-      if (shouldConfirm) {
-        const active = document.activeElement instanceof HTMLElement && items.includes(document.activeElement)
-          ? document.activeElement : items[0]
-        if (active) {
-          active.focus()
-          if (active instanceof HTMLSelectElement) {
-            const count = active.options.length
-            if (count > 0) {
-              const start = active.selectedIndex >= 0 ? active.selectedIndex : -1
-              for (let offset = 1; offset <= count; offset++) {
-                const candidate = (start + offset) % count
-                if (!active.options[candidate]?.disabled) {
-                  active.selectedIndex = candidate
-                  active.dispatchEvent(new Event('change', { bubbles: true }))
-                  break
-                }
-              }
-            }
-          } else {
-            active.click()
-          }
-        }
-      }
-    }
-
-    if (shouldBack) onBack?.()
-  }
-
-  function ensureLoop() {
-    if (disposed || frame !== undefined || typeof globalThis.requestAnimationFrame !== 'function') return
-    const tick = (now: number) => {
-      frame = undefined
-      if (disposed) return
-      step(now)
-      if (!disposed && readPads().length) frame = globalThis.requestAnimationFrame(tick)
-    }
-    frame = globalThis.requestAnimationFrame(tick)
-  }
-
-  window.addEventListener('gamepadconnected', () => ensureLoop(), listeners)
-  if (readPads().length) ensureLoop()
-
-  return {
-    poll: step,
-    dispose() {
-      disposed = true
-      if (frame !== undefined) {
-        globalThis.cancelAnimationFrame?.(frame)
-        frame = undefined
-      }
-      controller.abort()
     }
   }
 }

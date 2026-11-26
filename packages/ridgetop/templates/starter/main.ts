@@ -172,7 +172,6 @@ async function start() {
 
   const controls = bindActionControls({
     keys,
-    buttons: [],
     enabled: () => !won && !menuOpen,
     onPause: () => { if (!won) setMenuOpen(!menuOpen) },
     onPress: key => { queued = key }
@@ -471,13 +470,19 @@ async function start() {
     }
   })
 
-  window.addEventListener('pagehide', event => {
-    if (event.persisted) return
-    unregisterTestingHooks()
-    stop()
-    ui.dispose()
-    controls.dispose()
-    renderer?.dispose()
+  const stopLifecycle = platform.onLifecycle({
+    pause() {
+      controls.clear()
+      ui.clearHolds()
+    },
+    dispose() {
+      unregisterTestingHooks()
+      stop()
+      stopLifecycle()
+      ui.dispose()
+      controls.dispose()
+      renderer?.dispose()
+    }
   })
 }
 

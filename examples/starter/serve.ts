@@ -2,10 +2,15 @@ import { createGameHost, isMain, startGameHost } from 'ridgetop/server'
 
 export function createStarterServer({ testing }: { testing?: boolean } = {}) {
   const source = import.meta.url.endsWith('.ts')
+  const root = new URL(source ? '.' : '../', import.meta.url)
+  const moduleRoot = new URL(source ? 'dist/' : '.', import.meta.url)
   return createGameHost({
-    root: new URL(source ? '.' : '../', import.meta.url),
-    moduleRoot: new URL(source ? 'dist/' : '.', import.meta.url),
-    files: ['index.html', 'style.css', 'main.js', 'game.js'],
+    root,
+    moduleRoot,
+    files: ['index.html', 'style.css'],
+    mounts: {
+      '/': { dir: moduleRoot, extensions: ['js'], exclude: ['serve.js'] }
+    },
     artDirectories: ['art'],
     aliases: { '/': 'index.html' },
     testing

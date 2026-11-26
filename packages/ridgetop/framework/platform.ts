@@ -1,4 +1,11 @@
 export type PlatformKind = 'web' | 'desktop' | 'ios' | 'android'
+export type LifecycleReason = 'visibility' | 'page' | 'native'
+
+export interface PlatformLifecycleHandlers {
+  pause?(reason: LifecycleReason): void
+  resume?(reason: LifecycleReason): void
+  dispose?(): void
+}
 
 export interface RidgetopNativeBridge {
   platform?: PlatformKind
@@ -38,7 +45,7 @@ export interface RidgetopPlatform {
   setFullscreen(enabled: boolean): Promise<void>
   toggleFullscreen(): Promise<void>
   haptic(style?: 'light' | 'medium' | 'heavy'): void
-  onLifecycle(handlers: { pause?: () => void; resume?: () => void }): () => void
+  onLifecycle(handlers: PlatformLifecycleHandlers): () => void
   readonly steam: {
     readonly available: boolean
     unlockAchievement(id: string): Promise<boolean>
@@ -167,26 +174,50 @@ export function createPlatform(): RidgetopPlatform {
         }
       } catch { /* Ignore unsupported vibration. */ }
     },
-    onLifecycle({ pause, resume }: { pause?: () => void; resume?: () => void }) {
+    onLifecycle({ pause, resume, dispose }: PlatformLifecycleHandlers) {
       const controller = new AbortController()
       const options = { signal: controller.signal }
+      let disposed = false
+      let unsubscribeNative: (() => void) | void
+
+      function stop() {
+        controller.abort()
+        const unsub = unsubscribeNative
+        unsubscribeNative = undefined
+        if (typeof unsub === 'function') unsub()
+      }
+
+      function runDispose() {
+        if (disposed) return
+        disposed = true
+        stop()
+        dispose?.()
+      }
+
       if (globalThis.document) {
         globalThis.document.addEventListener('visibilitychange', () => {
-          if (globalThis.document.hidden) pause?.()
-          else resume?.()
+          if (disposed) return
+          if (globalThis.document.hidden) pause?.('visibility')
+          else resume?.('visibility')
         }, options)
       }
       if (globalThis.window) {
-        globalThis.window.addEventListener('pagehide', () => pause?.(), options)
+        globalThis.window.addEventListener('pagehide', event => {
+          if (disposed) return
+          if (event.persisted) pause?.('page')
+          else if (dispose) runDispose()
+          else pause?.('page')
+        }, options)
         globalThis.window.addEventListener('pageshow', event => {
-          if (event.persisted) resume?.()
+          if (disposed) return
+          if (event.persisted) resume?.('page')
         }, options)
       }
-      const unsubscribeNative = bridge?.lifecycle?.subscribe?.({ pause, resume })
-      return () => {
-        controller.abort()
-        if (typeof unsubscribeNative === 'function') unsubscribeNative()
-      }
+      unsubscribeNative = bridge?.lifecycle?.subscribe?.({
+        pause: pause ? () => { if (!disposed) pause('native') } : undefined,
+        resume: resume ? () => { if (!disposed) resume('native') } : undefined
+      })
+      return stop
     },
     steam: {
       get available() {

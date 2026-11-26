@@ -355,39 +355,38 @@ const uiState = (client: FirefoxBiDi, field: string) =>
 const uiAct = (client: FirefoxBiDi, id: string, action = 'press', payload?: unknown) =>
   client.evaluate(`window.__ridgetopUi?.act(${JSON.stringify(id)}, ${JSON.stringify(action)}, ${JSON.stringify(payload)})`)
 
-async function assertGameViewport(client: FirefoxBiDi, stage: string, hud: string, uiLayer: string): Promise<void> {
+async function assertGameViewport(client: FirefoxBiDi, stage: string, uiLayer: string): Promise<void> {
   await client.evaluate('new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))')
   const layout = await client.evaluate(`(() => {
     const world = document.getElementById(${JSON.stringify(stage)})
-    const layer = document.getElementById(${JSON.stringify(hud)})
     const ui = document.getElementById(${JSON.stringify(uiLayer)})
-    if (!world || !layer || !ui) return { missing: true }
+    if (!world || !ui) return { missing: true }
     const fillsViewport = el => {
       const rect = el.getBoundingClientRect()
       return Math.abs(rect.top) <= 1 && Math.abs(rect.left) <= 1 &&
         Math.abs(rect.width - innerWidth) <= 1 && Math.abs(rect.height - innerHeight) <= 1
     }
-    const ctx = layer.getContext('2d')
+    const ctx = ui.getContext('2d')
     let painted = false
-    if (ctx && layer.width > 0 && layer.height > 0) {
-      const data = ctx.getImageData(0, 0, layer.width, layer.height).data
+    if (ctx && ui.width > 0 && ui.height > 0) {
+      const data = ctx.getImageData(0, 0, ui.width, ui.height).data
       for (let i = 3; i < data.length; i += 64) {
         if (data[i] > 0) { painted = true; break }
       }
     }
     return {
       playfield: fillsViewport(world),
-      hud: fillsViewport(layer),
       ui: fillsViewport(ui),
+      noSeparateHud: document.querySelectorAll('canvas[id$="-hud"]').length === 0,
       noHtmlMenus: [...document.querySelectorAll('button, select')].every(el => Boolean(el.closest('#ridgetop-testing-root'))),
-      matchingPixels: layer.width === world.width && layer.height === world.height,
+      matchingPixels: ui.width === world.width && ui.height === world.height,
       painted
     }
   })()`)
   assert.deepEqual(layout, {
     playfield: true,
-    hud: true,
     ui: true,
+    noSeparateHud: true,
     noHtmlMenus: true,
     matchingPixels: true,
     painted: true
@@ -432,7 +431,7 @@ try {
     await client.navigate(`${server.origin}/?mode=practice&renderer=${backend}`)
     await until(() => uiState(client, 'backend'), expectedName, `Beacon Run ${backend} initialized`)
     await until(() => uiState(client, 'connection'), 'Solo practice', `Beacon Run ${backend} practice loaded`)
-    await assertGameViewport(client, 'stage', 'beacon-hud', 'ui')
+    await assertGameViewport(client, 'stage', 'ui')
     await uiAct(client, 'pause')
     await until(() => uiState(client, 'screen'), 'pause', `Beacon Run ${backend} pause`)
     await uiAct(client, 'resume')
@@ -449,7 +448,7 @@ try {
     await uiAct(client, 'garage-back')
     await uiAct(client, 'race-start')
     await until(() => uiState(client, 'screen'), 'racing', `Signal Drift ${backend} race started`)
-    await assertGameViewport(client, 'race-stage', 'race-hud', 'race-ui')
+    await assertGameViewport(client, 'race-stage', 'race-ui')
     assert.deepEqual(client.errors, [], `Signal Drift (${backend}) console/JS errors`)
     console.log(`PASS Firefox ${backend}: Signal Drift (/racing)`)
 
@@ -459,7 +458,7 @@ try {
     await until(() => uiState(client, 'screen'), 'title', `Tidewatch ${backend} title`)
     await uiAct(client, 'lh-play')
     await until(() => uiState(client, 'screen'), 'playing', `Tidewatch ${backend} playing`)
-    await assertGameViewport(client, 'lh-stage', 'lh-hud', 'lh-ui')
+    await assertGameViewport(client, 'lh-stage', 'lh-ui')
     const lhState = await client.evaluate('window.__ridgetopUi?.state?.()')
     assert.ok(isRecord(lhState), `Tidewatch ${backend} state object missing`)
     for (const metric of ['day', 'coins', 'fuel', 'warmth', 'carry', 'shipsGuided']) {

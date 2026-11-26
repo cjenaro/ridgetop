@@ -16,21 +16,18 @@ export interface HudPainter {
   }): void
 }
 
-/** A screen-space layer that shares the render target's size and pixel density. */
-export function createHud(canvas: HTMLCanvasElement) {
-  const context = canvas.getContext('2d')
-  if (!context) throw new Error('Could not create the game HUD')
-  let previous: string | undefined
-  let previousStage: HTMLCanvasElement | undefined
-  let width = 0
-  let height = 0
-  canvas.addEventListener('contextrestored', () => { previousStage = undefined })
-  const painter: HudPainter = {
-    get width() { return width },
-    get height() { return height },
+/** Create a lightweight screen-space HUD painter backed by any Canvas 2D context. */
+export function createHudPainter(
+  context: CanvasRenderingContext2D,
+  getSize: () => { width: number; height: number }
+): HudPainter {
+  return {
+    get width() { return getSize().width },
+    get height() { return getSize().height },
     panel(x, y, w, h, { fill, stroke, radius = 0 }) {
       context.beginPath()
-      context.roundRect(x, y, w, h, radius)
+      if (typeof context.roundRect === 'function') context.roundRect(x, y, w, h, radius)
+      else context.rect(x, y, w, h)
       context.fillStyle = fill
       context.fill()
       if (stroke) {
@@ -48,6 +45,18 @@ export function createHud(canvas: HTMLCanvasElement) {
       else context.fillText(value, x, y, maxWidth)
     }
   }
+}
+
+/** A standalone screen-space layer that shares the render target's size and pixel density. */
+export function createHud(canvas: HTMLCanvasElement) {
+  const context = canvas.getContext('2d')
+  if (!context) throw new Error('Could not create the game HUD')
+  let previous: string | undefined
+  let previousStage: HTMLCanvasElement | undefined
+  let width = 0
+  let height = 0
+  canvas.addEventListener('contextrestored', () => { previousStage = undefined })
+  const painter = createHudPainter(context, () => ({ width, height }))
 
   return {
     render(stage: HTMLCanvasElement, key: string, paint: (ui: HudPainter) => void) {

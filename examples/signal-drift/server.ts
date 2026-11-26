@@ -1,17 +1,18 @@
 import { createGameHost, isMain, startGameHost } from 'ridgetop/server'
 
-const files = [
-  'index.html', 'game-ui.css',
-  'racing/style.css', 'racing/main.js', 'racing/race.js', 'racing/scene.js', 'racing/track.js',
-  'racing/progression.js', 'racing/car-art.js', 'racing/garage.js', 'racing/garage-art.js', 'racing/save-menu.js'
-]
+const files = ['index.html', 'game-ui.css', 'racing/style.css']
 
 export function createSignalDriftServer({ testing }: { testing?: boolean } = {}) {
   const source = import.meta.url.endsWith('.ts')
+  const root = new URL(source ? '.' : '../', import.meta.url)
+  const moduleRoot = new URL(source ? 'dist/' : '.', import.meta.url)
   return createGameHost({
-    root: new URL(source ? '.' : '../', import.meta.url),
-    moduleRoot: new URL(source ? 'dist/' : '.', import.meta.url),
+    root,
+    moduleRoot,
     files,
+    mounts: {
+      '/racing/': { dir: new URL('racing/', moduleRoot), extensions: ['js'] }
+    },
     aliases: { '/': 'index.html' },
     hosted: false,
     testing

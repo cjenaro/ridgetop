@@ -1,14 +1,30 @@
 import type { IncomingMessage, ServerResponse } from 'node:http'
+import type { Duplex } from 'node:stream'
 import type { GameHost } from './server-types.ts'
 import { Buffer } from 'node:buffer'
 import { createHash } from 'node:crypto'
 import { createServer } from 'node:http'
 import { existsSync } from 'node:fs'
 import { appendFile, lstat, mkdir, readFile, stat, writeFile } from 'node:fs/promises'
-import { dirname } from 'node:path'
+import { dirname, resolve, sep } from 'node:path'
 import process from 'node:process'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import { HOSTED_BROWSER_MODULES, RIDGETOP_BROWSER_IMPORT_MAP } from './manifest.ts'
+
+export interface GameHostMount {
+  dir: URL
+  extensions?: readonly string[]
+  exclude?: readonly string[]
+}
+
+const defaultMountExtensions: ReadonlySet<string> = new Set(['js', 'css', 'html'])
+
+interface ResolvedMount {
+  prefix: string
+  rootPath: string
+  extensions: ReadonlySet<string>
+  exclude: ReadonlySet<string>
+}
 
 const browserModules = HOSTED_BROWSER_MODULES
 
@@ -82,6 +98,66 @@ async function artFile(pathname: string, folders: Map<string, URL>) {
   }
 }
 
+async function mountFile(pathname: string, mountedDirs: readonly ResolvedMount[]): Promise<URL | undefined> {
+  for (const mount of mountedDirs) {
+    if (!pathname.startsWith(mount.prefix)) continue
+    const rawRel = pathname.slice(mount.prefix.length)
+    if (!rawRel || rawRel.endsWith('/')) continue
+    const rawSegments = rawRel.split('/')
+    const segments: string[] = []
+    let valid = true
+    for (const raw of rawSegments) {
+      let decoded: string
+      try { decoded = decodeURIComponent(raw) } catch { valid = false; break }
+      if (!decoded || decoded === '.' || decoded === '..' || /[/\\\0]/.test(decoded)) {
+        valid = false
+        break
+      }
+      segments.push(decoded)
+    }
+    if (!valid || !segments.length) continue
+    const relPath = segments.join('/')
+    if (mount.exclude.has(relPath)) continue
+    const last = segments[segments.length - 1]
+    const dot = last.lastIndexOf('.')
+    if (dot <= 0) continue
+    const ext = last.slice(dot + 1).toLowerCase()
+    if (!mount.extensions.has(ext)) continue
+    const candidate = resolve(mount.rootPath, ...segments)
+    if (!candidate.startsWith(mount.rootPath + sep)) continue
+    try {
+      let current = mount.rootPath
+      let blocked = false
+      for (let i = 0; i < segments.length - 1; i++) {
+        current = resolve(current, segments[i])
+        const dirInfo = await lstat(current)
+        if (!dirInfo.isDirectory()) { blocked = true; break }
+      }
+      if (blocked) continue
+      const fileInfo = await lstat(candidate)
+      if (fileInfo.isFile()) return pathToFileURL(candidate)
+    } catch (error) {
+      const code = errorCode(error)
+      if (code !== 'ENOENT' && code !== 'ENOTDIR') throw error
+    }
+  }
+}
+
+function rejectUpgrade(socket: Duplex, status: number, reason: string) {
+  if (socket.listenerCount('error') === 0) socket.on('error', () => { /* ignore pre-close socket error */ })
+  if (!socket.destroyed && socket.writable) {
+    try {
+      socket.write(`HTTP/1.1 ${status} ${reason}\r\nContent-Length: 0\r\nConnection: close\r\n\r\n`)
+    } catch { /* ignore write errors on closing socket */ }
+  }
+  socket.destroy()
+}
+
+function socketTouched(socket: Duplex): boolean {
+  if (socket.destroyed || socket.writableLength > 0) return true
+  return 'bytesWritten' in socket && typeof socket.bytesWritten === 'number' && socket.bytesWritten > 0
+}
+
 export function sendText(res: ServerResponse, status: number, message = '') {
   res.writeHead(status, { 'Content-Type': 'text/plain; charset=utf-8' }).end(message)
 }
@@ -92,10 +168,11 @@ export function sendJson(res: ServerResponse, value: unknown) {
 }
 
 export function createGameHost({
-  root, moduleRoot = root, files, routes = {}, artDirectories = [], artMounts = {}, aliases = {}, testing, testingOptions, hosted = true, handle, stop, save
+  root, moduleRoot = root, files = [], routes = {}, mounts = {}, artDirectories = [], artMounts = {}, aliases = {}, testing, testingOptions, hosted = true, handle, upgrade, stop, save
 }: {
-  root: URL; moduleRoot?: URL; files: readonly string[]
+  root: URL; moduleRoot?: URL; files?: readonly string[]
   routes?: Readonly<Record<string, URL>>
+  mounts?: Readonly<Record<string, URL | GameHostMount>>
   artDirectories?: readonly string[]
   artMounts?: Readonly<Record<string, URL>>
   aliases?: Record<string, string>
@@ -103,6 +180,7 @@ export function createGameHost({
   testingOptions?: { artDir?: string; reviewsDir?: string }
   hosted?: boolean
   handle?(request: IncomingMessage, response: ServerResponse, pathname: string): boolean | Promise<boolean>
+  upgrade?(request: IncomingMessage, socket: Duplex, head: Buffer, pathname: string): boolean | void | Promise<boolean | void>
   stop?(): void; save?(): void | Promise<void>
 }): GameHost {
   const testingEnabled = testing ?? process.argv.includes('--testing')
@@ -116,6 +194,17 @@ export function createGameHost({
   assets.set('/framework/testing-overlay.css', testingCssAsset)
   for (const file of files) assets.set('/' + file, new URL(file, file.endsWith('.js') ? moduleRoot : root))
   for (const [routePath, url] of Object.entries(routes)) assets.set(routePath, url)
+  const mountedDirs: ResolvedMount[] = Object.entries(mounts).map(([mountPath, entry]) => {
+    const prefix = (mountPath.startsWith('/') ? mountPath : '/' + mountPath).replace(/\/$/, '') + '/'
+    const dir = entry instanceof URL ? entry : entry.dir
+    const extensions = entry instanceof URL || !entry.extensions
+      ? defaultMountExtensions
+      : new Set(entry.extensions.map(ext => ext.replace(/^\./, '').toLowerCase()))
+    const exclude = entry instanceof URL || !entry.exclude
+      ? new Set<string>()
+      : new Set(entry.exclude.map(rel => rel.replace(/^\/+/, '')))
+    return { prefix, rootPath: resolve(fileURLToPath(dir)), extensions, exclude }
+  }).sort((a, b) => b.prefix.length - a.prefix.length)
   const artFolders = new Map<string, URL>()
   for (const directory of artDirectories) {
     const prefix = directory.replace(/\/$/, '') + '/'
@@ -258,7 +347,7 @@ export function createGameHost({
       if (await handleTesting(req, res, pathname)) return
       if (req.method !== 'GET' && req.method !== 'HEAD') return sendText(res, 405)
       if (pathname === '/healthz') return sendText(res, 200, 'ok')
-      const asset = assets.get(pathname) ?? await artFile(pathname, artFolders)
+      const asset = assets.get(pathname) ?? await mountFile(pathname, mountedDirs) ?? await artFile(pathname, artFolders)
       if (!asset && pathname === '/favicon.ico') return sendText(res, 204)
       if (!asset) return sendText(res, 404, 'Not found')
       const extension = (asset.pathname.split('.').at(-1) ?? '').toLowerCase()
@@ -297,6 +386,30 @@ export function createGameHost({
     }
   })
   server.maxConnections = 1536
+  server.on('upgrade', async (req, socket, head) => {
+    if (socket.listenerCount('error') === 0) socket.on('error', () => { /* ignore socket error during upgrade */ })
+    let pathname: string
+    try {
+      pathname = new URL(req.url ?? '/', 'http://localhost').pathname
+    } catch {
+      rejectUpgrade(socket, 400, 'Bad Request')
+      return
+    }
+    if (!upgrade) {
+      rejectUpgrade(socket, 404, 'Not Found')
+      return
+    }
+    try {
+      const handled = await upgrade(req, socket, head, pathname)
+      if (handled === false || (handled === undefined && !socketTouched(socket))) {
+        rejectUpgrade(socket, 404, 'Not Found')
+      }
+    } catch (error) {
+      if (!socketTouched(socket)) rejectUpgrade(socket, 500, 'Internal Server Error')
+      else socket.destroy()
+      if (errorCode(error) !== 'ECONNRESET') console.error(error)
+    }
+  })
   let stopped = false
   function stopServices() {
     if (stopped) return

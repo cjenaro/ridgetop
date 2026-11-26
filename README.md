@@ -106,7 +106,7 @@ Both example games import their own game modules and Ridgetop's public APIs. The
 
 | Layer | Ridgetop supplies | Beacon Run supplies |
 | --- | --- | --- |
-| Browser and controls | `createGamePage`, `createPlatform`, `createHud`, keyboard, pointer, and gamepad input (`bindActionControls`, `bindMenuGamepad`), clipboard and lifecycle handling, the fixed-step loop, sprite atlases, and a Web Audio synthesizer | HUD design, menus, quest journal, input availability by screen, sprite poses, sound motifs, and artwork |
+| Browser and controls | `createGamePage`, `createPlatform`, `createCanvasUi` (with HUD underlay), `createHud`, keyboard, pointer, touch, and gamepad input (`bindActionControls`, `bindPlatformControls`, `bindVirtualStick`), clipboard and unified lifecycle handling, the fixed-step loop, sprite atlases, and a Web Audio synthesizer | HUD design, menus, quest journal, input availability by screen, sprite poses, sound motifs, and artwork |
 | Rendering | WebGPU, WebGL 2, and Canvas 2D backends, flat-shaded meshes, hardware instancing where available, culling, and camera projection | Island meshes, course colors, and the placement of terrain, pickups, and characters |
 | Simulation | A fixed 60 Hz step and `createPlatformer` for horizontal movement, gravity, jump timing, launch pads, and platform landing | Course geometry, movement constants, hazards, crystals, checkpoints, finish rules, and XP and loot |
 | Online play | HTTP hosting, authoritative room ticks, input validation, stream authentication and reconnects, and browser-side snapshot interpolation | Race and expedition routes, region access, quest rewards, and public fields in each snapshot |

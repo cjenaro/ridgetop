@@ -1,5 +1,5 @@
 import {
-  createGamePage, createHud, createLowPolyRenderer, createPerfLogger, createPerfMonitor, fixedLoop
+  createGamePage, createLowPolyRenderer, createPerfLogger, createPerfMonitor, fixedLoop
 } from 'ridgetop'
 import type { Backend, HudPainter } from 'ridgetop'
 import { boxNode, column, createCanvasUi, createUiTheme, overlay, row, spacerNode } from 'ridgetop/ui'
@@ -119,7 +119,6 @@ async function start() {
   let showPerfPanel = page.url.searchParams.has('fps') || page.url.searchParams.has('perf')
 
   const stage = element<HTMLCanvasElement>('cs-stage')
-  const hudCanvas = element<HTMLCanvasElement>('cs-hud')
   const uiCanvas = element<HTMLCanvasElement>('cs-ui')
 
   // Cap pixelRatio to 1.5 for crisp visuals without over-driving laptop GPU fans
@@ -129,7 +128,6 @@ async function start() {
     canvasDepth: true,
     lighting: { direction: [-0.55, 0.78, 0.42], ambient: 0.50 }
   })
-  const hud = createHud(hudCanvas)
   const scene = createCrownshardScene(renderer)
   const audio = createCrownshardAudio()
   const perf = createPerfMonitor(60)
@@ -4163,10 +4161,7 @@ async function start() {
       const hudKey = screen === 'battle'
         ? `b:${hudRev}:${animatingHud ? Math.floor(now / 33) : 0}:${scene.getHoveredCell()?.col ?? -1},${scene.getHoveredCell()?.row ?? -1}`
         : `s:${screen}`
-
-      const h0 = performance.now()
-      hud.render(canvas, hudKey, paintHud)
-      const hudMs = performance.now() - h0
+      ui.setUnderlay(screen === 'battle' ? paintHud : null, hudKey)
 
       const uiPerfBucket = Math.floor(now / 1000)
       if ((screen === 'battle' || showPerfPanel) && uiPerfBucket !== perfUiTick) {
@@ -4185,7 +4180,7 @@ async function start() {
         now,
         simMs: lastSimMs,
         renderMs,
-        hudMs,
+        hudMs: 0,
         uiMs,
         stats,
         backend: renderer.name,
@@ -4198,21 +4193,24 @@ async function start() {
     }
   })
 
-  page.lifecycle({
-    hide(persisted) {
+  const stopLifecycle = page.platform.onLifecycle({
+    pause() {
       saveNow()
       audio.suspend()
-      if (persisted) return
+    },
+    resume() {
+      audio.resume()
+    },
+    dispose() {
+      saveNow()
       stop()
+      stopLifecycle()
       perfLogger.dispose()
       inputAbort.abort()
       ui.dispose()
       scene.dispose()
       renderer.dispose()
       audio.close()
-    },
-    restore() {
-      audio.resume()
     }
   })
 }

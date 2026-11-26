@@ -48,6 +48,7 @@ function createFakeDomEnv(gamepads: unknown = { length: 0 }) {
     const noop = () => {}
     const ctx = {
       save: noop, restore: noop, beginPath: noop, moveTo: noop, lineTo: noop, closePath: noop,
+      rect: noop, roundRect: noop,
       fill: noop, stroke: noop, clip: noop, fillRect: noop, clearRect: noop, fillText: noop,
       drawImage: noop, setTransform: noop, measureText: () => ({ width: 10 }),
       fillStyle: '', strokeStyle: '', lineWidth: 1, font: '', textAlign: 'left',
@@ -512,6 +513,113 @@ test('createCanvasUi supports keyboard and gamepad navigation across buttons, to
     env.flushRaf(450)
     assert.equal(resumeCount, 2)
     assert.equal(backCount, 1)
+
+    ui.dispose()
+  } finally {
+    env.restore()
+  }
+})
+
+test('createCanvasUi paints HUD underlay before widgets with key memoization and state isolation', () => {
+  const env = createFakeDomEnv()
+  try {
+    const ops: string[] = []
+    const target = new EventTarget()
+    const ctx = {
+      save: () => ops.push('save'),
+      restore: () => ops.push('restore'),
+      beginPath: () => {},
+      moveTo: () => {},
+      lineTo: () => {},
+      closePath: () => {},
+      rect: () => {},
+      roundRect: () => ops.push('hud:roundRect'),
+      fill: () => {},
+      stroke: () => {},
+      clip: () => {},
+      fillRect: () => {},
+      clearRect: () => ops.push('clear'),
+      fillText: (text: string) => ops.push('text:' + text),
+      drawImage: () => {},
+      setTransform: () => {},
+      measureText: () => ({ width: 10 }),
+      fillStyle: '',
+      strokeStyle: '',
+      lineWidth: 1,
+      font: '',
+      textAlign: 'left',
+      textBaseline: 'middle',
+      globalAlpha: 1,
+      imageSmoothingEnabled: true
+    }
+    const canvas = Object.assign(target, {
+      clientWidth: 800,
+      clientHeight: 450,
+      width: 800,
+      height: 450,
+      style: { cursor: '' },
+      getContext: () => ctx,
+      getBoundingClientRect: () => ({ left: 0, top: 0, width: 800, height: 450 }),
+      setPointerCapture() { throw new Error('synthetic pointer') }
+    }) as unknown as HTMLCanvasElement
+
+    const ui = createCanvasUi(canvas)
+    const tree: LayoutNode = overlay({ id: 'root', style: { anchor: 'fill' } }, [
+      boxNode({ id: 'menu', style: { anchor: 'top-right', width: 80, height: 36 }, widget: { type: 'button', label: 'Menu' } })
+    ])
+
+    let measuredW = 0
+    let measuredH = 0
+    assert.equal(ui.setUnderlay(p => {
+      measuredW = p.width
+      measuredH = p.height
+      p.panel(12, 12, 160, 64, { fill: '#112233', radius: 6 })
+      p.text('SPEED 99', 20, 20, { fill: '#ffffff', size: 14 })
+    }, 'hud:1'), true)
+    assert.equal(ui.dirty, true)
+
+    ui.render(tree, { width: 800, height: 450, pixelRatio: 1 })
+    assert.equal(ui.dirty, false)
+    assert.equal(measuredW, 800)
+    assert.equal(measuredH, 450)
+    const clearIdx = ops.indexOf('clear')
+    const hudTextIdx = ops.indexOf('text:SPEED 99')
+    const menuTextIdx = ops.indexOf('text:Menu')
+    assert.ok(clearIdx >= 0 && hudTextIdx > clearIdx && menuTextIdx > hudTextIdx,
+      `Expected clear -> HUD underlay -> UI widget order, got ${ops.join(', ')}`)
+
+    // Same key keeps dirty=false (no redundant redraw) while refreshing closure for future UI repaints
+    assert.equal(ui.setUnderlay(p => {
+      p.text('SPEED 99B', 20, 20, { fill: '#ffffff', size: 14 })
+    }, 'hud:1'), false)
+    assert.equal(ui.dirty, false)
+
+    // Changing key marks dirty=true and repaints updated HUD
+    ops.length = 0
+    assert.equal(ui.setUnderlay(p => {
+      p.text('SPEED 120', 20, 20, { fill: '#ffffff', size: 14 })
+    }, 'hud:2'), true)
+    assert.equal(ui.dirty, true)
+    ui.render(tree, { width: 800, height: 450, pixelRatio: 1 })
+    assert.ok(ops.includes('text:SPEED 120'))
+
+    // Per-render viewport.underlay override works cleanly
+    ops.length = 0
+    ui.render(tree, {
+      width: 800,
+      height: 450,
+      pixelRatio: 1,
+      underlay: p => p.text('OVERRIDE', 10, 10, { fill: '#fff', size: 12 })
+    })
+    assert.ok(ops.includes('text:OVERRIDE'))
+    assert.ok(!ops.includes('text:SPEED 120'))
+
+    // Clearing underlay via null removes HUD painting
+    ops.length = 0
+    assert.equal(ui.setUnderlay(null, 'overlay'), true)
+    ui.render(tree, { width: 800, height: 450, pixelRatio: 1 })
+    assert.ok(!ops.includes('text:SPEED 120'))
+    assert.ok(ops.includes('text:Menu'))
 
     ui.dispose()
   } finally {

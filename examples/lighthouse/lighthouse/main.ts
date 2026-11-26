@@ -1,5 +1,5 @@
 import {
-  bindActionControls, bindVirtualStick, createGamePage, createHud, createLowPolyRenderer, fixedLoop
+  bindActionControls, bindVirtualStick, createGamePage, createLowPolyRenderer, fixedLoop
 } from 'ridgetop'
 import type { Backend, HudPainter } from 'ridgetop'
 import { boxNode, column, createCanvasUi, createUiTheme, overlay, row, spacerNode } from 'ridgetop/ui'
@@ -39,7 +39,6 @@ async function start() {
   const backend: Backend = requested === 'webgpu' || requested === 'webgl2' || requested === 'canvas' ? requested : 'auto'
 
   const stage = element<HTMLCanvasElement>('lh-stage')
-  const hudCanvas = element<HTMLCanvasElement>('lh-hud')
   const uiCanvas = element<HTMLCanvasElement>('lh-ui')
 
   const renderer = await createLowPolyRenderer(stage, {
@@ -47,7 +46,6 @@ async function start() {
     canvasDepth: true,
     lighting: { direction: [-0.45, 0.82, 0.36], ambient: 0.50 }
   })
-  const hud = createHud(hudCanvas)
   const scene = createLighthouseScene(renderer)
   const audio = createLighthouseAudio()
 
@@ -107,7 +105,6 @@ async function start() {
       down: [{ button: 13 }, { axis: 1, direction: 1, threshold: 0.25 }],
       shop: [{ button: 2 }, { button: 3 }]
     },
-    buttons: [],
     enabled: () => screen === 'playing',
     onPause: togglePause,
     onGesture: audio.unlock,
@@ -344,7 +341,7 @@ async function start() {
       ])
     }
 
-    // Playing HUD buttons (top-right corner — gauges & world popups live on #lh-hud)
+    // Playing HUD buttons (top-right corner — gauges & world popups paint on #lh-ui underlay)
     const btnH = compact ? 38 : 42
     return overlay({ id: 'root', style: { anchor: 'fill' } }, [
       row({
@@ -576,7 +573,7 @@ async function start() {
         : screen === 'playing'
           ? `playing:${hudRev}:${hudTick >> 1}`
           : `${screen}:${hudRev}`
-      hud.render(canvas, hudKey, paintHud)
+      ui.setUnderlay(screen === 'title' ? null : paintHud, hudKey)
 
       if (uiDirty || ui.dirty || w !== lastW || h !== lastH) {
         renderUiNow()
@@ -584,22 +581,27 @@ async function start() {
     }
   })
 
-  page.lifecycle({
-    hide(persisted) {
+  const stopLifecycle = page.platform.onLifecycle({
+    pause() {
       persistSave(page.storage, state)
+      controls.clear()
+      stick.clear()
       audio.suspend()
-      if (persisted) return
+    },
+    resume() {
+      audio.resume()
+    },
+    dispose() {
+      persistSave(page.storage, state)
       shopKeyController.abort()
       stop()
+      stopLifecycle()
       ui.dispose()
       stick.dispose()
       controls.dispose()
       scene.dispose()
       renderer.dispose()
       audio.close()
-    },
-    restore() {
-      audio.resume()
     }
   })
 }

@@ -2,6 +2,7 @@ export { boxNode, column, overlay, resolveLayout, row, spacerNode } from './ui-l
 export type { Align, Anchor, Justify, LayoutNode, LayoutRect, LayoutStyle, Padding, SafeInsets } from './ui-layout.ts'
 export { createCanvasUi, createUiTheme } from './ui-canvas.ts'
 export type {
-  CanvasSelectOption, CanvasUiHit, CanvasUiQuery, CanvasUiWidgetSnapshot,
+  CanvasSelectOption, CanvasUiHit, CanvasUiQuery, CanvasUiUnderlay, CanvasUiViewport, CanvasUiWidgetSnapshot,
   CanvasWidget, CanvasWidgetDrawState, CanvasWidgetKind, CanvasWidgetState, UiTheme
 } from './ui-canvas.ts'
+export type { HudPainter } from './hud.ts'

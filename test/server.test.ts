@@ -1,14 +1,16 @@
 import type { AddressInfo } from 'node:net'
 import test from 'node:test'
 import assert from 'node:assert/strict'
+import { randomBytes } from 'node:crypto'
 import { once } from 'node:events'
-import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises'
+import { mkdtemp, mkdir, readFile, rm, symlink, writeFile } from 'node:fs/promises'
+import { createConnection } from 'node:net'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { createGameServer } from '../server.ts'
-import { createGameHost, createRecords } from '../packages/ridgetop/framework/server.ts'
-import { connectRoom } from '../packages/ridgetop/framework/index.ts'
+import { createGameHost, createRecords, createRoomService } from '../packages/ridgetop/framework/server.ts'
+import { connectRoom, createArtRecipe } from '../packages/ridgetop/framework/index.ts'
 import { courses } from '../examples/beacon-run/game/level.ts'
 
 test('game art folders serve PNG and JSON exports with encoded names', async t => {
@@ -220,4 +222,177 @@ test('createGameHost hosted=false strips data-hosted="1" and testingOptions rout
   const base = 'http://127.0.0.1:' + (app.server.address() as AddressInfo).port
   const html = await fetch(base + '/').then(r => r.text())
   assert.ok(!html.includes('data-hosted="1"'), 'Standalone host with hosted: false must strip data-hosted="1"')
+
+  const recipe = createArtRecipe('lantern')
+  const saveRes = await fetch(base + '/__testing/recipe', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Origin: base },
+    body: JSON.stringify({ asset: 'lantern', file: null, base: null, recipe })
+  })
+  assert.equal(saveRes.status, 200)
+  const payload = await saveRes.json() as { saved: boolean; file: string }
+  assert.equal(payload.saved, true)
+  assert.equal(payload.file, 'nested/art/overrides.json')
+  const savedOnDisk = JSON.parse(await readFile(join(folder, 'nested', 'art', 'overrides.json'), 'utf8')) as Record<string, unknown>
+  assert.ok(savedOnDisk.lantern, 'Recipe must be persisted inside testingOptions.artDir')
+})
+
+test('createGameHost mounts serves valid modules/assets and blocks traversal, symlinks, exclusions, and disallowed extensions', async t => {
+  const folder = await mkdtemp(join(tmpdir(), 'ridgetop-mounts-'))
+  const outside = await mkdtemp(join(tmpdir(), 'ridgetop-outside-'))
+  t.after(() => Promise.all([
+    rm(folder, { recursive: true, force: true }),
+    rm(outside, { recursive: true, force: true })
+  ]))
+  await mkdir(join(folder, 'mod', 'parts'), { recursive: true })
+  await writeFile(join(folder, 'mod', 'main.js'), 'export const ok = 1\n')
+  await writeFile(join(folder, 'mod', 'style.css'), 'body { margin: 0 }\n')
+  await writeFile(join(folder, 'mod', 'page.html'), '<!doctype html><html><head></head><body><script type="module" src="/mod/main.js"></script></body></html>')
+  await writeFile(join(folder, 'mod', 'parts', 'blade.js'), 'export const blade = true\n')
+  await writeFile(join(folder, 'mod', 'server.js'), 'export const secret = true\n')
+  await writeFile(join(folder, 'mod', 'notes.txt'), 'not allowed')
+  await writeFile(join(folder, 'mod', 'main.d.ts'), 'export declare const ok: number\n')
+  await writeFile(join(folder, 'mod', 'main.js.map'), '{}')
+  await writeFile(join(outside, 'leak.js'), 'export const leaked = true\n')
+  await symlink(join(outside, 'leak.js'), join(folder, 'mod', 'link.js'))
+
+  const app = createGameHost({
+    root: pathToFileURL(folder + '/'),
+    mounts: {
+      '/mod/': { dir: pathToFileURL(join(folder, 'mod') + '/'), exclude: ['server.js'] }
+    }
+  })
+  t.after(() => app.close())
+  app.server.listen(0, '127.0.0.1')
+  await once(app.server, 'listening')
+  const base = 'http://127.0.0.1:' + (app.server.address() as AddressInfo).port
+
+  const jsRes = await fetch(base + '/mod/main.js')
+  assert.equal(jsRes.status, 200)
+  assert.match(jsRes.headers.get('content-type') ?? '', /text\/javascript/)
+  assert.match(await jsRes.text(), /export const ok = 1/)
+
+  const nestedRes = await fetch(base + '/mod/parts/blade.js')
+  assert.equal(nestedRes.status, 200)
+  assert.match(await nestedRes.text(), /export const blade = true/)
+
+  const cssRes = await fetch(base + '/mod/style.css')
+  assert.equal(cssRes.status, 200)
+  assert.match(cssRes.headers.get('content-type') ?? '', /text\/css/)
+
+  const htmlRes = await fetch(base + '/mod/page.html')
+  assert.equal(htmlRes.status, 200)
+  assert.match(await htmlRes.text(), /<script type="importmap">/)
+
+  // Security checks: traversal, encoded traversal, disallowed extensions, excluded files, symlinks
+  assert.equal((await fetch(base + '/mod/../outside.js')).status, 404)
+  assert.equal((await fetch(base + '/mod/%2e%2e/secret.js')).status, 404)
+  assert.equal((await fetch(base + '/mod/parts/%2e%2e/server.js')).status, 404)
+  assert.equal((await fetch(base + '/mod/server.js')).status, 404)
+  assert.equal((await fetch(base + '/mod/notes.txt')).status, 404)
+  assert.equal((await fetch(base + '/mod/main.d.ts')).status, 404)
+  assert.equal((await fetch(base + '/mod/main.js.map')).status, 404)
+  assert.equal((await fetch(base + '/mod/link.js')).status, 404)
+})
+
+async function rawUpgradeStatus(port: number, path: string): Promise<string> {
+  const socket = createConnection({ host: '127.0.0.1', port })
+  await once(socket, 'connect')
+  const key = randomBytes(16).toString('base64')
+  socket.write(
+    `GET ${path} HTTP/1.1\r\nHost: 127.0.0.1:${port}\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Key: ${key}\r\nSec-WebSocket-Version: 13\r\n\r\n`
+  )
+  let raw = ''
+  for await (const chunk of socket) {
+    raw += chunk.toString('utf8')
+    if (raw.includes('\r\n\r\n')) break
+  }
+  socket.destroy()
+  return raw.split('\r\n')[0] ?? ''
+}
+
+test('createGameHost upgrade seam upgrades WebSockets into createRoomService and rejects unhandled paths with 404', { timeout: 10_000 }, async t => {
+  const folder = await mkdtemp(join(tmpdir(), 'ridgetop-ws-host-'))
+  t.after(() => rm(folder, { recursive: true, force: true }))
+
+  // 1. Host without upgrade handler cleanly rejects upgrades with 404
+  const plain = createGameHost({ root: pathToFileURL(folder + '/') })
+  t.after(() => plain.close())
+  plain.server.listen(0, '127.0.0.1')
+  await once(plain.server, 'listening')
+  const plainPort = (plain.server.address() as AddressInfo).port
+  assert.match(await rawUpgradeStatus(plainPort, '/rooms/test/ws'), /^HTTP\/1\.1 404 /)
+
+  // 2. Host with upgrade seam wired to createRoomService
+  const rooms = createRoomService<{ arena: string }, { x: number; revision: number }, { x: number; revision: number }>({
+    createPlayer: () => ({ x: 0, revision: 0 }),
+    stepPlayer(player, input, dt) {
+      if (input.right) player.x += 100 * dt
+      if (input.left) player.x -= 100 * dt
+    },
+    snapshot: player => ({ x: player.x, revision: player.revision })
+  })
+  const wsHost = createGameHost({
+    root: pathToFileURL(folder + '/'),
+    stop: rooms.close,
+    upgrade(req, socket, head, pathname) {
+      const match = /^\/rooms\/([a-z0-9-]+)\/ws$/.exec(pathname)
+      if (!match) return false
+      rooms.upgrade(req, socket, head, { key: match[1], world: { arena: match[1] } })
+      return true
+    }
+  })
+  t.after(() => wsHost.close())
+  wsHost.server.listen(0, '127.0.0.1')
+  await once(wsHost.server, 'listening')
+  const wsPort = (wsHost.server.address() as AddressInfo).port
+  assert.match(await rawUpgradeStatus(wsPort, '/unknown/ws'), /^HTTP\/1\.1 404 /)
+
+  const ws = new WebSocket(`ws://127.0.0.1:${wsPort}/rooms/host-ws/ws`)
+  t.after(() => { try { ws.close() } catch { /* ignore */ } })
+  const messages: Record<string, unknown>[] = []
+  let wake: (() => void) | undefined
+  ws.onmessage = event => {
+    messages.push(JSON.parse(String(event.data)) as Record<string, unknown>)
+    wake?.()
+    wake = undefined
+  }
+  const nextMsg = async () => {
+    while (!messages.length) await new Promise<void>(resolve => { wake = resolve })
+    return messages.shift()!
+  }
+  const welcome = await nextMsg()
+  assert.equal(welcome.type, 'welcome')
+  ws.send(JSON.stringify({ type: 'input', left: false, right: true, jump: 0, restart: 0, inputSeq: 1 }))
+  let moved = false
+  for (let i = 0; i < 60 && !moved; i++) {
+    const msg = await nextMsg()
+    if (msg.type === 'snapshot' && Array.isArray(msg.players)) {
+      const me = (msg.players as { id: string; x: number }[]).find(p => p.id === welcome.id)
+      if (me && me.x > 2) moved = true
+    }
+  }
+  assert.equal(moved, true, 'WebSocket input through createGameHost upgrade seam must move player')
+  ws.close(1000)
+
+  // 3. Root createGameServer wires Beacon Run WS upgrades + blocks server-only modules in mounts
+  const gameServer = createGameServer()
+  t.after(() => gameServer.close())
+  gameServer.server.listen(0, '127.0.0.1')
+  await once(gameServer.server, 'listening')
+  const gamePort = (gameServer.server.address() as AddressInfo).port
+  const gameBase = `http://127.0.0.1:${gamePort}`
+  assert.equal((await fetch(gameBase + '/game/character-store.js')).status, 404)
+  assert.equal((await fetch(gameBase + '/starter/serve.js')).status, 404)
+  assert.match(await rawUpgradeStatus(gamePort, '/not-a-room/ws'), /^HTTP\/1\.1 404 /)
+  assert.match(await rawUpgradeStatus(gamePort, '/expeditions/ridge/guild/ws'), /^HTTP\/1\.1 401 /)
+
+  const beaconWs = new WebSocket(`ws://127.0.0.1:${gamePort}/rooms/ridge/ws-smoke/ws`)
+  t.after(() => { try { beaconWs.close() } catch { /* ignore */ } })
+  const beaconWelcome = await new Promise<{ type: string; id: string; token: string }>(resolve => {
+    beaconWs.onmessage = event => resolve(JSON.parse(String(event.data)))
+  })
+  assert.equal(beaconWelcome.type, 'welcome')
+  assert.ok(beaconWelcome.id && beaconWelcome.token)
+  beaconWs.close(1000)
 })

@@ -1,4 +1,4 @@
-import { bindActionControls, createGamePage, createHud, createLowPolyRenderer, createSynthAudio, fixedLoop } from 'ridgetop'
+import { bindActionControls, createGamePage, createLowPolyRenderer, createSynthAudio, fixedLoop } from 'ridgetop'
 import type { Backend } from 'ridgetop'
 import { boxNode, column, createCanvasUi, createUiTheme, overlay, row } from 'ridgetop/ui'
 import type { CanvasUiQuery } from 'ridgetop/ui'
@@ -28,7 +28,6 @@ async function start() {
   const backend: Backend = requested === 'webgpu' || requested === 'webgl2' || requested === 'canvas' ? requested : 'auto'
   const stage = element<HTMLCanvasElement>('race-stage')
   const renderer = await createLowPolyRenderer(stage, { backend })
-  const hud = createHud(element<HTMLCanvasElement>('race-hud'))
   const uiCanvas = element<HTMLCanvasElement>('race-ui')
   const touch = matchMedia('(any-pointer: coarse)')
   touch.addEventListener('change', () => { uiDirty = true })
@@ -64,20 +63,10 @@ async function start() {
   let countdown = 0
   let queuedPulse = false
   let queuedSnare = false
-  const touchHeld: Record<Action, boolean> = {
-    left: false, right: false, throttle: false, brake: false, drift: false, recover: false, pulse: false, snare: false
-  }
-
-  const actions: readonly Action[] = ['left', 'right', 'throttle', 'brake', 'drift', 'recover', 'pulse', 'snare']
 
   function persist() {
     saveFailed = !saveChampionship(page.storage, progress)
     return !saveFailed
-  }
-
-  function clearTouch() {
-    for (const k of actions) touchHeld[k] = false
-    ui.clearHolds()
   }
 
   const controls = bindActionControls<Action>({
@@ -96,7 +85,6 @@ async function start() {
       snare: [{ button: 3 }],
       recover: [{ button: 8 }]
     },
-    buttons: [],
     enabled: () => screen === 'racing',
     onPause: togglePause,
     onGesture: audio.unlock,
@@ -108,17 +96,13 @@ async function start() {
     }
   })
 
-  function active(action: Action) {
-    return controls.active(action) || touchHeld[action]
-  }
-
   function setScreen(value: Screen) {
     const wasGarage = screen === 'garage'
     if (value === 'garage' && !wasGarage) preview.invalidate()
     else if (wasGarage && value !== 'garage') scene.invalidate()
     screen = value
     controls.clear()
-    clearTouch()
+    ui.clearHolds()
     queuedPulse = queuedSnare = false
     if (screen === 'garage') garage.open()
     if (screen !== 'saves') saves.clear()
@@ -235,18 +219,18 @@ async function start() {
       // Multi-touch driving controls (only on touch devices during racing)
       column({ id: 'touch-left-deck', hidden: !showTouch, style: { anchor: 'bottom-left', inset: 12, gap: 8, respectSafeArea: true } }, [
         row({ id: 'touch-weapons', style: { gap: 8 } }, [
-          boxNode({ id: 'touch-pulse', style: { width: 66, height: 46 }, widget: { type: 'button', label: 'Pulse', onHold: (on: boolean) => { touchHeld.pulse = on; if (on) { audio.unlock(); if (!countdown) queuedPulse = true } } } }),
-          boxNode({ id: 'touch-snare', style: { width: 66, height: 46 }, widget: { type: 'button', label: 'Snare', onHold: (on: boolean) => { touchHeld.snare = on; if (on) { audio.unlock(); if (!countdown) queuedSnare = true } } } })
+          boxNode({ id: 'touch-pulse', style: { width: 66, height: 46 }, widget: { type: 'button', label: 'Pulse', onHold: (on: boolean) => controls.setHold('pulse', on) } }),
+          boxNode({ id: 'touch-snare', style: { width: 66, height: 46 }, widget: { type: 'button', label: 'Snare', onHold: (on: boolean) => controls.setHold('snare', on) } })
         ]),
         row({ id: 'touch-steer', style: { gap: 8 } }, [
-          boxNode({ id: 'touch-left', style: { width: 66, height: 54 }, widget: { type: 'button', label: '←', onHold: (on: boolean) => { touchHeld.left = on; if (on) audio.unlock() } } }),
-          boxNode({ id: 'touch-right', style: { width: 66, height: 54 }, widget: { type: 'button', label: '→', onHold: (on: boolean) => { touchHeld.right = on; if (on) audio.unlock() } } })
+          boxNode({ id: 'touch-left', style: { width: 66, height: 54 }, widget: { type: 'button', label: '←', onHold: (on: boolean) => controls.setHold('left', on) } }),
+          boxNode({ id: 'touch-right', style: { width: 66, height: 54 }, widget: { type: 'button', label: '→', onHold: (on: boolean) => controls.setHold('right', on) } })
         ])
       ]),
       row({ id: 'touch-right-deck', hidden: !showTouch, style: { anchor: 'bottom-right', inset: 12, gap: 8, respectSafeArea: true } }, [
-        boxNode({ id: 'touch-drift', style: { width: 62, height: 54 }, widget: { type: 'button', label: 'Drift', onHold: (on: boolean) => { touchHeld.drift = on; if (on) audio.unlock() } } }),
-        boxNode({ id: 'touch-brake', style: { width: 62, height: 54 }, widget: { type: 'button', label: 'Brake', onHold: (on: boolean) => { touchHeld.brake = on; if (on) audio.unlock() } } }),
-        boxNode({ id: 'touch-throttle', style: { width: 66, height: 54 }, widget: { type: 'button', label: 'Go', primary: true, onHold: (on: boolean) => { touchHeld.throttle = on; if (on) audio.unlock() } } })
+        boxNode({ id: 'touch-drift', style: { width: 62, height: 54 }, widget: { type: 'button', label: 'Drift', onHold: (on: boolean) => controls.setHold('drift', on) } }),
+        boxNode({ id: 'touch-brake', style: { width: 62, height: 54 }, widget: { type: 'button', label: 'Brake', onHold: (on: boolean) => controls.setHold('brake', on) } }),
+        boxNode({ id: 'touch-throttle', style: { width: 66, height: 54 }, widget: { type: 'button', label: 'Go', primary: true, onHold: (on: boolean) => controls.setHold('throttle', on) } })
       ]),
 
       // Home / Events / Paused / Results overlay
@@ -444,14 +428,6 @@ async function start() {
     }
   })
 
-  const stopPlatformLifecycle = page.platform.onLifecycle({
-    pause() {
-      if (screen === 'racing') setScreen('paused')
-      audio.suspend()
-    },
-    resume() { audio.resume() }
-  })
-
   renderUiNow()
   const stop = fixedLoop({
     update(dt) {
@@ -467,11 +443,11 @@ async function start() {
       const player = race.drivers[0]
       const previous = { pulses: player.pulses, snares: player.snares, shield: player.shield }
       stepRace(race, {
-        throttle: Number(active('throttle')) - Number(active('brake')),
-        steer: Number(active('right')) - Number(active('left')),
-        drift: active('drift'),
-        pulse: queuedPulse || active('pulse'),
-        snare: queuedSnare || active('snare')
+        throttle: Number(controls.active('throttle')) - Number(controls.active('brake')),
+        steer: Number(controls.active('right')) - Number(controls.active('left')),
+        drift: controls.active('drift'),
+        pulse: queuedPulse || controls.active('pulse'),
+        snare: queuedSnare || controls.active('snare')
       }, dt)
       queuedPulse = queuedSnare = false
       if (player.pulses < previous.pulses) { audio.play('pulse'); page.platform.haptic('light') }
@@ -494,7 +470,7 @@ async function start() {
     render() {
       if (screen === 'garage') {
         preview.render(garage.part, progress.build)
-        hud.render(renderer.canvas, 'garage', () => {})
+        ui.setUnderlay(null, 'garage')
       } else {
         const player = race.drivers[0]
         const circuit = race.circuit
@@ -509,8 +485,7 @@ async function start() {
         const racing = screen === 'racing'
         const count = Math.ceil(countdown)
         const key = racing ? [circuit.id, lap, position, speed, elapsed, surface, shield, ammo, count, touch.matches].join('|') : 'overlay'
-        hud.render(renderer.canvas, key, painter => {
-          if (!racing) return
+        ui.setUnderlay(racing ? painter => {
           const inset = Math.max(10, Math.min(24, painter.width * .02))
           const width = painter.width <= 520 ? 156 : 191
           const left = inset + 12
@@ -539,7 +514,7 @@ async function start() {
             painter.panel(painter.width / 2 - 38, painter.height * .30 - 30, 76, 60, panel)
             painter.text(String(count), painter.width / 2, painter.height * .30 - 24, { ...number, size: 42, align: 'center' })
           }
-        })
+        } : null, key)
       }
 
       const w = Math.max(1, uiCanvas.clientWidth), h = Math.max(1, uiCanvas.clientHeight)
@@ -548,22 +523,28 @@ async function start() {
     }
   })
 
-  page.lifecycle({
-    hide(persisted) {
-      controls.clear()
-      clearTouch()
-      if (!persisted) {
-        stop()
-        stopPlatformLifecycle()
-        ui.dispose()
-        controls.dispose()
-        preview.dispose()
-        scene.dispose()
-        renderer.dispose()
-        audio.close()
+  const stopLifecycle = page.platform.onLifecycle({
+    pause() {
+      if (screen === 'racing') setScreen('paused')
+      else {
+        controls.clear()
+        ui.clearHolds()
       }
+      audio.suspend()
     },
-    restore() {}
+    resume() { audio.resume() },
+    dispose() {
+      controls.clear()
+      ui.clearHolds()
+      stop()
+      stopLifecycle()
+      ui.dispose()
+      controls.dispose()
+      preview.dispose()
+      scene.dispose()
+      renderer.dispose()
+      audio.close()
+    }
   })
 }
 

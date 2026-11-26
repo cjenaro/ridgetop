@@ -3,7 +3,7 @@ import type { CharacterView } from './game/expedition.ts'
 import type { Player, PlayerSnapshot } from './game/simulation.ts'
 import type { Backend } from 'ridgetop'
 import {
-  bindPlatformControls, connectRoom, createGamePage, createHud, createLowPolyRenderer, fixedLoop, STEP
+  bindPlatformControls, connectRoom, createGamePage, createLowPolyRenderer, fixedLoop, STEP
 } from 'ridgetop'
 import { boxNode, column, createCanvasUi, createUiTheme, overlay, row, spacerNode } from 'ridgetop/ui'
 import type { CanvasUiQuery } from 'ridgetop/ui'
@@ -48,7 +48,6 @@ async function start() {
     createLowPolyRenderer($<HTMLCanvasElement>('stage'), config),
     createSprites($<HTMLCanvasElement>('sprites'), reducedMotion)
   ])
-  const hud = createHud($<HTMLCanvasElement>('beacon-hud'))
   const uiCanvas = $<HTMLCanvasElement>('ui')
   const touch = matchMedia('(any-pointer: coarse)')
   touch.addEventListener('change', () => { uiDirty = true })
@@ -82,29 +81,14 @@ async function start() {
   let lastCharacterKey = ''
   let uiDirty = true
 
-  // Multi-touch Canvas hold state merged cleanly with keyboard & gamepad controls.
-  let touchLeft = false
-  let touchRight = false
-  let touchJump = 0
-
   const controls = bindPlatformControls({
-    buttons: [],
     enabled: () => screen === 'play' && !latest?.finished,
     onPause: togglePause,
     onGesture: unlockSound
   })
   const clearInput = () => {
     controls.clear()
-    touchLeft = touchRight = false
     ui.clearHolds()
-  }
-  const readInput = () => {
-    const base = controls.read()
-    return {
-      left: base.left || touchLeft,
-      right: base.right || touchRight,
-      jump: base.jump + touchJump
-    }
   }
 
   async function loadCharacter() {
@@ -214,7 +198,7 @@ async function start() {
     uiDirty = true
     room = connectRoom<PlayerSnapshot>({
       endpoint: (mode === 'expedition' ? '/expeditions/' : '/rooms/') + courseId + '/' + code,
-      readInput,
+      readInput: controls.read,
       onStatus(status) {
         const labels = {
           connected: mode === 'expedition' ? 'Expedition online' : 'Room online',
@@ -237,7 +221,7 @@ async function start() {
     scene?.dispose()
     scene = createCourseScene(renderer, courses[courseId], reducedMotion, sprites)
     player = createPlayer('solo', 0, courses[courseId])
-    player.jump = readInput().jump
+    player.jump = controls.read().jump
     latest = undefined
     lastFinished = false
     finishRun = undefined
@@ -321,7 +305,7 @@ async function start() {
   function restartRun() {
     setScreen('play')
     if (room) room.restart()
-    else player = restartPlayer(player, readInput(), courses[courseId])
+    else player = restartPlayer(player, controls.read(), courses[courseId])
     $('stage').focus()
   }
 
@@ -348,8 +332,7 @@ async function start() {
     const checkpoint = local?.checkpoint ? 'Checkpoint saved' : ''
     const chapter = 'Relay ' + (ROUTE.indexOf(courseId) + 1) + ' of ' + ROUTE.length
     const key = local?.finished ? 'overlay' : [courseId, mode, collected, chip, status, best, checkpoint].join('|')
-    hud.render(renderer.canvas, key, painter => {
-      if (local?.finished) return
+    ui.setUnderlay(local?.finished ? null : painter => {
       const inset = Math.max(10, Math.min(24, painter.width * .02))
       const width = Math.min(230, Math.max(150, painter.width * .46))
       const x = inset + 12
@@ -367,7 +350,7 @@ async function start() {
       painter.text(status, x, inset + 90, label)
       if (best) painter.text(best, x, inset + 106, label)
       if (checkpoint) painter.text(checkpoint, x, inset + (best ? 122 : 106), { ...label, fill: '#a9efb4' })
-    })
+    }, key)
     if (!local) return
 
     if (local.revision === knownRevision) {
@@ -442,19 +425,19 @@ async function start() {
         boxNode({
           id: 'touch-left',
           style: { width: 58, height: 54 },
-          widget: { type: 'button', label: '←', onHold: (active: boolean) => { touchLeft = active; if (active) unlockSound() } }
+          widget: { type: 'button', label: '←', onHold: (active: boolean) => controls.setHold('left', active) }
         }),
         boxNode({
           id: 'touch-right',
           style: { width: 58, height: 54 },
-          widget: { type: 'button', label: '→', onHold: (active: boolean) => { touchRight = active; if (active) unlockSound() } }
+          widget: { type: 'button', label: '→', onHold: (active: boolean) => controls.setHold('right', active) }
         })
       ]),
       boxNode({
         id: 'touch-jump',
         hidden: !showTouch,
         style: { anchor: 'bottom-right', width: 92, height: 54, inset: 14, respectSafeArea: true },
-        widget: { type: 'button', label: 'Jump', primary: true, onHold: (active: boolean) => { if (active) { unlockSound(); touchJump++ } } }
+        widget: { type: 'button', label: 'Jump', primary: true, onHold: (active: boolean) => controls.setHold('jump', active) }
       }),
 
       // Title screen
@@ -637,11 +620,6 @@ async function start() {
     }
   })
 
-  const stopPlatformLifecycle = page.platform.onLifecycle({
-    pause() { audio.suspend() },
-    resume() { audio.resume() }
-  })
-
   function renderUiNow() {
     const w = Math.max(1, uiCanvas.clientWidth), h = Math.max(1, uiCanvas.clientHeight)
     const ratio = Math.min(devicePixelRatio || 1, 2)
@@ -653,7 +631,7 @@ async function start() {
   renderUiNow()
   const stop = fixedLoop({
     update(dt) {
-      if (screen === 'play' && !room) stepPlayer(player, readInput(), dt, courses[courseId])
+      if (screen === 'play' && !room) stepPlayer(player, controls.read(), dt, courses[courseId])
     },
     render(_alpha, now) {
       const activeRoom = room
@@ -668,7 +646,7 @@ async function start() {
       }
       scene.render(players, local, now)
       if (screen === 'play') paintRun(local)
-      else hud.render(renderer.canvas, 'overlay', () => {})
+      else ui.setUnderlay(null, 'overlay')
       if (room) updateStandings(players, local)
       if (mode === 'expedition' && local && 'character' in local && local.character) {
         const nextChar = local.character
@@ -685,21 +663,27 @@ async function start() {
     }
   })
 
-  page.lifecycle({
-    hide(persisted) {
+  const stopLifecycle = page.platform.onLifecycle({
+    pause(reason) {
+      clearInput()
+      audio.suspend()
+      if (reason === 'page') room?.close()
+    },
+    resume(reason) {
+      audio.resume()
+      if (reason === 'page') join()
+    },
+    dispose() {
       room?.close()
       clearInput()
-      if (!persisted) {
-        stop()
-        stopPlatformLifecycle()
-        ui.dispose()
-        controls.dispose()
-        scene.dispose()
-        renderer.dispose()
-        audio.close()
-      }
-    },
-    restore: join
+      stop()
+      stopLifecycle()
+      ui.dispose()
+      controls.dispose()
+      scene.dispose()
+      renderer.dispose()
+      audio.close()
+    }
   })
 }
 

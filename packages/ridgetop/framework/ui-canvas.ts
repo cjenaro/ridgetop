@@ -1,7 +1,19 @@
+import type { HudPainter } from './hud.ts'
+import { createHudPainter } from './hud.ts'
+import { readConnectedGamepads } from './input.ts'
 import type { LayoutNode, LayoutRect, SafeInsets } from './ui-layout.ts'
 import { resolveLayout } from './ui-layout.ts'
 import { isTestingActive, isTestingPaused, onTestingPause, recordCanvasUiRegions } from './testing-runtime.ts'
 import type { HudRegion } from './testing-runtime.ts'
+
+export type CanvasUiUnderlay = (painter: HudPainter, ctx: CanvasRenderingContext2D) => void
+
+export interface CanvasUiViewport {
+  width: number
+  height: number
+  pixelRatio?: number
+  underlay?: CanvasUiUnderlay | null
+}
 
 export interface UiTheme {
   readonly surface: string
@@ -311,12 +323,13 @@ function isDisabled(widget?: CanvasWidget): boolean {
   return Boolean(widget && isInteractive(widget) && widget.disabled)
 }
 
-/** Cross-platform Canvas 2D UI runtime (multi-touch, pointer, keyboard, gamepad, and headless agent API — zero HTML/CSS menus). */
+/** Cross-platform Canvas 2D UI runtime (multi-touch, pointer, keyboard, gamepad, HUD underlay, and headless agent API — zero HTML/CSS menus). */
 export function createCanvasUi(canvas: HTMLCanvasElement, options: {
   theme?: UiTheme
   safeArea?: SafeInsets
   keyboardEnabled?(): boolean
   onBack?(): void
+  underlay?: CanvasUiUnderlay
 } = {}) {
   const rawCtx = canvas.getContext('2d')
   if (!rawCtx) throw new Error('Could not create the Canvas UI context')
@@ -338,6 +351,8 @@ export function createCanvasUi(canvas: HTMLCanvasElement, options: {
   }>()
   let viewportW = 0
   let viewportH = 0
+  let currentUnderlay: CanvasUiUnderlay | null = options.underlay ?? null
+  let underlayKey: string | undefined
   let disposed = false
   let dirty = true
   let padFrame: number | undefined
@@ -346,12 +361,21 @@ export function createCanvasUi(canvas: HTMLCanvasElement, options: {
   let padConfirm = false
   let padBack = false
 
-  function connectedPads(): readonly Gamepad[] {
-    const getGamepads = globalThis.navigator?.getGamepads
-    if (typeof getGamepads !== 'function') return []
-    try {
-      return Array.from(getGamepads.call(globalThis.navigator) ?? []).filter((p): p is Gamepad => Boolean(p && p.connected))
-    } catch { return [] }
+  const hudPainter = createHudPainter(ctx, () => ({ width: viewportW, height: viewportH }))
+  canvas.addEventListener('contextrestored', () => { dirty = true }, signal)
+
+  function setUnderlay(paint: CanvasUiUnderlay | null, key?: string): boolean {
+    if (key !== undefined && key === underlayKey) {
+      currentUnderlay = paint
+      return false
+    }
+    if (key === undefined && underlayKey === undefined && paint === currentUnderlay) {
+      return false
+    }
+    underlayKey = key
+    currentUnderlay = paint
+    dirty = true
+    return true
   }
 
   function interactiveHits(includeDisabled = false, respectScrim = true): CanvasUiHit[] {
@@ -595,7 +619,7 @@ export function createCanvasUi(canvas: HTMLCanvasElement, options: {
 
   function pollGamepad(now = performance.now()) {
     if (disposed || isTestingPaused()) return
-    const pads = connectedPads()
+    const pads = readConnectedGamepads()
     if (!pads.length) {
       padDir = 0; padConfirm = false; padBack = false
       return
@@ -645,13 +669,13 @@ export function createCanvasUi(canvas: HTMLCanvasElement, options: {
       padFrame = undefined
       if (disposed) return
       pollGamepad(now)
-      if (!disposed && connectedPads().length) padFrame = globalThis.requestAnimationFrame(tick)
+      if (!disposed && readConnectedGamepads().length) padFrame = globalThis.requestAnimationFrame(tick)
     }
     padFrame = globalThis.requestAnimationFrame(tick)
   }
 
   globalThis.window?.addEventListener('gamepadconnected', () => ensurePadLoop(), signal)
-  if (connectedPads().length) ensurePadLoop()
+  if (readConnectedGamepads().length) ensurePadLoop()
 
   function paintNode(node: LayoutNode) {
     if (node.hidden) return
@@ -989,7 +1013,8 @@ export function createCanvasUi(canvas: HTMLCanvasElement, options: {
 
   return {
     theme,
-    render(tree: LayoutNode, viewport?: { width: number; height: number; pixelRatio?: number }) {
+    setUnderlay,
+    render(tree: LayoutNode, viewport?: CanvasUiViewport) {
       const w = Math.max(1, viewport?.width ?? canvas.clientWidth)
       const h = Math.max(1, viewport?.height ?? canvas.clientHeight)
       viewportW = w
@@ -1012,6 +1037,12 @@ export function createCanvasUi(canvas: HTMLCanvasElement, options: {
       }
       ctx.setTransform(pw / w, 0, 0, ph / h, 0, 0)
       ctx.clearRect(0, 0, w, h)
+      const underlay = viewport?.underlay !== undefined ? viewport.underlay : currentUnderlay
+      if (underlay) {
+        ctx.save()
+        underlay(hudPainter, ctx)
+        ctx.restore()
+      }
       paintNode(tree)
       if (isTestingActive()) {
         const hudRegions: HudRegion[] = []

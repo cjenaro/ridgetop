@@ -141,7 +141,6 @@ test('bindActionControls and bindPlatformControls poll standard gamepads with de
     const pressed: string[] = []
 
     const platform = bindPlatformControls({
-      buttons: [],
       enabled: () => enabled,
       onPause: () => { pauses++ },
       onGesture: () => { gestures++ }
@@ -176,7 +175,6 @@ test('bindActionControls and bindPlatformControls poll standard gamepads with de
     let reentrantChecks = 0
     const racer = bindActionControls<'throttle' | 'brake' | 'pulse'>({
       keys: { KeyW: 'throttle', KeyS: 'brake', KeyJ: 'pulse' },
-      buttons: [],
       enabled: () => enabled,
       onPress(action) {
         pressed.push(action)
@@ -319,4 +317,137 @@ test('resolveStorage shares cache per native bridge and color() validates hex fo
   assert.deepEqual(color('#0f8'), [0, 1, 0x88 / 255, 1])
   assert.deepEqual(color('112233'), [0x11 / 255, 0x22 / 255, 0x33 / 255, 1])
   assert.throws(() => color('not-a-color'), RangeError)
+})
+
+test('platform.onLifecycle unifies visibilitychange, persisted pagehide/pageshow, non-persisted dispose, and native bridge', () => {
+  const fakeWindow = new EventTarget()
+  const fakeDocument = Object.assign(new EventTarget(), { hidden: false })
+  const events: string[] = []
+  let nativeHandlers: { pause?: () => void; resume?: () => void } | undefined
+  let nativeUnsubs = 0
+
+  const bridge: RidgetopNativeBridge = {
+    platform: 'desktop',
+    lifecycle: {
+      subscribe(handlers) {
+        nativeHandlers = handlers
+        return () => { nativeUnsubs++ }
+      }
+    }
+  }
+
+  withGlobals({ window: fakeWindow, document: fakeDocument, __ridgetopPlatform: bridge }, () => {
+    const platform = createPlatform()
+    const stop = platform.onLifecycle({
+      pause: reason => events.push('pause:' + reason),
+      resume: reason => events.push('resume:' + reason),
+      dispose: () => events.push('dispose')
+    })
+
+    // Transient visibility changes
+    fakeDocument.hidden = true
+    fakeDocument.dispatchEvent(new Event('visibilitychange'))
+    fakeDocument.hidden = false
+    fakeDocument.dispatchEvent(new Event('visibilitychange'))
+
+    // Persisted pagehide/pageshow (bfcache) triggers pause/resume, NOT dispose
+    fakeWindow.dispatchEvent(Object.assign(new Event('pagehide'), { persisted: true }))
+    fakeWindow.dispatchEvent(Object.assign(new Event('pageshow'), { persisted: false }))
+    fakeWindow.dispatchEvent(Object.assign(new Event('pageshow'), { persisted: true }))
+
+    // Native bridge pause/resume
+    nativeHandlers?.pause?.()
+    nativeHandlers?.resume?.()
+
+    // Non-persisted pagehide triggers dispose ONCE and cleans up all listeners + native subscription
+    fakeWindow.dispatchEvent(Object.assign(new Event('pagehide'), { persisted: false }))
+    fakeWindow.dispatchEvent(Object.assign(new Event('pagehide'), { persisted: false }))
+    fakeDocument.hidden = true
+    fakeDocument.dispatchEvent(new Event('visibilitychange'))
+    nativeHandlers?.pause?.()
+    stop() // Idempotent after dispose
+
+    assert.deepEqual(events, [
+      'pause:visibility',
+      'resume:visibility',
+      'pause:page',
+      'resume:page',
+      'pause:native',
+      'resume:native',
+      'dispose'
+    ])
+    assert.equal(nativeUnsubs, 1)
+
+    // Backward compatibility: omitting dispose still routes non-persisted pagehide to pause('page')
+    const pauseOnlyEvents: string[] = []
+    const stopPauseOnly = platform.onLifecycle({
+      pause: reason => pauseOnlyEvents.push('pause:' + reason)
+    })
+    fakeWindow.dispatchEvent(Object.assign(new Event('pagehide'), { persisted: false }))
+    stopPauseOnly()
+    assert.deepEqual(pauseOnlyEvents, ['pause:page'])
+  })
+})
+
+test('bindActionControls and bindPlatformControls support programmatic virtual touch holds', () => {
+  const fakeWindow = new EventTarget()
+  const fakeDocument = Object.assign(new EventTarget(), { hidden: false })
+
+  withGlobals({ window: fakeWindow, document: fakeDocument, navigator: {} }, () => {
+    let enabled = true
+    let gestures = 0
+    const pressed: string[] = []
+
+    const controls = bindActionControls<'left' | 'right' | 'pulse'>({
+      keys: { KeyA: 'left', KeyD: 'right', KeyJ: 'pulse' },
+      enabled: () => enabled,
+      gamepad: false,
+      onGesture: () => { gestures++ },
+      onPress: action => { pressed.push(action) }
+    })
+
+    // Edge-triggered setHold fires gesture & press once while held
+    controls.setHold('left', true)
+    controls.setHold('left', true)
+    assert.equal(controls.active('left'), true)
+    assert.deepEqual(pressed, ['left'])
+    assert.equal(gestures, 1)
+
+    // Releasing works even after enabled() becomes false (holds never stick)
+    enabled = false
+    controls.setHold('pulse', true)
+    assert.equal(controls.active('pulse'), false, 'setHold(true) ignored while disabled')
+    controls.setHold('left', false)
+    assert.equal(controls.active('left'), false)
+
+    // clearHolds releases all active virtual holds
+    enabled = true
+    controls.setHold('right', true)
+    controls.setHold('pulse', true)
+    assert.equal(controls.active('right'), true)
+    assert.equal(controls.active('pulse'), true)
+    controls.clearHolds()
+    assert.equal(controls.active('right'), false)
+    assert.equal(controls.active('pulse'), false)
+    controls.dispose()
+
+    // bindPlatformControls merges virtual holds with jump edge counter
+    let platformGestures = 0
+    const platform = bindPlatformControls({
+      enabled: () => true,
+      onPause() {},
+      onGesture: () => { platformGestures++ }
+    })
+    platform.setHold('right', true)
+    platform.setHold('jump', true)
+    platform.setHold('jump', true)
+    assert.deepEqual(platform.read(), { left: false, right: true, jump: 1 })
+    platform.setHold('jump', false)
+    platform.setHold('jump', true)
+    assert.deepEqual(platform.read(), { left: false, right: true, jump: 2 })
+    platform.clear()
+    assert.deepEqual(platform.read(), { left: false, right: false, jump: 2 })
+    assert.equal(platformGestures, 3)
+    platform.dispose()
+  })
 })

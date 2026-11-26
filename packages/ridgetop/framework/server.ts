@@ -1,5 +1,7 @@
 export { createGameHost, isMain, ridgetopBrowserSpecifiers, sendJson, sendText, startGameHost } from './host.ts'
+export type { GameHostMount } from './host.ts'
 export { createRoomService } from './room-server.ts'
+export type { RoomJoinOptions, RoomService, RoomServiceOptions } from './room-server.ts'
 export { createCookieSession, createIdentity, createRecords, openRecords } from './records.ts'
 export { createDecisionApi } from './decision-api.ts'
 export { bakeIconPng, formatPackageSummary, packageGame, parsePackageArgs } from './packager.ts'
