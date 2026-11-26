@@ -25,7 +25,7 @@ import {
   TALL_GRASS_RANGED_COVER, TALL_GRASS_RANGED_CRIT_REDUCTION, TAUNT_RADIUS,
   cellHeightAt, cellHeightLevel, defaultTerrainHeightLevel,
   facingToYaw, facingVector, gridToWorld, isUnitActive, isUnitDowned, terrainDefBonus,
-  terrainElevation, terrainMoveCost, terrainWalkable, vectorToFacing
+  terrainElevation, terrainWalkable, vectorToFacing
 } from './types.ts'
 import {
   canEvadeZoneOfControl, computeAiOpportunityPenalty, findStepOpportunityAttackers,
@@ -35,6 +35,25 @@ export {
   canEvadeZoneOfControl, computeOpportunityAttackDamage, computeZocPerimeterTiles,
   formatOpportunityWarning, hasZoneOfControl, previewPathOpportunityAttacks
 } from './zoc.ts'
+import {
+  ARCANE_CONDUIT_SPLASH_RATIO, CHAMPION_KO_CT_SURGE, EQUIP_EFFECTS, HERO_PASSIVES,
+  MAX_TACTIC_DECK, MIN_TACTIC_DECK, RECOMMENDED_MIN_TACTIC_DECK, SHIELD_WALL_DEF_BONUS,
+  adjustCoverBonusForAttacker, autoBuildTacticDeck, computeAttackerDamageMultiplier,
+  computeBackstabPassiveCritBonus, computeBonusIgnoreArmor, computeDefenderIncomingDamageMultiplier,
+  computeKoHealAmount, computeOverhealShield, computePaladinCounterBonus, computePassiveRangeBonus,
+  computeShieldWallDefBonus, computeTacticDeckCurve, computeTurnStartGearEffects,
+  getActiveTacticDeckUids, getEquipEffect, getEquipmentJumpBonus, getHeroPassive,
+  ignoresSnowMoveCost, shouldApplyBurnOnCrit, shouldChillMeleeAttacker, toggleTacticInDeck,
+  unitHasEquip, unitTerrainMoveCost
+} from './passives.ts'
+export {
+  ARCANE_CONDUIT_SPLASH_RATIO, CHAMPION_KO_CT_SURGE, EQUIP_EFFECTS, HERO_PASSIVES,
+  MAX_TACTIC_DECK, MIN_TACTIC_DECK, RECOMMENDED_MIN_TACTIC_DECK, SHIELD_WALL_DEF_BONUS,
+  autoBuildTacticDeck, computeShieldWallDefBonus, computeTacticDeckCurve,
+  getActiveTacticDeckUids, getEquipEffect, getHeroPassive, ignoresSnowMoveCost,
+  toggleTacticInDeck, unitTerrainMoveCost
+}
+export type { EquipEffectSpec, HeroPassiveSpec, TacticDeckCurve } from './passives.ts'
 import {
   classifyElement, classifyHazardElement, collectWildfirePatch,
   previewElementalCombo, triggerElementalCombo
@@ -201,7 +220,7 @@ export function computeHeroStats(campaign: CampaignState, hero: OwnedHeroCard): 
     def += item.def
     speed += item.speed
     move += item.move
-    jump += item.jump ?? 0
+    jump += (item.jump ?? 0) + getEquipmentJumpBonus(item.id)
     range += item.range
     crit += item.crit
     lifesteal += item.lifesteal
@@ -768,6 +787,9 @@ function cloneCampaignFromSave(c: CampaignState, fallbackSeed: number): Campaign
     heroes: c.heroes.map(h => ({ ...h })),
     equipment: Array.isArray(c.equipment) ? c.equipment.map(e => ({ ...e })) : [],
     tactics: Array.isArray(c.tactics) ? c.tactics.map(t => ({ ...t })) : [],
+    ...(Array.isArray(c.activeTacticDeckUids)
+      ? { activeTacticDeckUids: c.activeTacticDeckUids.filter((u): u is string => typeof u === 'string') }
+      : {}),
     squadUids: Array.isArray(c.squadUids) && c.squadUids.length ? c.squadUids.slice() : [c.heroes[0].uid],
     selectedCampHeroUid: c.selectedCampHeroUid ?? c.heroes[0].uid,
     lastPackReveal: []
@@ -945,7 +967,8 @@ export function serializeBattleState(
       tauntTurns: u.tauntTurns,
       hasteTurns: u.hasteTurns,
       poisonStacks: u.poisonStacks,
-      cooldowns: [u.cooldowns[0], u.cooldowns[1], u.cooldowns[2]]
+      cooldowns: [u.cooldowns[0], u.cooldowns[1], u.cooldowns[2]],
+      ...(u.crownbladeKoUsed ? { crownbladeKoUsed: true } : {})
     }
     return snap
   })
@@ -1207,7 +1230,8 @@ export function validateBattleSnapshot(raw: unknown): BattleSaveSnapshot | null 
         Math.max(0, Math.floor(cd0)),
         Math.max(0, Math.floor(cd1)),
         Math.max(0, Math.floor(cd2))
-      ]
+      ],
+      ...(item.crownbladeKoUsed === true ? { crownbladeKoUsed: true } : {})
     })
   }
 
@@ -1340,7 +1364,8 @@ export function restoreBattleState(state: GameState, snapshot: unknown): boolean
       animTimer: 0,
       hitFlash: 0,
       lungeX: 0,
-      lungeZ: 0
+      lungeZ: 0,
+      ...(u.crownbladeKoUsed ? { crownbladeKoUsed: true } : {})
     }
   })
 
@@ -1517,6 +1542,9 @@ export function serializeSave(state: GameState): SaveData {
       heroes: state.campaign.heroes.map(h => ({ ...h })),
       equipment: state.campaign.equipment.map(e => ({ ...e })),
       tactics: state.campaign.tactics.map(t => ({ ...t })),
+      ...(Array.isArray(state.campaign.activeTacticDeckUids)
+        ? { activeTacticDeckUids: state.campaign.activeTacticDeckUids.slice() }
+        : {}),
       squadUids: state.campaign.squadUids.slice(),
       lastPackReveal: []
     },
@@ -1562,6 +1590,9 @@ export function loadSave(storage: StorageLike | null | undefined): SaveData | nu
         tactics: 'tactics' in camp && Array.isArray(camp.tactics)
           ? camp.tactics.filter((t): t is OwnedTacticCard => typeof t === 'object' && t !== null && 'uid' in t && 'tacticId' in t)
           : [],
+        ...('activeTacticDeckUids' in camp && Array.isArray(camp.activeTacticDeckUids)
+          ? { activeTacticDeckUids: camp.activeTacticDeckUids.filter((u): u is string => typeof u === 'string') }
+          : {}),
         squadUids: 'squadUids' in camp && Array.isArray(camp.squadUids)
           ? camp.squadUids.filter((u): u is string => typeof u === 'string')
           : [],
@@ -2299,7 +2330,7 @@ export function startChapterBattle(
   const objective = buildBattleObjective(chapter, units, endlessWave)
   const deployTiles = computeDeployTiles(chapter, cells, objective)
   const useDeploy = Boolean(options?.deployPhase)
-  const deckUids = shuffleStrings(campaign.tactics.map(t => t.uid), campaign)
+  const deckUids = shuffleStrings(getActiveTacticDeckUids(campaign), campaign)
   const battle: BattleState = {
     stageId: chapter.id,
     chapterIndex: safeIdx,
@@ -2674,13 +2705,17 @@ export function effectiveAttackRange(
   fromRow: number,
   toCol: number,
   toRow: number,
-  baseRange: number
+  baseRange: number,
+  attacker?: Partial<Pick<BattleUnit, 'heroId'>> | null
 ): number {
   if (baseRange <= 1) return baseRange
-  const diff = cellHeightAt(battle, fromCol, fromRow) - cellHeightAt(battle, toCol, toRow)
-  if (diff >= 1) return baseRange + 1
-  if (diff <= -2) return Math.max(1, baseRange - 1)
-  return baseRange
+  const attackerLvl = cellHeightAt(battle, fromCol, fromRow)
+  const diff = attackerLvl - cellHeightAt(battle, toCol, toRow)
+  let eff = baseRange
+  if (diff >= 1) eff += 1
+  else if (diff <= -2) eff = Math.max(1, eff - 1)
+  eff += computePassiveRangeBonus(attacker, attackerLvl, baseRange)
+  return eff
 }
 
 export function isIndirectSkill(skill: SkillSpec | null): boolean {
@@ -2763,7 +2798,8 @@ export function computeCoverBonus(
   fromCol: number,
   fromRow: number,
   toCol: number,
-  toRow: number
+  toRow: number,
+  attacker?: Partial<Pick<BattleUnit, 'heroId' | 'weaponId' | 'armorId' | 'relicId'>> | null
 ): number {
   const dist = manhattan(fromCol, fromRow, toCol, toRow)
   if (dist < 2) return 0
@@ -2789,7 +2825,7 @@ export function computeCoverBonus(
       best = Math.max(best, 2)
     }
   }
-  return best
+  return adjustCoverBonusForAttacker(best, attacker, cellHeightAt(battle, fromCol, fromRow))
 }
 
 function computeReachableMoveTiles(
@@ -2840,7 +2876,7 @@ function computeReachableMoveTiles(
       if (!canTraverseStep(fromCell, cell, unit.jump)) continue
       const occ = unitOrDownedAt(battle, nc, nr)
       if (occ && occ.team !== unit.team) continue
-      const baseCost = terrainMoveCost(cell.terrain)
+      const baseCost = unitTerrainMoveCost(unit, cell.terrain)
       const canGlide = cur.glided === 0 && (cell.terrain === 'ice' || fromCell.terrain === 'ice')
       const stepCost = canGlide ? Math.max(0, baseCost - 1) : baseCost
       const nextGlided: 0 | 1 = canGlide ? 1 : cur.glided
@@ -3090,7 +3126,7 @@ export function findGridPath(
       if (!canTraverseStep(fromCell, cell, unit.jump)) continue
       const occ = unitOrDownedAt(battle, nc, nr)
       if (occ && occ.team !== unit.team) continue
-      const baseCost = terrainMoveCost(cell.terrain)
+      const baseCost = unitTerrainMoveCost(unit, cell.terrain)
       const canGlide = cur.glided === 0 && (cell.terrain === 'ice' || fromCell.terrain === 'ice')
       const stepCost = canGlide ? Math.max(0, baseCost - 1) : baseCost
       const nextGlided: 0 | 1 = canGlide ? 1 : cur.glided
@@ -3460,7 +3496,7 @@ export function computeTargetTiles(
     // Basic attack targets all enemies & intact destructible barricades within elevation-adjusted range & direct LoS
     for (const other of battle.units) {
       if (!other.alive || other.team === unit.team) continue
-      const effRange = effectiveAttackRange(battle, unit.col, unit.row, other.col, other.row, unit.range)
+      const effRange = effectiveAttackRange(battle, unit.col, unit.row, other.col, other.row, unit.range, unit)
       if (
         manhattan(unit.col, unit.row, other.col, other.row) <= effRange &&
         hasLineOfSight(battle, unit.col, unit.row, other.col, other.row, false)
@@ -3472,7 +3508,7 @@ export function computeTargetTiles(
       for (let col = 0; col < battle.cols; col++) {
         if (!isIntactBarricade(battle.cells[row][col])) continue
         const d = manhattan(unit.col, unit.row, col, row)
-        const effRange = effectiveAttackRange(battle, unit.col, unit.row, col, row, unit.range)
+        const effRange = effectiveAttackRange(battle, unit.col, unit.row, col, row, unit.range, unit)
         if (d >= 1 && d <= effRange && hasLineOfSight(battle, unit.col, unit.row, col, row, false)) {
           targets.push({ col, row })
         }
@@ -3498,7 +3534,7 @@ export function computeTargetTiles(
       const terrain = battle.cells[row][col].terrain
       if (terrain === 'pillar' || terrain === 'void') continue
       const d = manhattan(unit.col, unit.row, col, row)
-      const effRange = effectiveAttackRange(battle, unit.col, unit.row, col, row, skill.range)
+      const effRange = effectiveAttackRange(battle, unit.col, unit.row, col, row, skill.range, unit)
       if (d >= minDist && d <= effRange && hasLineOfSight(battle, unit.col, unit.row, col, row, indirect)) {
         targets.push({ col, row })
       }
@@ -3601,7 +3637,7 @@ function pickBestApproachTile(
   let bestScore = -1e9
   for (const m of moveTiles) {
     const d = manhattan(m.col, m.row, targetCol, targetRow)
-    const effRange = effectiveAttackRange(battle, m.col, m.row, targetCol, targetRow, range)
+    const effRange = effectiveAttackRange(battle, m.col, m.row, targetCol, targetRow, range, unit)
     if (d < 1 || d > effRange) continue
     if (!hasLineOfSight(battle, m.col, m.row, targetCol, targetRow, indirect)) continue
     const cell = battle.cells[m.row][m.col]
@@ -3619,7 +3655,7 @@ function pickBestApproachTile(
       if (d === 1 && range <= 1 && findPincerAssisters(battle, unit, m.col, m.row, targetUnit).length > 0) {
         score += 500
       }
-      score -= computeCoverBonus(battle, m.col, m.row, targetCol, targetRow) * 45
+      score -= computeCoverBonus(battle, m.col, m.row, targetCol, targetRow, unit) * 45
     }
     const walkDist = manhattan(unit.col, unit.row, m.col, m.row)
     // Ranged heroes prefer staying at max safe distance; melee prefers shortest approach
@@ -3718,7 +3754,8 @@ function previewDamageMath(
   fromRow: number,
   rawDamage: number,
   ignoreArmor: number,
-  canCrit: boolean
+  canCrit: boolean,
+  isSkillDamage = false
 ): {
   normalDmg: number
   critDmg: number
@@ -3746,17 +3783,21 @@ function previewDamageMath(
     elevationDiff = aLvl - dLvl
     dmg *= elevationDamageMultiplier(aLvl, dLvl)
     highGround = elevationDiff > 0
-    coverBonus = computeCoverBonus(battle, fromCol, fromRow, defender.col, defender.row)
+    coverBonus = computeCoverBonus(battle, fromCol, fromRow, defender.col, defender.row, attacker)
     attackArc = computeAttackArc(fromCol, fromRow, defender.col, defender.row, defender.facing)
     const arcMod = attackArcModifiers(attackArc)
     dmg *= arcMod.dmgMul
-    arcCritBonus = arcMod.critBonus
+    arcCritBonus = arcMod.critBonus + computeBackstabPassiveCritBonus(attacker, attackArc)
     if (attacker.empowerTurns > 0) {
       dmg *= 1.35
       empowered = true
     }
+    dmg *= computeAttackerDamageMultiplier(attacker, defender)
   }
-  const effDef = Math.max(0, defender.def * (1 - clamp(ignoreArmor, 0, 1)) + terrainDef + coverBonus)
+  dmg *= computeDefenderIncomingDamageMultiplier(defender, isSkillDamage)
+  const totalIgnoreArmor = clamp(ignoreArmor + computeBonusIgnoreArmor(attacker, defender.def), 0, 1)
+  const shieldWallDef = computeShieldWallDefBonus(battle, defender)
+  const effDef = Math.max(0, (defender.def + shieldWallDef) * (1 - totalIgnoreArmor) + terrainDef + coverBonus)
   const baseDmg = Math.max(4, Math.round(dmg - effDef * 0.72))
   const rangedTallGrass = attacker !== null &&
     manhattan(fromCol, fromRow, defender.col, defender.row) >= 2 &&
@@ -3885,7 +3926,7 @@ export function computeCombatForecast(state: GameState, col: number, row: number
       healAmount = computeReviveHp(primary, spec.reviveHpRatio)
       hpAfterNormal = healAmount
     } else if (spec.damage > 0 && primary.team === 'enemy') {
-      const m = previewDamageMath(battle, null, primary, col, row, spec.damage, 0.6, false)
+      const m = previewDamageMath(battle, null, primary, col, row, spec.damage, 0.6, false, true)
       normalDmg = m.normalDmg
       hpAfterNormal = m.hpAfterNormal
       const tacticElement = classifyElement(spec)
@@ -4160,7 +4201,7 @@ export function computeCombatForecast(state: GameState, col: number, row: number
       hpAfterCrit = healAmount
     } else if (armedSkill.target === 'ally' || armedSkill.target === 'self') {
       healAmount = armedSkill.healAmount
-      shieldAmount = armedSkill.shieldAmount
+      shieldAmount = armedSkill.shieldAmount + computeOverhealShield(active, primary, healAmount, armedSkill.shieldAmount)
       hpAfterNormal = Math.min(primary.maxHp, primary.hp + healAmount)
       hpAfterCrit = hpAfterNormal
     } else {
@@ -4168,12 +4209,12 @@ export function computeCombatForecast(state: GameState, col: number, row: number
       const healsAlly = isDawnsJudgmentSafe && primary.team === active.team
       if (healsAlly) {
         healAmount = armedSkill.healAmount
-        shieldAmount = armedSkill.shieldAmount
+        shieldAmount = armedSkill.shieldAmount + computeOverhealShield(active, primary, healAmount, armedSkill.shieldAmount)
         hpAfterNormal = Math.min(primary.maxHp, primary.hp + healAmount)
         hpAfterCrit = hpAfterNormal
       } else if (armedSkill.powerMul > 0) {
         const raw = active.atk * armedSkill.powerMul + armedSkill.flatBonus
-        const m = previewDamageMath(battle, active, primary, approachCol, approachRow, raw, armedSkill.ignoreArmor, true)
+        const m = previewDamageMath(battle, active, primary, approachCol, approachRow, raw, armedSkill.ignoreArmor, true, true)
         normalDmg = m.normalDmg
         critDmg = m.critDmg
         critChance = m.critChance
@@ -4269,13 +4310,13 @@ export function computeCombatForecast(state: GameState, col: number, row: number
 
   // Basic Strike option (for living enemy targets)
   if (!primaryDowned && primary.team !== active.team) {
-    const strikeEffRange = effectiveAttackRange(battle, active.col, active.row, primary.col, primary.row, active.range)
+    const strikeEffRange = effectiveAttackRange(battle, active.col, active.row, primary.col, primary.row, active.range, active)
     const strikeDirect = distNow >= 1 && distNow <= strikeEffRange && hasLineOfSight(battle, active.col, active.row, primary.col, primary.row, false)
     const strikeApproach = strikeDirect
       ? { col: active.col, row: active.row }
       : (!active.moved ? pickBestApproachTile(battle, active, battle.moveTiles, primary.col, primary.row, active.range, false) : null)
     if (strikeApproach) {
-      const m = previewDamageMath(battle, active, primary, strikeApproach.col, strikeApproach.row, active.atk, 0, true)
+      const m = previewDamageMath(battle, active, primary, strikeApproach.col, strikeApproach.row, active.atk, 0, true, false)
       const strikeAssisters = findPincerAssisters(battle, active, strikeApproach.col, strikeApproach.row, primary)
       const strikePincerDmg = strikeAssisters.length > 0
         ? computePincerAssistDamage(battle, strikeAssisters[0], primary)
@@ -4292,12 +4333,14 @@ export function computeCombatForecast(state: GameState, col: number, row: number
       })
       const strikeHitHp = Math.max(0, m.normalDmg - primary.shield)
       const strikeLifesteal = active.lifesteal > 0 && strikeHitHp > 0 ? Math.max(2, Math.round(strikeHitHp * active.lifesteal)) : 0
+      const strikePalBonus = computePaladinCounterBonus(primary, m.attackArc, Math.min(primary.shield, m.normalDmg))
       const altCounter = altCanCounter
         ? computeCounterDamage(battle, primary, active, {
           attackerCol: strikeApproach.col,
           attackerRow: strikeApproach.row,
           attackerHp: Math.min(active.maxHp, active.hp + strikeLifesteal),
-          attackerShield: active.shield
+          attackerShield: active.shield,
+          counterMul: strikePalBonus.counterMul
         })
         : null
       alternatives.push({
@@ -4332,7 +4375,7 @@ export function computeCombatForecast(state: GameState, col: number, row: number
       if ((sk.target === 'enemy' || sk.target === 'tile') && primary.team === active.team) continue
     }
     const skIndirect = isIndirectSkill(sk)
-    const skEffRange = effectiveAttackRange(battle, active.col, active.row, primary.col, primary.row, sk.range)
+    const skEffRange = effectiveAttackRange(battle, active.col, active.row, primary.col, primary.row, sk.range, active)
     const skDirect = distNow >= 1 && distNow <= skEffRange && hasLineOfSight(battle, active.col, active.row, primary.col, primary.row, skIndirect)
     const skApproach = skDirect
       ? { col: active.col, row: active.row }
@@ -4367,7 +4410,7 @@ export function computeCombatForecast(state: GameState, col: number, row: number
         critDmg: 0,
         critChance: 0,
         healAmount: sk.healAmount,
-        selfShield: sk.shieldAmount,
+        selfShield: sk.shieldAmount + computeOverhealShield(active, primary, sk.healAmount, sk.shieldAmount),
         status: sk.status,
         selfStatus: sk.selfStatus,
         lethalNormal: false,
@@ -4380,7 +4423,7 @@ export function computeCombatForecast(state: GameState, col: number, row: number
       })
     } else {
       const raw = active.atk * sk.powerMul + sk.flatBonus
-      const m = previewDamageMath(battle, active, primary, skApproach.col, skApproach.row, raw, sk.ignoreArmor, true)
+      const m = previewDamageMath(battle, active, primary, skApproach.col, skApproach.row, raw, sk.ignoreArmor, true, true)
       const skAssisters = isPincerMeleeSkill(sk)
         ? findPincerAssisters(battle, active, skApproach.col, skApproach.row, primary)
         : []
@@ -4409,12 +4452,14 @@ export function computeCombatForecast(state: GameState, col: number, row: number
       const skLifesteal = active.lifesteal > 0 && skHitHp > 0 ? Math.max(2, Math.round(skHitHp * active.lifesteal)) : 0
       const skSelfHeal = sk.healAmount > 0 && sk.pattern === 'single' ? sk.healAmount : 0
       const skSelfShield = sk.shieldAmount > 0 && sk.pattern !== 'aura' ? sk.shieldAmount : 0
+      const skPalBonus = computePaladinCounterBonus(primary, m.attackArc, Math.min(primary.shield, m.normalDmg))
       const skCounter = skCanCounter
         ? computeCounterDamage(battle, primary, active, {
           attackerCol: skApproach.col,
           attackerRow: skApproach.row,
           attackerHp: Math.min(active.maxHp, active.hp + skSelfHeal + skLifesteal),
-          attackerShield: active.shield + skSelfShield
+          attackerShield: active.shield + skSelfShield,
+          counterMul: skPalBonus.counterMul
         })
         : null
       alternatives.push({
@@ -4474,11 +4519,13 @@ export function computeCombatForecast(state: GameState, col: number, row: number
         && armedSkill.target !== 'ally' && armedSkill.target !== 'self'
         ? armedSkill.healAmount
         : 0
+      const primaryPalBonus = computePaladinCounterBonus(primary, attackArc, Math.min(primary.shield, normalDmg))
       const cCalc = computeCounterDamage(battle, primary, active, {
         attackerCol: approachCol,
         attackerRow: approachRow,
         attackerHp: Math.min(active.maxHp, active.hp + primarySelfHeal + primaryLifesteal),
-        attackerShield: active.shield + selfShield
+        attackerShield: active.shield + selfShield,
+        counterMul: primaryPalBonus.counterMul
       })
       counterDmg = cCalc.normalDmg
       counterLethal = cCalc.lethalToAttacker
@@ -4565,16 +4612,102 @@ function addFloat(battle: BattleState, x: number, y: number, z: number, text: st
   })
 }
 
-function applyDamage(
+interface DamageResult {
+  readonly hpDamage: number
+  readonly absorbed: number
+  readonly rolledDamage: number
+  readonly isCrit: boolean
+}
+
+function triggerOnKoEffects(
+  state: GameState,
+  attacker: BattleUnit | null,
+  defeated: BattleUnit,
+  opts: { readonly isSkillKill: boolean; readonly rawHitDamage: number }
+): void {
+  const battle = state.battle
+  if (!battle || !attacker || !attacker.alive || attacker.team === defeated.team) return
+
+  // Champion Innate Passive — Relentless Momentum: KO grants Empower & +25 CT
+  if (attacker.heroId === 'champion') {
+    attacker.empowerTurns = Math.max(attacker.empowerTurns, 1)
+    attacker.ct += CHAMPION_KO_CT_SURGE
+    addFloat(battle, attacker.x, attacker.y + 0.62, attacker.z, `MOMENTUM! +${CHAMPION_KO_CT_SURGE} CT`, '#ff9c66')
+  }
+
+  // Crimson Pendant (`blood_amulet`): Heal +14 HP on KO
+  const koHeal = computeKoHealAmount(attacker)
+  if (koHeal > 0) {
+    applyHealAndShield(state, attacker, koHeal, 0, attacker)
+  }
+
+  // Solis Crownblade (`solis_crownblade`): +1 AP on first KO
+  if (attacker.team === 'ally' && !attacker.crownbladeKoUsed && unitHasEquip(attacker, 'solis_crownblade')) {
+    attacker.crownbladeKoUsed = true
+    battle.ap = Math.min(battle.maxAp, battle.ap + 1)
+    addFloat(battle, attacker.x, attacker.y + 0.85, attacker.z, 'CROWNBLADE +1 AP', '#ffe066')
+  }
+
+  // Mage Innate Passive — Arcane Conduit: skill KO refunds +1 AP & 20% splash magic DMG to 1 adjacent enemy
+  if (opts.isSkillKill && attacker.heroId === 'mage') {
+    if (attacker.team === 'ally') {
+      battle.ap = Math.min(battle.maxAp, battle.ap + 1)
+      addFloat(battle, attacker.x, attacker.y + 0.62, attacker.z, 'CONDUIT +1 AP', '#7ef2ff')
+    }
+    const adjacentFoes = battle.units
+      .filter(u =>
+        u.alive &&
+        u.team === defeated.team &&
+        u.uid !== defeated.uid &&
+        manhattan(u.col, u.row, defeated.col, defeated.row) === 1
+      )
+      .sort((a, b) => (a.hp !== b.hp ? a.hp - b.hp : a.uid.localeCompare(b.uid)))
+    const splashTarget = adjacentFoes[0]
+    if (splashTarget) {
+      const splashDmg = Math.max(4, Math.round(opts.rawHitDamage * ARCANE_CONDUIT_SPLASH_RATIO))
+      let rem = splashDmg
+      let absorbed = 0
+      if (splashTarget.shield > 0) {
+        absorbed = Math.min(splashTarget.shield, rem)
+        splashTarget.shield -= absorbed
+        rem -= absorbed
+      }
+      splashTarget.hp = Math.max(0, splashTarget.hp - rem)
+      splashTarget.hitFlash = 0.24
+      splashTarget.animState = 'hit'
+      splashTarget.animTimer = 0.26
+      state.vfx.push({ kind: 'burst', style: 'arcane', at: [splashTarget.x, splashTarget.y + 0.65, splashTarget.z], radius: 0.9, uid: attacker.uid })
+      state.vfx.push({
+        kind: 'impact',
+        uid: splashTarget.uid,
+        attackerUid: attacker.uid,
+        arc: 'front',
+        crit: false,
+        blocked: rem === 0 && absorbed > 0,
+        absorbed,
+        damage: rem
+      })
+      addFloat(battle, splashTarget.x, splashTarget.y + 0.35, splashTarget.z, rem > 0 ? `CONDUIT -${rem}` : `BLOCK ${absorbed}`, '#a5b8ff')
+      if (splashTarget.hp <= 0) {
+        handleUnitDefeat(state, splashTarget)
+      }
+    }
+  }
+}
+
+function applyDamageDetailed(
   state: GameState,
   attacker: BattleUnit | null,
   defender: BattleUnit,
   rawDamage: number,
   ignoreArmor: number,
-  canCrit: boolean
-): number {
+  canCrit: boolean,
+  isSkillDamage = false
+): DamageResult {
   const battle = state.battle
-  if (!battle || !defender.alive) return 0
+  if (!battle || !defender.alive) {
+    return { hpDamage: 0, absorbed: 0, rolledDamage: 0, isCrit: false }
+  }
 
   let dmg = rawDamage
   let attackArc: AttackArc = 'front'
@@ -4585,15 +4718,19 @@ function applyDamage(
     const aLvl = cellHeightAt(battle, attacker.col, attacker.row)
     const dLvl = cellHeightAt(battle, defender.col, defender.row)
     dmg *= elevationDamageMultiplier(aLvl, dLvl)
-    coverBonus = computeCoverBonus(battle, attacker.col, attacker.row, defender.col, defender.row)
+    coverBonus = computeCoverBonus(battle, attacker.col, attacker.row, defender.col, defender.row, attacker)
     attackArc = computeAttackArc(attacker.col, attacker.row, defender.col, defender.row, defender.facing)
     const arcMod = attackArcModifiers(attackArc)
     dmg *= arcMod.dmgMul
-    arcCritBonus = arcMod.critBonus
+    arcCritBonus = arcMod.critBonus + computeBackstabPassiveCritBonus(attacker, attackArc)
     if (attacker.empowerTurns > 0) dmg *= 1.35
+    dmg *= computeAttackerDamageMultiplier(attacker, defender)
   }
+  dmg *= computeDefenderIncomingDamageMultiplier(defender, isSkillDamage)
 
-  const effDef = Math.max(0, defender.def * (1 - clamp(ignoreArmor, 0, 1)) + terrainDef + coverBonus)
+  const totalIgnoreArmor = clamp(ignoreArmor + computeBonusIgnoreArmor(attacker, defender.def), 0, 1)
+  const shieldWallDef = computeShieldWallDefBonus(battle, defender)
+  const effDef = Math.max(0, (defender.def + shieldWallDef) * (1 - totalIgnoreArmor) + terrainDef + coverBonus)
   let finalDmg = Math.max(4, Math.round(dmg - effDef * 0.72))
 
   let isCrit = false
@@ -4605,6 +4742,7 @@ function applyDamage(
     isCrit = true
     finalDmg = Math.round(finalDmg * 1.55)
   }
+  const rolledDamage = finalDmg
 
   let absorbed = 0
   if (defender.shield > 0) {
@@ -4660,8 +4798,23 @@ function applyDamage(
 
   if (defender.hp <= 0) {
     handleUnitDefeat(state, defender)
+    triggerOnKoEffects(state, attacker, defender, { isSkillKill: isSkillDamage, rawHitDamage: rolledDamage })
+  } else if (isCrit && attacker && attacker.team !== defender.team && shouldApplyBurnOnCrit(attacker)) {
+    applyStatus(battle, defender, 'burn')
   }
-  return finalDmg
+  return { hpDamage: finalDmg, absorbed, rolledDamage, isCrit }
+}
+
+function applyDamage(
+  state: GameState,
+  attacker: BattleUnit | null,
+  defender: BattleUnit,
+  rawDamage: number,
+  ignoreArmor: number,
+  canCrit: boolean,
+  isSkillDamage = false
+): number {
+  return applyDamageDetailed(state, attacker, defender, rawDamage, ignoreArmor, canCrit, isSkillDamage).hpDamage
 }
 
 function handleUnitDefeat(state: GameState, unit: BattleUnit): void {
@@ -4736,10 +4889,12 @@ function applyHealAndShield(
   state: GameState,
   target: BattleUnit,
   healAmount: number,
-  shieldAmount: number
+  shieldAmount: number,
+  healer?: BattleUnit | null
 ): void {
   const battle = state.battle
   if (!battle || !target.alive) return
+  const overhealShield = computeOverhealShield(healer, target, healAmount, shieldAmount)
   if (healAmount > 0) {
     const before = target.hp
     target.hp = Math.min(target.maxHp, target.hp + healAmount)
@@ -4748,9 +4903,17 @@ function applyHealAndShield(
     state.vfx.push({ kind: 'heal', at: [target.x, target.y + 0.5, target.z] })
     state.sounds.push({ kind: 'heal' })
   }
-  if (shieldAmount > 0) {
-    target.shield += shieldAmount
-    addFloat(battle, target.x, target.y + 0.35, target.z, `+${shieldAmount} SHD`, '#7ed9ff')
+  const totalShield = shieldAmount + overhealShield
+  if (totalShield > 0) {
+    target.shield += totalShield
+    addFloat(
+      battle,
+      target.x,
+      target.y + 0.35,
+      target.z,
+      overhealShield > 0 && shieldAmount === 0 ? `GRACE +${overhealShield} SHD` : `+${totalShield} SHD`,
+      '#7ed9ff'
+    )
     state.vfx.push({ kind: 'shield', at: [target.x, target.y + 0.5, target.z] })
     state.sounds.push({ kind: 'shield' })
   }
@@ -5201,12 +5364,18 @@ function executePincerFollowUp(state: GameState, attacker: BattleUnit, target: B
 
     if (target.hp <= 0) {
       handleUnitDefeat(state, target)
+      triggerOnKoEffects(state, assister, target, { isSkillKill: false, rawHitDamage: rawDmg })
     }
   }
   return totalDealt
 }
 
-function executeCounterAttack(state: GameState, defender: BattleUnit, attacker: BattleUnit): number {
+function executeCounterAttack(
+  state: GameState,
+  defender: BattleUnit,
+  attacker: BattleUnit,
+  paladinBonus?: { readonly counterMul: number; readonly shieldGain: number }
+): number {
   const battle = state.battle
   if (!battle || !defender.alive || !attacker.alive) return 0
 
@@ -5228,7 +5397,15 @@ function executeCounterAttack(state: GameState, defender: BattleUnit, attacker: 
     uid: defender.uid
   })
 
-  const calc = computeCounterDamage(battle, defender, attacker)
+  if (paladinBonus && paladinBonus.shieldGain > 0) {
+    defender.shield += paladinBonus.shieldGain
+    addFloat(battle, defender.x, defender.y + 0.68, defender.z, `AEGIS +${paladinBonus.shieldGain} SHD`, '#ffd15c')
+    state.vfx.push({ kind: 'shield', at: [defender.x, defender.y + 0.5, defender.z] })
+  }
+
+  const calc = computeCounterDamage(battle, defender, attacker, {
+    counterMul: paladinBonus?.counterMul
+  })
   const absorbed = calc.shieldAbsorbed
   const hpDmg = calc.hpDamage
   attacker.shield = Math.max(0, attacker.shield - absorbed)
@@ -5249,7 +5426,7 @@ function executeCounterAttack(state: GameState, defender: BattleUnit, attacker: 
   attacker.animTimer = 0.30
   battle.shake = Math.max(battle.shake, 0.22)
 
-  addFloat(battle, defender.x, defender.y + 0.46, defender.z, 'COUNTER!', '#ff9f43')
+  addFloat(battle, defender.x, defender.y + 0.46, defender.z, paladinBonus && paladinBonus.counterMul > 1 ? 'AEGIS COUNTER!' : 'COUNTER!', '#ff9f43')
   if (hpDmg > 0) {
     addFloat(battle, attacker.x, attacker.y + 0.12, attacker.z, `-${hpDmg}`, '#ff6b7a')
     state.sounds.push({ kind: 'hit', pitch: 1.06 })
@@ -5260,6 +5437,7 @@ function executeCounterAttack(state: GameState, defender: BattleUnit, attacker: 
 
   if (attacker.hp <= 0) {
     handleUnitDefeat(state, attacker)
+    triggerOnKoEffects(state, defender, attacker, { isSkillKill: false, rawHitDamage: calc.normalDmg })
   }
   checkBattleOutcome(state)
 
@@ -5312,7 +5490,13 @@ function executeBasicAttack(state: GameState, attacker: BattleUnit, target: Batt
     })
   }
 
-  applyDamage(state, attacker, target, attacker.atk, 0, true)
+  const dmgRes = applyDamageDetailed(state, attacker, target, attacker.atk, 0, true, false)
+  // Frostguard Plate (`frostguard_plate`): chills adjacent melee attackers with slowTurns = 1
+  if (!isRanged && attacker.alive && attacker.team !== target.team && shouldChillMeleeAttacker(target)) {
+    attacker.slowTurns = Math.max(attacker.slowTurns, 1)
+    addFloat(battle, attacker.x, attacker.y + 0.55, attacker.z, 'CHILLED!', '#7fdfff')
+    state.vfx.push({ kind: 'burst', style: 'frost', at: [attacker.x, attacker.y + 0.65, attacker.z], radius: 0.75 })
+  }
   if (target.alive) {
     if (attacker.team === 'ally') {
       applyEquipmentOnHitStatus(battle, attacker, target)
@@ -5322,7 +5506,8 @@ function executeBasicAttack(state: GameState, attacker: BattleUnit, target: Batt
     executePincerFollowUp(state, attacker, target)
   }
   if (canCounterAttack(battle, attacker, target, attackArc, isRanged)) {
-    executeCounterAttack(state, target, attacker)
+    const palBonus = computePaladinCounterBonus(target, attackArc, dmgRes.absorbed)
+    executeCounterAttack(state, target, attacker, palBonus)
   }
   checkBattleOutcome(state)
   advanceTurnIfActiveHeroDowned(state)
@@ -5393,7 +5578,7 @@ function executeHeroSkill(
       }
       const ally = unitAt(battle, c.col, c.row)
       if (!ally || ally.team !== caster.team) continue
-      applyHealAndShield(state, ally, skill.healAmount, skill.shieldAmount)
+      applyHealAndShield(state, ally, skill.healAmount, skill.shieldAmount, caster)
       if (skill.status && isBeneficialStatus(skill.status)) applyStatus(battle, ally, skill.status, skill.statusStacks)
       hitAny = true
     }
@@ -5410,7 +5595,7 @@ function executeHeroSkill(
       }
       const unit = unitAt(battle, c.col, c.row)
       if (!unit) continue
-      applyHealAndShield(state, unit, skill.healAmount, skill.shieldAmount)
+      applyHealAndShield(state, unit, skill.healAmount, skill.shieldAmount, caster)
       if (skill.status && isBeneficialStatus(skill.status)) applyStatus(battle, unit, skill.status, skill.statusStacks)
       hitAny = true
     }
@@ -5420,12 +5605,12 @@ function executeHeroSkill(
     const directTarget = skill.canRevive ? unitOrDownedAt(battle, col, row) : unitAt(battle, col, row)
     const isDawnsJudgmentSafe = skill.id === 'dawns_judgment' && (!directTarget || directTarget.team !== caster.team || isUnitDowned(directTarget))
     const skillAllowsCounter = isMeleeSkillEligibleForCounter(skill)
-    let counterCandidate: { target: BattleUnit; arc: AttackArc } | null = null
+    let counterCandidate: { target: BattleUnit; arc: AttackArc; absorbed: number } | null = null
     if (skill.shieldAmount > 0 && skill.pattern !== 'aura') {
-      applyHealAndShield(state, caster, 0, skill.shieldAmount)
+      applyHealAndShield(state, caster, 0, skill.shieldAmount, caster)
     }
     if (skill.healAmount > 0 && skill.pattern === 'single') {
-      applyHealAndShield(state, caster, skill.healAmount, 0)
+      applyHealAndShield(state, caster, skill.healAmount, 0, caster)
     }
     const displaceTargets: BattleUnit[] = []
     const skillElement = skill.powerMul > 0 ? classifyElement(skill) : null
@@ -5453,16 +5638,32 @@ function executeHeroSkill(
       // Don't self-hit from splash around an adjacent tile unless caster directly targeted own space
       if (target.uid === caster.uid && !(col === caster.col && row === caster.row)) continue
       if (isDawnsJudgmentSafe && target.team === caster.team) {
-        applyHealAndShield(state, target, skill.healAmount, skill.shieldAmount)
+        applyHealAndShield(state, target, skill.healAmount, skill.shieldAmount, caster)
         hitAny = true
         continue
       }
       if (skill.powerMul > 0) {
         const hitArc = computeAttackArc(caster.col, caster.row, target.col, target.row, target.facing)
         const raw = caster.atk * skill.powerMul + skill.flatBonus
-        applyDamage(state, caster, target, raw, skill.ignoreArmor, true)
+        const dmgRes = applyDamageDetailed(state, caster, target, raw, skill.ignoreArmor, true, true)
+        // Frostguard Plate chills adjacent melee skill attackers
+        if (
+          skill.range <= 1 &&
+          manhattan(caster.col, caster.row, target.col, target.row) === 1 &&
+          caster.alive &&
+          caster.team !== target.team &&
+          shouldChillMeleeAttacker(target)
+        ) {
+          caster.slowTurns = Math.max(caster.slowTurns, 1)
+          addFloat(battle, caster.x, caster.y + 0.55, caster.z, 'CHILLED!', '#7fdfff')
+          state.vfx.push({ kind: 'burst', style: 'frost', at: [caster.x, caster.y + 0.65, caster.z], radius: 0.75 })
+        }
+        const aliveAfterDirect = target.alive
         if (skillElement) {
           triggerElementalCombo(state, caster, skillElement, target.alive ? target : null, c.col, c.row, handleUnitDefeat)
+          if (aliveAfterDirect && !target.alive) {
+            triggerOnKoEffects(state, caster, target, { isSkillKill: true, rawHitDamage: dmgRes.rolledDamage })
+          }
         }
         if (target.alive) {
           if (skill.status && !isBeneficialStatus(skill.status)) {
@@ -5480,7 +5681,7 @@ function executeHeroSkill(
             }
           }
           if (target.alive && skillAllowsCounter && target.team !== caster.team && !counterCandidate) {
-            counterCandidate = { target, arc: hitArc }
+            counterCandidate = { target, arc: hitArc, absorbed: dmgRes.absorbed }
           }
         }
         hitAny = true
@@ -5504,7 +5705,8 @@ function executeHeroSkill(
       counterCandidate &&
       canCounterAttack(battle, caster, counterCandidate.target, counterCandidate.arc, false)
     ) {
-      executeCounterAttack(state, counterCandidate.target, caster)
+      const palBonus = computePaladinCounterBonus(counterCandidate.target, counterCandidate.arc, counterCandidate.absorbed)
+      executeCounterAttack(state, counterCandidate.target, caster, palBonus)
     }
   }
 
@@ -5591,7 +5793,7 @@ function executeTacticCard(state: GameState, tacticUid: string, col: number, row
       }
       if (target.team === 'enemy') {
         if (spec.damage > 0) {
-          applyDamage(state, null, target, spec.damage, 0.6, false)
+          applyDamage(state, null, target, spec.damage, 0.6, false, true)
         }
         if (tacticElement) {
           triggerElementalCombo(state, null, tacticElement, target.alive ? target : null, c.col, c.row, handleUnitDefeat)
@@ -6174,6 +6376,10 @@ function advanceToNextUnitTurn(state: GameState, initial = false): void {
     if (next.team === 'ally' && startCell.terrain === 'shrine' && next.hp < next.maxHp) {
       applyHealAndShield(state, next, 14, 0)
     }
+    const turnStartGear = computeTurnStartGearEffects(next)
+    if (turnStartGear.hpRegen > 0 || turnStartGear.shieldGain > 0) {
+      applyHealAndShield(state, next, turnStartGear.hpRegen, turnStartGear.shieldGain)
+    }
 
     if (next.stunTurns > 0) {
       next.stunTurns -= 1
@@ -6416,7 +6622,7 @@ function performEnemyAttack(state: GameState, enemy: BattleUnit, target: BattleU
     for (const c of novaCells) {
       const victim = unitAt(battle, c.col, c.row)
       if (victim && victim.team === 'ally') {
-        applyDamage(state, enemy, victim, enemy.atk * 1.15, 0.35, false)
+        applyDamage(state, enemy, victim, enemy.atk * 1.15, 0.35, false, true)
         if (victim.alive) applyStatus(battle, victim, 'burn')
       }
     }
@@ -6534,7 +6740,7 @@ export function stepGame(state: GameState, dt: number): void {
                 battle.armedSkillIndex = null
               } else {
                 const target = unitAt(battle, pending.col, pending.row)
-                const effRange = effectiveAttackRange(battle, u.col, u.row, pending.col, pending.row, u.range)
+                const effRange = effectiveAttackRange(battle, u.col, u.row, pending.col, pending.row, u.range, u)
                 const distToPending = manhattan(u.col, u.row, pending.col, pending.row)
                 const clearLoS = hasLineOfSight(battle, u.col, u.row, pending.col, pending.row, false)
                 if (target && target.team === 'enemy' && distToPending <= effRange && clearLoS) {

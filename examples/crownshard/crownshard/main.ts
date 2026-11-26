@@ -14,18 +14,20 @@ import {
 } from './data.ts'
 import { cameraAlignedFacing, cameraCardinalHeading, createCrownshardScene, facingPickerAnchor } from './scene.ts'
 import {
-  abandonBattle, armSkill, armTacticCard, autoEquipBestFit, beginWaitFacingPicker, buyPack, canBuyPack,
+  MAX_TACTIC_DECK, MIN_TACTIC_DECK,
+  abandonBattle, armSkill, armTacticCard, autoBuildTacticDeck, autoEquipBestFit, beginWaitFacingPicker, buyPack, canBuyPack,
   canMergeHero, canUndoMove, cancelWaitFacingPicker, clearSave, computeCombatForecast, computeDangerZone,
-  computeDeckValue, computeEnemyThreat, computeHeroStats, computeSquadPower, computeZocPerimeterTiles,
+  computeDeckValue, computeEnemyThreat, computeHeroStats, computeSquadPower, computeTacticDeckCurve, computeZocPerimeterTiles,
   confirmDeployment, confirmWaitFacingPicker, createInitialState, createTurnBoundaryTracker, effectiveSpeed,
   equipItem, evaluateAllFacingExposures, evaluateFacingExposure, findBestFitUpgrades, findEquipOwner, findGridPath,
-  formatOpportunityWarning, getChapterObjectiveSummary, getEquipmentByUid, getHeroByUid, getHeroSkill,
+  formatOpportunityWarning, getActiveTacticDeckUids, getChapterObjectiveSummary, getEquipEffect, getEquipmentByUid,
+  getHeroByUid, getHeroPassive, getHeroSkill,
   getMergeCandidates, getNextRecommendedStage, getObjectiveProgressText, getStageUnlockHint, getTacticByUid,
   getUnitByUid, isChestClaimed, isDeployTile, isEndlessUnlocked, isStageCleared, isStageUnlocked, loadSave,
   maxSquadSize, mergeHero, moveDeployUnit, persistSave, previewPathOpportunityAttacks, previewTurnOrderAfterAction,
   previewWaitFacing, restoreBattleState, rotateDeployUnit, salvageEquipCard, salvageHeroCard, selectHeroByUid,
   selectTile, serializeBattleState, shouldAutoSaveOnTurnBoundary, startChapterBattle, stepGame, swapDeployUnit,
-  syncTurnBoundaryTracker, toggleSquadMember, undoMove, unequipItem, unitAt
+  syncTurnBoundaryTracker, toggleSquadMember, toggleTacticInDeck, undoMove, unequipItem, unitAt
 } from './simulation.ts'
 import { FACING_DIRS, cellHeightLevel, gridToWorld, isUnitDowned } from './types.ts'
 import type {
@@ -39,10 +41,10 @@ import {
   drawChapterPicker, drawChip, drawCombatForecast, drawControlHints, drawDefeatBackdrop, drawDeployHeroChip,
   drawDifficultyBadge, drawEmptyNote, drawEndTurnButton, drawEquipCard, drawForecastAltChip,
   drawHeroHeader, drawHeroRosterCard, drawHintPill, drawIconButton, drawLabel, drawLetterbox,
-  drawLootRow, drawModal, drawObjectiveBadge, drawOverline, drawPackCeremonyBackdrop, drawPanel, drawPortraitTile,
+  drawLootRow, drawModal, drawObjectiveBadge, drawOverline, drawPackCeremonyBackdrop, drawPanel, drawPassiveBanner, drawPortraitTile,
   drawResultHeadlineAnimated, drawRevealCard, drawRewardRowAnimated, drawSegmentTrack,
   drawSettingRow, drawSheet, drawSkillRow, drawSkillTile, drawSpeakerPortrait, drawStatStrip,
-  drawStoryHeading, drawTab, drawTacticCard, drawText, drawTimelineBg, drawTitleCard,
+  drawStoryHeading, drawTab, drawTacticCard, drawTacticDeckCard, drawTacticDeckHeader, drawText, drawTimelineBg, drawTitleCard,
   drawTitleLogo, drawToast, drawToolbarBg, drawTopFade, drawTurnOrderCallout,
   drawTurnOrderPreviewBanner, drawTurnTimelinePreviewOverlay, drawTurnToken, drawUnitCard,
   drawVictoryBackdrop, drawWell, drawWorldMapCanvas, drawWorldMapNode, worldMapScale, worldMapToScreen,
@@ -52,7 +54,7 @@ import type { FanfareDrawOpts } from './ui-art.ts'
 import type { IconName, WorldMapViewport } from './ui-art.ts'
 
 type Screen = 'title' | 'world' | 'camp' | 'story' | 'battle' | 'victory' | 'defeat' | 'paused'
-type CampTab = 'squad' | 'armory' | 'decks'
+type CampTab = 'squad' | 'armory' | 'deck' | 'decks'
 type ArmoryFilter = 'all' | 'weapon' | 'armor' | 'relic'
 
 interface PackAnimState {
@@ -194,6 +196,7 @@ async function start() {
   let armorySlotFilter: ArmoryFilter = 'all'
   let rosterPage = 0
   let armoryPage = 0
+  let deckPage = 0
   let campToast = ''
   let campToastTimer = 0
   let uiDirty = true
@@ -3661,7 +3664,19 @@ async function start() {
           })
         ])
 
-        const skillRowH = wide ? 52 : shortH ? 28 : mobile ? 30 : 36
+        const passive = getHeroPassive(selHero.heroId)
+        const passiveNode: LayoutNode | null = passive
+          ? boxNode({
+              id: 'ins-passive',
+              style: { height: wide ? 40 : shortH ? 24 : 28 },
+              widget: {
+                type: 'panel',
+                draw: (ctx: CanvasRenderingContext2D, rect: LayoutRect) => drawPassiveBanner(ctx, rect, passive, !wide)
+              }
+            })
+          : null
+
+        const skillRowH = wide ? 42 : shortH ? 26 : mobile ? 28 : 34
         const skillNodes: LayoutNode[] = spec.skills.map((sk, i) => {
           const unlocked = selHero.stars >= sk.tier
           return boxNode({
@@ -3686,11 +3701,12 @@ async function start() {
             pagerNode,
             column({
               id: 'camp-inspector-col',
-              style: { grow: 1, gap: 6, padding: 9 },
+              style: { grow: 1, gap: 5, padding: 9 },
               widget: { type: 'panel', draw: (ctx: CanvasRenderingContext2D, rect: LayoutRect) => drawWell(ctx, rect) }
             }, [
               headerNode,
               statsNode,
+              ...(passiveNode ? [passiveNode] : []),
               actionsNode,
               gearHeaderRow,
               gearRow,
@@ -3727,24 +3743,25 @@ async function start() {
             ]),
             column({
               id: 'camp-skills-col',
-              style: { grow: 0.9, gap: 7, padding: 12 },
+              style: { grow: 0.95, gap: 5, padding: 10 },
               widget: { type: 'panel', draw: (ctx: CanvasRenderingContext2D, rect: LayoutRect) => drawWell(ctx, rect) }
             }, [
+              ...(passiveNode ? [passiveNode] : []),
               boxNode({
-                id: 'ins-sk-lbl', style: { height: 14 },
+                id: 'ins-sk-lbl', style: { height: 13 },
                 widget: {
                   type: 'panel',
-                  draw: (ctx: CanvasRenderingContext2D, rect: LayoutRect) => drawOverline(ctx, 'Skill Ascension', rect.x, rect.y + 7, rect.width)
+                  draw: (ctx: CanvasRenderingContext2D, rect: LayoutRect) => drawOverline(ctx, 'Skill Ascension', rect.x, rect.y + 6.5, rect.width)
                 }
               }),
               ...skillNodes,
               spacerNode(1),
               boxNode({
-                id: 'ins-sk-tip', style: { height: 16 },
+                id: 'ins-sk-tip', style: { height: 15 },
                 widget: {
                   type: 'panel',
                   draw: (ctx: CanvasRenderingContext2D, rect: LayoutRect) => drawLabel(
-                    ctx, rect, 'Merge 3 copies for Tier 2, 2 copies for Tier 3', { size: 10.5, color: COLOR.faint }
+                    ctx, rect, 'Merge 3 copies for Tier 2, 2 copies for Tier 3', { size: 10, color: COLOR.faint }
                   )
                 }
               })
@@ -3769,11 +3786,12 @@ async function start() {
             ]),
             column({
               id: 'camp-inspector-col',
-              style: { grow: 1, gap: 5, padding: shortH ? 7 : 10 },
+              style: { grow: 1, gap: 4, padding: shortH ? 7 : 9 },
               widget: { type: 'panel', draw: (ctx: CanvasRenderingContext2D, rect: LayoutRect) => drawWell(ctx, rect) }
             }, [
               headerNode,
               statsNode,
+              ...(passiveNode ? [passiveNode] : []),
               actionsNode,
               gearHeaderRow,
               gearRow,
@@ -3826,7 +3844,12 @@ async function start() {
                     if (equipItem(state, selHero.uid, item.uid)) {
                       saveNow()
                       scene.triggerCampEquipFlourish(selHero.uid, item.slot, spec?.accentHex)
-                      showToast(`Equipped ${spec?.name ?? 'item'} on ${HERO_SPECS[selHero.heroId].name}.`)
+                      const eqEff = spec ? getEquipEffect(spec.id) : null
+                      showToast(
+                        eqEff
+                          ? `Equipped ${spec?.name ?? 'item'} (${eqEff.name}: ${eqEff.shortLabel}) on ${HERO_SPECS[selHero.heroId].name}.`
+                          : `Equipped ${spec?.name ?? 'item'} on ${HERO_SPECS[selHero.heroId].name}.`
+                      )
                       if (!wasOnSel) startEquipFanfare(selHero, item.equipId)
                     }
                   }
@@ -3834,6 +3857,7 @@ async function start() {
                 draw: (ctx: CanvasRenderingContext2D, rect: LayoutRect, st: CanvasWidgetDrawState) => drawEquipCard(ctx, rect, {
                   slot: item.slot,
                   spec,
+                  effect: spec ? getEquipEffect(spec.id) ?? undefined : undefined,
                   ownerText: equippedOnSel ? undefined : ownerLabel,
                   equippedOnSelected: equippedOnSel
                 }, st)
@@ -3981,6 +4005,145 @@ async function start() {
             widget: {
               type: 'panel',
               draw: (ctx: CanvasRenderingContext2D, rect: LayoutRect) => drawLabel(ctx, rect, `${filtered.length} items`, { size: 11, color: COLOR.muted, align: 'right' })
+            }
+          })
+        ])
+      ])
+    } else if (campTab === 'deck') {
+      // Curated Tactic Deck Builder (6..12 active battle cards)
+      const activeUids = getActiveTacticDeckUids(camp)
+      const activeSet = new Set<string>(activeUids)
+      const curve = computeTacticDeckCurve(camp)
+      const sortedTactics = camp.tactics.slice().sort((a, b) => {
+        const aIn = activeSet.has(a.uid) ? 0 : 1
+        const bIn = activeSet.has(b.uid) ? 0 : 1
+        if (aIn !== bIn) return aIn - bIn
+        const sa = TACTIC_BY_ID[a.tacticId]
+        const sb = TACTIC_BY_ID[b.tacticId]
+        const ra = sa ? RARITY_ORDER.indexOf(sa.rarity) : 0
+        const rb = sb ? RARITY_ORDER.indexOf(sb.rarity) : 0
+        if (rb !== ra) return rb - ra
+        const ca = sa?.cost ?? 1
+        const cb = sb?.cost ?? 1
+        if (ca !== cb) return ca - cb
+        return a.tacticId.localeCompare(b.tacticId)
+      })
+      const cols = mobile ? 1 : 2
+      const rowsPerPage = mobile ? 4 : shortH ? 2 : 3
+      const perPage = cols * rowsPerPage
+      const maxPage = Math.max(0, Math.ceil(sortedTactics.length / perPage) - 1)
+      deckPage = Math.min(deckPage, maxPage)
+      const shown = sortedTactics.slice(deckPage * perPage, deckPage * perPage + perPage)
+      const cardH = shortH ? 46 : 52
+
+      const deckRows: LayoutNode[] = []
+      for (let i = 0; i < shown.length; i += cols) {
+        const slice = shown.slice(i, i + cols)
+        const cards: LayoutNode[] = slice.map((item, j) => {
+          const spec = TACTIC_BY_ID[item.tacticId]
+          const inDeck = activeSet.has(item.uid)
+          return boxNode({
+            id: `deck-card-${i + j}`,
+            style: { grow: 1, height: cardH },
+            widget: {
+              type: 'button',
+              label: spec ? `${spec.name} (${inDeck ? 'In Deck' : 'Bench'})` : item.tacticId,
+              selected: inDeck,
+              onPress: () => {
+                audio.unlock()
+                if (toggleTacticInDeck(state, item.uid)) {
+                  saveNow()
+                  const nowIn = getActiveTacticDeckUids(camp).includes(item.uid)
+                  showToast(`${nowIn ? 'Added' : 'Benched'} ${spec?.name ?? 'tactic'} (${getActiveTacticDeckUids(camp).length}/${MAX_TACTIC_DECK}).`)
+                  uiDirty = true
+                } else if (inDeck) {
+                  showToast(`Deck needs at least ${Math.min(MIN_TACTIC_DECK, camp.tactics.length)} tactic cards.`)
+                } else {
+                  showToast(`Battle deck is full (${MAX_TACTIC_DECK}/${MAX_TACTIC_DECK}). Bench a card first.`)
+                }
+              },
+              draw: (ctx: CanvasRenderingContext2D, rect: LayoutRect, st: CanvasWidgetDrawState) => {
+                if (spec) drawTacticDeckCard(ctx, rect, { spec, inDeck }, st)
+              }
+            }
+          })
+        })
+        while (cards.length < cols) cards.push(spacerNode(1))
+        deckRows.push(row({ id: `deck-row-${i}`, style: { height: cardH, gap: 8 } }, cards))
+      }
+
+      if (deckRows.length === 0) {
+        deckRows.push(boxNode({
+          id: 'deck-empty', style: { height: 76 },
+          widget: {
+            type: 'panel',
+            draw: (ctx: CanvasRenderingContext2D, rect: LayoutRect) => drawEmptyNote(ctx, rect, 'No tactic cards owned yet. Open Card Decks to collect tactics.')
+          }
+        }))
+      }
+
+      bodyNode = column({ id: 'camp-deck-body', style: { grow: 1, gap: 8 } }, [
+        row({ id: 'deck-top-bar', style: { height: 34, gap: 8, align: 'center' } }, [
+          boxNode({
+            id: 'deck-header', style: { grow: 1, height: 34 },
+            widget: {
+              type: 'panel',
+              draw: (ctx: CanvasRenderingContext2D, rect: LayoutRect) => drawTacticDeckHeader(ctx, rect, curve, camp.tactics.length)
+            }
+          }),
+          boxNode({
+            id: 'cs-deck-autobuild', style: { width: mobile ? 104 : 122, height: 34 },
+            widget: {
+              type: 'button',
+              label: 'Auto-Build',
+              disabled: camp.tactics.length === 0,
+              onPress: () => {
+                audio.unlock()
+                const built = autoBuildTacticDeck(state)
+                saveNow()
+                showToast(`Auto-built balanced ${built.length}-card Tactic Deck!`)
+                uiDirty = true
+              },
+              draw: (ctx: CanvasRenderingContext2D, rect: LayoutRect, st: CanvasWidgetDrawState) => drawButton(
+                ctx, rect, 'Auto-Build', st, { variant: 'success', icon: 'sparkle', size: 11 }
+              )
+            }
+          })
+        ]),
+        ...deckRows,
+        spacerNode(1),
+        row({ id: 'deck-pager', hidden: maxPage === 0, style: { height: 28, gap: 8, align: 'center' } }, [
+          boxNode({
+            id: 'deck-prev', style: { width: 88, height: 28 },
+            widget: {
+              type: 'button', label: 'Prev', disabled: deckPage <= 0,
+              onPress: () => { deckPage--; uiDirty = true },
+              draw: (ctx: CanvasRenderingContext2D, rect: LayoutRect, st: CanvasWidgetDrawState) => drawButton(ctx, rect, 'Prev', st, { variant: 'secondary', size: 11 })
+            }
+          }),
+          boxNode({
+            id: 'deck-pg', style: { width: 58, height: 28 },
+            widget: {
+              type: 'panel',
+              draw: (ctx: CanvasRenderingContext2D, rect: LayoutRect) => drawLabel(ctx, rect, `${deckPage + 1} / ${maxPage + 1}`, { size: 11, color: COLOR.muted, align: 'center' })
+            }
+          }),
+          boxNode({
+            id: 'deck-next', style: { width: 88, height: 28 },
+            widget: {
+              type: 'button', label: 'Next', disabled: deckPage >= maxPage,
+              onPress: () => { deckPage++; uiDirty = true },
+              draw: (ctx: CanvasRenderingContext2D, rect: LayoutRect, st: CanvasWidgetDrawState) => drawButton(ctx, rect, 'Next', st, { variant: 'secondary', size: 11 })
+            }
+          }),
+          spacerNode(1),
+          boxNode({
+            id: 'deck-hint', style: { width: mobile ? 140 : 240, height: 28 },
+            widget: {
+              type: 'panel',
+              draw: (ctx: CanvasRenderingContext2D, rect: LayoutRect) => drawLabel(
+                ctx, rect, 'Click cards to toggle In Deck / Bench (8–12 ideal)', { size: 10.5, color: COLOR.muted, align: 'right' }
+              )
             }
           })
         ])
@@ -4206,14 +4369,27 @@ async function start() {
               }
             }),
             boxNode({
+              id: 'cs-tab-deck', style: { grow: 1, height: shortH ? 28 : 32 },
+              widget: {
+                type: 'button',
+                label: 'Tactic Deck',
+                selected: campTab === 'deck',
+                onPress: () => { setCampTab('deck'); mobileCampCollapsed = false; uiDirty = true },
+                draw: (ctx: CanvasRenderingContext2D, rect: LayoutRect, st: CanvasWidgetDrawState) => drawTab(ctx, rect, mobile ? 'Deck' : 'Tactic Deck', st, {
+                  icon: 'cards',
+                  count: mobile ? undefined : `${getActiveTacticDeckUids(camp).length}/${MAX_TACTIC_DECK}`
+                })
+              }
+            }),
+            boxNode({
               id: 'cs-tab-decks', style: { grow: 1, height: shortH ? 28 : 32 },
               widget: {
                 type: 'button',
                 label: 'Card Decks',
                 selected: campTab === 'decks',
                 onPress: () => { setCampTab('decks'); mobileCampCollapsed = false; uiDirty = true },
-                draw: (ctx: CanvasRenderingContext2D, rect: LayoutRect, st: CanvasWidgetDrawState) => drawTab(ctx, rect, mobile ? 'Decks' : 'Card Decks', st, {
-                  icon: 'cards',
+                draw: (ctx: CanvasRenderingContext2D, rect: LayoutRect, st: CanvasWidgetDrawState) => drawTab(ctx, rect, mobile ? 'Packs' : 'Card Decks', st, {
+                  icon: 'sparkle',
                   count: mobile ? undefined : `${camp.gold}g`
                 })
               }

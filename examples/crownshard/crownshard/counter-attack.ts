@@ -1,3 +1,4 @@
+import { computeShieldWallDefBonus } from './passives.ts'
 import {
   cellHeightAt, facingVector, terrainDefBonus, vectorToFacing
 } from './types.ts'
@@ -35,6 +36,8 @@ export interface CounterDamageOptions {
   readonly attackerShield?: number
   /** Optional cover bonus for the attacker's tile (always 0 for adjacent melee). */
   readonly coverBonus?: number
+  /** Optional counter damage multiplier (e.g. 1.30 for Paladin's Vengeful Aegis). */
+  readonly counterMul?: number
 }
 
 export interface CounterDamageResult {
@@ -159,9 +162,9 @@ export function getCounterAvoidReason(
  * and attacker's facing toward defender.
  */
 export function computeCounterDamage(
-  battle: Pick<BattleState, 'cells' | 'cols' | 'rows'>,
+  battle: Pick<BattleState, 'cells' | 'cols' | 'rows'> & Partial<Pick<BattleState, 'units'>>,
   defender: Pick<BattleUnit, 'col' | 'row' | 'atk' | 'empowerTurns'>,
-  attacker: Pick<BattleUnit, 'col' | 'row' | 'facing' | 'def' | 'hp' | 'shield'>,
+  attacker: Pick<BattleUnit, 'col' | 'row' | 'facing' | 'def' | 'hp' | 'shield'> & Partial<Pick<BattleUnit, 'uid' | 'team' | 'alive'>>,
   opts?: CounterDamageOptions
 ): CounterDamageResult {
   const attCol = opts?.attackerCol ?? attacker.col
@@ -185,10 +188,17 @@ export function computeCounterDamage(
   const attCell = battle.cells[attRow]?.[attCol]
   const terrainDef = attCell ? terrainDefBonus(attCell.terrain) : 0
   const coverBonus = opts?.coverBonus ?? 0
-  const effDef = Math.max(0, attacker.def + terrainDef + coverBonus)
+  const shieldWallDef = battle.units && attacker.uid && attacker.team
+    ? computeShieldWallDefBonus(
+        { units: battle.units },
+        { uid: attacker.uid, team: attacker.team, col: attCol, row: attRow, alive: attacker.alive ?? true }
+      )
+    : 0
+  const effDef = Math.max(0, attacker.def + shieldWallDef + terrainDef + coverBonus)
 
   const fullBasicDmg = Math.max(4, Math.round(raw - effDef * 0.72))
-  const normalDmg = Math.max(COUNTER_MIN_DAMAGE, Math.round(fullBasicDmg * COUNTER_DAMAGE_MULTIPLIER))
+  const counterMul = COUNTER_DAMAGE_MULTIPLIER * (opts?.counterMul ?? 1.0)
+  const normalDmg = Math.max(COUNTER_MIN_DAMAGE, Math.round(fullBasicDmg * counterMul))
   const shieldAbsorbed = Math.min(Math.max(0, attShield), normalDmg)
   const hpDamage = Math.max(0, normalDmg - shieldAbsorbed)
   const attackerHpAfter = Math.max(0, attHp - hpDamage)
