@@ -1,5 +1,5 @@
 import type {
-  InstanceBatch, Matrix, Mesh, ProjectShadowMeshOptions, Quaternion,
+  Color, InstanceBatch, Matrix, Mesh, ProjectShadowMeshOptions, Quaternion,
   ShadowProjection, ShadowProjectionOptions, Vec3
 } from './types.ts'
 import { isTestingActive, recordMeshMeta } from './testing-runtime.ts'
@@ -1286,4 +1286,385 @@ export function projectShadowMesh(source: Mesh, options: ProjectShadowMeshOption
     vertexCount: out.length / 6,
     radius
   }
+}
+
+function clamp01(value: number): number {
+  return value <= 0 ? 0 : value >= 1 ? 1 : value
+}
+
+const uncoloredMeshCache = new WeakMap<Mesh, Mesh>()
+
+/** Return a cached shallow view of `source` with per-vertex `colors` stripped (used for flat ID-picking passes). */
+export function uncoloredMesh(source: Mesh): Mesh {
+  if (!source.colors) return source
+  let cached = uncoloredMeshCache.get(source)
+  if (!cached) {
+    cached = { data: source.data, vertexCount: source.vertexCount, radius: source.radius }
+    uncoloredMeshCache.set(source, cached)
+  }
+  return cached
+}
+
+/** Parametric horizontal cross-section ring for `sculptLoft`. */
+export interface SculptLoftParamRing {
+  readonly y: number
+  readonly rx: number
+  readonly rz: number
+  readonly xOffset?: number
+  readonly zOffset?: number
+  /** Flatten the +Z front side toward `zOffset + rz * (1 - frontFlat)` (0..0.6). */
+  readonly frontFlat?: number
+  /** Flatten the -Z back side toward `zOffset - rz * (1 - backFlat)` (0..0.6). */
+  readonly backFlat?: number
+  /** Pinch +/-X sides inward (`> 0`) or push outward (`< 0`). */
+  readonly sidePinch?: number
+  /** Uniform scale multiplier applied to `rx` and `rz` of this ring. */
+  readonly topScale?: number
+  /** Optional angular phase offset in radians. */
+  readonly angleOffset?: number
+}
+
+/** Explicit 2D `[x, z]` polygon cross-section ring for `sculptLoft`. */
+export interface SculptLoftPolygonRing {
+  readonly y: number
+  readonly points: readonly (readonly [number, number])[]
+}
+
+export type SculptLoftRing = SculptLoftParamRing | SculptLoftPolygonRing
+
+export interface SculptLoftOptions {
+  /** Number of sides for parametric rings (default 8 — planar front/back/sides + 45° corner chamfers). */
+  readonly sides?: number
+  /** Close the bottom ring with a flat cap (default true). */
+  readonly capBottom?: boolean
+  /** Close the top ring with a flat cap (default true). */
+  readonly capTop?: boolean
+  /** Optional post-bake vertex ambient occlusion strength (`0` disables, default `0`). */
+  readonly aoStrength?: number
+  /** Vertical AO gradient when `aoStrength > 0` (default `0.12`). */
+  readonly aoGradient?: number
+}
+
+function isPolygonRing(ring: SculptLoftRing): ring is SculptLoftPolygonRing {
+  return 'points' in ring
+}
+
+function signedAreaXZ(pts: readonly (readonly [number, number])[]): number {
+  let area2 = 0
+  const n = pts.length
+  for (let i = 0; i < n; i++) {
+    const a = pts[i]
+    const b = pts[(i + 1) % n]
+    area2 += a[0] * b[1] - b[0] * a[1]
+  }
+  return area2
+}
+
+function buildRingPoints(ring: SculptLoftRing, sides: number): [number, number][] {
+  if (isPolygonRing(ring)) {
+    if (ring.points.length < 3) {
+      throw new RangeError('sculptLoft polygon rings require at least 3 [x, z] points')
+    }
+    const pts: [number, number][] = []
+    for (let i = 0; i < ring.points.length; i++) {
+      const p = ring.points[i]
+      if (!Number.isFinite(p[0]) || !Number.isFinite(p[1])) {
+        throw new RangeError('sculptLoft polygon ring points must be finite numbers')
+      }
+      pts.push([p[0], p[1]])
+    }
+    // Positive XZ area matches (cos a, sin a) increasing a, giving outward CCW side quads and caps.
+    if (signedAreaXZ(pts) < 0) pts.reverse()
+    return pts
+  }
+
+  const scale = ring.topScale ?? 1
+  if (!Number.isFinite(ring.y) || !Number.isFinite(ring.rx) || !Number.isFinite(ring.rz) ||
+      !Number.isFinite(scale) || ring.rx < 0 || ring.rz < 0 || scale < 0) {
+    throw new RangeError('sculptLoft ring dimensions must be finite and non-negative')
+  }
+  const rx = ring.rx * scale
+  const rz = ring.rz * scale
+  const xOff = ring.xOffset ?? 0
+  const zOff = ring.zOffset ?? 0
+  const frontFlat = Math.max(0, Math.min(0.65, ring.frontFlat ?? 0))
+  const backFlat = Math.max(0, Math.min(0.65, ring.backFlat ?? 0))
+  const sidePinch = Math.max(-0.5, Math.min(0.5, ring.sidePinch ?? 0))
+  const defaultOffset = sides % 2 === 0 ? Math.PI / sides : 0
+  const phase = ring.angleOffset ?? defaultOffset
+  // Normalize flat-aligned even polygons so rx / rz correspond directly to the flat face half-extents.
+  const norm = ring.angleOffset === undefined && sides % 2 === 0 ? 1 / Math.cos(Math.PI / sides) : 1
+
+  const frontLimit = rz * (1 - frontFlat)
+  const backLimit = -rz * (1 - backFlat)
+  const pts: [number, number][] = []
+  for (let i = 0; i < sides; i++) {
+    const a = (i / sides) * Math.PI * 2 + phase
+    let x = Math.cos(a) * rx * norm
+    let z = Math.sin(a) * rz * norm
+    if (rx > 0 && Math.abs(x) > rx) x = Math.sign(x) * rx
+    if (rz > 0 && Math.abs(z) > rz) z = Math.sign(z) * rz
+    if (frontFlat > 0 && z > frontLimit) z = frontLimit
+    if (backFlat > 0 && z < backLimit) z = backLimit
+    if (sidePinch !== 0 && rx > 1e-6) {
+      const sideWeight = Math.abs(Math.cos(a))
+      x *= 1 - sidePinch * sideWeight * sideWeight
+    }
+    pts.push([x + xOff, z + zOff])
+  }
+  return pts
+}
+
+function pushTriIfValid(
+  positions: readonly number[],
+  indices: number[],
+  i0: number,
+  i1: number,
+  i2: number
+) {
+  const a0 = i0 * 3, a1 = i1 * 3, a2 = i2 * 3
+  const e1x = positions[a1] - positions[a0]
+  const e1y = positions[a1 + 1] - positions[a0 + 1]
+  const e1z = positions[a1 + 2] - positions[a0 + 2]
+  const e2x = positions[a2] - positions[a0]
+  const e2y = positions[a2 + 1] - positions[a0 + 1]
+  const e2z = positions[a2 + 2] - positions[a0 + 2]
+  const cx = e1y * e2z - e1z * e2y
+  const cy = e1z * e2x - e1x * e2z
+  const cz = e1x * e2y - e1y * e2x
+  if (cx * cx + cy * cy + cz * cz > 1e-14) {
+    indices.push(i0, i1, i2)
+  }
+}
+
+/**
+ * Build a flat-faceted lofted low-poly mesh from an ordered sequence of cross-section rings.
+ * Supports parametric rings (`rx`, `rz`, `frontFlat`, `backFlat`, `sidePinch`) and custom 2D `[x, z]`
+ * polygon rings, with automatic closed bottom/top caps and verified outward CCW winding.
+ */
+export function sculptLoft(rings: readonly SculptLoftRing[], options: SculptLoftOptions = {}): Mesh {
+  if (rings.length < 2) {
+    throw new RangeError('sculptLoft requires at least 2 cross-section rings')
+  }
+  const sides = options.sides ?? 8
+  if (!Number.isInteger(sides) || sides < 3 || sides > 64) {
+    throw new RangeError('sculptLoft sides must be an integer between 3 and 64')
+  }
+  const capBottom = options.capBottom ?? true
+  const capTop = options.capTop ?? true
+
+  // Ensure bottom-to-top ordering so outward winding is consistent regardless of caller order.
+  const ordered: readonly SculptLoftRing[] = rings[0].y <= rings[rings.length - 1].y
+    ? rings
+    : rings.slice().reverse()
+
+  const ringPts: [number, number][][] = []
+  let expectedCount = -1
+  for (let r = 0; r < ordered.length; r++) {
+    const pts = buildRingPoints(ordered[r], sides)
+    if (expectedCount < 0) expectedCount = pts.length
+    else if (pts.length !== expectedCount) {
+      throw new RangeError('All rings passed to sculptLoft must have the same vertex count')
+    }
+    ringPts.push(pts)
+  }
+
+  const n = expectedCount
+  const positions: number[] = []
+  const indices: number[] = []
+
+  for (let r = 0; r < ordered.length; r++) {
+    const y = ordered[r].y
+    const pts = ringPts[r]
+    for (let i = 0; i < n; i++) {
+      positions.push(pts[i][0], y, pts[i][1])
+    }
+  }
+
+  for (let r = 0; r < ordered.length - 1; r++) {
+    const base0 = r * n
+    const base1 = (r + 1) * n
+    for (let i = 0; i < n; i++) {
+      const next = (i + 1) % n
+      const a0 = base0 + i
+      const b0 = base0 + next
+      const a1 = base1 + i
+      const b1 = base1 + next
+      pushTriIfValid(positions, indices, a0, a1, b0)
+      pushTriIfValid(positions, indices, b0, a1, b1)
+    }
+  }
+
+  if (capBottom) {
+    const pts = ringPts[0]
+    let cx = 0, cz = 0
+    for (let i = 0; i < n; i++) { cx += pts[i][0]; cz += pts[i][1] }
+    const centerIdx = positions.length / 3
+    positions.push(cx / n, ordered[0].y, cz / n)
+    for (let i = 0; i < n; i++) {
+      const next = (i + 1) % n
+      pushTriIfValid(positions, indices, centerIdx, i, next)
+    }
+  }
+
+  if (capTop) {
+    const lastRing = ordered.length - 1
+    const base = lastRing * n
+    const pts = ringPts[lastRing]
+    let cx = 0, cz = 0
+    for (let i = 0; i < n; i++) { cx += pts[i][0]; cz += pts[i][1] }
+    const centerIdx = positions.length / 3
+    positions.push(cx / n, ordered[lastRing].y, cz / n)
+    for (let i = 0; i < n; i++) {
+      const next = (i + 1) % n
+      pushTriIfValid(positions, indices, centerIdx, base + next, base + i)
+    }
+  }
+
+  const built = mesh(positions, indices)
+  const aoStrength = options.aoStrength ?? 0
+  if (aoStrength > 0) {
+    return bakeVertexAO(built, { strength: aoStrength, verticalGradient: options.aoGradient ?? 0.12 })
+  }
+  return built
+}
+
+/**
+ * Bake per-triangle zone colors onto a mesh so a single draw call can carry subtle face zones
+ * (cheek warmth, under-chin shadow, tunic trim, boot soles) across all Ridgetop backends.
+ * Multiplies into existing `source.colors` when present.
+ */
+export function bakeZoneColors(
+  source: Mesh,
+  colorForTri: (cx: number, cy: number, cz: number, nx: number, ny: number, nz: number) => Color
+): Mesh {
+  const n = source.vertexCount
+  const data = source.data
+  const existing = source.colors && source.colors.length >= n * 3 ? source.colors : undefined
+  const out = new Float32Array(n * 3)
+  for (let i = 0; i < n; i += 3) {
+    const o0 = i * 6
+    const o1 = (i + 1) * 6
+    const o2 = (i + 2) * 6
+    const cx = (data[o0] + data[o1] + data[o2]) / 3
+    const cy = (data[o0 + 1] + data[o1 + 1] + data[o2 + 1]) / 3
+    const cz = (data[o0 + 2] + data[o1 + 2] + data[o2 + 2]) / 3
+    const nx = data[o0 + 3]
+    const ny = data[o0 + 4]
+    const nz = data[o0 + 5]
+    const c = colorForTri(cx, cy, cz, nx, ny, nz)
+    const r = clamp01(c[0])
+    const g = clamp01(c[1])
+    const b = clamp01(c[2])
+    for (let k = 0; k < 3; k++) {
+      const ci = (i + k) * 3
+      out[ci] = existing ? existing[ci] * r : r
+      out[ci + 1] = existing ? existing[ci + 1] * g : g
+      out[ci + 2] = existing ? existing[ci + 2] * b : b
+    }
+  }
+  return { data: source.data, colors: out, vertexCount: n, radius: source.radius }
+}
+
+export interface MergeMeshInput {
+  readonly mesh: Mesh
+  readonly position?: Vec3
+  readonly scale?: Vec3
+  /** Euler `[pitch, yaw, roll]` in radians or a unit XYZW Quaternion. */
+  readonly rotation?: readonly [pitch: number, yaw: number, roll: number] | Quaternion
+  /** Optional RGBA color multiplier baked into per-vertex RGB colors (defaults to white `[1, 1, 1, 1]`). */
+  readonly color?: Color
+}
+
+const NORM_TRI = [0, 1, 2] as const
+const FLIP_TRI = [0, 2, 1] as const
+
+/**
+ * Merge multiple transformed meshes into a single Mesh with optional baked per-vertex RGB colors,
+ * preserving outward CCW winding even under mirrored negative scales.
+ */
+export function mergeMeshes(inputs: readonly MergeMeshInput[]): Mesh {
+  if (!inputs.length) {
+    throw new RangeError('mergeMeshes requires at least one mesh')
+  }
+  let totalVerts = 0
+  let hasColors = false
+  for (let i = 0; i < inputs.length; i++) {
+    totalVerts += inputs[i].mesh.vertexCount
+    if (inputs[i].color !== undefined || inputs[i].mesh.colors !== undefined) hasColors = true
+  }
+  const data = new Float32Array(totalVerts * 6)
+  const colors = hasColors ? new Float32Array(totalVerts * 3) : undefined
+  let radiusSq = 0
+  let vCursor = 0
+
+  for (let i = 0; i < inputs.length; i++) {
+    const p = inputs[i]
+    const src = p.mesh.data
+    const srcCol = p.mesh.colors
+    const n = p.mesh.vertexCount
+    const px = p.position ? p.position[0] : 0
+    const py = p.position ? p.position[1] : 0
+    const pz = p.position ? p.position[2] : 0
+    const sx = p.scale ? p.scale[0] : 1
+    const sy = p.scale ? p.scale[1] : 1
+    const sz = p.scale ? p.scale[2] : 1
+    const invSx = Math.abs(sx) > 1e-6 ? 1 / sx : 1
+    const invSy = Math.abs(sy) > 1e-6 ? 1 / sy : 1
+    const invSz = Math.abs(sz) > 1e-6 ? 1 / sz : 1
+    let rm: number[] | null = null
+    if (p.rotation) {
+      const q: Quaternion = p.rotation.length === 4
+        ? p.rotation
+        : quaternionFromEuler(p.rotation[0], p.rotation[1], p.rotation[2])
+      rm = rotationMatrix(q)
+    }
+    const cr = p.color ? p.color[0] : 1
+    const cg = p.color ? p.color[1] : 1
+    const cb = p.color ? p.color[2] : 1
+    const order = sx * sy * sz < 0 ? FLIP_TRI : NORM_TRI
+
+    for (let tri = 0; tri < n; tri += 3) {
+      for (let k = 0; k < 3; k++) {
+        const vi = tri + order[k]
+        const so = vi * 6
+        let vx = src[so] * sx
+        let vy = src[so + 1] * sy
+        let vz = src[so + 2] * sz
+        let nx = src[so + 3] * invSx
+        let ny = src[so + 4] * invSy
+        let nz = src[so + 5] * invSz
+        if (rm) {
+          const rx = rm[0] * vx + rm[1] * vy + rm[2] * vz
+          const ry = rm[3] * vx + rm[4] * vy + rm[5] * vz
+          const rz = rm[6] * vx + rm[7] * vy + rm[8] * vz
+          vx = rx; vy = ry; vz = rz
+          const rnx = rm[0] * nx + rm[1] * ny + rm[2] * nz
+          const rny = rm[3] * nx + rm[4] * ny + rm[5] * nz
+          const rnz = rm[6] * nx + rm[7] * ny + rm[8] * nz
+          nx = rnx; ny = rny; nz = rnz
+        }
+        vx += px; vy += py; vz += pz
+        const nLen = Math.hypot(nx, ny, nz) || 1
+        nx /= nLen; ny /= nLen; nz /= nLen
+        const dOff = vCursor * 6
+        data[dOff] = vx; data[dOff + 1] = vy; data[dOff + 2] = vz
+        data[dOff + 3] = nx; data[dOff + 4] = ny; data[dOff + 5] = nz
+        const rSq = vx * vx + vy * vy + vz * vz
+        if (rSq > radiusSq) radiusSq = rSq
+        if (colors) {
+          const cOff = vCursor * 3
+          const scOff = vi * 3
+          colors[cOff] = (srcCol ? srcCol[scOff] : 1) * cr
+          colors[cOff + 1] = (srcCol ? srcCol[scOff + 1] : 1) * cg
+          colors[cOff + 2] = (srcCol ? srcCol[scOff + 2] : 1) * cb
+        }
+        vCursor++
+      }
+    }
+  }
+
+  return colors
+    ? { data, colors, vertexCount: totalVerts, radius: Math.sqrt(radiusSq) }
+    : { data, vertexCount: totalVerts, radius: Math.sqrt(radiusSq) }
 }

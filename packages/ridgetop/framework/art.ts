@@ -1,16 +1,19 @@
 import { createAnimator, createMeshPool, createRig, renderRig, sampleClip } from './animation.ts'
 import type { AnimationClip, Keyframe, Rig, RigJoint, RigPart } from './animation.ts'
 import { instances } from './instances.ts'
-import { multiply, orthographic, quaternionFromEuler, view } from './geometry.ts'
+import { multiply, orthographic, quaternionFromEuler, uncoloredMesh, view } from './geometry.ts'
 import { applySpriteOutline, bakeSpriteDirections, bakeSpritePixels, renderMeshPixels, spriteDirections } from './low-poly.ts'
 import { color } from './renderer.ts'
 import type { SpriteAtlasSource, SpriteClip, SpriteSheetImage } from './sprites.ts'
-import { artPalette, artPoseBounds, artShapes, checkArtModel, checkArtPalette, checkFrameSize, compileArtJoints, modelFromArtRecipe } from './art-recipe.ts'
-import type { ArtModel, ArtPart, ArtRecipe, ArtShape, ArtTone } from './art-recipe.ts'
+import {
+  artPalette, artPoseBounds, artShapes, checkArtModel, checkArtPalette, checkFrameSize,
+  compileArtJoints, createOrthoFrameAccumulator, modelFromArtRecipe, recipeFromArtModel, SPRITE_ELEVATION
+} from './art-recipe.ts'
+import type { ArtModel, ArtPart, ArtRecipe, ArtTone } from './art-recipe.ts'
 import { captureSourceSite, isTestingActive, nextTestingGroupId, registerArtKitRuntime } from './testing-runtime.ts'
 import type { BlendMode, Color, InstanceBatch, LightingOptions, Mesh, Vec3 } from './types.ts'
-export { artPalette, artShapes, modelFromArtRecipe } from './art-recipe.ts'
-export type { ArtModel, ArtPart, ArtRecipe, ArtRecipeClip, ArtRecipeClipFrame, ArtRecipeJoint, ArtRecipeJointPose, ArtRecipePart, ArtShape, ArtTone } from './art-recipe.ts'
+export { artPalette, artShapes, modelFromArtRecipe, recipeFromArtModel } from './art-recipe.ts'
+export type { ArtBounds, ArtModel, ArtPart, ArtRecipe, ArtRecipeClip, ArtRecipeClipFrame, ArtRecipeJoint, ArtRecipeJointPose, ArtRecipePart, ArtShape, ArtTone, ArtTubeSpec } from './art-recipe.ts'
 
 function resolvePartColor(base: Color, part: Pick<ArtPart, 'alpha' | 'shade'>): Color {
   const shade = part.shade ?? 0
@@ -141,39 +144,12 @@ export const artModels = {
   ] }
 } satisfies Record<string, ArtModel>
 
-function isArtShape(key: string): key is ArtShape {
-  return Object.hasOwn(artShapes, key)
-}
-
-const shapeNames = new Map<Mesh, ArtShape>()
-for (const key of Object.keys(artShapes)) {
-  if (isArtShape(key)) shapeNames.set(artShapes[key], key)
-}
-
 /** Make an independent, editable source file for a built-in model. */
 export function createArtRecipe(name: keyof typeof artModels): ArtRecipe {
   if (!Object.hasOwn(artModels, name)) throw new Error('Unknown built-in art model: ' + name)
-  const entry: ArtModel = artModels[name]
-  const { span, centerY, parts } = entry
-  const paletteMap: Record<string, string | undefined> = { ...artPalette, ...entry.palette }
-  const palette = Object.fromEntries(parts.map(p => [p.tone, paletteMap[p.tone] ?? artPalette.accent]))
-  return {
-    format: 'ridgetop-art', version: 1, name, span, centerY, frameSize: 64, palette,
-    parts: parts.map((p, index) => {
-      const shape = shapeNames.get(p.mesh)
-      if (!shape) throw new Error('Unknown art shape in built-in model: ' + name)
-      return {
-        name: p.name ?? 'part-' + (index + 1), shape,
-        position: [p.position[0], p.position[1], p.position[2]] as const,
-        scale: [p.scale[0], p.scale[1], p.scale[2]] as const,
-        tone: p.tone, ...(p.pitch ? { pitch: p.pitch } : {}), ...(p.yaw ? { yaw: p.yaw } : {}),
-        ...(p.roll ? { roll: p.roll } : {}), ...(p.unlit ? { unlit: p.unlit } : {}),
-        ...(p.joint ? { joint: p.joint } : {})
-      }
-    }),
-    ...(entry.joints ? { joints: Array.from(entry.joints, j => structuredClone(j)) } : {}),
-    ...(entry.clips ? { clips: Object.fromEntries(Object.entries(entry.clips).map(([k, v]) => [k, structuredClone(v)])) } : {})
-  }
+  const recipe = recipeFromArtModel(name, artModels[name])
+  if (!recipe) throw new Error('Unknown art shape in built-in model: ' + name)
+  return recipe
 }
 
 /** Convert an ArtModel (rigged or static) and palette into a runtime animation Rig + AnimationClips. */
@@ -300,7 +276,7 @@ export function bakeAnimatedSpritePixels(source: ArtModel | ArtRecipe, options: 
   }
   const frameSize = options.frameSize ?? model.frameSize ?? 64
   checkFrameSize(frameSize)
-  const elevation = options.elevation ?? Math.PI / 6
+  const elevation = options.elevation ?? SPRITE_ELEVATION
   if (!Number.isFinite(elevation) || Math.abs(elevation) >= Math.PI / 2) {
     throw new RangeError('Invalid sprite camera elevation')
   }
@@ -352,13 +328,13 @@ export function bakeAnimatedSpritePixels(source: ArtModel | ArtRecipe, options: 
   const centerY = options.centerY ?? model.centerY
   const cosEl = Math.cos(elevation)
   const sinEl = Math.sin(elevation)
-  const padding = Math.min(2, frameSize * .1)
-  const innerFraction = Math.max(0.2, 1 - 2 * padding / frameSize)
+  const framer = options.span === undefined
+    ? createOrthoFrameAccumulator({ elevation, angles: dirAngles, centerY })
+    : undefined
 
   type SampledFrame = { poses: ReturnType<typeof sampleClip>; liftY: number }
   const plan: { name: string; startColumn: number; frameCount: number; frameMs: number; samples: SampledFrame[] }[] = []
   let totalColumns = 0
-  let maxHalfSpan = 0
 
   for (const clipName of targetNames) {
     const hasClip = Object.hasOwn(animClips, clipName)
@@ -388,28 +364,14 @@ export function bakeAnimatedSpritePixels(source: ArtModel | ArtRecipe, options: 
       const poses = sampleClip(animClip, t)
       const b = artPoseBounds(model, poses)
       const liftY = alignFeet ? -b.min[1] : 0
-      if (options.span === undefined) {
-        const xs = [b.min[0], b.max[0]]
-        const ys = [b.min[1] + liftY, b.max[1] + liftY]
-        const zs = [b.min[2], b.max[2]]
-        for (const px of xs) for (const py of ys) for (const pz of zs) {
-          const cyTerm = cosEl * (py - centerY)
-          for (let d = 0; d < dirAngles.length; d++) {
-            const sin = Math.sin(dirAngles[d]), cos = Math.cos(dirAngles[d])
-            const u = Math.abs(cos * px - sin * pz)
-            const v = Math.abs(cyTerm - sinEl * (sin * px + cos * pz))
-            if (u > maxHalfSpan) maxHalfSpan = u
-            if (v > maxHalfSpan) maxHalfSpan = v
-          }
-        }
-      }
+      framer?.addBounds(b, liftY)
       samples.push({ poses, liftY })
     }
     plan.push({ name: clipName, startColumn: totalColumns, frameCount, frameMs, samples })
     totalColumns += frameCount
   }
 
-  const span = options.span ?? Math.max(model.span, (2 * maxHalfSpan) / innerFraction)
+  const span = options.span ?? Math.max(model.span, framer ? framer.spanAroundCenter(frameSize) : 0)
   const width = totalColumns * frameSize
   const height = directions.length * frameSize
   const pixels = new Uint8ClampedArray(width * height * 4)
@@ -495,17 +457,6 @@ export function bakeAnimatedSpriteDirections(source: ArtModel | ArtRecipe, optio
   return { image, manifest }
 }
 
-const uncoloredMeshCache = new WeakMap<Mesh, Mesh>()
-function meshWithoutVertexColors(source: Mesh): Mesh {
-  if (!source.colors) return source
-  let cached = uncoloredMeshCache.get(source)
-  if (!cached) {
-    cached = { data: source.data, vertexCount: source.vertexCount, radius: source.radius }
-    uncoloredMeshCache.set(source, cached)
-  }
-  return cached
-}
-
 /** A palette and named model recipes shared by mesh batches, rigs and cached, in-memory sprite sheets. */
 export function createArtKit<Extra extends string = never>({
   palette = {}, models, frameSize = 64
@@ -528,62 +479,13 @@ export function createArtKit<Extra extends string = never>({
   const rigs = new Map<Name, ArtRig>()
   const kitSourceSite = isTestingActive() ? captureSourceSite() : undefined
 
-  function recipeFromModel(name: string): ArtRecipe | undefined {
-    if (!Object.hasOwn(catalog, name)) return undefined
-    const m = catalog[name]
-    let isV2 = Boolean(m.joints?.length || m.clips)
-    const usedNames = new Set<string>()
-    const recipeParts = []
-    for (let i = 0; i < m.parts.length; i++) {
-      const p = m.parts[i]
-      const shape = shapeNames.get(p.mesh)
-      if (!shape) return undefined
-      if (p.alpha !== undefined || p.blend !== undefined || p.shade !== undefined || p.joint !== undefined || !Object.hasOwn(artPalette, p.tone)) {
-        isV2 = true
-      }
-      const baseName = p.name?.trim() || ('part-' + (i + 1))
-      let uniqueName = baseName
-      let suffix = 2
-      while (usedNames.has(uniqueName)) uniqueName = `${baseName}-${suffix++}`
-      usedNames.add(uniqueName)
-      recipeParts.push({
-        name: uniqueName,
-        shape,
-        position: [p.position[0], p.position[1], p.position[2]] as const,
-        scale: [p.scale[0], p.scale[1], p.scale[2]] as const,
-        tone: p.tone,
-        ...(p.pitch ? { pitch: p.pitch } : {}),
-        ...(p.yaw ? { yaw: p.yaw } : {}),
-        ...(p.roll ? { roll: p.roll } : {}),
-        ...(p.unlit ? { unlit: p.unlit } : {}),
-        ...(p.alpha !== undefined ? { alpha: p.alpha } : {}),
-        ...(p.blend !== undefined ? { blend: p.blend } : {}),
-        ...(p.shade !== undefined ? { shade: p.shade } : {}),
-        ...(p.joint !== undefined ? { joint: p.joint } : {})
-      })
-    }
-    const mergedPalette: Record<string, string | undefined> = { ...rgb, ...m.palette }
-    const usedPalette = Object.fromEntries(recipeParts.map(p => [p.tone, mergedPalette[p.tone] ?? artPalette.accent]))
-    return {
-      format: 'ridgetop-art',
-      version: isV2 ? 2 : 1,
-      name,
-      span: m.span,
-      centerY: m.centerY,
-      frameSize: m.frameSize ?? frameSize,
-      palette: usedPalette,
-      parts: recipeParts,
-      ...(m.joints ? { joints: m.joints.map(j => ({ id: j.id, ...(j.parent !== undefined ? { parent: j.parent } : {}), ...(j.pivot ? { pivot: [j.pivot[0], j.pivot[1], j.pivot[2]] as const } : {}) })) } : {}),
-      ...(m.clips ? { clips: Object.fromEntries(Object.entries(m.clips).map(([k, v]) => [k, structuredClone(v)])) } : {}),
-      ...(m.timings ? { timings: { ...m.timings } } : {})
-    }
-  }
-
   if (isTestingActive()) {
     registerArtKitRuntime({
       palette: { ...rgb },
       models: catalog,
-      recipeFor: recipeFromModel,
+      recipeFor: (name: string) => Object.hasOwn(catalog, name)
+        ? recipeFromArtModel(name, catalog[name], { palette: rgb, frameSize })
+        : undefined,
       sourceSite: kitSourceSite
     })
   }
@@ -622,7 +524,7 @@ export function createArtKit<Extra extends string = never>({
         let index = 0
         for (const piece of model(name).parts) {
           const blend = partTint ? 'opaque' : resolvePartBlend(piece)
-          const pieceMesh = partTint ? meshWithoutVertexColors(piece.mesh) : piece.mesh
+          const pieceMesh = partTint ? uncoloredMesh(piece.mesh) : piece.mesh
           const bucket = byMesh[blend]
           let batch = bucket.get(pieceMesh)
           if (!batch) {

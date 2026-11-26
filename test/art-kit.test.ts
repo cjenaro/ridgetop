@@ -1,9 +1,8 @@
 import assert from 'node:assert/strict'
 import { readdir, readFile } from 'node:fs/promises'
 import test from 'node:test'
-import { artModels, bakeAnimatedSpritePixels, box, createArtBuilder, createArtKit, createArtRecipe, createMeshPool,
-  modelFromArtRecipe, renderRig, rigFromArtModel, rigFromArtRecipe } from '../packages/ridgetop/framework/index.ts'
-import { compileArtJoints } from '../packages/ridgetop/framework/art-recipe.ts'
+import { artModels, artPoseBounds, bakeAnimatedSpritePixels, box, createArtBuilder, createArtKit, createArtRecipe,
+  createMeshPool, modelFromArtRecipe, recipeFromArtModel, renderRig, rigFromArtModel, rigFromArtRecipe } from '../packages/ridgetop/framework/index.ts'
 import type { ArtModel, ArtRecipe } from '../packages/ridgetop/framework/index.ts'
 
 test('custom art shares mesh buffers and applies the kit palette and object transform', () => {
@@ -289,5 +288,82 @@ test('all existing v1 starter and library .art.json recipes remain 100% compatib
   const built = rigFromArtRecipe(trickyRecipe)
   assert.ok(built.clips.wave.tracks.toString.length === 2)
   assert.ok(built.rig.joints.some(j => j.id === '__static_1__'))
-  assert.throws(() => compileArtJoints([{ id: 'a', parent: 'b' }, { id: 'b', parent: 'a' }]), /Cyclic joint parent/i)
+
+  const cyclicModel: ArtModel = {
+    span: 2,
+    centerY: 0.5,
+    parts: [{ name: 'core', mesh: box, position: [0, 0.5, 0], scale: [1, 1, 1], tone: 'wood' }],
+    joints: [{ id: 'a', parent: 'b' }, { id: 'b', parent: 'a' }]
+  }
+  assert.throws(() => rigFromArtModel(cyclicModel), /Cyclic joint/i)
+  assert.throws(() => artPoseBounds(cyclicModel), /Cyclic joint/i)
+})
+
+test('v2 recipes with tube parts and styling round-trip cleanly through modelFromArtRecipe and recipeFromArtModel', () => {
+  const art = createArtBuilder('fox-lantern', { base: 'biped', frameSize: 48 })
+  art.palette('fur', '#d97236')
+  art.palette('glass', '#9be2f5')
+  art.joint('tail', 'body', [0, 0.45, -0.22])
+  art.tube(
+    'fox-tail',
+    [[0, 0.45, -0.22], [0, 0.36, -0.55], [0, 0.65, -0.82]],
+    [0.10, 0.16, 0.06],
+    'fur',
+    { sides: 6, style: { joint: 'tail', shade: -0.12 } }
+  )
+  art.tube(
+    'lantern-hook',
+    [[0.25, 0.72, 0.10], [0.42, 0.85, 0.18], [0.48, 0.70, 0.22]],
+    0.04,
+    'glass',
+    { sides: 5, style: { alpha: 0.6, blend: 'alpha', unlit: 0.4 } }
+  )
+  const recipe1 = art.finish()
+  recipe1.timings = { turntable: 140 }
+  assert.equal(recipe1.version, 2)
+
+  const model1 = modelFromArtRecipe(recipe1)
+  const tailPart = model1.parts.find(p => p.name === 'fox-tail')
+  const hookPart = model1.parts.find(p => p.name === 'lantern-hook')
+  assert.ok(tailPart?.tube && Array.isArray(tailPart.tube.radii))
+  assert.equal(tailPart.tube.sides, 6)
+  assert.equal(hookPart?.tube?.radii, 0.04)
+  assert.equal(hookPart?.tube?.sides, 5)
+
+  const recipe2 = recipeFromArtModel(recipe1.name, model1)
+  assert.ok(recipe2, 'recipeFromArtModel must serialize tube models instead of returning undefined')
+  assert.equal(recipe2.version, 2)
+  assert.deepEqual(recipe2.timings, { turntable: 140 })
+  assert.equal(recipe2.palette.fur, '#d97236')
+  assert.equal(recipe2.palette.glass, '#9be2f5')
+
+  const tailRecipe = recipe2.parts.find(p => p.name === 'fox-tail')
+  const hookRecipe = recipe2.parts.find(p => p.name === 'lantern-hook')
+  assert.equal(tailRecipe?.shape, 'tube')
+  assert.deepEqual(tailRecipe?.radii, [0.10, 0.16, 0.06])
+  assert.equal(tailRecipe?.sides, 6)
+  assert.equal(tailRecipe?.joint, 'tail')
+  assert.equal(tailRecipe?.shade, -0.12)
+  assert.equal(hookRecipe?.shape, 'tube')
+  assert.equal(hookRecipe?.radii, 0.04)
+  assert.equal(hookRecipe?.sides, 5)
+  assert.equal(hookRecipe?.alpha, 0.6)
+  assert.equal(hookRecipe?.blend, 'alpha')
+  assert.equal(hookRecipe?.unlit, 0.4)
+
+  const model2 = modelFromArtRecipe(JSON.parse(JSON.stringify(recipe2)))
+  assert.equal(model2.parts.length, model1.parts.length)
+  for (let i = 0; i < model1.parts.length; i++) {
+    assert.equal(model2.parts[i].name, model1.parts[i].name)
+    assert.equal(model2.parts[i].mesh.vertexCount, model1.parts[i].mesh.vertexCount)
+    assert.deepEqual(model2.parts[i].mesh.data, model1.parts[i].mesh.data)
+    assert.deepEqual(model2.parts[i].position, model1.parts[i].position)
+    assert.deepEqual(model2.parts[i].scale, model1.parts[i].scale)
+  }
+
+  // Mutating serialized recipe2 does not mutate model1
+  if (tailRecipe?.points && Array.isArray(tailRecipe.radii)) {
+    ;(tailRecipe.radii as number[])[0] = 99
+    assert.equal(Array.isArray(tailPart.tube.radii) ? tailPart.tube.radii[0] : -1, 0.10)
+  }
 })

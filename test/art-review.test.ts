@@ -7,7 +7,7 @@ import test from 'node:test'
 import { pathToFileURL } from 'node:url'
 import { createArtKit, createArtRecipe } from '../packages/ridgetop/framework/art.ts'
 import { modelFromArtRecipe } from '../packages/ridgetop/framework/art-recipe.ts'
-import { pickArtScene, spritePartVisibility } from '../packages/ridgetop/framework/art-review.ts'
+import { pickRenderedScene, spritePartVisibility } from '../packages/ridgetop/framework/art-review.ts'
 import { box, multiply, orthographic, view } from '../packages/ridgetop/framework/geometry.ts'
 import { createGameHost } from '../packages/ridgetop/framework/host.ts'
 import { bakeSpritePixels } from '../packages/ridgetop/framework/low-poly.ts'
@@ -112,7 +112,7 @@ test('part edits preserve other roles and reject an outdated or invalid recipe w
   assert.equal((await app.request('reviews/' + badId, 'PATCH', { revision: 'x', status: 'open' })).status, 400)
 })
 
-test('pickArtScene, spritePartVisibility, and art-recipe validation handle bounds, duplicates, and malformed values', () => {
+test('pickRenderedScene, spritePartVisibility, and art-recipe validation handle bounds, duplicates, and malformed values', () => {
   // Sparse arrays and JSON null angles/unlit must be rejected
   const badSparse = createArtRecipe('ranger')
   const sparse = new Array(3)
@@ -141,12 +141,17 @@ test('pickArtScene, spritePartVisibility, and art-recipe validation handle bound
   assert.deepEqual(Object.keys(vis.parts), ['leg', 'leg#2', '__proto__'])
   assert.ok(vis.parts.leg[0] > 0 && vis.parts['leg#2'][0] > 0 && vis.parts['__proto__'][0] > 0)
 
-  // Headless pickArtScene (no DOM document) rejects out-of-range u/v and hits centered object
+  // Headless pickRenderedScene (no DOM document) rejects out-of-range u/v and hits centered object
+  const group = kit.group()
+  group.add('dup', [0, 0, 0], { id: 'd1' })
   const cam = multiply(orthographic(4, 4, .1, 20), view([0, 0, 5], [0, 0, 0]))
-  const hit = pickArtScene(kit, [{ id: 'd1', name: 'dup', x: 0, z: 0 }], cam, 100, 100, .4, .5)
-  assert.equal(hit?.object.id, 'd1')
-  assert.equal(pickArtScene(kit, [{ id: 'd1', name: 'dup', x: 5, z: 0 }], cam, 100, 100, 1.5, .5), undefined)
-  assert.equal(pickArtScene(kit, [{ id: 'd1', name: 'dup', x: 0, z: 0 }], cam, 100, 100, 1, 1), undefined)
+  const hit = pickRenderedScene(group.batches, cam, 100, 100, .4, .5)
+  assert.ok(hit)
+  assert.equal(hit.batchIndex, 0)
+  assert.equal(hit.instanceIndex, 0)
+  assert.ok(Math.abs(hit.position[0] - (-0.4)) < 1e-5)
+  assert.equal(pickRenderedScene(group.batches, cam, 100, 100, 1.5, .5), undefined)
+  assert.equal(pickRenderedScene(group.batches, cam, 100, 100, 1, 1), undefined)
 })
 
 test('createArtReviewHandler supports custom artDir/reviewsDir and saving sprite sheets & manifests', async t => {

@@ -1,8 +1,9 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import {
-  bevelBox, box, capsuleMesh, chamferedPrism, cylinder, instances, intersectRayPlane, invertMatrix, mesh, multiply,
-  octahedron, orthographic, perspective, scallopedCone, screenToRay, smoothMesh, view, worldToScreen
+  bakeZoneColors, bevelBox, box, capsuleMesh, chamferedPrism, cylinder, instances, intersectRayPlane, invertMatrix,
+  mergeMeshes, mesh, multiply, octahedron, orthographic, perspective, quaternionFromEuler, scallopedCone,
+  screenToRay, sculptLoft, smoothMesh, view, worldToScreen
 } from '../packages/ridgetop/framework/index.ts'
 import { frustum, visible } from '../packages/ridgetop/framework/instances.ts'
 
@@ -138,4 +139,39 @@ test('crescentMesh builds a tapered double-sided arc centred on +Z', async () =>
   assert.equal(maxY, 0, 'flat in the XZ plane')
   assert.throws(() => crescentMesh(0))
   assert.throws(() => crescentMesh(Math.PI, 1, 0.5))
+})
+
+test('mergeMeshes combines transformed meshes, bakes colors, and preserves outward winding under mirrored scale', () => {
+  assert.throws(() => mergeMeshes([]), RangeError)
+
+  const untinted = mergeMeshes([
+    { mesh: box, position: [-1, 0, 0] },
+    { mesh: box, position: [1, 0, 0], rotation: quaternionFromEuler(0, Math.PI / 4, 0) }
+  ])
+  assert.equal(untinted.vertexCount, box.vertexCount * 2)
+  assert.equal(untinted.colors, undefined)
+  assert.ok(untinted.radius > 1.5)
+
+  const loft = bakeZoneColors(
+    sculptLoft([{ y: -0.5, rx: 0.4, rz: 0.4 }, { y: 0.5, rx: 0.3, rz: 0.3 }], { sides: 6 }),
+    () => [0.5, 0.5, 0.5, 1]
+  )
+  const merged = mergeMeshes([
+    { mesh: loft, position: [0, 1, 0], color: [1, 0.5, 0.25, 1] },
+    { mesh: box, position: [0, 0, 0], scale: [-1, 1, 1], rotation: [0, Math.PI / 2, 0], color: [0.2, 0.4, 0.8, 1] }
+  ])
+  assert.equal(merged.vertexCount, loft.vertexCount + box.vertexCount)
+  assert.ok(merged.colors && merged.colors.length === merged.vertexCount * 3)
+  assert.ok(Math.abs(merged.colors[0] - 0.5) < 1e-5)
+  assert.ok(Math.abs(merged.colors[1] - 0.25) < 1e-5)
+
+  // Verify the mirrored box still has outward CCW triangle winding (geometric normal matches vertex normal)
+  const start = loft.vertexCount
+  for (let i = start; i < merged.vertexCount; i += 3) {
+    const o0 = i * 6, o1 = (i + 1) * 6, o2 = (i + 2) * 6
+    const e1x = merged.data[o1] - merged.data[o0], e1y = merged.data[o1 + 1] - merged.data[o0 + 1], e1z = merged.data[o1 + 2] - merged.data[o0 + 2]
+    const e2x = merged.data[o2] - merged.data[o0], e2y = merged.data[o2 + 1] - merged.data[o0 + 1], e2z = merged.data[o2 + 2] - merged.data[o0 + 2]
+    const cx = e1y * e2z - e1z * e2y, cy = e1z * e2x - e1x * e2z, cz = e1x * e2y - e1y * e2x
+    assert.ok(cx * merged.data[o0 + 3] + cy * merged.data[o0 + 4] + cz * merged.data[o0 + 5] > 0)
+  }
 })
