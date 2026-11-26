@@ -18,6 +18,59 @@ export const CURSED_ALTAR_HP_COST = 10
 export const TALL_GRASS_RANGED_COVER = 3
 export const TALL_GRASS_RANGED_CRIT_REDUCTION = 0.12
 export const OPPORTUNITY_ATTACK_DAMAGE_MUL = 0.75
+export const COLLISION_IMPACT_DAMAGE = 10
+export const LEDGE_STOP_DAMAGE = 12
+export const FALL_DAMAGE_PER_LEVEL = 7
+export const FALL_MIN_DROP_LEVELS = 2
+
+export type DisplacementKind = 'knockback' | 'pull' | 'swap'
+
+export interface DisplacementSpec {
+  readonly kind: DisplacementKind
+  readonly distance: number
+}
+
+export type DisplacementCollisionKind =
+  | 'none'
+  | 'wall'
+  | 'pillar'
+  | 'barricade'
+  | 'edge'
+  | 'unit'
+  | 'void'
+  | 'water'
+  | 'lava'
+  | 'cliff'
+
+export interface DisplacementPreview {
+  readonly kind: DisplacementKind
+  readonly distance: number
+  readonly fromCol: number
+  readonly fromRow: number
+  readonly toCol: number
+  readonly toRow: number
+  readonly actorToCol?: number
+  readonly actorToRow?: number
+  readonly path: readonly GridCoord[]
+  readonly moved: boolean
+  readonly collidedWith: DisplacementCollisionKind
+  readonly collidedUnitUid?: string
+  readonly collidedUnitName?: string
+  readonly collidedCell?: GridCoord
+  readonly collisionDmg: number
+  readonly secondaryCollisionDmg: number
+  readonly barricadeDmg: number
+  readonly fallDrop: number
+  readonly fallDmg: number
+  readonly hazardKind: 'none' | 'lava_geyser' | 'cursed_altar' | 'ice'
+  readonly hazardDmg: number
+  readonly iceSlid: boolean
+  readonly causesStun: boolean
+  readonly causesSlow: boolean
+  readonly causesBurn: boolean
+  readonly totalBonusDmg: number
+  readonly summaryTag: string
+}
 
 export type Rarity = 'common' | 'uncommon' | 'rare' | 'epic' | 'legendary'
 
@@ -90,6 +143,7 @@ export interface SkillSpec {
   readonly status?: StatusKind
   readonly selfStatus?: StatusKind
   readonly statusStacks?: number
+  readonly displacement?: DisplacementSpec
   readonly vfx: 'slash' | 'arrow' | 'arcane' | 'fire' | 'frost' | 'holy' | 'shadow'
 }
 
@@ -152,6 +206,7 @@ export interface TacticCardSpec {
   readonly status?: StatusKind
   readonly statusStacks?: number
   readonly refreshMove?: boolean
+  readonly displacement?: DisplacementSpec
   readonly vfx: 'fire' | 'frost' | 'holy' | 'arcane' | 'slash' | 'shadow'
 }
 
@@ -529,6 +584,16 @@ export type VfxEvent =
   | { kind: 'shield'; at: Vec3 }
   | { kind: 'ko'; at: Vec3; isBoss?: boolean; downed?: boolean }
   | { kind: 'levelup'; at: Vec3 }
+  | {
+      kind: 'displace'
+      uid: string
+      displacementKind: DisplacementKind
+      from: Vec3
+      to: Vec3
+      collided?: DisplacementCollisionKind
+      fallDrop?: number
+      iceSlid?: boolean
+    }
 
 export interface BattleReward {
   readonly gold: number
@@ -744,6 +809,7 @@ export interface CombatForecast {
   readonly counterLethal?: boolean
   readonly counterAvoidReason?: CounterAvoidReason
   readonly opportunityAttacks?: PathOpportunityPreview
+  readonly displacementPreview?: DisplacementPreview
   readonly alternatives: readonly CombatForecastAlt[]
 }
 

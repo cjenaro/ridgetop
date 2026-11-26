@@ -853,6 +853,30 @@ export function createBattleVfx(pool: MeshPool, particles: Particles, onShake: (
           dust(c, 8, 1.4, d)
         }
         return d + 0.1
+      case 'gale_gust':
+        for (const c of cells) {
+          groundRing(c, C.haste, d, 0.58, 0.22, TILE_SIZE * 1.55, 3.8)
+          add(d, 0.72, (u, t) => {
+            const fade = 1 - u
+            for (let i = 0; i < 4; i++) {
+              const h = 0.18 + i * 0.36 + u * 0.48
+              const s = 0.58 + u * 0.85 + i * 0.1
+              pool.add(
+                slashArc,
+                [c[0], c[1] + h, c[2]],
+                [s, 1, s],
+                t * 18 + i * 1.57,
+                withAlpha(i % 2 === 0 ? C.haste : C.ice, fade * 0.9),
+                1,
+                'additive'
+              )
+            }
+          })
+          dust(c, 12, 2.2, d)
+          motes(c, C.haste, 10, 0.55, 2.4, d + 0.04, 0.75)
+        }
+        later(d, () => onShake(0.16))
+        return d + 0.12
       case 'taunt_banner':
         for (const c of cells) {
           groundRing(c, C.taunt, d, 0.65, 0.25, TILE_SIZE * 1.45, 2.2)

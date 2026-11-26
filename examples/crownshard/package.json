@@ -24,6 +24,7 @@
     "godotEntries": [
       "crownshard/simulation.ts",
       "crownshard/counter-attack.ts",
+      "crownshard/forced-movement.ts",
       "crownshard/pincer.ts",
       "crownshard/zoc.ts",
       "crownshard/data.ts",
