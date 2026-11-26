@@ -275,8 +275,15 @@ export async function verifyCrownshardCore(
       label: `Crownshard ${backend} battle`
     })
 
+    const deployState = await uiStateRecord(page)
+    if (deployState.battlePhase === 'deploy') {
+      assert.ok(typeof deployState.deployTilesCount === 'number' && deployState.deployTilesCount > 0, `Crownshard ${backend} deployTilesCount > 0`)
+      await uiAct(page, 'cs-start-battle')
+      await until(() => uiState(page, 'battlePhase'), 'player', `Crownshard ${backend} deploy confirmed to player phase`, 160, interval)
+    }
+
     const battleState = await uiStateRecord(page)
-    assert.equal(battleState.battlePhase, 'player', `Crownshard ${backend} starts in player phase`)
+    assert.equal(battleState.battlePhase, 'player', `Crownshard ${backend} enters player phase`)
     for (const metric of ['gold', 'battleCols', 'battleRows', 'battleTurn', 'battleAlliesAlive', 'battleEnemiesAlive']) {
       const value = battleState[metric]
       assert.ok(typeof value === 'number' && Number.isFinite(value), `Crownshard ${backend} ${metric} must be finite`)

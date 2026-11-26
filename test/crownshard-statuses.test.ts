@@ -551,3 +551,41 @@ test('CrownshardScene and HUD render Taunt, Haste, and Poison 3D auras, VFX, and
     }
   )
 })
+
+test('Wave 3 cross-feature seams: Poison KO enters 3-turn Downed Window, statuses clear on down/revive, Lava Geyser KO advances turn', () => {
+  // 1. Poison lethal tick enters downed countdown and clears Wave 3a statuses
+  const state = createInitialState(9301)
+  const battle = startChapterBattle(state, 0)
+  const hero = getUnitByUid(battle, battle.activeUnitUid)!
+  const otherAlly = battle.units.find(u => u.team === 'ally' && u.uid !== hero.uid)!
+  assert.ok(otherAlly)
+  hero.hp = 4
+  hero.poisonStacks = 3
+  hero.tauntTurns = 2
+  hero.hasteTurns = 2
+  // Force hero's own next turn so Poison ticks on hero
+  for (const u of battle.units) u.ct = 0
+  hero.ct = 100
+  endPlayerTurn(state)
+  assert.equal(hero.alive, false)
+  assert.equal(hero.downed, true, 'Poison KO on ally must enter 3-turn Downed Window')
+  assert.equal(hero.koCountdown, 3)
+  assert.equal(hero.tauntTurns, 0, 'Downed hero must clear tauntTurns')
+  assert.equal(hero.hasteTurns, 0, 'Downed hero must clear hasteTurns so KO clock is not accelerated')
+  assert.equal(hero.poisonStacks, 0, 'Downed hero must clear poisonStacks')
+
+  // 2. Active hero stepping onto erupting Lava Geyser and dropping to 0 HP advances turn instead of soft-locking
+  const state2 = createInitialState(9302)
+  const battle2 = startChapterBattle(state2, 0)
+  const active2 = getUnitByUid(battle2, battle2.activeUnitUid)!
+  const dest = battle2.moveTiles[0]!
+  battle2.cells[dest.row][dest.col].terrain = 'lava_geyser'
+  battle2.cells[dest.row][dest.col].walkable = true
+  battle2.cells[dest.row][dest.col].geyserActive = true
+  active2.hp = 5
+  assert.equal(selectTile(state2, dest.col, dest.row), true)
+  for (let i = 0; i < 120; i++) stepGame(state2, 1 / 60)
+  assert.equal(active2.alive, false)
+  assert.equal(active2.downed, true)
+  assert.notEqual(battle2.activeUnitUid, active2.uid, 'Turn must advance off a hero downed by Lava Geyser (no soft-lock)')
+})

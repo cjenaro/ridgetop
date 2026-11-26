@@ -543,6 +543,7 @@ test('shared cross-browser suites run end-to-end against a fake BrowserPage adap
       campTab: 'squad',
       gold: 120,
       battlePhase: null,
+      deployTilesCount: 0,
       battleCols: 0,
       battleRows: 0,
       battleTurn: 0,
@@ -556,12 +557,17 @@ test('shared cross-browser suites run end-to-end against a fake BrowserPage adap
       if (id === 'cs-world-deploy') st.screen = 'story'
       if (id === 'cs-story-go') {
         st.screen = 'battle'
-        st.battlePhase = 'player'
+        st.battlePhase = 'deploy'
+        st.deployTilesCount = 6
         st.battleCols = 8
         st.battleRows = 6
-        st.battleTurn = 1
+        st.battleTurn = 0
         st.battleAlliesAlive = 3
         st.battleEnemiesAlive = 4
+      }
+      if (id === 'cs-start-battle') {
+        st.battlePhase = 'player'
+        st.battleTurn = 1
       }
       if (id === 'cs-pause') st.screen = 'paused'
       if (id === 'cs-resume') st.screen = 'battle'

@@ -3966,6 +3966,7 @@ export function computeCombatForecast(state: GameState, col: number, row: number
         shieldAmount: 0,
         selfShield: armedSkill && armedSkill.shieldAmount > 0 && armedSkill.pattern !== 'aura' ? armedSkill.shieldAmount : 0,
         status: armedSkill?.status,
+        selfStatus: armedSkill?.selfStatus,
         highGround: false,
         elevationDiff: 0,
         coverBonus: 0,
@@ -4403,6 +4404,9 @@ function handleUnitDefeat(state: GameState, unit: BattleUnit): void {
   unit.slowTurns = 0
   unit.stunTurns = 0
   unit.empowerTurns = 0
+  unit.tauntTurns = 0
+  unit.hasteTurns = 0
+  unit.poisonStacks = 0
   if (unit.team === 'ally') {
     unit.downed = true
     unit.koCountdown = KO_COUNTDOWN_TURNS
@@ -4438,6 +4442,9 @@ function reviveHero(
   target.slowTurns = 0
   target.stunTurns = 0
   target.empowerTurns = 0
+  target.tauntTurns = 0
+  target.hasteTurns = 0
+  target.poisonStacks = 0
   target.animState = 'idle'
   target.animTimer = 0
   addFloat(battle, target.x, target.y + 0.45, target.z, 'REVIVED!', '#ffe378')
@@ -4499,9 +4506,7 @@ function applyPoisonTick(state: GameState, unit: BattleUnit, dmg: number): void 
   addFloat(battle, unit.x, unit.y, unit.z, `POISON -${dmg}`, '#8dff4f')
   state.sounds.push({ kind: 'hit', pitch: 0.85 })
   if (unit.hp <= 0) {
-    unit.alive = false
-    state.sounds.push({ kind: 'ko' })
-    state.vfx.push({ kind: 'ko', at: [unit.x, unit.y + 0.6, unit.z], isBoss: unit.isBoss })
+    handleUnitDefeat(state, unit)
   }
 }
 
@@ -4952,7 +4957,7 @@ function executeHeroSkill(
       const downed = skill.canRevive ? downedHeroAt(battle, c.col, c.row) : undefined
       if (downed && downed.team === caster.team) {
         reviveHero(state, downed, computeReviveHp(downed, skill.reviveHpRatio), skill.shieldAmount)
-        if (skill.status === 'empower') applyStatus(battle, downed, 'empower')
+        if (skill.status && isBeneficialStatus(skill.status)) applyStatus(battle, downed, skill.status, skill.statusStacks)
         hitAny = true
         continue
       }
@@ -4969,7 +4974,7 @@ function executeHeroSkill(
       const downed = skill.canRevive ? downedHeroAt(battle, c.col, c.row) : undefined
       if (downed && downed.team === caster.team) {
         reviveHero(state, downed, computeReviveHp(downed, skill.reviveHpRatio), skill.shieldAmount)
-        if (skill.status === 'empower') applyStatus(battle, downed, 'empower')
+        if (skill.status && isBeneficialStatus(skill.status)) applyStatus(battle, downed, skill.status, skill.statusStacks)
         hitAny = true
         continue
       }
@@ -5070,7 +5075,7 @@ function executeTacticCard(state: GameState, tacticUid: string, col: number, row
       if (u.team !== 'ally') continue
       if (spec.canRevive && isUnitDowned(u)) {
         reviveHero(state, u, computeReviveHp(u, spec.reviveHpRatio), spec.shield)
-        if (spec.status) applyStatus(battle, u, spec.status)
+        if (spec.status && isBeneficialStatus(spec.status)) applyStatus(battle, u, spec.status, spec.statusStacks)
         continue
       }
       if (!u.alive) continue
@@ -5097,7 +5102,7 @@ function executeTacticCard(state: GameState, tacticUid: string, col: number, row
         const downed = downedHeroAt(battle, c.col, c.row)
         if (downed && downed.team === 'ally') {
           reviveHero(state, downed, computeReviveHp(downed, spec.reviveHpRatio), spec.shield)
-          if (spec.status === 'empower') applyStatus(battle, downed, 'empower')
+          if (spec.status && isBeneficialStatus(spec.status)) applyStatus(battle, downed, spec.status, spec.statusStacks)
           continue
         }
       }
@@ -5745,8 +5750,8 @@ function executeEnemyUnitTurn(state: GameState, enemy: BattleUnit): void {
 
   if (!target) return
 
-  // Move if not already in ideal range or LoS is blocked (or if a melee foe can breach a Defend objective!)
-  const defendTile = battle.objective.kind === 'defend' ? battle.objective.protectTile : undefined
+  // Move if not already in ideal range or LoS is blocked (or if an unprovoked melee foe can breach a Defend objective!)
+  const defendTile = !provoked && battle.objective.kind === 'defend' ? battle.objective.protectTile : undefined
   const distNow = manhattan(enemy.col, enemy.row, target.col, target.row)
   const effRangeNow = effectiveAttackRange(battle, enemy.col, enemy.row, target.col, target.row, enemy.range)
   const hasLoSNow = hasLineOfSight(battle, enemy.col, enemy.row, target.col, target.row, false)
@@ -5887,7 +5892,24 @@ export function stepGame(state: GameState, dt: number): void {
         u.path.shift()
         u.moveProgress = 0
         triggerStepOnHazard(state, u, toCell)
-        if (!u.alive || isBattleEnded(battle)) {
+        if (isBattleEnded(battle)) {
+          u.path = []
+          break
+        }
+        if (!u.alive) {
+          u.path = []
+          if (u.uid === battle.activeUnitUid) {
+            battle.pendingAction = null
+            battle.armedSkillIndex = null
+            battle.armedTacticUid = null
+            battle.moveUndo = null
+            battle.facingPicker = null
+            if (battle.phase === 'player') {
+              battle.objective.roundsElapsed += 1
+            }
+            advanceToNextUnitTurn(state)
+            break
+          }
           continue
         }
         checkTileObjectiveInteractions(state, u)
