@@ -87,17 +87,17 @@ export const HERO_SPECS: Record<HeroClassId, HeroSpec> = {
     skills: [
       {
         id: 'shield_bash', name: 'Shield Bash', tier: 1,
-        desc: 'Strike adjacent foe (125% ATK) & gain +12 Shield.',
+        desc: 'Strike adjacent foe (125% ATK), +12 Shield & Taunt 2 turns.',
         range: 1, cooldown: 2, target: 'enemy', pattern: 'single',
         powerMul: 1.25, flatBonus: 4, healAmount: 0, shieldAmount: 12, ignoreArmor: 0.2,
-        vfx: 'slash'
+        selfStatus: 'taunt', vfx: 'slash'
       },
       {
         id: 'bulwark_aura', name: 'Bulwark Aura', tier: 2,
-        desc: 'Grant +20 Shield to self & adjacent allies.',
+        desc: 'Grant +20 Shield to self & adjacent allies, & Taunt nearby foes.',
         range: 0, cooldown: 3, target: 'self', pattern: 'aura',
         powerMul: 0, flatBonus: 0, healAmount: 6, shieldAmount: 20, ignoreArmor: 0,
-        vfx: 'holy'
+        selfStatus: 'taunt', vfx: 'holy'
       },
       {
         id: 'solar_cleave', name: 'Crown Cleave', tier: 3,
@@ -201,10 +201,10 @@ export const HERO_SPECS: Record<HeroClassId, HeroSpec> = {
     skills: [
       {
         id: 'sun_mend', name: 'Sunbeam Mend', tier: 1,
-        desc: 'Heal an ally for 28 HP & grant +8 Shield.',
+        desc: 'Heal an ally for 28 HP, +8 Shield & grant Haste.',
         range: 3, cooldown: 2, target: 'ally', pattern: 'single',
         powerMul: 0, flatBonus: 0, healAmount: 28, shieldAmount: 8, ignoreArmor: 0,
-        vfx: 'holy'
+        status: 'haste', vfx: 'holy'
       },
       {
         id: 'sanctuary_wave', name: 'Sanctuary Wave', tier: 2,
@@ -239,17 +239,17 @@ export const HERO_SPECS: Record<HeroClassId, HeroSpec> = {
     skills: [
       {
         id: 'shadowstep', name: 'Shadow Strike', tier: 1,
-        desc: 'Leap up to 3 tiles to ambush foe (145% ATK).',
+        desc: 'Leap up to 3 tiles to ambush foe (145% ATK) & inflict Poison x2.',
         range: 3, cooldown: 2, target: 'enemy', pattern: 'single',
         powerMul: 1.45, flatBonus: 5, healAmount: 0, shieldAmount: 0, ignoreArmor: 0.4,
-        vfx: 'shadow'
+        status: 'poison', statusStacks: 2, vfx: 'shadow'
       },
       {
         id: 'fan_blades', name: 'Fan of Blades', tier: 2,
-        desc: 'Slash all enemies in a cross around you (135% ATK).',
+        desc: 'Slash all enemies in a cross (135% ATK) & inflict Poison.',
         range: 1, cooldown: 2, target: 'enemy', pattern: 'cross',
         powerMul: 1.35, flatBonus: 4, healAmount: 0, shieldAmount: 10, ignoreArmor: 0.35,
-        vfx: 'shadow'
+        status: 'poison', statusStacks: 1, vfx: 'shadow'
       },
       {
         id: 'phantom_exec', name: 'Phantom Finisher', tier: 3,
@@ -284,10 +284,10 @@ export const HERO_SPECS: Record<HeroClassId, HeroSpec> = {
       },
       {
         id: 'aegis_vow', name: 'Aegis Vow', tier: 2,
-        desc: 'Fortify self & nearby allies with +30 Shield & Empower.',
+        desc: 'Fortify self & allies (+30 Shield, Empower) & Taunt nearby foes.',
         range: 0, cooldown: 3, target: 'self', pattern: 'aura',
         powerMul: 0, flatBonus: 0, healAmount: 14, shieldAmount: 30, ignoreArmor: 0,
-        status: 'empower', vfx: 'holy'
+        status: 'empower', selfStatus: 'taunt', vfx: 'holy'
       },
       {
         id: 'solar_verdict', name: 'Solar Verdict', tier: 3,
@@ -407,8 +407,8 @@ export const EQUIPMENT_LIST: readonly EquipmentSpec[] = [
   },
   {
     id: 'dragonfang_spear', name: 'Dragonfang Halberd', slot: 'weapon', rarity: 'epic',
-    desc: '+15 ATK, +1 Range, +15% Lifesteal.',
-    atk: 15, def: 2, hp: 10, speed: 1, move: 0, range: 1, crit: 0.12, lifesteal: 0.15, shieldStart: 0, accentHex: '#d66bff'
+    desc: '+15 ATK, +1 Range, +15% Lifesteal, Venom.',
+    atk: 15, def: 2, hp: 10, speed: 1, move: 0, range: 1, crit: 0.12, lifesteal: 0.15, shieldStart: 0, onHitStatus: 'poison', accentHex: '#d66bff'
   },
   {
     id: 'solis_crownblade', name: 'Solis Crownblade', slot: 'weapon', rarity: 'legendary',
@@ -444,8 +444,8 @@ export const EQUIPMENT_LIST: readonly EquipmentSpec[] = [
   },
   {
     id: 'aegis_of_dawn', name: 'Aegis of Dawn', slot: 'armor', rarity: 'legendary',
-    desc: '+62 HP, +11 DEF, +2 SPD, +32 Shield.',
-    atk: 4, def: 11, hp: 62, speed: 2, move: 0, range: 0, crit: 0, lifesteal: 0, shieldStart: 32, accentHex: '#ffd15c'
+    desc: '+62 HP, +11 DEF, +2 SPD, +32 Shield, Start Taunt.',
+    atk: 4, def: 11, hp: 62, speed: 2, move: 0, range: 0, crit: 0, lifesteal: 0, shieldStart: 32, startStatus: 'taunt', accentHex: '#ffd15c'
   },
 
   // Relics
@@ -456,8 +456,8 @@ export const EQUIPMENT_LIST: readonly EquipmentSpec[] = [
   },
   {
     id: 'swift_boots', name: 'Gale Striders', slot: 'relic', rarity: 'uncommon',
-    desc: '+3 SPD, +1 Move, +10 HP.',
-    atk: 2, def: 1, hp: 10, speed: 3, move: 1, range: 0, crit: 0.08, lifesteal: 0, shieldStart: 0, accentHex: '#5cd99e'
+    desc: '+3 SPD, +1 Move, +10 HP, Start Haste.',
+    atk: 2, def: 1, hp: 10, speed: 3, move: 1, range: 0, crit: 0.08, lifesteal: 0, shieldStart: 0, startStatus: 'haste', accentHex: '#5cd99e'
   },
   {
     id: 'blood_amulet', name: 'Crimson Pendant', slot: 'relic', rarity: 'rare',
@@ -508,8 +508,20 @@ export const TACTIC_LIST: readonly TacticCardSpec[] = [
   {
     id: 'wind_step', name: 'Gale Step', rarity: 'uncommon', cost: 1,
     target: 'ally', pattern: 'single',
-    desc: 'Refresh ally Movement & grant +8 Shield.',
-    damage: 0, heal: 0, shield: 8, apGain: 0, refreshMove: true, vfx: 'arcane'
+    desc: 'Refresh ally Movement, +8 Shield & grant Haste.',
+    damage: 0, heal: 0, shield: 8, apGain: 0, status: 'haste', refreshMove: true, vfx: 'arcane'
+  },
+  {
+    id: 'taunt_banner', name: 'Vanguard Challenge', rarity: 'common', cost: 1,
+    target: 'ally', pattern: 'single',
+    desc: 'Grant +16 Shield & Taunt nearby foes for 2 turns.',
+    damage: 0, heal: 0, shield: 16, apGain: 0, status: 'taunt', vfx: 'holy'
+  },
+  {
+    id: 'venom_vial', name: 'Venom Flask', rarity: 'uncommon', cost: 1,
+    target: 'enemy', pattern: 'single',
+    desc: 'Deal 14 Venom DMG & inflict Poison x2.',
+    damage: 14, heal: 0, shield: 0, apGain: 0, status: 'poison', statusStacks: 2, vfx: 'shadow'
   },
   {
     id: 'frost_nova_scroll', name: 'Rime Seal', rarity: 'rare', cost: 2,

@@ -2,7 +2,7 @@ import type { CanvasWidgetDrawState, LayoutRect } from 'ridgetop/ui'
 import type {
   BattleUnit, ChapterSpec, CombatForecast, CombatForecastAlt, DifficultyLevel, EquipSlot, EquipmentSpec,
   FacingDir, FacingExposureLevel, HeroSpec, LandmarkKind, OwnedHeroCard, PackRevealItem, PackSpec,
-  Rarity, SkillSpec, TacticCardSpec, TurnOrderActionPreview, TurnPreviewEntry
+  Rarity, SkillSpec, StatusKind, TacticCardSpec, TurnOrderActionPreview, TurnPreviewEntry
 } from './types.ts'
 import { DIFFICULTY_META, RARITY_META, RARITY_ORDER } from './data.ts'
 
@@ -2069,6 +2069,34 @@ export function drawTurnOrderPreviewBanner(
  * Star-Tier badge, dynamic color-shifting segmented HP bar, shield/CT micro-bars,
  * and dark-outlined stat badges.
  */
+interface StatusBadgeSpec {
+  readonly text: string
+  readonly bg: string
+  readonly color: string
+}
+
+function statusChipStyle(status: StatusKind, prefix = ''): StatusBadgeSpec {
+  if (status === 'taunt') return { text: `${prefix}TAUNT`, bg: '#8a241b', color: '#ffd4c2' }
+  if (status === 'haste') return { text: `${prefix}HASTE`, bg: '#115e57', color: '#b8fff2' }
+  if (status === 'poison') return { text: `${prefix}POISON`, bg: '#2d5414', color: '#d8ff9e' }
+  if (status === 'burn') return { text: `${prefix}BURN`, bg: '#7a340e', color: '#ffd5a3' }
+  if (status === 'slow') return { text: `${prefix}SLOW`, bg: '#184b6e', color: '#c2f0ff' }
+  if (status === 'stun') return { text: `${prefix}STUN`, bg: '#6e540c', color: '#fff2a6' }
+  return { text: `${prefix}BUFF`, bg: '#61450b', color: '#ffe899' }
+}
+
+function getUnitStatusBadges(unit: BattleUnit): StatusBadgeSpec[] {
+  const badges: StatusBadgeSpec[] = []
+  if (unit.tauntTurns > 0) badges.push({ text: 'TAUNT', bg: '#8a241b', color: '#ffd4c2' })
+  if (unit.hasteTurns > 0) badges.push({ text: 'HASTE', bg: '#115e57', color: '#b8fff2' })
+  if (unit.poisonStacks > 0) badges.push({ text: `PSN x${unit.poisonStacks}`, bg: '#2d5414', color: '#d8ff9e' })
+  if (unit.burnTurns > 0) badges.push({ text: 'BURN', bg: '#7a340e', color: '#ffd5a3' })
+  if (unit.slowTurns > 0) badges.push({ text: 'SLOW', bg: '#184b6e', color: '#c2f0ff' })
+  if (unit.stunTurns > 0) badges.push({ text: 'STUN', bg: '#6e540c', color: '#fff2a6' })
+  if (unit.empowerTurns > 0) badges.push({ text: 'BUFF', bg: '#61450b', color: '#ffe899' })
+  return badges
+}
+
 export function drawUnitCard(
   ctx: CanvasRenderingContext2D,
   rect: LayoutRect,
@@ -2122,13 +2150,28 @@ export function drawUnitCard(
   const tx = px + ps + 10
   const tw = x + w - pad - tx
   drawText(ctx, unit.name, tx, py + 9, { size: 14, weight: 900, maxW: tw, display: true, stroke: true, strokeWidth: 2.4 })
-  drawChip(ctx, tx, py + 20, roleLabel.toUpperCase(), {
+  const roleW = drawChip(ctx, tx, py + 20, roleLabel.toUpperCase(), {
     h: 16,
     size: 8.5,
     color: ally ? '#b8e8ff' : '#ffd0d6',
     bg: ally ? '#16355e' : '#541826',
     border: COLOR.outline
   })
+  const unitBadges = getUnitStatusBadges(unit)
+  let badgeX = tx + roleW + 4
+  const badgeMaxX = x + w - pad
+  for (const b of unitBadges) {
+    const estW = Math.round(measureText(ctx, b.text, 8, 800, true) + 12)
+    if (badgeX + estW > badgeMaxX) break
+    const drawnW = drawChip(ctx, badgeX, py + 20, b.text, {
+      h: 16,
+      size: 8,
+      color: b.color,
+      bg: b.bg,
+      border: COLOR.outline
+    })
+    badgeX += drawnW + 3
+  }
 
   const hpRatio = unit.hp / Math.max(1, unit.maxHp)
   const [hpHi] = hpBarColor(hpRatio, !ally)
@@ -2705,8 +2748,10 @@ export function drawCombatForecast(
     })
   }
   if (fc.empowered) tags.push({ text: 'BUFF +35%', bg: '#6e5208', color: COLOR.accentHi })
+  if (fc.targetTaunting) tags.push({ text: 'TAUNT', bg: '#8a241b', color: '#ffd4c2' })
   if (fc.aoeTargets > 1) tags.push({ text: `AOE x${fc.aoeTargets}`, bg: '#6e2336', color: '#ffd0d6' })
-  if (fc.status) tags.push({ text: fc.status.toUpperCase(), bg: '#452463', color: '#e6c2ff' })
+  if (fc.status) tags.push(statusChipStyle(fc.status))
+  if (fc.selfStatus && fc.selfStatus !== fc.status) tags.push(statusChipStyle(fc.selfStatus, '+'))
 
   const chipH = 15
   const chipY = topY + 19
@@ -3957,6 +4002,62 @@ function drawTacticIllustration(
     ctx.strokeStyle = '#7cdbff'
     ctx.lineWidth = 1.4
     ctx.stroke()
+  } else if (tacticId === 'taunt_banner') {
+    // Vanguard Challenge: crimson-gold aggro crest & radiating battle ring
+    ctx.beginPath()
+    ctx.arc(cx, cy, s * 0.78, 0, Math.PI * 2)
+    ctx.strokeStyle = '#ff6d52'
+    ctx.lineWidth = 2.2
+    ctx.stroke()
+    ctx.beginPath()
+    ctx.moveTo(cx, cy - s * 0.72)
+    ctx.lineTo(cx + s * 0.54, cy - s * 0.42)
+    ctx.lineTo(cx + s * 0.44, cy + s * 0.24)
+    ctx.lineTo(cx, cy + s * 0.74)
+    ctx.lineTo(cx - s * 0.44, cy + s * 0.24)
+    ctx.lineTo(cx - s * 0.54, cy - s * 0.42)
+    ctx.closePath()
+    const tg = ctx.createLinearGradient(cx, cy - s * 0.7, cx, cy + s * 0.7)
+    tg.addColorStop(0, '#ff7354')
+    tg.addColorStop(0.55, '#b82525')
+    tg.addColorStop(1, '#5e1118')
+    ctx.fillStyle = tg
+    ctx.fill()
+    ctx.strokeStyle = '#ffdb73'
+    ctx.lineWidth = 2
+    ctx.stroke()
+    drawStarShape(ctx, cx, cy - s * 0.04, s * 0.28, s * 0.12, 4)
+    ctx.fillStyle = '#fff0a6'
+    ctx.fill()
+  } else if (tacticId === 'venom_vial') {
+    // Venom Flask: bubbling acid-green & toxic-violet alchemical bottle
+    ctx.beginPath()
+    ctx.arc(cx, cy + s * 0.16, s * 0.62, 0, Math.PI * 2)
+    ctx.fillStyle = 'rgba(130, 255, 72, 0.22)'
+    ctx.fill()
+    ctx.beginPath()
+    ctx.arc(cx, cy + s * 0.20, s * 0.48, 0, Math.PI * 2)
+    const vg = ctx.createRadialGradient(cx - s * 0.12, cy + s * 0.08, s * 0.05, cx, cy + s * 0.2, s * 0.52)
+    vg.addColorStop(0, '#e0ff8c')
+    vg.addColorStop(0.55, '#68d92e')
+    vg.addColorStop(1, '#265c14')
+    ctx.fillStyle = vg
+    ctx.fill()
+    ctx.strokeStyle = '#d49eff'
+    ctx.lineWidth = 1.8
+    ctx.stroke()
+    rr(ctx, cx - s * 0.16, cy - s * 0.54, s * 0.32, s * 0.34, 3)
+    ctx.fillStyle = '#c8f0c0'
+    ctx.fill()
+    ctx.strokeStyle = '#1d3616'
+    ctx.lineWidth = 1.4
+    ctx.stroke()
+    for (const [bx, by, br, col] of [[-0.42, -0.34, 3.2, '#a3ff5c'], [0.44, -0.42, 2.8, '#c578ff'], [0.24, -0.68, 2.2, '#b8ff7a']] as const) {
+      ctx.beginPath()
+      ctx.arc(cx + bx * s, cy + by * s, br, 0, Math.PI * 2)
+      ctx.fillStyle = col
+      ctx.fill()
+    }
   } else {
     // solar_blessing: radiant golden sunflare crown
     for (let i = 0; i < 12; i++) {

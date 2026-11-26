@@ -5,7 +5,8 @@ import {
   MERGE_COPIES_REQUIRED, PACK_BY_ID, PLAYABLE_CHAPTERS, RARITY_META, RARITY_ORDER, TACTIC_BY_ID, TACTIC_LIST
 } from './data.ts'
 import {
-  FACING_DIRS, GRID_COLS, GRID_ROWS, MAX_HEIGHT_LEVEL, cellHeightAt, cellHeightLevel, defaultTerrainHeightLevel,
+  FACING_DIRS, GRID_COLS, GRID_ROWS, MAX_HEIGHT_LEVEL, MAX_POISON_STACKS, TAUNT_RADIUS,
+  cellHeightAt, cellHeightLevel, defaultTerrainHeightLevel,
   facingToYaw, facingVector, gridToWorld, terrainDefBonus, terrainElevation, terrainMoveCost,
   terrainWalkable, vectorToFacing
 } from './types.ts'
@@ -15,7 +16,7 @@ import type {
   DangerZoneMap, DangerZoneTile, DifficultyLevel, EnemyArchetypeId, EnemyThreatMap, EquipSlot,
   EquipmentSpec, FacingDir, FacingExposureLevel, FacingExposureReport, FacingThreatEntry,
   FlankThreatTile, GameState, GridCell, GridCoord, HeroClassId, MoveAttackTile, OwnedEquipCard,
-  OwnedHeroCard, OwnedTacticCard, PackId, PackRevealItem, Rarity, SaveData, SkillSpec,
+  OwnedHeroCard, OwnedTacticCard, PackId, PackRevealItem, Rarity, SaveData, SkillSpec, StatusKind,
   TacticCardSpec, TileTerrain, TurnActionKind, TurnOrderActionPreview, TurnPreviewEntry
 } from './types.ts'
 
@@ -801,6 +802,9 @@ export function serializeBattleState(
       slowTurns: u.slowTurns,
       stunTurns: u.stunTurns,
       empowerTurns: u.empowerTurns,
+      tauntTurns: u.tauntTurns,
+      hasteTurns: u.hasteTurns,
+      poisonStacks: u.poisonStacks,
       cooldowns: [u.cooldowns[0], u.cooldowns[1], u.cooldowns[2]]
     }
     return snap
@@ -960,7 +964,10 @@ export function validateBattleSnapshot(raw: unknown): BattleSaveSnapshot | null 
       !isFiniteNum(item.burnTurns) ||
       !isFiniteNum(item.slowTurns) ||
       !isFiniteNum(item.stunTurns) ||
-      !isFiniteNum(item.empowerTurns)
+      !isFiniteNum(item.empowerTurns) ||
+      (item.tauntTurns !== undefined && !isFiniteNum(item.tauntTurns)) ||
+      (item.hasteTurns !== undefined && !isFiniteNum(item.hasteTurns)) ||
+      (item.poisonStacks !== undefined && !isFiniteNum(item.poisonStacks))
     ) {
       return null
     }
@@ -1023,6 +1030,9 @@ export function validateBattleSnapshot(raw: unknown): BattleSaveSnapshot | null 
       slowTurns: Math.max(0, Math.floor(item.slowTurns)),
       stunTurns: Math.max(0, Math.floor(item.stunTurns)),
       empowerTurns: Math.max(0, Math.floor(item.empowerTurns)),
+      tauntTurns: item.tauntTurns !== undefined ? Math.max(0, Math.floor(item.tauntTurns)) : 0,
+      hasteTurns: item.hasteTurns !== undefined ? Math.max(0, Math.floor(item.hasteTurns)) : 0,
+      poisonStacks: item.poisonStacks !== undefined ? clamp(Math.floor(item.poisonStacks), 0, MAX_POISON_STACKS) : 0,
       cooldowns: [
         Math.max(0, Math.floor(cd0)),
         Math.max(0, Math.floor(cd1)),
@@ -1144,6 +1154,9 @@ export function restoreBattleState(state: GameState, snapshot: unknown): boolean
       slowTurns: u.slowTurns,
       stunTurns: u.stunTurns,
       empowerTurns: u.empowerTurns,
+      tauntTurns: u.tauntTurns ?? 0,
+      hasteTurns: u.hasteTurns ?? 0,
+      poisonStacks: u.poisonStacks ?? 0,
       cooldowns: [u.cooldowns[0], u.cooldowns[1], u.cooldowns[2]],
       animState: 'idle',
       animTimer: 0,
@@ -1489,6 +1502,15 @@ export function startChapterBattle(state: GameState, chapterIndex: number, endle
     const weaponOwned = getEquipmentByUid(campaign, hero.weaponUid)
     const armorOwned = getEquipmentByUid(campaign, hero.armorUid)
     const relicOwned = getEquipmentByUid(campaign, hero.relicUid)
+    let startEmpower = 0
+    let startTaunt = 0
+    let startHaste = 0
+    for (const eqId of [weaponOwned?.equipId, armorOwned?.equipId, relicOwned?.equipId]) {
+      const st = eqId ? EQUIPMENT_BY_ID[eqId]?.startStatus : undefined
+      if (st === 'empower') startEmpower = Math.max(startEmpower, 2)
+      else if (st === 'taunt') startTaunt = Math.max(startTaunt, 2)
+      else if (st === 'haste') startHaste = Math.max(startHaste, 2)
+    }
     units.push({
       uid: hero.uid,
       team: 'ally',
@@ -1526,7 +1548,10 @@ export function startChapterBattle(state: GameState, chapterIndex: number, endle
       burnTurns: 0,
       slowTurns: 0,
       stunTurns: 0,
-      empowerTurns: 0,
+      empowerTurns: startEmpower,
+      tauntTurns: startTaunt,
+      hasteTurns: startHaste,
+      poisonStacks: 0,
       cooldowns: [0, 0, 0],
       animState: 'idle',
       animTimer: 0,
@@ -1578,6 +1603,9 @@ export function startChapterBattle(state: GameState, chapterIndex: number, endle
       slowTurns: 0,
       stunTurns: 0,
       empowerTurns: 0,
+      tauntTurns: 0,
+      hasteTurns: 0,
+      poisonStacks: 0,
       cooldowns: [0, 0, 0],
       animState: 'idle',
       animTimer: 0,
@@ -1633,8 +1661,20 @@ export function startChapterBattle(state: GameState, chapterIndex: number, endle
   return battle
 }
 
-export function effectiveSpeed(unit: Pick<BattleUnit, 'speed' | 'slowTurns'>): number {
-  return unit.slowTurns > 0 ? Math.max(3, Math.round(unit.speed * 0.6)) : unit.speed
+export function effectiveSpeed(
+  unit: Pick<BattleUnit, 'speed' | 'slowTurns'> & { readonly hasteTurns?: number }
+): number {
+  let mul = 1
+  if (unit.slowTurns > 0) mul *= 0.6
+  if ((unit.hasteTurns ?? 0) > 0) mul *= 1.4
+  if (mul === 1) return unit.speed
+  return Math.max(3, Math.round(unit.speed * mul))
+}
+
+/** True HP damage dealt by Poison at the start of the poisoned unit's turn (pierces Shield). */
+export function computePoisonDamage(unit: Pick<BattleUnit, 'maxHp' | 'poisonStacks'>): number {
+  if (unit.poisonStacks <= 0) return 0
+  return Math.max(3, Math.round(unit.maxHp * 0.05 * unit.poisonStacks))
 }
 
 /** Predict the next `count` turns using exact Speed / Charge Time (CT) initiative math. */
@@ -1721,6 +1761,8 @@ interface TurnOrderSimUnit {
   burnTurns: number
   slowTurns: number
   stunTurns: number
+  hasteTurns: number
+  poisonStacks: number
 }
 
 /**
@@ -1744,7 +1786,9 @@ function simulateNextTurnOrder(
       alive: true,
       burnTurns: u.burnTurns,
       slowTurns: u.slowTurns,
-      stunTurns: u.stunTurns
+      stunTurns: u.stunTurns,
+      hasteTurns: u.hasteTurns,
+      poisonStacks: u.poisonStacks
     })
   }
   if (!sim.length) return []
@@ -1760,8 +1804,8 @@ function simulateNextTurnOrder(
     for (const s of sim) {
       if (!s.alive || s.ct < 100) continue
       if (!best) { best = s; continue }
-      const sSpd = effectiveSpeed({ speed: s.unit.speed, slowTurns: s.slowTurns })
-      const bSpd = effectiveSpeed({ speed: best.unit.speed, slowTurns: best.slowTurns })
+      const sSpd = effectiveSpeed({ speed: s.unit.speed, slowTurns: s.slowTurns, hasteTurns: s.hasteTurns })
+      const bSpd = effectiveSpeed({ speed: best.unit.speed, slowTurns: best.slowTurns, hasteTurns: best.hasteTurns })
       if (s.ct > best.ct) best = s
       else if (s.ct === best.ct && sSpd > bSpd) best = s
       else if (s.ct === best.ct && sSpd === bSpd && s.unit.team === 'ally' && best.unit.team === 'enemy') best = s
@@ -1769,7 +1813,7 @@ function simulateNextTurnOrder(
 
     if (!best) {
       for (const s of sim) {
-        if (s.alive) s.ct += effectiveSpeed({ speed: s.unit.speed, slowTurns: s.slowTurns })
+        if (s.alive) s.ct += effectiveSpeed({ speed: s.unit.speed, slowTurns: s.slowTurns, hasteTurns: s.hasteTurns })
       }
       continue
     }
@@ -1785,7 +1829,17 @@ function simulateNextTurnOrder(
         continue
       }
     }
+    if (best.poisonStacks > 0) {
+      const poisonDmg = computePoisonDamage({ maxHp: best.unit.maxHp, poisonStacks: best.poisonStacks })
+      best.poisonStacks = Math.max(0, best.poisonStacks - 1)
+      best.hp = Math.max(0, best.hp - poisonDmg)
+      if (best.hp <= 0) {
+        best.alive = false
+        continue
+      }
+    }
     if (best.slowTurns > 0) best.slowTurns -= 1
+    if (best.hasteTurns > 0) best.hasteTurns -= 1
     if (best.stunTurns > 0) {
       best.stunTurns -= 1
       best.ct = Math.max(0, best.ct - 100)
@@ -1801,13 +1855,17 @@ function simulateNextTurnOrder(
     .map(s => ({
       unit: s.unit,
       ct: s.ct,
-      spd: effectiveSpeed({ speed: s.unit.speed, slowTurns: s.slowTurns })
+      spd: effectiveSpeed({ speed: s.unit.speed, slowTurns: s.slowTurns, hasteTurns: s.hasteTurns })
     }))
   if (!aliveSim.length) return []
 
   const out: TurnPreviewEntry[] = []
   if (nextActive) {
-    const nextSpd = effectiveSpeed({ speed: nextActive.unit.speed, slowTurns: nextActive.slowTurns })
+    const nextSpd = effectiveSpeed({
+      speed: nextActive.unit.speed,
+      slowTurns: nextActive.slowTurns,
+      hasteTurns: nextActive.hasteTurns
+    })
     out.push({
       uid: nextActive.unit.uid,
       team: nextActive.unit.team,
@@ -3033,6 +3091,7 @@ export function computeCombatForecast(state: GameState, col: number, row: number
       shieldAmount: primary.team === 'ally' ? spec.shield : 0,
       selfShield: 0,
       status: spec.status,
+      targetTaunting: primary.tauntTurns > 0,
       highGround: false,
       elevationDiff: 0,
       coverBonus: 0,
@@ -3124,6 +3183,7 @@ export function computeCombatForecast(state: GameState, col: number, row: number
       shieldAmount: 0,
       selfShield: armedSkill.shieldAmount > 0 && armedSkill.pattern !== 'aura' ? armedSkill.shieldAmount : 0,
       status: armedSkill.status,
+      selfStatus: armedSkill.selfStatus,
       highGround: false,
       elevationDiff: 0,
       coverBonus: 0,
@@ -3161,13 +3221,15 @@ export function computeCombatForecast(state: GameState, col: number, row: number
   let healAmount = 0
   let shieldAmount = 0
   let selfShield = 0
-  let status: 'burn' | 'slow' | 'stun' | 'empower' | undefined
+  let status: StatusKind | undefined
+  let selfStatus: StatusKind | undefined
   let hpAfterNormal = primary.hp
   let hpAfterCrit = primary.hp
 
   if (armedSkill) {
     ignoreArmor = armedSkill.ignoreArmor
     status = armedSkill.status
+    selfStatus = armedSkill.selfStatus
     if (armedSkill.target === 'ally' || armedSkill.target === 'self') {
       healAmount = armedSkill.healAmount
       shieldAmount = armedSkill.shieldAmount
@@ -3273,6 +3335,7 @@ export function computeCombatForecast(state: GameState, col: number, row: number
         healAmount: sk.healAmount,
         selfShield: sk.shieldAmount,
         status: sk.status,
+        selfStatus: sk.selfStatus,
         lethalNormal: false,
         requiresMove: !skDirect,
         attackArc: 'front',
@@ -3291,6 +3354,7 @@ export function computeCombatForecast(state: GameState, col: number, row: number
         healAmount: 0,
         selfShield: sk.shieldAmount,
         status: sk.status,
+        selfStatus: sk.selfStatus,
         lethalNormal: m.hpAfterNormal <= 0,
         requiresMove: !skDirect,
         attackArc: m.attackArc,
@@ -3325,6 +3389,8 @@ export function computeCombatForecast(state: GameState, col: number, row: number
     shieldAmount,
     selfShield,
     status,
+    selfStatus,
+    targetTaunting: primary.tauntTurns > 0,
     highGround,
     elevationDiff,
     coverBonus,
@@ -3482,10 +3548,51 @@ function applyHealAndShield(
   }
 }
 
-function applyStatus(
+function isBeneficialStatus(status: StatusKind): boolean {
+  return status === 'empower' || status === 'taunt' || status === 'haste'
+}
+
+function applyPoisonTick(state: GameState, unit: BattleUnit, dmg: number): void {
+  const battle = state.battle
+  if (!battle || !unit.alive || dmg <= 0) return
+  unit.hp = Math.max(0, unit.hp - dmg)
+  state.vfx.push({
+    kind: 'impact',
+    uid: unit.uid,
+    attackerUid: null,
+    arc: 'front',
+    crit: false,
+    blocked: false,
+    absorbed: 0,
+    damage: dmg
+  })
+  unit.hitFlash = 0.24
+  unit.animState = 'hit'
+  unit.animTimer = 0.28
+  addFloat(battle, unit.x, unit.y, unit.z, `POISON -${dmg}`, '#8dff4f')
+  state.sounds.push({ kind: 'hit', pitch: 0.85 })
+  if (unit.hp <= 0) {
+    unit.alive = false
+    state.sounds.push({ kind: 'ko' })
+    state.vfx.push({ kind: 'ko', at: [unit.x, unit.y + 0.6, unit.z], isBoss: unit.isBoss })
+  }
+}
+
+function applyEquipmentOnHitStatus(battle: BattleState, attacker: BattleUnit, target: BattleUnit): void {
+  if (!target.alive || attacker.team === target.team) return
+  for (const eqId of [attacker.weaponId, attacker.armorId, attacker.relicId]) {
+    const st = eqId ? EQUIPMENT_BY_ID[eqId]?.onHitStatus : undefined
+    if (st && !isBeneficialStatus(st)) {
+      applyStatus(battle, target, st, 1)
+    }
+  }
+}
+
+export function applyStatus(
   battle: BattleState,
   target: BattleUnit,
-  status: 'burn' | 'slow' | 'stun' | 'empower'
+  status: StatusKind,
+  stacks = 2
 ): void {
   if (!target.alive) return
   if (status === 'burn') {
@@ -3500,6 +3607,16 @@ function applyStatus(
   } else if (status === 'empower') {
     target.empowerTurns = Math.max(target.empowerTurns, 2)
     addFloat(battle, target.x, target.y + 0.55, target.z, 'EMPOWER', '#ffd86b')
+  } else if (status === 'taunt') {
+    target.tauntTurns = Math.max(target.tauntTurns, 2)
+    addFloat(battle, target.x, target.y + 0.55, target.z, 'TAUNT!', '#ff6652')
+  } else if (status === 'haste') {
+    target.hasteTurns = Math.max(target.hasteTurns, 2)
+    addFloat(battle, target.x, target.y + 0.55, target.z, 'HASTE!', '#5cf2d6')
+  } else if (status === 'poison') {
+    const add = Math.max(1, Math.round(stacks))
+    target.poisonStacks = Math.min(MAX_POISON_STACKS, target.poisonStacks + add)
+    addFloat(battle, target.x, target.y + 0.55, target.z, `POISON x${target.poisonStacks}`, '#8dff4f')
   }
 }
 
@@ -3727,6 +3844,13 @@ function executeBasicAttack(state: GameState, attacker: BattleUnit, target: Batt
   }
 
   applyDamage(state, attacker, target, attacker.atk, 0, true)
+  if (target.alive) {
+    if (attacker.team === 'ally') {
+      applyEquipmentOnHitStatus(battle, attacker, target)
+    } else if (attacker.enemyId === 'bog_shaman') {
+      applyStatus(battle, target, 'poison', 2)
+    }
+  }
   checkBattleOutcome(state)
 }
 
@@ -3773,18 +3897,20 @@ function executeHeroSkill(
       const ally = unitAt(battle, c.col, c.row)
       if (!ally || ally.team !== caster.team) continue
       applyHealAndShield(state, ally, skill.healAmount, skill.shieldAmount)
-      if (skill.status === 'empower') applyStatus(battle, ally, 'empower')
+      if (skill.status && isBeneficialStatus(skill.status)) applyStatus(battle, ally, skill.status, skill.statusStacks)
       hitAny = true
     }
+    if (skill.selfStatus) applyStatus(battle, caster, skill.selfStatus, skill.statusStacks)
   } else if (skill.target === 'ally') {
     // Support skill can be cast on any tile in range (heals/shields whoever sits there, or whiffs on empty space!)
     for (const c of affected) {
       const unit = unitAt(battle, c.col, c.row)
       if (!unit) continue
       applyHealAndShield(state, unit, skill.healAmount, skill.shieldAmount)
-      if (skill.status === 'empower') applyStatus(battle, unit, 'empower')
+      if (skill.status && isBeneficialStatus(skill.status)) applyStatus(battle, unit, skill.status, skill.statusStacks)
       hitAny = true
     }
+    if (skill.selfStatus) applyStatus(battle, caster, skill.selfStatus, skill.statusStacks)
   } else {
     // Offensive skill: can target empty spaces AND allies (friendly fire!)
     const directTarget = unitAt(battle, col, row)
@@ -3808,13 +3934,19 @@ function executeHeroSkill(
       if (skill.powerMul > 0) {
         const raw = caster.atk * skill.powerMul + skill.flatBonus
         applyDamage(state, caster, target, raw, skill.ignoreArmor, true)
-        if (skill.status && skill.status !== 'empower' && target.alive) {
-          applyStatus(battle, target, skill.status)
+        if (target.alive) {
+          if (skill.status && !isBeneficialStatus(skill.status)) {
+            applyStatus(battle, target, skill.status, skill.statusStacks)
+          }
+          if (caster.team === 'ally') {
+            applyEquipmentOnHitStatus(battle, caster, target)
+          }
         }
         hitAny = true
       }
     }
-    if (skill.status === 'empower') applyStatus(battle, caster, 'empower')
+    if (skill.status && isBeneficialStatus(skill.status)) applyStatus(battle, caster, skill.status, skill.statusStacks)
+    if (skill.selfStatus) applyStatus(battle, caster, skill.selfStatus, skill.statusStacks)
   }
 
   if (!hitAny) {
@@ -3853,7 +3985,7 @@ function executeTacticCard(state: GameState, tacticUid: string, col: number, row
     for (const u of battle.units) {
       if (!u.alive || u.team !== 'ally') continue
       applyHealAndShield(state, u, spec.heal, spec.shield)
-      if (spec.status) applyStatus(battle, u, spec.status)
+      if (spec.status) applyStatus(battle, u, spec.status, spec.statusStacks)
     }
     const allyCells: Vec3[] = []
     for (const u of battle.units) {
@@ -3873,15 +4005,17 @@ function executeTacticCard(state: GameState, tacticUid: string, col: number, row
     for (const c of cells) {
       const target = unitAt(battle, c.col, c.row)
       if (!target) continue
-      if (spec.damage > 0 && target.team === 'enemy') {
-        applyDamage(state, null, target, spec.damage, 0.6, false)
-        if (spec.status && spec.status !== 'empower' && target.alive) {
-          applyStatus(battle, target, spec.status)
+      if (target.team === 'enemy') {
+        if (spec.damage > 0) {
+          applyDamage(state, null, target, spec.damage, 0.6, false)
+        }
+        if (spec.status && !isBeneficialStatus(spec.status) && target.alive) {
+          applyStatus(battle, target, spec.status, spec.statusStacks)
         }
       }
       if (target.team === 'ally') {
         if (spec.heal > 0 || spec.shield > 0) applyHealAndShield(state, target, spec.heal, spec.shield)
-        if (spec.status === 'empower') applyStatus(battle, target, 'empower')
+        if (spec.status && isBeneficialStatus(spec.status)) applyStatus(battle, target, spec.status, spec.statusStacks)
         if (spec.refreshMove) {
           target.moved = false
           addFloat(battle, target.x, target.y + 0.55, target.z, 'MOVE +1', '#8ef5ff')
@@ -4196,7 +4330,7 @@ function advanceToNextUnitTurn(state: GameState, initial = false): void {
     next.moved = false
     next.acted = false
 
-    // Start-of-unit-turn ticks (cooldowns, burn, slow, empower, shrine heal)
+    // Start-of-unit-turn ticks (cooldowns, burn, poison, slow, haste, empower, taunt, shrine heal)
     for (let i = 0; i < 3; i++) {
       if (next.cooldowns[i] > 0) next.cooldowns[i] -= 1
     }
@@ -4208,8 +4342,19 @@ function advanceToNextUnitTurn(state: GameState, initial = false): void {
         continue
       }
     }
+    if (next.poisonStacks > 0) {
+      const poisonDmg = computePoisonDamage(next)
+      next.poisonStacks = Math.max(0, next.poisonStacks - 1)
+      applyPoisonTick(state, next, poisonDmg)
+      if (!next.alive) {
+        checkBattleOutcome(state)
+        continue
+      }
+    }
     if (next.slowTurns > 0) next.slowTurns -= 1
+    if (next.hasteTurns > 0) next.hasteTurns -= 1
     if (next.empowerTurns > 0) next.empowerTurns -= 1
+    if (next.tauntTurns > 0) next.tauntTurns -= 1
     if (next.team === 'ally' && battle.cells[next.row][next.col].terrain === 'shrine' && next.hp < next.maxHp) {
       applyHealAndShield(state, next, 14, 0)
     }
@@ -4267,6 +4412,59 @@ export function endPlayerTurn(state: GameState): void {
   advanceToNextUnitTurn(state)
 }
 
+/** Alive allies whose Taunt forces `enemy` to prioritize targeting them. */
+export function findProvokingTaunters(
+  battle: BattleState,
+  enemy: BattleUnit,
+  allies?: readonly BattleUnit[]
+): BattleUnit[] {
+  const pool = allies ?? battle.units.filter(u => u.alive && u.team === 'ally')
+  const moveBudget = Math.max(1, enemy.move - (enemy.slowTurns > 0 ? 1 : 0))
+  const reachRadius = Math.max(TAUNT_RADIUS, moveBudget + enemy.range)
+  return pool.filter(a => a.alive && a.tauntTurns > 0 && manhattan(enemy.col, enemy.row, a.col, a.row) <= reachRadius)
+}
+
+function chooseEnemyTarget(
+  battle: BattleState,
+  enemy: BattleUnit,
+  allies: readonly BattleUnit[],
+  ai: 'melee' | 'ranged' | 'support' | 'boss',
+  requireInRangeNow = false
+): { target: BattleUnit | null; provoked: boolean } {
+  const taunters = findProvokingTaunters(battle, enemy, allies)
+  const canHitNow = (u: BattleUnit): boolean => {
+    const d = manhattan(enemy.col, enemy.row, u.col, u.row)
+    const effR = effectiveAttackRange(battle, enemy.col, enemy.row, u.col, u.row, enemy.range)
+    if (d > effR) return false
+    return enemy.isBoss || hasLineOfSight(battle, enemy.col, enemy.row, u.col, u.row, false)
+  }
+
+  if (taunters.length > 0) {
+    const inRangeTaunters = taunters.filter(canHitNow)
+    const candidates = requireInRangeNow
+      ? inRangeTaunters
+      : (inRangeTaunters.length > 0 ? inRangeTaunters : taunters)
+    if (candidates.length === 0) return { target: null, provoked: true }
+    const picked = candidates.slice().sort((a, b) => {
+      const da = manhattan(enemy.col, enemy.row, a.col, a.row)
+      const db = manhattan(enemy.col, enemy.row, b.col, b.row)
+      if (da !== db) return da - db
+      return a.hp - b.hp
+    })[0]
+    return { target: picked ?? null, provoked: true }
+  }
+
+  const pool = requireInRangeNow ? allies.filter(canHitNow) : allies.slice()
+  if (pool.length === 0) return { target: null, provoked: false }
+  const picked = pool.sort((a, b) => {
+    const da = manhattan(enemy.col, enemy.row, a.col, a.row)
+    const db = manhattan(enemy.col, enemy.row, b.col, b.row)
+    if (ai === 'ranged' && da <= enemy.range && db <= enemy.range) return a.hp - b.hp
+    return da - db
+  })[0]
+  return { target: picked ?? null, provoked: false }
+}
+
 function executeEnemyUnitTurn(state: GameState, enemy: BattleUnit): void {
   const battle = state.battle
   if (!battle || !enemy.alive) return
@@ -4280,9 +4478,10 @@ function executeEnemyUnitTurn(state: GameState, enemy: BattleUnit): void {
   if (!allies.length) return
 
   const spec = enemy.enemyId ? ENEMY_SPECS[enemy.enemyId] : ENEMY_SPECS.goblin
+  const { target, provoked } = chooseEnemyTarget(battle, enemy, allies, spec.ai, false)
 
-  // Support shaman heals injured comrade if possible
-  if (spec.ai === 'support') {
+  // Support shaman heals injured comrade if NOT provoked by a nearby Taunting tank
+  if (spec.ai === 'support' && !provoked) {
     const hurt = battle.units
       .filter(u => u.alive && u.team === 'enemy' && u.hp < u.maxHp * 0.8)
       .sort((a, b) => (a.hp / a.maxHp) - (b.hp / b.maxHp))[0]
@@ -4296,15 +4495,6 @@ function executeEnemyUnitTurn(state: GameState, enemy: BattleUnit): void {
     }
   }
 
-  // Pick nearest/best hero target
-  const target = allies
-    .slice()
-    .sort((a, b) => {
-      const da = manhattan(enemy.col, enemy.row, a.col, a.row)
-      const db = manhattan(enemy.col, enemy.row, b.col, b.row)
-      if (spec.ai === 'ranged' && da <= enemy.range && db <= enemy.range) return a.hp - b.hp
-      return da - db
-    })[0]
   if (!target) return
 
   // Move if not already in ideal range or LoS is blocked
@@ -4460,12 +4650,11 @@ export function stepGame(state: GameState, dt: number): void {
             }
           } else if (u.team === 'enemy' && battle.phase === 'enemy' && !u.acted) {
             const allies = battle.units.filter(a => a.alive && a.team === 'ally')
-            const nearest = allies.sort(
-              (a, b) => manhattan(u.col, u.row, a.col, a.row) - manhattan(u.col, u.row, b.col, b.row)
-            )[0]
-            if (nearest) {
-              faceToward(u, nearest.x, nearest.z)
-              performEnemyAttack(state, u, nearest)
+            const spec = u.enemyId ? ENEMY_SPECS[u.enemyId] : ENEMY_SPECS.goblin
+            const { target: chosen } = chooseEnemyTarget(battle, u, allies, spec.ai, true)
+            if (chosen) {
+              faceToward(u, chosen.x, chosen.z)
+              performEnemyAttack(state, u, chosen)
             }
           }
         }

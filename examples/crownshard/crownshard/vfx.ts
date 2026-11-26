@@ -30,6 +30,10 @@ export const VFX_COLORS = {
   lightning: color('e8f4ff'),
   arrow: color('f1dfb4'),
   blood: color('ff5470'),
+  taunt: color('ff5944'),
+  haste: color('42f5d4'),
+  poison: color('8dff4f'),
+  venom: color('b44cff'),
   white: color('ffffff')
 } as const
 
@@ -833,12 +837,44 @@ export function createBattleVfx(pool: MeshPool, particles: Particles, onShake: (
             for (let i = 0; i < 3; i++) {
               const h = 0.2 + i * 0.5 + u * 0.6
               const s = 0.55 + i * 0.12
-              pool.add(slashArc, [c[0], c[1] + h, c[2]], [s, 1, s], t * 14 + i * 2.1, withAlpha(C.wind, (1 - u) * 0.85), 1, 'additive')
+              pool.add(slashArc, [c[0], c[1] + h, c[2]], [s, 1, s], t * 14 + i * 2.1, withAlpha(C.haste, (1 - u) * 0.85), 1, 'additive')
             }
           })
           dust(c, 8, 1.4, d)
         }
         return d + 0.1
+      case 'taunt_banner':
+        for (const c of cells) {
+          groundRing(c, C.taunt, d, 0.65, 0.25, TILE_SIZE * 1.45, 2.2)
+          groundRing(c, C.gold, d + 0.06, 0.55, 0.2, TILE_SIZE * 1.05, -2.6)
+          spires(c, C.taunt, d + 0.04, { count: 4, radius: 0.55, height: 0.65, life: 0.7, tilt: 0.45 })
+          later(d, () => {
+            onShake(0.10)
+            sparks([c[0], c[1] + 0.75, c[2]], C.gold, 8, 1.8)
+          })
+        }
+        return d + 0.12
+      case 'venom_vial': {
+        const start: Vec3 = [at[0] - 0.55, at[1] + 3.4, at[2] - 0.35]
+        add(d, 0.38, (u, t) => {
+          const p = lerp3(start, [at[0], at[1] + 0.85, at[2]], easeIn(u))
+          pool.add(roundPebble, p, [0.22, 0.26, 0.22], t * 10, withAlpha(C.poison, 0.9), 0.85, 'alpha')
+          pool.add(crystalMesh, [p[0], p[1] + 0.18, p[2]], [0.08, 0.14, 0.08], -t * 8, C.venom, 0.9)
+        })
+        later(d + 0.38, () => {
+          for (let i = 0; i < 12; i++) {
+            const a = (i / 12) * Math.PI * 2
+            particles.spawn({
+              mesh: roundPebble, blend: 'alpha', alphaFade: true, position: [at[0], at[1] + 0.75, at[2]],
+              velocity: [Math.cos(a) * 1.4, 1.2 + (i % 3) * 0.45, Math.sin(a) * 1.4], gravity: 4.2,
+              scale: [0.10, 0.10, 0.10], endScale: 0.35, color: i % 3 === 0 ? withAlpha(C.venom, 0.9) : withAlpha(C.poison, 0.92), unlit: 0.95, life: 0.52
+            })
+          }
+          groundRing(at, C.poison, 0, 0.55, 0.2, 1.35, 1.8)
+          motes(at, C.venom, 6, 0.45, 1.3, 0.04)
+        })
+        return d + 0.38
+      }
       case 'frost_nova_scroll':
         cells.forEach((c, i) => {
           add(d + i * 0.03, 1.1, (u, t) => {

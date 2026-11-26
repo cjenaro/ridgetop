@@ -87,6 +87,10 @@ const C_ARCANE = color('ad84ff')
 const C_HOLY = color('fff0a0')
 const C_SHADOW = color('cc64ff')
 const C_HEAL = color('68ffa8')
+const C_TAUNT = color('ff5944')
+const C_HASTE = color('42f5d4')
+const C_POISON = color('8dff4f')
+const C_VENOM = color('b44cff')
 const C_SHIELD: Color = [0.46, 0.86, 1.0, 0.38]
 const C_HIT_FLASH = color('ffffff')
 const C_CAMP_SKY = color('465a78')
@@ -433,6 +437,9 @@ interface UnitFx {
   prevSlow: number
   prevStun: number
   prevEmpower: number
+  prevTaunt: number
+  prevHaste: number
+  prevPoison: number
   auraTimer: number
   deathClip: UnitClipName
   readonly pos: [number, number, number]
@@ -613,6 +620,9 @@ export function createCrownshardScene(renderer: LowPolyRenderer) {
         prevSlow: unit?.slowTurns ?? 0,
         prevStun: unit?.stunTurns ?? 0,
         prevEmpower: unit?.empowerTurns ?? 0,
+        prevTaunt: unit?.tauntTurns ?? 0,
+        prevHaste: unit?.hasteTurns ?? 0,
+        prevPoison: unit?.poisonStacks ?? 0,
         auraTimer: seed,
         deathClip: 'death',
         pos: [0, 0, 0],
@@ -1024,7 +1034,7 @@ export function createCrownshardScene(renderer: LowPolyRenderer) {
     }
   }
 
-  /** Persistent status VFX: flickering embers (burn), frost rings (slow), rising gold aura (empower). */
+  /** Persistent status VFX: embers (burn), frost rings (slow), gold aura (empower), aggro spikes (taunt), wind rings (haste), toxic bubbles (poison). */
   function drawStatusAura(unit: BattleUnit, fx: UnitFx, px: number, py: number, pz: number, scale: number, realDt: number, time: number) {
     fx.auraTimer -= realDt
     if (fx.auraTimer <= 0) {
@@ -1032,6 +1042,29 @@ export function createCrownshardScene(renderer: LowPolyRenderer) {
       if (unit.burnTurns > 0) vfx.embers([px, py + 0.25, pz], 2, 0.28)
       if (unit.empowerTurns > 0) vfx.motes([px, py, pz], VFX_COLORS.gold, 2, 0.42 * scale, 1.2, 0, 0.8)
       if (unit.slowTurns > 0) vfx.motes([px, py + 0.9 * scale, pz], VFX_COLORS.ice, 1, 0.3 * scale, -0.4, 0, 0.6)
+      if (unit.tauntTurns > 0) vfx.motes([px, py + 0.2 * scale, pz], VFX_COLORS.taunt, 2, 0.52 * scale, 1.0, 0, 0.65)
+      if (unit.hasteTurns > 0) vfx.motes([px, py + 0.35 * scale, pz], VFX_COLORS.haste, 2, 0.46 * scale, 1.7, 0, 0.55)
+      if (unit.poisonStacks > 0) {
+        const bubbleCount = Math.min(3, Math.max(1, Math.ceil(unit.poisonStacks / 2)))
+        for (let i = 0; i < bubbleCount; i++) {
+          const a = time * 3.1 + i * 2.1 + fx.seed * 6.28
+          const r = (0.24 + (i % 2) * 0.14) * scale
+          particles.spawn({
+            mesh: roundPebble,
+            blend: 'alpha',
+            alphaFade: true,
+            position: [px + Math.cos(a) * r, py + 0.22 * scale, pz + Math.sin(a) * r],
+            velocity: [Math.cos(a) * 0.12, 0.85 + (i % 3) * 0.22, Math.sin(a) * 0.12],
+            gravity: -0.25,
+            spin: 4,
+            scale: [0.09 * scale, 0.09 * scale, 0.09 * scale],
+            endScale: 1.5,
+            color: i % 2 === 0 ? [C_POISON[0], C_POISON[1], C_POISON[2], 0.88] : [C_VENOM[0], C_VENOM[1], C_VENOM[2], 0.82],
+            unlit: 0.95,
+            life: 0.72
+          })
+        }
+      }
     }
     if (unit.burnTurns > 0) {
       for (let i = 0; i < 3; i++) {
@@ -1052,6 +1085,72 @@ export function createCrownshardScene(renderer: LowPolyRenderer) {
       pool.add(flatRing, [px, py + 0.06, pz], [r, 1, r], -time * 1.8, [1.0, 0.84, 0.36, 0.8], 1, 'additive')
       const h = ((time * 0.9) % 1)
       pool.add(flatRing, [px, py + 0.1 + h * 1.5 * scale, pz], [r * (1 - h * 0.4), 1, r * (1 - h * 0.4)], time, [1.0, 0.9, 0.5, 0.7 * (1 - h)], 1, 'additive')
+    }
+    if (unit.tauntTurns > 0) {
+      // Golden-crimson aggro shield perimeter ring + 4 orbiting guard spikes
+      const pulse = 1 + Math.sin(time * 6.4) * 0.08
+      const r = 0.72 * scale * pulse
+      pool.add(flatRing, [px, py + 0.075, pz], [r, 1, r], time * 1.6, [C_TAUNT[0], C_TAUNT[1], C_TAUNT[2], 0.88], 1, 'additive')
+      pool.add(flatRing, [px, py + 0.12, pz], [0.54 * scale, 1, 0.54 * scale], -time * 2.4, [1.0, 0.82, 0.34, 0.78], 1, 'additive')
+      for (let i = 0; i < 4; i++) {
+        const a = time * 1.9 + (i / 4) * Math.PI * 2
+        const sr = 0.62 * scale
+        const sy = py + (0.48 + Math.sin(time * 5 + i * 1.5) * 0.08) * scale
+        const q = quaternionFromEuler(0.45, a, 0)
+        pool.add(
+          crystalMesh,
+          [px + Math.sin(a) * sr, sy, pz + Math.cos(a) * sr],
+          [0.10 * scale, 0.24 * scale, 0.10 * scale],
+          q,
+          i % 2 === 0 ? C_TAUNT : C_STAR2_GOLD,
+          1,
+          'additive'
+        )
+      }
+    }
+    if (unit.hasteTurns > 0) {
+      // Bright cyan-emerald speed rings + fast orbiting wind streaks
+      const r0 = (0.58 + Math.sin(time * 8.5) * 0.04) * scale
+      pool.add(flatRing, [px, py + 0.14 * scale, pz], [r0, 1, r0], time * 4.8, [C_HASTE[0], C_HASTE[1], C_HASTE[2], 0.82], 1, 'additive')
+      pool.add(flatRing, [px, py + 0.62 * scale, pz], [r0 * 0.82, 1, r0 * 0.82], -time * 5.6, [0.76, 1.0, 0.94, 0.68], 1, 'additive')
+      for (let i = 0; i < 3; i++) {
+        const a = time * 5.4 + (i / 3) * Math.PI * 2
+        const wr = 0.54 * scale
+        const wy = py + (0.28 + ((time * 1.8 + i / 3) % 1) * 1.05) * scale
+        pool.add(
+          crystalMesh,
+          [px + Math.cos(a) * wr, wy, pz + Math.sin(a) * wr],
+          [0.05 * scale, 0.05 * scale, 0.28 * scale],
+          -a,
+          C_HASTE,
+          1,
+          'additive'
+        )
+      }
+    }
+    if (unit.poisonStacks > 0) {
+      // Pulsing acid-green miasma ring + stack-scaled rising toxic-violet / acid-green bubbling orbs
+      const pr = (0.46 + Math.sin(time * 4.2) * 0.04) * scale
+      pool.add(flatRing, [px, py + 0.068, pz], [pr, 1, pr], -time * 1.4, [C_POISON[0], C_POISON[1], C_POISON[2], 0.72], 1, 'additive')
+      const orbCount = Math.min(5, Math.max(2, unit.poisonStacks + 1))
+      for (let i = 0; i < orbCount; i++) {
+        const phase = (time * 0.95 + i / orbCount + fx.seed) % 1
+        const a = time * 2.0 + (i / orbCount) * Math.PI * 2
+        const r = (0.30 + Math.sin(phase * Math.PI) * 0.16) * scale
+        const s = (0.08 + Math.sin(phase * Math.PI) * 0.06) * scale
+        const col: Color = i % 2 === 0
+          ? [C_POISON[0], C_POISON[1], C_POISON[2], 0.88 * (1 - phase * 0.35)]
+          : [C_VENOM[0], C_VENOM[1], C_VENOM[2], 0.85 * (1 - phase * 0.35)]
+        pool.add(
+          roundPebble,
+          [px + Math.cos(a) * r, py + (0.18 + phase * 1.25) * scale, pz + Math.sin(a) * r],
+          [s, s, s],
+          a,
+          col,
+          0.95,
+          'alpha'
+        )
+      }
     }
   }
 
@@ -1219,18 +1318,26 @@ export function createCrownshardScene(renderer: LowPolyRenderer) {
       startAction(fx, turnClipFor(Math.abs(yawJump) > 2.4 ? 'about' : yawJump > 0 ? 'left' : 'right'), 0.05)
     }
 
-    // Status onset & burn-tick reactions (burn flinch, freeze shiver, stun stagger, empower flex) once the current action ends
+    // Status onset & DoT-tick reactions (burn/poison flinch, freeze shiver, stun stagger, taunt roar, haste/empower flex)
     const burnTicked = unit.burnTurns < fx.prevBurn && fx.hitQueue !== null && !fx.hitQueue.hasAttacker
+    const poisonTicked = unit.poisonStacks < fx.prevPoison && fx.hitQueue !== null && !fx.hitQueue.hasAttacker
     const onset = unit.stunTurns > fx.prevStun ? 'stun'
       : (unit.burnTurns > fx.prevBurn || burnTicked) ? 'burn'
+      : (unit.poisonStacks > fx.prevPoison || poisonTicked) ? 'poison'
       : unit.slowTurns > fx.prevSlow ? 'slow'
+      : unit.tauntTurns > fx.prevTaunt ? 'taunt'
+      : unit.hasteTurns > fx.prevHaste ? 'haste'
       : unit.empowerTurns > fx.prevEmpower ? 'empower'
       : null
     if (burnTicked) vfx.embers([unit.x, unit.y + 0.4, unit.z], 6, 0.35)
+    if (poisonTicked) vfx.motes([unit.x, unit.y + 0.35, unit.z], VFX_COLORS.poison, 8, 0.38, 1.4, 0, 0.7)
     fx.prevStun = unit.stunTurns
     fx.prevBurn = unit.burnTurns
     fx.prevSlow = unit.slowTurns
     fx.prevEmpower = unit.empowerTurns
+    fx.prevTaunt = unit.tauntTurns
+    fx.prevHaste = unit.hasteTurns
+    fx.prevPoison = unit.poisonStacks
     if (onset) fx.statusQueue = statusClipFor(onset)
 
     if (fx.pendingReady && st === 'idle' && !fx.action && unit.path.length === 0) {
