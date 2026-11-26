@@ -47,7 +47,7 @@ export async function createGame(destination: string) {
     for (const name of ['game', 'main', 'serve', 'preview-art', 'art-library', 'package']) {
       await copyModule(join(templateDist, name + '.js'), join(game, name + '.js'), rewriteTemplateFramework)
     }
-    for (const file of ['README.md', 'AGENTS.md', 'ART.md']) await cp(join(templateSrc, file), join(temporary, file))
+    for (const file of ['README.md', 'AGENTS.md', 'ART.md', 'godot-main.gd']) await cp(join(templateSrc, file), join(temporary, file))
 
     await mkdir(join(temporary, 'framework'))
     for (const file of await readdir(frameworkDist)) {

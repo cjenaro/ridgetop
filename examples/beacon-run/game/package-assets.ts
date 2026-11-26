@@ -1,6 +1,5 @@
 import { createArtKit } from 'ridgetop'
 import type { InstanceBatch } from 'ridgetop'
-import { defaultMenuLayout } from 'ridgetop/server'
 import type { ResolvedGameAssets } from 'ridgetop/server'
 
 export function resolvePackageAssets(): ResolvedGameAssets {
@@ -23,7 +22,6 @@ export function resolvePackageAssets(): ResolvedGameAssets {
       hit: { notes: [[195, .23, 0, 70]], waveform: 'triangle' },
       finish: { notes: [[392, .16, 0], [493.9, .17, .13], [587.3, .18, .26], [784, .38, .39]], waveform: 'sine' }
     },
-    gameData: { game: 'beacon-run', courses: ['ridge', 'ruins', 'summit', 'storm', 'foundry', 'lastlight'] },
-    uiTree: defaultMenuLayout('Beacon Run', ['Start Campaign', 'Practice'])
+    gameData: { game: 'beacon-run', courses: ['ridge', 'ruins', 'summit', 'storm', 'foundry', 'lastlight'] }
   }
 }

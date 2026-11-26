@@ -88,6 +88,15 @@ test('packages/ridgetop is completely isolated with zero example-game imports an
   assert.ok(!BLOCKED_STUDIO_FILES.has('rng.js'), 'rng.js must not be in BLOCKED_STUDIO_FILES')
   assert.ok(BLOCKED_STUDIO_FILES.has('verification.js'), 'verification.js must remain in BLOCKED_STUDIO_FILES')
 
+  // export-godot.ts must remain strictly game-agnostic with zero hardcoded example-game GDScript
+  const exportGodotSource = await readFile(new URL('export-godot.ts', ridgetopFrameworkRoot), 'utf8')
+  for (const forbiddenToken of ['signal-drift', 'racing/race.gd', 'racing/track.gd', 'Lantern Grove']) {
+    assert.ok(
+      !exportGodotSource.includes(forbiddenToken),
+      `packages/ridgetop/framework/export-godot.ts must not reference example-game logic (${forbiddenToken})`
+    )
+  }
+
   // Every browser framework module reachable from framework/index.ts or framework/ui.ts
   // is registered in framework/manifest.ts HOSTED_BROWSER_MODULES so it never 404s in hosted builds.
   const visited = new Set<string>()

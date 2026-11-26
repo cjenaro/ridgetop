@@ -97,6 +97,7 @@ export const SERVER_FRAMEWORK_MODULES: readonly string[] = Object.freeze([
   'server.js',
   'packager.js',
   'export-godot.js',
+  'binary-encoders.js',
   'png.js'
 ])
 
