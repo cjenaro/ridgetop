@@ -1581,6 +1581,116 @@ function fitWithin(ctx: CanvasRenderingContext2D, text: string, maxW: number, si
 // Battle HUD (Chunky Game Plates, Segmented HP, Angled Unit Frame, Cards)
 // ===========================================================================
 
+export interface ObjectiveHudDrawInfo {
+  readonly kind: 'rout' | 'assassinate' | 'defend' | 'seize'
+  readonly label: string
+  readonly progressText: string
+  readonly urgent?: boolean
+  readonly compact?: boolean
+}
+
+export function drawObjectiveBadge(
+  ctx: CanvasRenderingContext2D,
+  rect: LayoutRect,
+  info: ObjectiveHudDrawInfo
+) {
+  const accent = info.urgent
+    ? COLOR.danger
+    : info.kind === 'assassinate'
+      ? '#ff6b78'
+      : info.kind === 'defend'
+        ? '#5eeeff'
+        : info.kind === 'seize'
+          ? COLOR.accentHi
+          : '#8de8b0'
+  const fillTop = info.urgent
+    ? '#4a1b2b'
+    : info.kind === 'assassinate'
+      ? '#3d1c2b'
+      : info.kind === 'defend'
+        ? '#18374a'
+        : info.kind === 'seize'
+          ? '#3d3018'
+          : '#1c3330'
+  const fillBot = info.urgent ? '#2d101b' : '#141d34'
+  drawSurface(ctx, rect, { r: RADIUS.md, lipH: 3, fill: fillTop, fillBot })
+
+  const { x, y, width: w, height: h } = rect
+  const cy = y + (h - 3) / 2
+  const iconR = info.compact ? 9 : 10.5
+  const iconX = x + iconR + 7
+  ctx.beginPath()
+  ctx.arc(iconX, cy, iconR, 0, Math.PI * 2)
+  ctx.fillStyle = COLOR.wellDeep
+  ctx.fill()
+  ctx.strokeStyle = accent
+  ctx.lineWidth = 1.6
+  ctx.stroke()
+
+  const iconName: IconName = info.kind === 'assassinate'
+    ? 'target'
+    : info.kind === 'defend'
+      ? 'shield'
+      : info.kind === 'seize'
+        ? 'flag'
+        : 'sword'
+  drawIcon(ctx, iconName, iconX, cy, iconR * 1.15, accent)
+
+  const textX = iconX + iconR + 7
+  const maxW = Math.max(40, w - (textX - x) - 8)
+  drawText(ctx, info.progressText, textX, cy + 0.5, {
+    size: info.compact ? 10.5 : 11.5,
+    weight: 900,
+    color: info.urgent ? '#ffd6dc' : '#ffffff',
+    maxW,
+    display: true,
+    stroke: true,
+    strokeWidth: 2
+  })
+}
+
+export function drawDeployHeroChip(
+  ctx: CanvasRenderingContext2D,
+  rect: LayoutRect,
+  opts: {
+    readonly name: string
+    readonly facing: string
+    readonly portrait?: CanvasImageSource
+    readonly selected: boolean
+    readonly compact?: boolean
+  },
+  st: CanvasWidgetDrawState
+) {
+  const active = opts.selected || st.selected
+  drawSurface(ctx, rect, {
+    r: RADIUS.md,
+    lipH: st.pressed ? 1 : 3,
+    fill: active ? '#2b4d7c' : st.hovered ? '#283960' : '#1d2846',
+    fillBot: active ? '#1a3254' : '#141c34',
+    border: active ? COLOR.accent : undefined
+  })
+  const { x, y, width: w, height: h } = rect
+  const cy = y + (h - 3) / 2
+  const pSize = Math.min(h - 10, opts.compact ? 28 : 34)
+  if (opts.portrait) {
+    drawPortraitTile(ctx, x + 5, cy - pSize / 2, pSize, opts.portrait, { ring: active ? COLOR.accentHi : COLOR.ally })
+  }
+  const tx = x + (opts.portrait ? pSize + 10 : 8)
+  const shortName = opts.name.split(' ').pop() ?? opts.name
+  drawText(ctx, shortName, tx, cy - 5, {
+    size: opts.compact ? 10.5 : 11.5,
+    weight: 900,
+    color: active ? COLOR.accentHi : '#ffffff',
+    maxW: Math.max(24, w - (tx - x) - 6)
+  })
+  drawText(ctx, `FACE ${opts.facing.toUpperCase()}`, tx, cy + 7, {
+    size: opts.compact ? 8.5 : 9,
+    weight: 800,
+    color: active ? '#9cecff' : COLOR.muted,
+    maxW: Math.max(24, w - (tx - x) - 6)
+  })
+}
+
 export function drawBattleInfo(ctx: CanvasRenderingContext2D, rect: LayoutRect, chapter: string, gold: number) {
   drawSurface(ctx, rect, { r: RADIUS.lg, lipH: 4 })
   const { x, y, width: w, height: h } = rect
