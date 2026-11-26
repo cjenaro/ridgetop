@@ -7,6 +7,8 @@ import type {
 } from './types.ts'
 import { DIFFICULTY_META, RARITY_META, RARITY_ORDER } from './data.ts'
 import { heroLevelProgress } from './leveling.ts'
+import { RECOMMENDED_MIN_TACTIC_DECK, getEquipEffect, getHeroPassive } from './passives.ts'
+import type { EquipEffectSpec, HeroPassiveSpec, TacticDeckCurve } from './passives.ts'
 
 // ===========================================================================
 // Stylized Game UI Tokens
@@ -2336,20 +2338,33 @@ export function drawUnitCard(
     return
   }
 
-  // Crisp HP readout + shield (and compact XP bar for allies on the right)
+  // Crisp HP readout + shield + Innate Passive tag (or compact XP bar)
+  const passive = unit.heroId ? getHeroPassive(unit.heroId) : null
   const showXpBar = ally && xpProgress !== undefined && barW >= 96
-  const xpBarW = showXpBar ? Math.min(68, Math.max(36, Math.round(barW * 0.34))) : 0
-  drawText(ctx, `HP ${unit.hp}/${unit.maxHp}${unit.shield > 0 ? ` +${unit.shield}` : ''}`, barX + 2, barY + barH + 10, {
+  const xpBarW = showXpBar ? Math.min(60, Math.max(36, Math.round(barW * 0.28))) : 0
+  const hpText = `HP ${unit.hp}/${unit.maxHp}${unit.shield > 0 ? ` +${unit.shield}` : ''}`
+  const passiveTagW = !showXpBar && passive && barW >= 150 ? Math.min(barW * 0.52, measureText(ctx, `★ ${passive.name}`, 9, 800, true) + 6) : 0
+  drawText(ctx, hpText, barX + 2, barY + barH + 10, {
     size: 10.5,
     weight: 900,
     color: '#e8f0ff',
-    maxW: barW - (showXpBar ? xpBarW + 8 : 4),
+    maxW: Math.max(40, barW - (showXpBar ? xpBarW + 8 : passiveTagW ? passiveTagW + 6 : 4)),
     display: true,
     shadow: true
   })
   if (showXpBar && xpProgress) {
     const xpBarX = barX + barW - xpBarW
     drawBar(ctx, xpBarX, barY + barH + 7, xpBarW, 6, xpProgress.ratio, xpProgress.isMaxLevel ? COLOR.accent : COLOR.ap, COLOR.wellDeep)
+  } else if (passive && passiveTagW > 0) {
+    drawText(ctx, `★ ${passive.name}`, barX + barW - 2, barY + barH + 10, {
+      size: 9,
+      weight: 900,
+      color: passive.accentHex,
+      align: 'right',
+      maxW: passiveTagW,
+      display: true,
+      shadow: true
+    })
   }
 
   // Chunky outlined stat pills along bottom
@@ -2357,6 +2372,14 @@ export function drawUnitCard(
   const cw = (barW - 8) / 3
   const cy = y + faceH - pad - 10
   if (cy - 10 < barY + barH + 15) return
+  if (passive && cy - 24 > barY + barH + 17) {
+    drawText(ctx, passive.shortLabel, barX + 2, barY + barH + 22, {
+      size: 8.5,
+      weight: 700,
+      color: COLOR.muted,
+      maxW: barW - 4
+    })
+  }
   stats.forEach(([icon, val, col], i) => {
     const cx = barX + i * (cw + 4)
     rr(ctx, cx, cy - 10.5, cw, 21, 7)
@@ -3572,10 +3595,11 @@ export function drawStatStrip(ctx: CanvasRenderingContext2D, rect: LayoutRect, s
 export function drawEquipCard(
   ctx: CanvasRenderingContext2D,
   rect: LayoutRect,
-  o: { slot: EquipSlot; spec?: EquipmentSpec; ownerText?: string; equippedOnSelected?: boolean },
+  o: { slot: EquipSlot; spec?: EquipmentSpec; effect?: EquipEffectSpec; ownerText?: string; equippedOnSelected?: boolean },
   st: CanvasWidgetDrawState
 ) {
   const spec = o.spec
+  const effect = o.effect ?? (spec ? getEquipEffect(spec.id) ?? undefined : undefined)
   const meta = spec ? RARITY_META[spec.rarity] : undefined
   const { x, width: w, height: h } = rect
   const pressed = st.pressed
@@ -3679,10 +3703,24 @@ export function drawEquipCard(
   const right = x + w - 9
   const tagW = o.ownerText ? Math.min(72, measureText(ctx, o.ownerText, 9.5, 800, true) + 16) : on ? 22 : 0
   const twoLine = faceH >= 42
-  drawText(ctx, spec.name, tx, y + faceH / 2 - (twoLine ? 8 : 0), { size: 12, weight: 900, maxW: right - tx - tagW - 4, display: true, shadow: true })
-  if (twoLine) drawText(ctx, spec.desc, tx, y + faceH / 2 + 8.5, { size: 10, weight: 600, color: COLOR.muted, maxW: right - tx })
+  const threeLine = Boolean(effect) && faceH >= 47
+  const nameY = threeLine ? y + 11.5 : y + faceH / 2 - (twoLine ? 8 : 0)
+  drawText(ctx, spec.name, tx, nameY, { size: 12, weight: 900, maxW: right - tx - tagW - 4, display: true, shadow: true })
+  if (threeLine && effect) {
+    drawText(ctx, spec.desc, tx, y + 25.5, { size: 9.5, weight: 600, color: COLOR.muted, maxW: right - tx })
+    drawText(ctx, `★ ${effect.name}: ${effect.shortLabel}`, tx, y + 38.5, {
+      size: 9.5,
+      weight: 800,
+      color: effect.accentHex,
+      maxW: right - tx,
+      display: true
+    })
+  } else if (twoLine) {
+    const subText = effect ? `${spec.desc} · ★ ${effect.shortLabel}` : spec.desc
+    drawText(ctx, subText, tx, y + faceH / 2 + 8.5, { size: 10, weight: 600, color: effect ? effect.accentHex : COLOR.muted, maxW: right - tx })
+  }
   if (o.ownerText) {
-    drawChip(ctx, right, y + faceH / 2 - (twoLine ? 16 : 8.5), fitWithin(ctx, o.ownerText, 56, 9.5), {
+    drawChip(ctx, right, threeLine ? y + 4 : y + faceH / 2 - (twoLine ? 16 : 8.5), fitWithin(ctx, o.ownerText, 56, 9.5), {
       h: 17,
       size: 9.5,
       color: o.ownerText === 'Bag' ? COLOR.muted : '#ffffff',
@@ -3691,14 +3729,15 @@ export function drawEquipCard(
       align: 'right'
     })
   } else if (on) {
+    const chkY = threeLine ? y + 12 : y + faceH / 2 - (twoLine ? 8 : 0)
     ctx.beginPath()
-    ctx.arc(right - 8, y + faceH / 2 - (twoLine ? 8 : 0), 8, 0, Math.PI * 2)
+    ctx.arc(right - 8, chkY, 8, 0, Math.PI * 2)
     ctx.fillStyle = COLOR.accent
     ctx.fill()
     ctx.strokeStyle = COLOR.outline
     ctx.lineWidth = 1.6
     ctx.stroke()
-    drawIcon(ctx, 'check', right - 8, y + faceH / 2 - (twoLine ? 8 : 0), 9, COLOR.accentText)
+    drawIcon(ctx, 'check', right - 8, chkY, 9, COLOR.accentText)
   }
   drawCornerRibbon(ctx, x, y, w, faceH + 1, r, meta?.hex ?? '#888', 13)
   ctx.restore()
@@ -3748,6 +3787,201 @@ export function drawSkillRow(ctx: CanvasRenderingContext2D, rect: LayoutRect, o:
     drawText(ctx, o.desc, tx + nw + 8, icy + 0.5, { size: 10.5, weight: 600, color: o.unlocked ? '#d0dbf5' : COLOR.faint, maxW: x + w - (tx + nw + 8) - sw - 6 })
   }
   drawStars(ctx, x + w - 8, twoLine ? y + 12 : icy, o.tier, o.tier, 8.5, 'right', o.unlocked ? color : '#55658a')
+}
+
+/** Innate Hero Passive banner for Camp Hero Inspector. */
+export function drawPassiveBanner(
+  ctx: CanvasRenderingContext2D,
+  rect: LayoutRect,
+  passive: HeroPassiveSpec,
+  compact = false
+) {
+  const { x, y, width: w, height: h } = rect
+  drawSurface(ctx, rect, {
+    r: RADIUS.md,
+    lipH: 2,
+    fill: '#2b3d66',
+    fillBot: '#1b2644',
+    rim: passive.accentHex + 'aa',
+    shadow: false
+  })
+  const faceH = Math.max(8, h - 2)
+  // Colored left accent strip
+  rr(ctx, x + 2, y + 4, 4, Math.max(6, faceH - 8), 2)
+  ctx.fillStyle = passive.accentHex
+  ctx.fill()
+
+  const twoLine = !compact && faceH >= 34
+  const tx = x + 12
+  if (twoLine) {
+    const chipW = drawChip(ctx, tx, y + 4, 'INNATE', {
+      h: 15,
+      size: 8,
+      color: COLOR.accentText,
+      bg: passive.accentHex,
+      border: COLOR.outline
+    })
+    drawText(ctx, passive.name, tx + chipW + 6, y + 12, {
+      size: 11.5,
+      weight: 900,
+      color: '#ffffff',
+      maxW: Math.max(30, w - chipW - 24),
+      display: true,
+      shadow: true
+    })
+    drawText(ctx, passive.desc, tx, y + 28, {
+      size: 10,
+      weight: 600,
+      color: '#d4e2ff',
+      maxW: Math.max(30, w - 18)
+    })
+  } else {
+    const chipW = drawChip(ctx, tx, y + (faceH - 15) / 2, 'INNATE', {
+      h: 15,
+      size: 8,
+      color: COLOR.accentText,
+      bg: passive.accentHex,
+      border: COLOR.outline
+    })
+    const label = `${passive.name} · ${passive.shortLabel}`
+    drawText(ctx, label, tx + chipW + 6, y + faceH / 2 + 0.5, {
+      size: 10.5,
+      weight: 800,
+      color: '#e8f0ff',
+      maxW: Math.max(30, w - chipW - 22),
+      display: true
+    })
+  }
+}
+
+/** Curated Tactic Deck Builder header showing Deck: N/12 and AP cost curve. */
+export function drawTacticDeckHeader(
+  ctx: CanvasRenderingContext2D,
+  rect: LayoutRect,
+  curve: TacticDeckCurve,
+  ownedCount: number
+) {
+  const { x, y, width: w, height: h } = rect
+  const cy = y + h / 2
+  const healthy = curve.total >= RECOMMENDED_MIN_TACTIC_DECK && curve.total <= curve.max
+  const deckColor = healthy ? COLOR.good : COLOR.accentHi
+
+  let cx = x + 2
+  cx += drawChip(ctx, cx, cy - 11, `DECK: ${curve.total} / ${curve.max}`, {
+    h: 22,
+    size: 10.5,
+    color: healthy ? '#072e17' : COLOR.accentText,
+    bg: deckColor,
+    border: COLOR.outline
+  }) + 8
+
+  if (cx + 78 < x + w) {
+    cx += drawChip(ctx, cx, cy - 10, `OWNED ${ownedCount}`, {
+      h: 20,
+      size: 9.5,
+      color: COLOR.muted,
+      bg: COLOR.wellDeep,
+      border: COLOR.outline
+    }) + 6
+  }
+  if (cx + 80 < x + w) {
+    cx += drawChip(ctx, cx, cy - 10, `AVG ${curve.avgCost.toFixed(1)} AP`, {
+      h: 20,
+      size: 9.5,
+      color: COLOR.ap,
+      bg: '#14294a',
+      border: COLOR.outline
+    }) + 8
+  }
+
+  // AP curve pills [0 AP, 1 AP, 2+ AP]
+  const buckets: readonly [string, number, string][] = [
+    ['0 AP', curve.byCost[0], '#6ee09e'],
+    ['1 AP', curve.byCost[1], '#69c2ff'],
+    ['2+ AP', curve.byCost[2], '#d482ff']
+  ]
+  for (const [lbl, cnt, col] of buckets) {
+    const label = `${lbl}: ${cnt}`
+    const estW = measureText(ctx, label, 9, 800, true) + 14
+    if (cx + estW > x + w - 4) break
+    cx += drawChip(ctx, cx, cy - 9.5, label, {
+      h: 19,
+      size: 9,
+      color: col,
+      bg: COLOR.wellDeep,
+      border: COLOR.outline
+    }) + 5
+  }
+}
+
+/** Curated Tactic Deck toggleable card row in Camp. */
+export function drawTacticDeckCard(
+  ctx: CanvasRenderingContext2D,
+  rect: LayoutRect,
+  o: { spec: TacticCardSpec; inDeck: boolean },
+  st: CanvasWidgetDrawState
+) {
+  const meta = RARITY_META[o.spec.rarity]
+  const { x, width: w, height: h } = rect
+  const pressed = st.pressed
+  const y = rect.y + (pressed ? 2 : 0)
+  const drawH = Math.max(12, h - (pressed ? 2 : 0))
+  const hot = st.hovered || st.focused
+  const r = RADIUS.md
+
+  ctx.save()
+  drawSurface(ctx, { x, y, width: w, height: drawH }, {
+    r,
+    lipH: pressed ? 1 : 3,
+    fill: o.inDeck ? (hot ? '#425d94' : '#334a7a') : (hot ? '#2d3b5e' : '#202b47'),
+    fillBot: o.inDeck ? '#23355c' : '#161e36',
+    rim: o.inDeck ? COLOR.good + 'aa' : '#ffffff1c',
+    shadow: false
+  })
+  if (o.inDeck) {
+    rr(ctx, x + 2, y + 2, w - 4, drawH - 4, Math.max(1, r - 2))
+    ctx.strokeStyle = COLOR.good
+    ctx.lineWidth = 2
+    ctx.stroke()
+  }
+
+  const faceH = drawH - (pressed ? 1 : 3)
+  const cy = y + faceH / 2
+  // AP crystal on left
+  drawApCrystal(ctx, x + 20, cy, Math.min(13, faceH * 0.32), true, `${o.spec.cost}`)
+
+  const tx = x + 38
+  const right = x + w - 9
+  const badgeText = o.inDeck ? 'IN DECK' : 'BENCH'
+  const badgeW = 58
+  const twoLine = faceH >= 40
+  drawText(ctx, o.spec.name, tx, twoLine ? y + faceH * 0.34 : cy, {
+    size: 12,
+    weight: 900,
+    color: o.inDeck ? '#ffffff' : COLOR.muted,
+    maxW: Math.max(40, right - tx - badgeW - 6),
+    display: true,
+    shadow: o.inDeck
+  })
+  if (twoLine) {
+    drawText(ctx, o.spec.desc, tx, y + faceH * 0.72, {
+      size: 9.5,
+      weight: 600,
+      color: o.inDeck ? '#d2e0ff' : COLOR.faint,
+      maxW: Math.max(40, right - tx - 4)
+    })
+  }
+  drawChip(ctx, right, twoLine ? y + 6 : cy - 8.5, badgeText, {
+    h: 17,
+    size: 8.5,
+    color: o.inDeck ? '#072e17' : COLOR.muted,
+    bg: o.inDeck ? COLOR.good : COLOR.wellDeep,
+    border: COLOR.outline,
+    align: 'right'
+  })
+  drawCornerRibbon(ctx, x, y, w, faceH + 1, r, meta.hex, 12)
+  ctx.restore()
+  if (st.focused) drawFocusRing(ctx, x, y, w, drawH, r)
 }
 
 /** Tactile foil-wrapped game Booster Pack card with bold 3D price button & rarity ribbon. */

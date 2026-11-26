@@ -542,6 +542,7 @@ export interface BattleUnit {
   hitFlash: number
   lungeX: number
   lungeZ: number
+  crownbladeKoUsed?: boolean
 }
 
 export interface FloatingNumber {
@@ -943,6 +944,7 @@ export interface BattleUnitSnapshot {
   readonly hasteTurns?: number
   readonly poisonStacks?: number
   readonly cooldowns: readonly [number, number, number]
+  readonly crownbladeKoUsed?: boolean
 }
 
 export interface BattleSaveSnapshot {
@@ -987,6 +989,7 @@ export interface CampaignState {
   heroes: OwnedHeroCard[]
   equipment: OwnedEquipCard[]
   tactics: OwnedTacticCard[]
+  activeTacticDeckUids?: string[]
   squadUids: string[]
   selectedCampHeroUid: string | null
   lastPackReveal: PackRevealItem[]
