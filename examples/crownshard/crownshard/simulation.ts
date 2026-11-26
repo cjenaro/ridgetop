@@ -865,8 +865,6 @@ export function startChapterBattle(state: GameState, chapterIndex: number, endle
       heroId: hero.heroId,
       stars: hero.stars,
       isBoss: false,
-      weaponHex: weaponOwned ? EQUIPMENT_BY_ID[weaponOwned.equipId]?.accentHex : undefined,
-      armorHex: armorOwned ? EQUIPMENT_BY_ID[armorOwned.equipId]?.accentHex : undefined,
       weaponId: weaponOwned?.equipId,
       armorId: armorOwned?.equipId,
       relicId: relicOwned?.equipId,

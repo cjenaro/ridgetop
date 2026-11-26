@@ -19,7 +19,7 @@ import type { StrikeShape } from './vfx.ts'
 import { getEquipmentByUid, getHeroByUid, getPatternCells, getHeroSkill, getUnitByUid, getTacticByUid, unitAt } from './simulation.ts'
 import { TACTIC_BY_ID } from './data.ts'
 import { TILE_SIZE, facingToYaw, gridToWorld } from './types.ts'
-import type { AttackArc, BattleState, BattleUnit, CombatForecast, GameState, OwnedHeroCard } from './types.ts'
+import type { AttackArc, BattleState, BattleUnit, CombatForecast, EquipSlot, GameState, OwnedHeroCard } from './types.ts'
 
 const C_MOVE_TILE: Color = [0.22, 0.80, 1.0, 0.34]
 const C_MOVE_BORDER: Color = [0.84, 0.97, 1.0, 0.94]
@@ -360,8 +360,12 @@ export function createCrownshardScene(renderer: LowPolyRenderer) {
   let cameraPanZ = 0
   const MIN_CAMERA_ZOOM = 0.58
   const MAX_CAMERA_ZOOM = 1.38
-  let campFraming: 'title' | 'camp' | 'story' | 'world' = 'title'
+  let campFraming: 'title' | 'camp' | 'armory' | 'story' | 'world' = 'title'
   let campShift = 0
+  let armoryFocusW = 0
+  let armoryFocusX = 0
+  let armoryFocusZ = -0.35
+  const campEquipPulse = new Map<string, { t: number; dur: number; color: Color; spawned: boolean }>()
   let fireTimer = 0
   let lastBattle: BattleState | null = null
   let lastFloatId = -1
@@ -982,11 +986,7 @@ export function createCrownshardScene(renderer: LowPolyRenderer) {
       fx.kbX *= kbDecay
       fx.kbZ *= kbDecay
       const flash = fx.flashT > 0
-      renderRig(rig, { position: fx.pos, yaw: fx.yaw, scale: ds }, pose, pool, (_jointId, part) => {
-        if (flash) return C_HIT_FLASH
-        if (part.name === 'weapon' && unit.weaponHex) return color(unit.weaponHex)
-        return part.color
-      })
+      renderRig(rig, { position: fx.pos, yaw: fx.yaw, scale: ds }, pose, pool, flash ? () => C_HIT_FLASH : undefined)
       shadows.add([unit.x, unit.y + 0.02, unit.z], { groundY: unit.y, radius: 0.62 * ds, opacity: 0.30 * (1 - sink) })
       return
     }
@@ -1136,11 +1136,7 @@ export function createCrownshardScene(renderer: LowPolyRenderer) {
     fx.scl[1] = scale * (1 - squash)
     fx.scl[2] = scale * (1 + squash * 0.6)
 
-    renderRig(rig, { position: fx.pos, yaw: fx.yaw, scale: fx.scl }, pose, pool, (_jointId, part) => {
-      if (flash) return C_HIT_FLASH
-      if (part.name === 'weapon' && unit.weaponHex) return color(unit.weaponHex)
-      return part.color
-    })
+    renderRig(rig, { position: fx.pos, yaw: fx.yaw, scale: fx.scl }, pose, pool, flash ? () => C_HIT_FLASH : undefined)
 
     const groundY = unit.y
     shadows.add([px, groundY + 0.02, pz], { groundY, radius: 0.58 * scale * (1 - Math.min(0.35, extraY * 0.5)), opacity: 0.30 })
@@ -1519,31 +1515,87 @@ export function createCrownshardScene(renderer: LowPolyRenderer) {
     pool.add(crystalMesh, [0, 0.32, 2.0], [flameScale, flameScale * 1.48, flameScale], state.time * 2.2, C_FIRE_CORE, 0.98)
     pool.add(crystalMesh, [0, 0.42, 2.0], [flameScale * 0.58, flameScale * 0.95, flameScale * 0.58], -state.time * 2.6, C_FIRE_TIP, 0.98)
 
-    const aspect = Math.max(0.32, w / Math.max(1, h))
-    const orbit = Math.sin(state.time * 0.20) * 0.22
-    const campShiftTarget = campFraming === 'camp' ? 1 : 0
-    campShift += (campShiftTarget - campShift) * Math.min(1, dt * 6)
-    const dist = aspect < 0.85
-      ? 6.1 / Math.max(0.45, aspect)
-      : (h < 480 ? 9.4 : 8.4) + campShift * 0.6
-    const eyeY = (aspect < 0.85 ? 5.2 : 4.3) + campShift * 0.55
-    const targetY = 0.46 - campShift * (aspect < 0.85 ? 1.85 : h < 480 ? 0.6 : 1.15)
-    const targetZ = -0.35 + campShift * 0.65
-    const eye: Vec3 = [Math.sin(orbit) * dist, eyeY, Math.cos(orbit) * dist + 1.3]
-    const target: Vec3 = [0, targetY, targetZ]
-    lastMatrix = multiply(perspective(Math.PI / 3.9, aspect, 0.5, 90), view(eye, target))
-
     const squad: OwnedHeroCard[] = state.campaign.squadUids
       .map(uid => getHeroByUid(state.campaign, uid))
       .filter((hero): hero is OwnedHeroCard => Boolean(hero))
+    const selectedCampHero = getHeroByUid(state.campaign, state.campaign.selectedCampHeroUid)
     const count = squad.length
+
+    interface CampDisplayHero {
+      readonly hero: OwnedHeroCard
+      readonly x: number
+      readonly z: number
+      readonly yaw: number
+      readonly isSelected: boolean
+    }
+    const displayed: CampDisplayHero[] = []
+    let focusGoalX = 0
+    let focusGoalZ = -0.35
+    let selectedInSquad = false
     for (let i = 0; i < count; i++) {
       const hero = squad[i]
       const offset = count === 1 ? 0 : (i / (count - 1) - 0.5) * 2
       const hx = offset * 2.35
       const hz = -0.35 + Math.abs(offset) * 0.55
-      const yaw = Math.atan2(-hx, 2.2 - hz)
       const isSelected = hero.uid === state.campaign.selectedCampHeroUid
+      if (isSelected) {
+        selectedInSquad = true
+        focusGoalX = hx
+        focusGoalZ = hz
+      }
+      const yaw = isSelected && campFraming === 'armory'
+        ? Math.sin(state.time * 0.65) * 0.42
+        : Math.atan2(-hx, 2.2 - hz)
+      displayed.push({ hero, x: hx, z: hz, yaw, isSelected })
+    }
+    // If the hero being inspected in Armory is benched, spotlight them front-and-center!
+    if (selectedCampHero && !selectedInSquad && campFraming === 'armory') {
+      const bx = 0
+      const bz = 0.78
+      focusGoalX = bx
+      focusGoalZ = bz
+      displayed.push({
+        hero: selectedCampHero,
+        x: bx,
+        z: bz,
+        yaw: Math.sin(state.time * 0.65) * 0.42,
+        isSelected: true
+      })
+    }
+
+    const aspect = Math.max(0.32, w / Math.max(1, h))
+    const isArmory = campFraming === 'armory'
+    const campShiftTarget = campFraming === 'camp' || isArmory ? 1 : 0
+    campShift += (campShiftTarget - campShift) * Math.min(1, dt * 6)
+    armoryFocusW += ((isArmory ? 1 : 0) - armoryFocusW) * Math.min(1, dt * 7)
+    armoryFocusX += (focusGoalX - armoryFocusX) * Math.min(1, dt * 8)
+    armoryFocusZ += (focusGoalZ - armoryFocusZ) * Math.min(1, dt * 8)
+
+    const orbit = Math.sin(state.time * 0.20) * (0.22 * (1 - armoryFocusW * 0.65))
+    const baseDist = aspect < 0.85
+      ? 6.1 / Math.max(0.45, aspect)
+      : (h < 480 ? 9.4 : 8.4) + campShift * 0.6
+    const armoryDist = aspect < 0.85 ? 5.2 / Math.max(0.50, aspect) : h < 480 ? 5.4 : 4.9
+    const dist = baseDist + (armoryDist - baseDist) * armoryFocusW
+    const baseEyeY = (aspect < 0.85 ? 5.2 : 4.3) + campShift * 0.55
+    const armoryEyeY = aspect < 0.85 ? 2.85 : 2.45
+    const eyeY = baseEyeY + (armoryEyeY - baseEyeY) * armoryFocusW
+    const baseTargetY = 0.46 - campShift * (aspect < 0.85 ? 1.85 : h < 480 ? 0.6 : 1.15)
+    const armoryTargetY = aspect < 0.85 ? 0.12 : h < 480 ? 0.42 : 0.26
+    const targetY = baseTargetY + (armoryTargetY - baseTargetY) * armoryFocusW
+    const baseTargetZ = -0.35 + campShift * 0.65
+    const targetX = armoryFocusX * armoryFocusW
+    const targetZ = baseTargetZ + (armoryFocusZ - baseTargetZ) * armoryFocusW
+    const eye: Vec3 = [
+      targetX + Math.sin(orbit) * dist,
+      eyeY,
+      targetZ + Math.cos(orbit) * dist + (1.3 * (1 - armoryFocusW))
+    ]
+    const target: Vec3 = [targetX, targetY, targetZ]
+    lastMatrix = multiply(perspective(Math.PI / 3.9, aspect, 0.5, 90), view(eye, target))
+
+    for (let i = 0; i < displayed.length; i++) {
+      const { hero, x: hx, z: hz, yaw, isSelected } = displayed[i]
       const scale = hero.stars === 3 ? 1.16 : hero.stars === 2 ? 1.07 : 1.0
       const fx = getFx('camp_' + hero.uid)
       const anim = fx.anim
@@ -1575,7 +1627,47 @@ export function createCrownshardScene(renderer: LowPolyRenderer) {
       renderRig(campRig, { position: [hx, 0.04, hz], yaw, scale }, pose, pool)
       shadows.add([hx, 0.06, hz], { groundY: 0.04, radius: 0.58 * scale, opacity: 0.30 })
       if (isSelected) {
-        pool.add(flatRing, [hx, 0.065, hz], [0.72 * scale, 1, 0.72 * scale], state.time * 1.0, C_ACTIVE_RING, 0.95, 'alpha')
+        const ringR = (isArmory ? 0.80 + Math.sin(state.time * 4.5) * 0.04 : 0.72) * scale
+        pool.add(flatRing, [hx, 0.065, hz], [ringR, 1, ringR], state.time * 1.0, C_ACTIVE_RING, 0.95, 'alpha')
+        if (isArmory) {
+          pool.add(flatRing, [hx, 0.075, hz], [ringR * 1.18, 1, ringR * 1.18], -state.time * 1.6, C_STAR3_HALO, 0.96, 'additive')
+        }
+      }
+      const pulse = campEquipPulse.get(hero.uid)
+      if (pulse) {
+        if (!pulse.spawned) {
+          pulse.spawned = true
+          for (let k = 0; k < 14; k++) {
+            const a = (k / 14) * Math.PI * 2
+            particles.spawn({
+              mesh: crystalMesh,
+              blend: 'additive',
+              position: [hx + Math.cos(a) * 0.36 * scale, 0.22, hz + Math.sin(a) * 0.36 * scale],
+              velocity: [Math.cos(a) * 1.2, 1.9 + (k % 3) * 0.45, Math.sin(a) * 1.2],
+              gravity: 3.4,
+              spin: 9,
+              scale: [0.11, 0.15, 0.11],
+              endScale: 0.1,
+              color: pulse.color,
+              unlit: 1,
+              life: 0.62
+            })
+          }
+        }
+        pulse.t += dt
+        const u = Math.min(1, pulse.t / pulse.dur)
+        const expand = (0.55 + u * 0.78) * scale
+        const alpha = (1 - u) * 0.9
+        pool.add(
+          flatRing,
+          [hx, 0.09 + u * 0.65 * scale, hz],
+          [expand, 1, expand],
+          state.time * 3.0,
+          [pulse.color[0], pulse.color[1], pulse.color[2], alpha],
+          1,
+          'additive'
+        )
+        if (pulse.t >= pulse.dur) campEquipPulse.delete(hero.uid)
       }
       if (hero.stars >= 2) {
         pool.add(crownMesh, [hx, (1.72 + Math.sin(state.time * 3 + i) * 0.05) * scale, hz], [0.28, 0.22, 0.28], state.time, C_STAR2_GOLD, 0.8)
@@ -1615,8 +1707,23 @@ export function createCrownshardScene(renderer: LowPolyRenderer) {
       if (state.battle) return renderBattle(state, dt, width, height)
       return renderCamp(state, dt, width, height)
     },
-    setCampFraming(mode: 'title' | 'camp' | 'story' | 'world') {
+    setCampFraming(mode: 'title' | 'camp' | 'armory' | 'story' | 'world') {
       campFraming = mode
+    },
+    /** Trigger an immediate celebratory weapon-flourish / equip pose & sparkle burst on a Camp hero. */
+    triggerCampEquipFlourish(heroUid: string, slot?: EquipSlot, accentHex?: string) {
+      const fx = getFx('camp_' + heroUid)
+      const clip: UnitClipName = slot === 'weapon' ? 'fidget_twirl'
+        : slot === 'armor' ? 'status_empower'
+        : 'ready'
+      startAction(fx, clip, 0.08)
+      fx.fidgetTimer = 6.0
+      campEquipPulse.set(heroUid, {
+        t: 0,
+        dur: 0.85,
+        color: accentHex ? color(accentHex) : C_HOLY,
+        spawned: false
+      })
     },
     pickCellAt,
     setHoveredCell(cell: { col: number; row: number } | null) {

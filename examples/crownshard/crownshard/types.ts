@@ -280,8 +280,6 @@ export interface BattleUnit {
   readonly enemyId?: EnemyArchetypeId
   readonly stars: 1 | 2 | 3
   readonly isBoss: boolean
-  readonly weaponHex?: string
-  readonly armorHex?: string
   readonly weaponId?: string
   readonly armorId?: string
   readonly relicId?: string

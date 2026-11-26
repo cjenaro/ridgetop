@@ -436,6 +436,133 @@ export interface HeroVisualLoadout {
 }
 
 /**
+ * Resolve the complete CharacterSpec for a hero given their star ascension tier and equipped gear.
+ * Precedence: Base class -> Star ascension (2★/3★) -> Armor -> Relic -> Weapon (+ off-hand conflict cleanup).
+ * Applying star upgrades BEFORE equipment ensures equipped gear is never clobbered by 2★/3★ upgrades.
+ */
+export function resolveHeroCharacterSpec(heroId: HeroClassId, loadout?: HeroVisualLoadout): CharacterSpec {
+  const stars = loadout?.stars ?? 1
+  const weaponId = loadout?.weaponId ?? ''
+  const armorId = loadout?.armorId ?? ''
+  const relicId = loadout?.relicId ?? ''
+
+  const base = HERO_CHARACTER_SPECS[heroId]
+  if (stars === 1 && !weaponId && !armorId && !relicId) return base
+
+  const parts: Partial<NonNullable<CharacterSpec['parts']>> = { ...base.parts }
+  const palette: Partial<NonNullable<CharacterSpec['palette']>> = { ...base.palette }
+
+  // 1. Star Ascension upgrades FIRST (2★ gilded pauldrons/cuffs, 3★ radiant sun-halo)
+  if (stars >= 2) {
+    parts.pauldrons = 'pauldrons_gilded'
+    parts.bootL = 'boot_cuff_gold'
+    parts.bootR = 'boot_cuff_gold'
+  }
+  if (stars >= 3) {
+    parts.back = 'halo_radiant'
+  }
+
+  // 2. Equipped Armor visual swaps (all 6 armor items have bespoke 3D parts)
+  if (armorId === 'leather_jerkin') {
+    parts.chest = 'chest_scout_brigandine'
+    parts.pauldrons = 'pauldrons_brigandine'
+  } else if (armorId === 'iron_plate') {
+    parts.chest = 'chest_watchman_plate'
+    parts.pauldrons = 'pauldrons_watchman'
+  } else if (armorId === 'ranger_cloak') {
+    parts.back = 'cape_windrunner'
+    parts.collar = 'collar_windrunner'
+    parts.pauldrons = 'pauldrons_windrunner'
+  } else if (armorId === 'runed_mail') {
+    parts.chest = 'chest_runed_mail'
+    parts.pauldrons = 'pauldrons_runed_mail'
+    palette.glow = '#6eb8ff'
+  } else if (armorId === 'frostguard_plate') {
+    parts.chest = 'chest_frostguard'
+    parts.pauldrons = 'pauldrons_frostguard'
+    parts.collar = 'collar_frostguard'
+    palette.metal = '#bce4fa'
+  } else if (armorId === 'aegis_of_dawn') {
+    parts.chest = 'chest_aegis_dawn'
+    parts.pauldrons = 'pauldrons_aegis_dawn'
+    parts.collar = 'collar_aegis_dawn'
+    if (
+      parts.offHand === 'shield_heater' ||
+      parts.offHand === 'shield_buckler' ||
+      parts.offHand === 'shield_tower_paladin'
+    ) {
+      parts.offHand = 'shield_aegis_dawn'
+    }
+    palette.accent = '#ffe078'
+  }
+
+  // 3. Equipped Relic visual swaps (all 5 relic items have bespoke 3D parts)
+  if (relicId === 'copper_signet') {
+    parts.bracerL = 'bracer_copper_signet'
+    parts.bracerR = 'bracer_copper_signet'
+  } else if (relicId === 'swift_boots') {
+    parts.bootL = 'boot_gale_striders'
+    parts.bootR = 'boot_gale_striders'
+  } else if (relicId === 'blood_amulet') {
+    parts.collar = 'collar_blood_amulet'
+  } else if (relicId === 'eagle_charm') {
+    parts.belt = 'belt_skyhawk_crest'
+    parts.bracerR = 'bracer_skyhawk'
+  } else if (relicId === 'heart_of_solis') {
+    parts.collar = 'collar_heart_of_solis'
+    parts.belt = 'belt_heart_of_solis'
+    palette.glow = '#ffdb6e'
+  }
+
+  // 4. Equipped Weapon visual swaps + off-hand conflict resolution (all 7 weapon items have bespoke 3D parts)
+  const clearBowOffhand = () => {
+    if (parts.offHand === 'offhand_bow_recurve' || parts.offHand === 'offhand_bow_yew') {
+      delete parts.offHand
+    }
+  }
+  const clearTwoHandConflicts = () => {
+    clearBowOffhand()
+    if (parts.offHand === 'offhand_dagger') {
+      delete parts.offHand
+    }
+  }
+
+  if (weaponId === 'iron_sword') {
+    parts.mainHand = 'weapon_iron_broadsword'
+    clearBowOffhand()
+  } else if (weaponId === 'hunter_bow' || weaponId === 'yew_bow') {
+    parts.mainHand = 'weapon_yew_arrow'
+    parts.offHand = 'offhand_bow_yew'
+  } else if (weaponId === 'ember_wand' || weaponId === 'apprentice_staff') {
+    parts.mainHand = 'weapon_ember_scepter'
+    clearTwoHandConflicts()
+    palette.glow = '#ff8a3d'
+  } else if (weaponId === 'sunsteel_blade') {
+    parts.mainHand = 'weapon_sunsteel_blade'
+    clearBowOffhand()
+  } else if (weaponId === 'frostbite_staff') {
+    parts.mainHand = 'weapon_frostbite_staff'
+    clearTwoHandConflicts()
+    palette.glow = '#88f4ff'
+  } else if (weaponId === 'dragonfang_spear') {
+    parts.mainHand = 'weapon_dragonfang_halberd'
+    clearTwoHandConflicts()
+    palette.glow = '#d66bff'
+  } else if (weaponId === 'solis_crownblade') {
+    parts.mainHand = 'weapon_solis_crownblade'
+    clearTwoHandConflicts()
+    palette.glow = '#ffe478'
+  }
+
+  return {
+    body: base.body,
+    palette,
+    parts,
+    scale: base.scale
+  }
+}
+
+/**
  * Dynamically compose & cache a modular hero rig reflecting equipped Weapon/Armor/Relic cards
  * and 2★/3★ ascension upgrades without ever allocating per frame.
  */
@@ -450,77 +577,7 @@ export function resolveHeroRig(heroId: HeroClassId, loadout?: HeroVisualLoadout)
   const cached = customHeroRigCache.get(key)
   if (cached) return cached
 
-  const base = HERO_CHARACTER_SPECS[heroId]
-  const parts = { ...base.parts }
-  const palette = { ...base.palette }
-
-  // Live Weapon Card visual swaps
-  if (weaponId === 'sunsteel_blade' || weaponId === 'solis_crownblade') {
-    parts.mainHand = 'weapon_sunblade'
-    if (weaponId === 'solis_crownblade') palette.glow = '#ffe478'
-  } else if (weaponId === 'frostbite_staff') {
-    parts.mainHand = 'weapon_staff_frost'
-    palette.glow = '#88f4ff'
-  } else if (weaponId === 'dragonfang_spear') {
-    parts.mainHand = 'weapon_obsidian_greatsword'
-    palette.glow = '#d66bff'
-  } else if (weaponId === 'iron_sword') {
-    parts.mainHand = 'weapon_broadsword'
-  } else if (weaponId === 'hunter_bow' || weaponId === 'yew_bow') {
-    parts.mainHand = 'weapon_arrow_nocked'
-    parts.offHand = 'offhand_bow_recurve'
-  } else if (weaponId === 'ember_wand' || weaponId === 'apprentice_staff') {
-    parts.mainHand = 'weapon_staff_arcane'
-  }
-
-  // Live Armor Card visual swaps
-  if (armorId === 'iron_plate' || armorId === 'runed_mail') {
-    parts.chest = 'chest_plate'
-    parts.pauldrons = 'pauldrons_knight'
-    if (armorId === 'runed_mail') palette.glow = '#6eb8ff'
-  } else if (armorId === 'ranger_cloak') {
-    parts.back = 'cape_royal'
-    parts.collar = 'collar_scarf'
-  } else if (armorId === 'frostguard_plate') {
-    parts.chest = 'chest_plate'
-    parts.collar = 'collar_fur'
-    parts.pauldrons = 'pauldrons_knight'
-    palette.metal = '#bce4fa'
-  } else if (armorId === 'aegis_of_dawn') {
-    parts.chest = 'chest_plate'
-    parts.pauldrons = 'pauldrons_paladin'
-    parts.collar = 'collar_gold_mantle'
-    if (parts.offHand === 'shield_heater' || parts.offHand === 'shield_buckler') {
-      parts.offHand = 'shield_tower_paladin'
-    }
-    palette.accent = '#ffe078'
-  }
-
-  // Live Relic accents
-  if (relicId === 'swift_boots') {
-    parts.bootL = 'boot_cuff_gold'
-    parts.bootR = 'boot_cuff_gold'
-  } else if (relicId === 'heart_of_solis') {
-    palette.glow = '#ffdb6e'
-    parts.collar = 'collar_gold_mantle'
-  }
-
-  // Star Ascension upgrades (2★ gilded pauldrons/cuffs, 3★ radiant sun-halo!)
-  if (stars >= 2) {
-    parts.pauldrons = 'pauldrons_gilded'
-    parts.bootL = 'boot_cuff_gold'
-    parts.bootR = 'boot_cuff_gold'
-  }
-  if (stars >= 3) {
-    parts.back = 'halo_radiant'
-  }
-
-  const rig = crownshardCharacterBuilder.assemble({
-    body: base.body,
-    palette,
-    parts,
-    scale: base.scale
-  })
+  const rig = crownshardCharacterBuilder.assemble(resolveHeroCharacterSpec(heroId, loadout))
   customHeroRigCache.set(key, rig)
   return rig
 }

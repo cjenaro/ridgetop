@@ -9,11 +9,12 @@ import {
   GRID_COLS, GRID_ROWS, HEIGHT_STEP, TILE_SIZE, cellHeightLevel, gridToWorld
 } from './types.ts'
 import type { BiomeId, EnemyArchetypeId, GridCell, HeroClassId, TileTerrain } from './types.ts'
-import { ENEMY_RIGS, HERO_RIGS } from './characters.ts'
+import { ENEMY_RIGS, resolveHeroRig } from './characters.ts'
+import type { HeroVisualLoadout } from './characters.ts'
 
 export {
   ENEMY_CHARACTER_SPECS, ENEMY_RIGS, HERO_CHARACTER_SPECS, HERO_RIGS,
-  crownshardCharacterBuilder, resolveHeroRig
+  crownshardCharacterBuilder, resolveHeroCharacterSpec, resolveHeroRig
 } from './characters.ts'
 export type { HeroVisualLoadout } from './characters.ts'
 export { UNIT_CLIPS, stanceOffsetFor } from './animations.ts'
@@ -146,17 +147,95 @@ export interface PortraitPixels {
   readonly pixels: Uint8ClampedArray<ArrayBuffer>
 }
 
+const heroPortraitPixelCache = new Map<string, PortraitPixels>()
+
+/** Canonical cache key for a loadout-aware hero bust portrait (matches base heroId when 1★ unequipped). */
+export function heroPortraitKey(heroId: HeroClassId, loadout?: HeroVisualLoadout): string {
+  const stars = loadout?.stars ?? 1
+  const weaponId = loadout?.weaponId ?? ''
+  const armorId = loadout?.armorId ?? ''
+  const relicId = loadout?.relicId ?? ''
+  if (stars === 1 && !weaponId && !armorId && !relicId) return heroId
+  return `${heroId}:${stars}:${weaponId}:${armorId}:${relicId}`
+}
+
+/** Lazily bake & cache a DOM-free 3D bust portrait reflecting a hero's stars and equipped gear. */
+export function getHeroPortraitPixels(heroId: HeroClassId, loadout?: HeroVisualLoadout, size = 96): PortraitPixels {
+  const baseKey = heroPortraitKey(heroId, loadout)
+  const cacheKey = size === 96 ? baseKey : `${baseKey}@${size}`
+  const cached = heroPortraitPixelCache.get(cacheKey)
+  if (cached) return cached
+  const rig = resolveHeroRig(heroId, loadout)
+  const baked = bakeRigPortrait(rig, stanceOffsetFor(heroId), size)
+  heroPortraitPixelCache.set(cacheKey, baked)
+  return baked
+}
+
+function pixelsToCanvas(portrait: PortraitPixels): HTMLCanvasElement | undefined {
+  if (typeof document === 'undefined') return undefined
+  const canvas = document.createElement('canvas')
+  canvas.width = portrait.size
+  canvas.height = portrait.size
+  const ctx = canvas.getContext('2d')
+  if (ctx && typeof ImageData !== 'undefined') {
+    ctx.putImageData(new ImageData(portrait.pixels, portrait.size, portrait.size), 0, 0)
+  }
+  return canvas
+}
+
+export interface PortraitStore {
+  /** Pre-baked baseline portraits keyed by heroId / enemyId (empty when running headless without DOM). */
+  readonly base: Record<string, HTMLCanvasElement>
+  /** Retrieve a baseline portrait canvas by hero/enemy id. */
+  getBase(id: string): HTMLCanvasElement | undefined
+  /** Lazily bake & cache a loadout-aware 3D hero bust portrait canvas (returns undefined headless). */
+  getHero(heroId: HeroClassId, loadout?: HeroVisualLoadout): HTMLCanvasElement | undefined
+  /** Lazily bake & cache DOM-free portrait pixels for a hero loadout (works headless & in browser). */
+  getHeroPixels(heroId: HeroClassId, loadout?: HeroVisualLoadout): PortraitPixels
+  /** Canonical cache key for a hero loadout. */
+  getKey(heroId: HeroClassId, loadout?: HeroVisualLoadout): string
+  /** Number of cached canvas portraits. */
+  readonly cacheSize: number
+}
+
+/** Create a lazy loadout-aware portrait store with clean headless fallback when no DOM canvas is available. */
+export function createPortraitStore(size = 96): PortraitStore {
+  const base = bakePortraitCanvases()
+  const canvasCache = new Map<string, HTMLCanvasElement>()
+  for (const [k, canvas] of Object.entries(base)) canvasCache.set(k, canvas)
+
+  return {
+    base,
+    getBase(id: string) {
+      return canvasCache.get(id) ?? base[id]
+    },
+    getHero(heroId: HeroClassId, loadout?: HeroVisualLoadout) {
+      const key = heroPortraitKey(heroId, loadout)
+      const hit = canvasCache.get(key)
+      if (hit) return hit
+      if (typeof document === 'undefined') return undefined
+      const pixels = getHeroPortraitPixels(heroId, loadout, size)
+      const canvas = pixelsToCanvas(pixels)
+      if (canvas) canvasCache.set(key, canvas)
+      return canvas ?? base[heroId]
+    },
+    getHeroPixels(heroId: HeroClassId, loadout?: HeroVisualLoadout) {
+      return getHeroPortraitPixels(heroId, loadout, size)
+    },
+    getKey: heroPortraitKey,
+    get cacheSize() {
+      return canvasCache.size
+    }
+  }
+}
+
 /** Wrap DOM-free portrait pixels into canvases for the Canvas UI (empty outside the browser). */
 export function bakePortraitCanvases(): Record<string, HTMLCanvasElement> {
   const out: Record<string, HTMLCanvasElement> = {}
   if (typeof document === 'undefined') return out
-  for (const [key, { size, pixels }] of Object.entries(bakePortraitPixels())) {
-    const canvas = document.createElement('canvas')
-    canvas.width = size
-    canvas.height = size
-    const ctx = canvas.getContext('2d')
-    if (ctx) ctx.putImageData(new ImageData(pixels, size, size), 0, 0)
-    out[key] = canvas
+  for (const [key, portrait] of Object.entries(bakePortraitPixels())) {
+    const canvas = pixelsToCanvas(portrait)
+    if (canvas) out[key] = canvas
   }
   return out
 }
@@ -172,7 +251,7 @@ const ENEMY_IDS: readonly EnemyArchetypeId[] = [
 export function bakePortraitPixels(): Record<string, PortraitPixels> {
   const out: Record<string, PortraitPixels> = {}
   for (const id of HERO_IDS) {
-    out[id] = bakeRigPortrait(HERO_RIGS[id], stanceOffsetFor(id))
+    out[id] = getHeroPortraitPixels(id)
   }
   for (const id of ENEMY_IDS) {
     out[id] = bakeRigPortrait(ENEMY_RIGS[id], stanceOffsetFor(undefined, id))

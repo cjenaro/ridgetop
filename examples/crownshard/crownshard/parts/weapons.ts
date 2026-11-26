@@ -44,6 +44,15 @@ const C_DARK_STEEL: Color = [0.32, 0.35, 0.44, 1]
 const C_BRIGHT_STEEL: Color = [0.80, 0.85, 0.91, 1]
 const C_DARK_WOOD: Color = [0.36, 0.22, 0.15, 1]
 const C_BOW_WOOD: Color = [0.64, 0.40, 0.21, 1]
+const C_YEW_GOLD: Color = [0.78, 0.54, 0.24, 1]
+const C_FOREST_GREEN: Color = [0.22, 0.58, 0.36, 1]
+const C_EMBER_CORE: Color = [1.0, 0.52, 0.14, 1]
+const C_EMBER_TIP: Color = [1.0, 0.88, 0.38, 1]
+const C_BRONZE: Color = [0.76, 0.48, 0.26, 1]
+const C_IRON_STEEL: Color = [0.68, 0.75, 0.82, 1]
+const C_IRON_GUARD: Color = [0.36, 0.42, 0.50, 1]
+const C_DRAGON_AMETHYST: Color = [0.84, 0.42, 1.0, 1]
+const C_DRAGON_DARK: Color = [0.24, 0.18, 0.32, 1]
 
 /**
  * Bake a local scale, rotation, and translation directly into a mesh so multi-part
@@ -1320,8 +1329,557 @@ function getEclipseScepterMeshes(): EclipseScepterMeshes {
   return cachedEclipseScepter
 }
 
+interface EquipmentWeaponMeshes {
+  // Iron Broadsword (Vanguard notched arming sword)
+  readonly ironGrip: Mesh
+  readonly ironPommel: Mesh
+  readonly ironGuard: Mesh
+  readonly ironBlade: Mesh
+  readonly ironEdge: Mesh
+  // Yew Longbow + Hunting Arrow
+  readonly yewBowLimbs: Mesh
+  readonly yewBowGrip: Mesh
+  readonly yewBowTips: Mesh
+  readonly yewBowString: Mesh
+  readonly yewArrowShaft: Mesh
+  readonly yewArrowFletch: Mesh
+  readonly yewArrowHead: Mesh
+  // Ember Scepter
+  readonly emberShaft: Mesh
+  readonly emberGrip: Mesh
+  readonly emberBrazier: Mesh
+  readonly emberFlame: Mesh
+  readonly emberSpark: Mesh
+  // Sunsteel Blade
+  readonly sunsteelGrip: Mesh
+  readonly sunsteelGuard: Mesh
+  readonly sunsteelBlade: Mesh
+  readonly sunsteelRails: Mesh
+  readonly sunsteelGem: Mesh
+  // Frostbite Staff
+  readonly frostbiteShaft: Mesh
+  readonly frostbiteGrip: Mesh
+  readonly frostbiteHorns: Mesh
+  readonly frostbiteIcicles: Mesh
+  readonly frostbiteStar: Mesh
+  // Dragonfang Halberd
+  readonly halberdHaft: Mesh
+  readonly halberdWrap: Mesh
+  readonly halberdCollar: Mesh
+  readonly halberdBlade: Mesh
+  readonly halberdEdge: Mesh
+  readonly halberdGem: Mesh
+  // Solis Crownblade
+  readonly crownGrip: Mesh
+  readonly crownGuard: Mesh
+  readonly crownWings: Mesh
+  readonly crownBlade: Mesh
+  readonly crownCore: Mesh
+  readonly crownJewel: Mesh
+  // Aegis of Dawn Shield
+  readonly aegisRim: Mesh
+  readonly aegisField: Mesh
+  readonly aegisRays: Mesh
+  readonly aegisCore: Mesh
+}
+
+let cachedEquipWeapons: EquipmentWeaponMeshes | undefined
+
+function getEquipmentWeaponMeshes(): EquipmentWeaponMeshes {
+  if (cachedEquipWeapons) return cachedEquipWeapons
+
+  // --- A. Iron Broadsword (heavy riveted Vanguard arming sword) ---
+  const ironGrip = sculptLoft([
+    { y: -0.092, rx: 0.025, rz: 0.031 },
+    { y: 0.000, rx: 0.028, rz: 0.035 },
+    { y: 0.092, rx: 0.026, rz: 0.032 }
+  ], { sides: 6, aoStrength: 0.16, aoGradient: 0.08 })
+
+  const ironPommel = bakeVertexAO(
+    transformMesh(bevelBox(0.24), [0, -0.128, 0], [0, Math.PI * 0.25, 0], [0.068, 0.068, 0.072]),
+    { strength: 0.15, verticalGradient: 0.08 }
+  )
+
+  const ironGuard = mergeMeshes([
+    extrudeYZ([
+      [-0.168, 0.105], [-0.158, 0.145], [-0.056, 0.140], [0, 0.162],
+      [0.056, 0.140], [0.158, 0.145], [0.168, 0.105], [0.072, 0.086],
+      [-0.072, 0.086]
+    ], 0.060, 0.16),
+    transformMesh(octahedron, [0, 0.124, 0.135], ZERO_ROT, [0.032, 0.024, 0.024]),
+    transformMesh(octahedron, [0, 0.124, -0.135], ZERO_ROT, [0.032, 0.024, 0.024])
+  ])
+
+  const ironBlade = extrudeYZ([
+    [-0.074, 0.148], [-0.070, 0.560], [-0.054, 0.720], [0, 0.845],
+    [0.054, 0.720], [0.070, 0.560], [0.074, 0.148]
+  ], 0.034, 0.16)
+
+  const ironEdge = diamondBladeLoft([
+    [0.152, 0.022, 0.080],
+    [0.560, 0.020, 0.076],
+    [0.720, 0.016, 0.060],
+    [0.855, 0.004, 0.005]
+  ], 0.10)
+
+  // --- B. Yew Longbow + Hunting Arrow ---
+  const yewBowLimbs = bakeVertexAO(
+    tubeMesh(
+      [
+        [0, -0.42, -0.120],
+        [0, -0.28, -0.028],
+        [0, -0.14, 0.018],
+        [0, 0.00, 0.022],
+        [0, 0.14, 0.018],
+        [0, 0.30, -0.028],
+        [0, 0.46, -0.120]
+      ],
+      [0.020, 0.027, 0.033, 0.034, 0.033, 0.027, 0.020],
+      6
+    ),
+    { strength: 0.16, verticalGradient: 0.08 }
+  )
+
+  const yewBowGrip = bakeVertexAO(
+    mergeMeshes([
+      sculptLoft([
+        { y: -0.095, rx: 0.037, rz: 0.041, zOffset: 0.020 },
+        { y: 0.000, rx: 0.040, rz: 0.044, zOffset: 0.022 },
+        { y: 0.095, rx: 0.037, rz: 0.041, zOffset: 0.020 }
+      ], { sides: 6 }),
+      // Upper and lower emerald leather limb bindings
+      sculptLoft([
+        { y: 0.220, rx: 0.035, rz: 0.035, zOffset: -0.008 },
+        { y: 0.265, rx: 0.034, rz: 0.034, zOffset: -0.018 }
+      ], { sides: 6 }),
+      sculptLoft([
+        { y: -0.265, rx: 0.034, rz: 0.034, zOffset: -0.018 },
+        { y: -0.220, rx: 0.035, rz: 0.035, zOffset: -0.008 }
+      ], { sides: 6 })
+    ]),
+    { strength: 0.15, verticalGradient: 0.08 }
+  )
+
+  const yewBowTips = bakeVertexAO(
+    mergeMeshes([
+      tubeMesh(
+        [[0, 0.44, -0.108], [0, 0.515, -0.146], [0, 0.575, -0.096]],
+        [0.024, 0.019, 0.010],
+        6
+      ),
+      tubeMesh(
+        [[0, -0.40, -0.108], [0, -0.470, -0.142], [0, -0.515, -0.096]],
+        [0.024, 0.019, 0.010],
+        6
+      )
+    ]),
+    { strength: 0.14, verticalGradient: 0.06 }
+  )
+
+  const yewBowString = tubeMesh(
+    [[0, -0.495, -0.115], [0, 0.550, -0.115]],
+    [0.008, 0.008],
+    4
+  )
+
+  const yewArrowShaft = sculptLoft([
+    { y: -0.24, rx: 0.018, rz: 0.018 },
+    { y: 0.48, rx: 0.018, rz: 0.018 }
+  ], { sides: 6, aoStrength: 0.14, aoGradient: 0.06 })
+
+  const yewVane = extrudeMesh([
+    [0.014, -0.252], [0.096, -0.270], [0.088, -0.098], [0.014, -0.052]
+  ], 0.015)
+  const yewArrowFletch = bakeVertexAO(
+    mergeMeshes([
+      transformMesh(yewVane, [0, 0, 0], [0, 0, 0]),
+      transformMesh(yewVane, [0, 0, 0], [0, (Math.PI * 2) / 3, 0]),
+      transformMesh(yewVane, [0, 0, 0], [0, (Math.PI * 4) / 3, 0])
+    ]),
+    { strength: 0.12, verticalGradient: 0.06 }
+  )
+
+  const yewArrowHead = diamondBladeLoft([
+    [0.455, 0.024, 0.062],
+    [0.495, 0.030, 0.078],
+    [0.675, 0.004, 0.004]
+  ], 0.14)
+
+  // --- C. Ember Scepter (brazier scepter cradling a blazing flame core) ---
+  const emberShaft = sculptLoft([
+    { y: -0.34, rx: 0.024, rz: 0.024 },
+    { y: -0.06, rx: 0.028, rz: 0.028 },
+    { y: 0.30, rx: 0.032, rz: 0.032 },
+    { y: 0.52, rx: 0.044, rz: 0.044 }
+  ], { sides: 6, aoStrength: 0.18, aoGradient: 0.10 })
+
+  const emberGrip = sculptLoft([
+    { y: -0.092, rx: 0.034, rz: 0.034 },
+    { y: 0.000, rx: 0.037, rz: 0.037 },
+    { y: 0.092, rx: 0.034, rz: 0.034 }
+  ], { sides: 6, aoStrength: 0.16, aoGradient: 0.08 })
+
+  const brazierProng = tubeMesh(
+    [
+      [0.046, 0.55, 0],
+      [0.124, 0.64, 0],
+      [0.132, 0.77, 0],
+      [0.092, 0.87, 0]
+    ],
+    [0.024, 0.022, 0.017, 0.010],
+    5
+  )
+  const emberBrazier = bakeVertexAO(
+    mergeMeshes([
+      // Butt bronze cap
+      sculptLoft([
+        { y: -0.395, rx: 0.014, rz: 0.014 },
+        { y: -0.340, rx: 0.036, rz: 0.036 },
+        { y: -0.305, rx: 0.030, rz: 0.030 }
+      ], { sides: 6 }),
+      // Flared brazier bowl
+      sculptLoft([
+        { y: 0.49, rx: 0.046, rz: 0.046 },
+        { y: 0.56, rx: 0.088, rz: 0.088 },
+        { y: 0.62, rx: 0.072, rz: 0.072 }
+      ], { sides: 8 }),
+      // 4 curved bronze flame-cage ribs
+      brazierProng,
+      transformMesh(brazierProng, [0, 0, 0], [0, Math.PI * 0.5, 0]),
+      transformMesh(brazierProng, [0, 0, 0], [0, Math.PI, 0]),
+      transformMesh(brazierProng, [0, 0, 0], [0, Math.PI * 1.5, 0]),
+      // Mid-cage decorative ring
+      transformMesh(ringTube(0.118, 0.014, 10, 4), [0, 0.69, 0])
+    ]),
+    { strength: 0.16, verticalGradient: 0.08 }
+  )
+
+  const emberFlame = sculptLoft([
+    { y: 0.60, rx: 0.028, rz: 0.028 },
+    { y: 0.70, rx: 0.082, rz: 0.082 },
+    { y: 0.82, rx: 0.056, rz: 0.056, zOffset: 0.010 },
+    { y: 0.96, rx: 0.008, rz: 0.008, zOffset: 0.016 }
+  ], { sides: 6, aoStrength: 0.04, aoGradient: 0.02 })
+
+  const emberSpark = mergeMeshes([
+    transformMesh(octahedron, [0, 1.03, 0.010], [0, Math.PI * 0.25, 0], [0.038, 0.056, 0.038]),
+    transformMesh(octahedron, [0.088, 0.90, 0], ZERO_ROT, [0.022, 0.030, 0.022]),
+    transformMesh(octahedron, [-0.084, 0.88, 0.02], ZERO_ROT, [0.020, 0.028, 0.020])
+  ])
+
+  // --- D. Sunsteel Blade (gleaming crescent-guard solar longsword) ---
+  const sunsteelGrip = sculptLoft([
+    { y: -0.095, rx: 0.026, rz: 0.031 },
+    { y: 0.000, rx: 0.029, rz: 0.035 },
+    { y: 0.095, rx: 0.027, rz: 0.032 }
+  ], { sides: 6, aoStrength: 0.16, aoGradient: 0.08 })
+
+  const sunsteelGuard = mergeMeshes([
+    // Ring pommel
+    transformMesh(ringTube(0.042, 0.016, 10, 5), [0, -0.148, 0], [0, 0, Math.PI * 0.5]),
+    // Sweeping crescent sunburst crossguard
+    extrudeYZ([
+      [-0.215, 0.200], [-0.162, 0.124], [-0.068, 0.092], [0.068, 0.092],
+      [0.162, 0.124], [0.215, 0.200], [0.152, 0.184], [0.072, 0.148],
+      [0, 0.186], [-0.072, 0.148], [-0.152, 0.184]
+    ], 0.062, 0.16)
+  ])
+
+  const sunsteelBlade = diamondBladeLoft([
+    [0.162, 0.030, 0.082],
+    [0.480, 0.027, 0.076],
+    [0.730, 0.022, 0.064],
+    [0.910, 0.004, 0.005]
+  ], 0.14)
+
+  const sunsteelRails = mergeMeshes([
+    sculptLoft([
+      { y: 0.180, rx: 0.036, rz: 0.018, zOffset: 0.028 },
+      { y: 0.650, rx: 0.030, rz: 0.014, zOffset: 0.022 },
+      { y: 0.720, rx: 0.012, rz: 0.006, zOffset: 0.014 }
+    ], { sides: 4, aoStrength: 0.08 }),
+    sculptLoft([
+      { y: 0.180, rx: 0.036, rz: 0.018, zOffset: -0.028 },
+      { y: 0.650, rx: 0.030, rz: 0.014, zOffset: -0.022 },
+      { y: 0.720, rx: 0.012, rz: 0.006, zOffset: -0.014 }
+    ], { sides: 4, aoStrength: 0.08 })
+  ])
+
+  const sunsteelGem = transformMesh(octahedron, [0, 0.136, 0], ZERO_ROT, [0.048, 0.056, 0.056])
+
+  // --- E. Frostbite Staff (twin curling glacial crescent horns + hovering ice star) ---
+  const frostbiteShaft = bakeVertexAO(
+    mergeMeshes([
+      sculptLoft([
+        { y: -0.405, rx: 0.016, rz: 0.016 },
+        { y: -0.335, rx: 0.032, rz: 0.032 },
+        { y: 0.280, rx: 0.031, rz: 0.031 },
+        { y: 0.590, rx: 0.044, rz: 0.044 }
+      ], { sides: 6 }),
+      sculptLoft([
+        { y: 0.56, rx: 0.058, rz: 0.058 },
+        { y: 0.62, rx: 0.074, rz: 0.074 },
+        { y: 0.67, rx: 0.052, rz: 0.052 }
+      ], { sides: 6 })
+    ]),
+    { strength: 0.16, verticalGradient: 0.10 }
+  )
+
+  const frostbiteGrip = sculptLoft([
+    { y: -0.095, rx: 0.036, rz: 0.036 },
+    { y: 0.000, rx: 0.039, rz: 0.039 },
+    { y: 0.095, rx: 0.036, rz: 0.036 }
+  ], { sides: 6, aoStrength: 0.14, aoGradient: 0.08 })
+
+  const frostHornL = tubeMesh(
+    [
+      [0, 0.63, 0.040],
+      [0, 0.72, 0.148],
+      [0, 0.88, 0.188],
+      [0, 1.04, 0.132],
+      [0, 1.12, 0.046]
+    ],
+    [0.030, 0.028, 0.024, 0.018, 0.008],
+    5
+  )
+  const frostHornR = tubeMesh(
+    [
+      [0, 0.63, -0.040],
+      [0, 0.72, -0.148],
+      [0, 0.88, -0.188],
+      [0, 1.04, -0.132],
+      [0, 1.12, -0.046]
+    ],
+    [0.030, 0.028, 0.024, 0.018, 0.008],
+    5
+  )
+  const frostbiteHorns = bakeVertexAO(mergeMeshes([frostHornL, frostHornR]), { strength: 0.14, verticalGradient: 0.08 })
+
+  const icicleTooth = sculptLoft([
+    { y: 0.44, rx: 0.005, rz: 0.005 },
+    { y: 0.56, rx: 0.022, rz: 0.022 },
+    { y: 0.62, rx: 0.026, rz: 0.026 }
+  ], { sides: 5 })
+  const frostbiteIcicles = bakeVertexAO(
+    mergeMeshes([
+      transformMesh(icicleTooth, [0.056, 0, 0]),
+      transformMesh(icicleTooth, [-0.056, 0, 0]),
+      transformMesh(icicleTooth, [0, 0, 0.056]),
+      transformMesh(icicleTooth, [0, 0, -0.056])
+    ]),
+    { strength: 0.12, verticalGradient: 0.06 }
+  )
+
+  const frostbiteStar = mergeMeshes([
+    transformMesh(octahedron, [0, 0.88, 0], ZERO_ROT, [0.064, 0.134, 0.064]),
+    transformMesh(octahedron, [0, 0.88, 0], ZERO_ROT, [0.064, 0.042, 0.130]),
+    transformMesh(octahedron, [0, 0.88, 0], ZERO_ROT, [0.112, 0.042, 0.042])
+  ])
+
+  // --- F. Dragonfang Halberd (long polearm with axe blade, rear dragonfang beak & spear spike) ---
+  const halberdHaft = sculptLoft([
+    { y: -0.39, rx: 0.028, rz: 0.028 },
+    { y: 0.15, rx: 0.031, rz: 0.031 },
+    { y: 0.72, rx: 0.034, rz: 0.034 }
+  ], { sides: 6, aoStrength: 0.18, aoGradient: 0.10 })
+
+  const halberdWrap = bakeVertexAO(
+    mergeMeshes([
+      sculptLoft([
+        { y: -0.095, rx: 0.037, rz: 0.037 },
+        { y: 0.000, rx: 0.040, rz: 0.040 },
+        { y: 0.095, rx: 0.037, rz: 0.037 }
+      ], { sides: 6 }),
+      sculptLoft([
+        { y: 0.36, rx: 0.038, rz: 0.038 },
+        { y: 0.44, rx: 0.040, rz: 0.040 }
+      ], { sides: 6 })
+    ]),
+    { strength: 0.16, verticalGradient: 0.08 }
+  )
+
+  const halberdCollar = bakeVertexAO(
+    mergeMeshes([
+      // Butt counterweight spike
+      sculptLoft([
+        { y: -0.415, rx: 0.010, rz: 0.010 },
+        { y: -0.375, rx: 0.038, rz: 0.038 },
+        { y: -0.340, rx: 0.034, rz: 0.034 }
+      ], { sides: 6 }),
+      // Ornate halberd head socket
+      transformMesh(bevelBox(0.16), [0, 0.675, 0], ZERO_ROT, [0.088, 0.245, 0.112]),
+      // Neck collar ring
+      sculptLoft([
+        { y: 0.51, rx: 0.048, rz: 0.048 },
+        { y: 0.55, rx: 0.056, rz: 0.056 }
+      ], { sides: 6 })
+    ]),
+    { strength: 0.16, verticalGradient: 0.08 }
+  )
+
+  // Sweeping curved halberd axe-blade (+Z) + wicked hooked dragonfang rear beak (-Z) + spearhead (+Y)
+  const halberdBlade = mergeMeshes([
+    extrudeYZ([
+      [0.044, 0.565], [0.195, 0.475], [0.295, 0.540], [0.315, 0.680],
+      [0.265, 0.825], [0.155, 0.840], [0.044, 0.765]
+    ], 0.044, 0.16),
+    extrudeYZ([
+      [-0.044, 0.625], [-0.155, 0.605], [-0.255, 0.555], [-0.220, 0.675],
+      [-0.140, 0.755], [-0.044, 0.745]
+    ], 0.040, 0.16),
+    diamondBladeLoft([
+      [0.765, 0.028, 0.068],
+      [0.900, 0.022, 0.054],
+      [1.120, 0.004, 0.005]
+    ], 0.14)
+  ])
+
+  const halberdEdge = mergeMeshes([
+    extrudeYZ([
+      [0.245, 0.505], [0.308, 0.542], [0.334, 0.680], [0.282, 0.834],
+      [0.235, 0.818], [0.286, 0.680], [0.270, 0.556]
+    ], 0.024, 0.08),
+    extrudeYZ([
+      [-0.195, 0.585], [-0.272, 0.542], [-0.232, 0.680], [-0.185, 0.670]
+    ], 0.022, 0.08)
+  ])
+
+  const halberdGem = mergeMeshes([
+    transformMesh(octahedron, [0, 0.680, 0], ZERO_ROT, [0.066, 0.082, 0.072]),
+    transformMesh(octahedron, [0, 0.835, 0], ZERO_ROT, [0.036, 0.056, 0.036])
+  ])
+
+  // --- G. Solis Crownblade (mythic sovereign greatsword with 3-prong crown guard & blazing split blade) ---
+  const crownGrip = sculptLoft([
+    { y: -0.118, rx: 0.028, rz: 0.034 },
+    { y: 0.000, rx: 0.031, rz: 0.038 },
+    { y: 0.118, rx: 0.029, rz: 0.035 }
+  ], { sides: 6, aoStrength: 0.16, aoGradient: 0.08 })
+
+  const crownGuard = mergeMeshes([
+    // Crown pommel
+    sculptLoft([
+      { y: -0.205, rx: 0.014, rz: 0.016 },
+      { y: -0.162, rx: 0.060, rz: 0.066 },
+      { y: -0.114, rx: 0.036, rz: 0.040 }
+    ], { sides: 6, aoStrength: 0.14 }),
+    // Grand three-pronged solar crown crossguard
+    extrudeYZ([
+      [-0.285, 0.285], [-0.220, 0.300], [-0.140, 0.210], [-0.095, 0.268],
+      [0, 0.228], [0.095, 0.268], [0.140, 0.210], [0.220, 0.300],
+      [0.285, 0.285], [0.205, 0.140], [0.078, 0.102], [-0.078, 0.102], [-0.205, 0.140]
+    ], 0.074, 0.16)
+  ])
+
+  // Swept golden wing flanges rising along the lower blade
+  const crownWings = mergeMeshes([
+    extrudeYZ([
+      [0.085, 0.220], [0.175, 0.340], [0.145, 0.455], [0.088, 0.365]
+    ], 0.044, 0.12),
+    extrudeYZ([
+      [-0.085, 0.220], [-0.175, 0.340], [-0.145, 0.455], [-0.088, 0.365]
+    ], 0.044, 0.12)
+  ])
+
+  const crownBlade = diamondBladeLoft([
+    [0.195, 0.034, 0.112],
+    [0.440, 0.034, 0.106],
+    [0.820, 0.028, 0.094],
+    [1.060, 0.005, 0.006]
+  ], 0.14)
+
+  const crownCore = mergeMeshes([
+    diamondBladeLoft([
+      [0.220, 0.044, 0.048],
+      [0.835, 0.038, 0.038],
+      [0.980, 0.010, 0.008]
+    ], 0),
+    transformMesh(octahedron, [0, 0.42, 0], ZERO_ROT, [0.052, 0.068, 0.058]),
+    transformMesh(octahedron, [0, 0.66, 0], ZERO_ROT, [0.048, 0.062, 0.052])
+  ])
+
+  const crownJewel = mergeMeshes([
+    transformMesh(octahedron, [0, 0.168, 0], ZERO_ROT, [0.064, 0.076, 0.074]),
+    transformMesh(octahedron, [0, -0.162, 0], ZERO_ROT, [0.042, 0.046, 0.046])
+  ])
+
+  // --- H. Aegis of Dawn Shield (radiant golden sunburst tower shield) ---
+  const aegisOuterPoly: readonly (readonly [number, number])[] = [
+    [0, -0.345], [0.155, -0.258], [0.225, -0.085], [0.236, 0.225],
+    [0.158, 0.318], [0, 0.352], [-0.158, 0.318], [-0.236, 0.225],
+    [-0.225, -0.085], [-0.155, -0.258]
+  ]
+  const aegisInnerPoly: readonly (readonly [number, number])[] = [
+    [0, -0.288], [0.122, -0.212], [0.180, -0.068], [0.188, 0.186],
+    [0.124, 0.264], [0, 0.292], [-0.124, 0.264], [-0.188, 0.186],
+    [-0.180, -0.068], [-0.122, -0.212]
+  ]
+  const aegisRim = bakeVertexAO(
+    transformMesh(extrudeMesh(aegisOuterPoly, 0.050), [0, 0.055, 0.092]),
+    { strength: 0.16, verticalGradient: 0.10 }
+  )
+  const aegisField = bakeVertexAO(
+    transformMesh(extrudeMesh(aegisInnerPoly, 0.026), [0, 0.055, 0.112]),
+    { strength: 0.12, verticalGradient: 0.06 }
+  )
+  const raySpike = extrudeMesh([[0.036, -0.018], [0.152, 0], [0.036, 0.018]], 0.022)
+  const rayParts: Mesh[] = []
+  for (let i = 0; i < 8; i++) {
+    rayParts.push(transformMesh(raySpike, [0, 0.068, 0.132], [0, 0, (i / 8) * Math.PI * 2]))
+  }
+  const aegisRays = bakeVertexAO(mergeMeshes(rayParts), { strength: 0.10, verticalGradient: 0.04 })
+  const aegisCore = transformMesh(octahedron, [0, 0.068, 0.148], ZERO_ROT, [0.058, 0.066, 0.032])
+
+  cachedEquipWeapons = {
+    ironGrip,
+    ironPommel,
+    ironGuard,
+    ironBlade,
+    ironEdge,
+    yewBowLimbs,
+    yewBowGrip,
+    yewBowTips,
+    yewBowString,
+    yewArrowShaft,
+    yewArrowFletch,
+    yewArrowHead,
+    emberShaft,
+    emberGrip,
+    emberBrazier,
+    emberFlame,
+    emberSpark,
+    sunsteelGrip,
+    sunsteelGuard,
+    sunsteelBlade,
+    sunsteelRails,
+    sunsteelGem,
+    frostbiteShaft,
+    frostbiteGrip,
+    frostbiteHorns,
+    frostbiteIcicles,
+    frostbiteStar,
+    halberdHaft,
+    halberdWrap,
+    halberdCollar,
+    halberdBlade,
+    halberdEdge,
+    halberdGem,
+    crownGrip,
+    crownGuard,
+    crownWings,
+    crownBlade,
+    crownCore,
+    crownJewel,
+    aegisRim,
+    aegisField,
+    aegisRays,
+    aegisCore
+  }
+  return cachedEquipWeapons
+}
+
 /**
- * Register all Crownshard main-hand weapons (11) and off-hand shields & relics (8)
+ * Register all Crownshard main-hand weapons (18) and off-hand shields & relics (10)
  * onto a Ridgetop `CharacterBuilder`.
  */
 export function registerCrownshardWeapons(builder: CharacterBuilder): void {
@@ -1585,5 +2143,114 @@ export function registerCrownshardWeapons(builder: CharacterBuilder): void {
       { name: 'offhand_dagger_blade', mesh: m.offDaggerBlade, color: darkBlade },
       { name: 'offhand_dagger_edge', mesh: m.offDaggerEdge, color: brightEdge }
     ], [0.98, -0.16, 0.08])
+  })
+
+  // =========================================================================
+  // BESPOKE EQUIPMENT WEAPONS & OFF-HANDS (1:1 for every EquipmentSpec weapon)
+  // =========================================================================
+
+  builder.registerPart('mainHand', 'weapon_iron_broadsword', (palette: CharacterPalette) => {
+    const m = getEquipmentWeaponMeshes()
+    const darkGrip = mixColor(palette.leather, C_DARK_WOOD, 0.55)
+    return orientParts([
+      { name: 'iron_sword_grip', mesh: m.ironGrip, color: darkGrip },
+      { name: 'iron_sword_pommel', mesh: m.ironPommel, color: C_IRON_GUARD },
+      { name: 'iron_sword_guard', mesh: m.ironGuard, color: C_IRON_GUARD },
+      { name: 'iron_sword_blade', mesh: m.ironBlade, color: C_IRON_STEEL },
+      { name: 'iron_sword_edge', mesh: m.ironEdge, color: C_BRIGHT_STEEL }
+    ], [1.04, 0.10, -0.08])
+  })
+
+  builder.registerPart('mainHand', 'weapon_yew_arrow', () => {
+    const m = getEquipmentWeaponMeshes()
+    return orientParts([
+      { name: 'yew_arrow_shaft', mesh: m.yewArrowShaft, color: C_YEW_GOLD },
+      { name: 'yew_arrow_fletch', mesh: m.yewArrowFletch, color: C_FOREST_GREEN },
+      { name: 'yew_arrow_head', mesh: m.yewArrowHead, color: C_BRIGHT_STEEL }
+    ], [1.22, 0.14, -0.06])
+  })
+
+  builder.registerPart('offHand', 'offhand_bow_yew', () => {
+    const m = getEquipmentWeaponMeshes()
+    return orientParts([
+      { name: 'yew_bow_limbs', mesh: m.yewBowLimbs, color: C_YEW_GOLD },
+      { name: 'yew_bow_grip', mesh: m.yewBowGrip, color: C_FOREST_GREEN },
+      { name: 'yew_bow_tips', mesh: m.yewBowTips, color: C_HORN_IVORY },
+      { name: 'yew_bow_string', mesh: m.yewBowString, color: C_PARCHMENT }
+    ], [0.12, -0.22, 0.22], [-0.012, 0.010, 0.020])
+  })
+
+  builder.registerPart('mainHand', 'weapon_ember_scepter', (palette: CharacterPalette) => {
+    const m = getEquipmentWeaponMeshes()
+    const charredWood = mixColor(palette.leather, [0.22, 0.12, 0.10, 1], 0.65)
+    return orientParts([
+      { name: 'ember_scepter_shaft', mesh: m.emberShaft, color: charredWood },
+      { name: 'ember_scepter_grip', mesh: m.emberGrip, color: C_CRIMSON_DARK },
+      { name: 'ember_scepter_brazier', mesh: m.emberBrazier, color: C_BRONZE },
+      { name: 'ember_scepter_flame', mesh: m.emberFlame, color: C_EMBER_CORE, unlit: 0.96 },
+      { name: 'ember_scepter_spark', mesh: m.emberSpark, color: C_EMBER_TIP, unlit: 0.98 }
+    ], [0.22, 0.06, -0.06])
+  })
+
+  builder.registerPart('mainHand', 'weapon_sunsteel_blade', (palette: CharacterPalette) => {
+    const m = getEquipmentWeaponMeshes()
+    const sunSteel = mixColor(C_BRIGHT_STEEL, C_SUN_GLOW, 0.25)
+    const grip = mixColor(palette.leather, C_CRIMSON, 0.35)
+    return orientParts([
+      { name: 'sunsteel_grip', mesh: m.sunsteelGrip, color: grip },
+      { name: 'sunsteel_guard', mesh: m.sunsteelGuard, color: C_SUN_GOLD },
+      { name: 'sunsteel_blade', mesh: m.sunsteelBlade, color: sunSteel },
+      { name: 'sunsteel_rails', mesh: m.sunsteelRails, color: C_SUN_GOLD },
+      { name: 'sunsteel_gem', mesh: m.sunsteelGem, color: C_SUN_GLOW, unlit: 0.92 }
+    ], [0.96, 0.10, -0.08])
+  })
+
+  builder.registerPart('mainHand', 'weapon_frostbite_staff', (palette: CharacterPalette) => {
+    const m = getEquipmentWeaponMeshes()
+    const shaft = mixColor(C_FROST_SHAFT, palette.metalDark, 0.35)
+    return orientParts([
+      { name: 'frostbite_shaft', mesh: m.frostbiteShaft, color: shaft },
+      { name: 'frostbite_grip', mesh: m.frostbiteGrip, color: C_PALADIN_COBALT },
+      { name: 'frostbite_horns', mesh: m.frostbiteHorns, color: C_FROST_ICE, unlit: 0.22 },
+      { name: 'frostbite_icicles', mesh: m.frostbiteIcicles, color: C_BRIGHT_STEEL, unlit: 0.26 },
+      { name: 'frostbite_star', mesh: m.frostbiteStar, color: C_FROST_GLOW, unlit: 0.96 }
+    ], [0.18, 0.04, -0.06])
+  })
+
+  builder.registerPart('mainHand', 'weapon_dragonfang_halberd', (palette: CharacterPalette) => {
+    const m = getEquipmentWeaponMeshes()
+    const haft = mixColor(C_DRAGON_DARK, palette.leather, 0.35)
+    return orientParts([
+      { name: 'dragonfang_haft', mesh: m.halberdHaft, color: haft },
+      { name: 'dragonfang_wrap', mesh: m.halberdWrap, color: C_CRIMSON_DARK },
+      { name: 'dragonfang_collar', mesh: m.halberdCollar, color: C_SUN_GOLD },
+      { name: 'dragonfang_blade', mesh: m.halberdBlade, color: C_DRAGON_DARK },
+      { name: 'dragonfang_edge', mesh: m.halberdEdge, color: C_BRIGHT_STEEL },
+      { name: 'dragonfang_gem', mesh: m.halberdGem, color: C_DRAGON_AMETHYST, unlit: 0.96 }
+    ], [0.34, 0.12, -0.08])
+  })
+
+  builder.registerPart('mainHand', 'weapon_solis_crownblade', () => {
+    const m = getEquipmentWeaponMeshes()
+    return orientParts([
+      { name: 'crownblade_grip', mesh: m.crownGrip, color: C_CRIMSON },
+      { name: 'crownblade_guard', mesh: m.crownGuard, color: C_SUN_GOLD },
+      { name: 'crownblade_wings', mesh: m.crownWings, color: shadeColor(C_SUN_GOLD, 0.12) },
+      { name: 'crownblade_blade', mesh: m.crownBlade, color: C_PALADIN_IVORY },
+      { name: 'crownblade_core', mesh: m.crownCore, color: C_SUN_GLOW, unlit: 0.98 },
+      { name: 'crownblade_jewel', mesh: m.crownJewel, color: C_SUN_GLOW, unlit: 0.98 }
+    ], [0.84, 0.12, -0.10])
+  })
+
+  builder.registerPart('offHand', 'shield_aegis_dawn', (palette: CharacterPalette) => {
+    const baseM = getWeaponMeshes()
+    const m = getEquipmentWeaponMeshes()
+    return orientParts([
+      { name: 'shield_aegis_grip', mesh: baseM.shieldGrip, color: palette.leather },
+      { name: 'shield_aegis_rim', mesh: m.aegisRim, color: C_SUN_GOLD },
+      { name: 'shield_aegis_field', mesh: m.aegisField, color: C_PALADIN_IVORY },
+      { name: 'shield_aegis_rays', mesh: m.aegisRays, color: shadeColor(C_SUN_GOLD, 0.10) },
+      { name: 'shield_aegis_core', mesh: m.aegisCore, color: C_SUN_GLOW, unlit: 0.96 }
+    ], [-0.05, -0.82, 0.04])
   })
 }
