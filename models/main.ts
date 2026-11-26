@@ -1,6 +1,8 @@
-import { color, createArtKit, createArtRecipe, createLowPolyRenderer, modelFromArtRecipe, multiply, orthographic, view } from 'ridgetop'
-import type { Backend, Color, InstanceBatch } from 'ridgetop'
+import { color, createArtKit, createArtRecipe, createGamePage, createLowPolyRenderer, modelFromArtRecipe, multiply, orthographic, view } from 'ridgetop'
+import type { Color, InstanceBatch } from 'ridgetop'
 import { createHeadland } from './headland.ts'
+
+const page = createGamePage()
 
 type Study = {
   title: string; category: string; description: string; batches: readonly InstanceBatch[]
@@ -9,13 +11,9 @@ type Study = {
 function element(id: string): HTMLElement
 function element<T extends HTMLElement>(id: string, type: new () => T): T
 function element<T extends HTMLElement>(id: string, type?: new () => T): HTMLElement {
-  const el = document.getElementById(id)
-  if (!el) throw new Error('Missing element #' + id)
+  const el = page.element(id)
   if (type && !(el instanceof type)) throw new Error('Unexpected element type for #' + id)
   return el
-}
-function parseBackend(value: string | null): Backend {
-  return value === 'webgpu' || value === 'webgl2' || value === 'canvas' || value === 'auto' ? value : 'auto'
 }
 const clamp = (n: number, min: number, max: number) => Math.max(min, Math.min(max, n))
 
@@ -31,9 +29,8 @@ async function start() {
   const orbit = element('orbit'), turn = element('turn', HTMLButtonElement)
   const choiceButtons = [...element('choices').querySelectorAll('button')]
   const zoomIn = element('zoom-in', HTMLButtonElement), zoomOut = element('zoom-out', HTMLButtonElement)
-  const params = new URLSearchParams(location.search)
   const renderer = await createLowPolyRenderer(element('model-canvas', HTMLCanvasElement), {
-    backend: parseBackend(params.get('renderer')), canvasDepth: true,
+    backend: page.requestedBackend(), canvasDepth: true,
     lighting: { direction: [-.55, .88, .62], ambient: .57 }
   })
   const studies = new Map<string, Study>([

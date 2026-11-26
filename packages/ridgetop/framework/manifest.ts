@@ -57,7 +57,7 @@ export const BROWSER_RUNTIME_MODULES: readonly string[] = Object.freeze([
   'index.js', 'rng.js', 'loop.js', 'renderer.js', 'room-client.js',
   'geometry.js', 'instances.js', 'low-poly.js', 'mesh-gpu.js', 'mesh-gl.js', 'mesh-canvas.js',
   'input.js', 'vehicle.js', 'page.js', 'platform.js', 'backup.js', 'audio.js', 'audio-assets.js', 'import-mesh.js',
-  'hud.js', 'perf.js', 'sprites.js', 'sprite-sheet.js', 'pixel-rig.js',
+  'perf.js', 'sprites.js', 'sprite-sheet.js', 'pixel-rig.js',
   'art.js', 'art-recipe.js', 'art-builder.js', 'character-builder.js', 'platformer.js', 'animation.js', 'physics3d.js',
   'ui.js', 'ui-layout.js', 'ui-canvas.js'
 ])
