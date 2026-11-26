@@ -1195,6 +1195,8 @@ export function restoreBattleState(state: GameState, snapshot: unknown): boolean
     moveTiles: [],
     targetTiles: [],
     moveAttackTiles: [],
+    moveUndo: null,
+    facingPicker: null,
     pendingAction: null,
     enemyDelay: valid.phase === 'enemy' ? Math.max(0.25, valid.enemyDelay) : 0,
     enemyActedThisTurn: valid.enemyActedThisTurn,
