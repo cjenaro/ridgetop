@@ -10,8 +10,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url'
 import { promisify } from 'node:util'
 import vm from 'node:vm'
 import { createArtKit, box, instances } from '../packages/ridgetop/framework/index.ts'
-import { boxNode, column, overlay } from '../packages/ridgetop/framework/ui-layout.ts'
-import { bakeIconPng, bakeMotifWav, encodeGlb, encodeWav, layoutToGodotTscn, packageGame, parsePackageArgs } from '../packages/ridgetop/framework/server.ts'
+import { bakeIconPng, bakeMotifWav, encodeGlb, encodeWav, packageGame, parsePackageArgs } from '../packages/ridgetop/framework/server.ts'
 import { createGame } from '../packages/ridgetop/tools/create-game.ts'
 
 const execFileAsync = promisify(execFile)
@@ -38,7 +37,7 @@ function parseGlb(buffer: Buffer) {
   return { json, binLength }
 }
 
-test('bakeIconPng, encodeGlb, bakeMotifWav, and layoutToGodotTscn produce valid binary/scene assets', () => {
+test('bakeIconPng, encodeGlb, and bakeMotifWav produce valid binary assets', () => {
   const kit = createArtKit()
   const group = kit.group()
   group.add('crystal', [0, 0, 0])
@@ -64,20 +63,6 @@ test('bakeIconPng, encodeGlb, bakeMotifWav, and layoutToGodotTscn produce valid 
   let peak = 0
   for (let i = 44; i + 1 < wav.length; i += 2) peak = Math.max(peak, Math.abs(wav.readInt16LE(i)))
   assert.ok(peak > 1000, 'Baked WAV should contain audible synth signal')
-
-  const tscn = layoutToGodotTscn(overlay({ id: 'root' }, [
-    column({ id: 'card', style: { anchor: 'center', width: 320, gap: 10 }, widget: { type: 'panel' } }, [
-      boxNode({ id: 'play', style: { width: 200, height: 42 }, widget: { type: 'button', label: 'Start' } }),
-      boxNode({ id: 'mute', style: { width: 200, height: 40 }, widget: { type: 'toggle', label: 'Sound', checked: true } })
-    ])
-  ]))
-  assert.ok(tscn.includes('[gd_scene load_steps=2 format=3]'))
-  assert.ok(tscn.includes('StyleBoxFlat_panel'))
-  assert.ok(tscn.includes('type="PanelContainer"'))
-  assert.ok(tscn.includes('type="VBoxContainer" parent="card"'))
-  assert.ok(tscn.includes('type="Button" parent="card/Content"'))
-  assert.ok(tscn.includes('text = "Start"'))
-  assert.ok(tscn.includes('type="CheckButton"'))
 })
 
 test('parsePackageArgs validates flags and supports web, steam, mobile, godot, and all', () => {
@@ -211,9 +196,22 @@ test('packageGame builds tree-shaken Web, Steam, Mobile, and Godot outputs for S
   assert.ok(uiTscn.includes('ridgetop_ui.gd'), 'Godot UI scene should render via custom Canvas UI script, not default Controls')
   await access(join(godotDir, 'scripts', 'ridgetop_ui.gd'))
   await access(join(godotDir, 'scripts', 'ridgetop_runtime.gd'))
-  await access(join(godotDir, 'scripts', 'main.gd'))
+  const signalDriftMainGd = await readFile(join(godotDir, 'scripts', 'main.gd'), 'utf8')
+  assert.ok(signalDriftMainGd.includes('racing/race.gd'), 'Signal Drift Godot export should use its project-supplied host script')
+  const godotReadme = await readFile(join(godotDir, 'README.md'), 'utf8')
+  assert.ok(godotReadme.includes('ridgetop_ui.gd'), 'Godot README should accurately describe ridgetop_ui.gd Canvas UI')
+  assert.ok(!godotReadme.includes('Layout SDK'), 'Godot README must not claim static Layout SDK .tscn generation')
   await access(join(godotDir, 'scripts', 'compiled', 'rt.gd'))
   await access(join(godotDir, 'scripts', 'compiled', 'racing', 'race.gd'))
+
+  // target: 'all' reuses the assembled web bundle cleanly across web, steam/www, and mobile/www
+  assert.equal(steamHtml, webHtml, 'steam/www/index.html should match web/index.html')
+  const mobileHtml = await readFile(join(mobileDir, 'www', 'index.html'), 'utf8')
+  assert.ok(mobileHtml.includes('ridgetop-mobile-bridge.js'), 'mobile/www/index.html should include mobile bridge script')
+  assert.ok(mobileHtml.includes('apple-mobile-web-app-capable'), 'mobile/www/index.html should include mobile meta tags')
+  const webVehicle = await readFile(join(webDir, 'framework', 'vehicle.js'), 'utf8')
+  assert.equal(await readFile(join(steamDir, 'www', 'framework', 'vehicle.js'), 'utf8'), webVehicle)
+  assert.equal(await readFile(join(mobileDir, 'www', 'framework', 'vehicle.js'), 'utf8'), webVehicle)
 })
 
 test('packageGame rewrites Beacon Run asset paths for offline native bundles', async t => {
@@ -296,15 +294,18 @@ test('generated create-game projects use pure Canvas UI, drop studio reviews/too
   assert.equal(typeof unregister, 'function')
   unregister()
 
-  // Godot export includes baked 3D models from the starter game
+  // Godot export includes baked 3D models and starter's project-owned godot-main.gd (not leaked into web/)
   const godotDir = join(projectDir, 'dist', 'packages', 'godot')
   await access(join(godotDir, 'assets', 'models', 'ranger.glb'))
   await access(join(godotDir, 'assets', 'models', 'crystal.glb'))
   await access(join(godotDir, 'assets', 'models', 'flower.glb'))
   await access(join(godotDir, 'scenes', 'ui.tscn'))
+  const starterMainGd = await readFile(join(godotDir, 'scripts', 'main.gd'), 'utf8')
+  assert.ok(starterMainGd.includes('_setup_grid_game'), 'Starter Godot export should use starter godot-main.gd host')
+  await assert.rejects(access(join(webDir, 'godot-main.gd')), 'godot-main.gd must not be copied into web bundle')
 })
 
-test('export-godot fixes Float32 accessor bounds, unlit PBR attenuation, WAV safety, layout anchors, and racing runtime', () => {
+test('binary-encoders fixes Float32 accessor bounds, unlit PBR attenuation, and WAV safety', () => {
   const batch = instances(box, 2)
   batch.add([0.123456789, 1.987654321, -0.333333333], [1, 2, 0.5], [0, 0, 0, 1], [1, 0.5, 0.25], 1)
   batch.add([2, 0, 1], [1, 1, 1], [0, 0, 0, 1], [0.2, 0.4, 0.8], 0)
@@ -338,21 +339,6 @@ test('export-godot fixes Float32 accessor bounds, unlit PBR attenuation, WAV saf
   assert.equal(safeWav.readInt16LE(48), -32767)
   const motifWav = bakeMotifWav([[0, 0.1, 0], [-100, 0.1, 0], [440, 0.1, 0, -5]])
   assert.equal(motifWav.subarray(0, 4).toString('ascii'), 'RIFF')
-
-  // Layout anchors (bottom, bottom-left, tuple inset, fractional offsets), newline escaping, and digit-prefixed deduplicated node names
-  const tscn = layoutToGodotTscn(overlay({ id: 'root' }, [
-    boxNode({ id: '1st', style: { anchor: 'bottom', width: 200, height: 40, inset: [12, 24] }, widget: { type: 'text', text: 'Line 1\nLine 2' } }),
-    boxNode({ id: '1st', style: { anchor: 'bottom-left', width: 100.5, height: 30, inset: [10.5, 30] }, widget: { type: 'text', text: 'B' } })
-  ]))
-  assert.ok(tscn.includes('name="_1st"'))
-  assert.ok(tscn.includes('name="_1st_2"'))
-  assert.ok(tscn.includes('anchors_preset = 7'))
-  assert.ok(tscn.includes('offset_bottom = -24.0'))
-  assert.ok(tscn.includes('text = "Line 1\\nLine 2"'))
-  assert.ok(tscn.includes('anchors_preset = 2'))
-  assert.ok(tscn.includes('offset_left = 10.5'))
-  assert.ok(!tscn.includes('10.5.0'))
-  assert.ok(tscn.includes('offset_bottom = -30.0'))
 })
 
 test('packager handles nested game subdirs, comment/template imports, scoped mobile clear, Electron hardening, and slug trimming', async t => {
@@ -649,4 +635,49 @@ registerTestingHooks({ snapshot: () => ({ ok: true }) })
   assert.equal(playerRes.outputs[0].files, 1)
   const playerHtml = await readFile(playerRes.outputs[0].playerPath!, 'utf8')
   assert.ok(playerHtml.includes('ridgetop-offline/framework/index.js'))
+})
+
+test('packageGame fails loudly when configured godotEntries fail to compile, while allowing projects without godotEntries', async t => {
+  const work = await mkdtemp(join(tmpdir(), 'ridgetop-godot-fail-'))
+  t.after(() => rm(work, { recursive: true, force: true }))
+
+  // 1. Broken configured godotEntries must fail loudly instead of silently emitting 0 scripts
+  const brokenDir = join(work, 'broken-godot')
+  await mkdir(brokenDir, { recursive: true })
+  await writeFile(join(brokenDir, 'package.json'), JSON.stringify({
+    name: 'broken-godot',
+    version: '1.0.0',
+    private: true,
+    type: 'module',
+    ridgetop: {
+      name: 'Broken Godot',
+      godotEntries: ['src/does-not-exist.ts']
+    }
+  }, null, 2))
+  await writeFile(join(brokenDir, 'index.html'), '<!doctype html><html><head><script type="module" src="./main.js"></script></head><body></body></html>\n')
+  await writeFile(join(brokenDir, 'main.js'), 'export const ok = true\n')
+
+  await assert.rejects(
+    packageGame({ target: 'godot', projectDir: brokenDir, outDir: join(work, 'out-broken') }),
+    /Failed to compile configured godotEntries/
+  )
+
+  // 2. Project with NO godotEntries configured exports cleanly with generic main.gd
+  const plainDir = join(work, 'plain-godot')
+  await mkdir(plainDir, { recursive: true })
+  await writeFile(join(plainDir, 'package.json'), JSON.stringify({
+    name: 'plain-godot',
+    version: '1.0.0',
+    private: true,
+    type: 'module',
+    ridgetop: { name: 'Plain Godot' }
+  }, null, 2))
+  await writeFile(join(plainDir, 'index.html'), '<!doctype html><html><head><script type="module" src="./main.js"></script></head><body></body></html>\n')
+  await writeFile(join(plainDir, 'main.js'), 'export const ok = true\n')
+
+  const outPlain = join(work, 'out-plain')
+  const plainRes = await packageGame({ target: 'godot', projectDir: plainDir, outDir: outPlain })
+  assert.equal(plainRes.outputs[0].target, 'godot')
+  const mainGd = await readFile(join(outPlain, 'scripts', 'main.gd'), 'utf8')
+  assert.ok(mainGd.includes('_setup_generic_game'))
 })

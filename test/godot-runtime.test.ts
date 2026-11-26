@@ -99,7 +99,14 @@ test('exportGodotProject emits clean GDScript 4 scripts/ridgetop_runtime.gd and 
   assert.ok(mainGd.includes('_setup_generic_game'), 'main.gd should include generic game bootstrap')
 
   // GDScript 4 strictness checks: no integer-literal division, no Variant := from dict.get/subscript
-  for (const [label, src] of [['ridgetop_runtime.gd', rtGd], ['main.gd', mainGd]] as const) {
+  const signalDriftHostGd = await readFile(new URL('../examples/signal-drift/racing/godot-main.gd', import.meta.url), 'utf8')
+  const starterHostGd = await readFile(new URL('../packages/ridgetop/templates/starter/godot-main.gd', import.meta.url), 'utf8')
+  for (const [label, src] of [
+    ['ridgetop_runtime.gd', rtGd],
+    ['main.gd', mainGd],
+    ['examples/signal-drift/racing/godot-main.gd', signalDriftHostGd],
+    ['packages/ridgetop/templates/starter/godot-main.gd', starterHostGd]
+  ] as const) {
     const lines = src.split('\n')
     for (let i = 0; i < lines.length; i++) {
       const line = lines[i]

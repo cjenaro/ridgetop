@@ -1,6 +1,5 @@
 import { createMeshPool, renderRig } from 'ridgetop'
 import type { InstanceBatch, JointPose, Rig } from 'ridgetop'
-import { defaultMenuLayout } from 'ridgetop/server'
 import type { ResolvedGameAssets } from 'ridgetop/server'
 import { ENEMY_RIGS, HERO_RIGS, buildCampDioramaBatches, stanceOffsetFor } from './art.ts'
 import { SFX_MOTIFS } from './audio.ts'
@@ -57,7 +56,6 @@ export function resolvePackageAssets(): ResolvedGameAssets {
         muted: COLOR.muted,
         glow: COLOR.ap
       }
-    },
-    uiTree: defaultMenuLayout('Crownshard', ['Begin Campaign', 'Vanguard Camp', 'Quit'])
+    }
   }
 }

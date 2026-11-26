@@ -24,6 +24,7 @@
     "staticFiles": ["style.css"],
     "staticDirs": ["art"],
     "overridesReset": "art/overrides.json",
+    "godotMain": "godot-main.gd",
     "godotEntries": [
       "game.ts",
       "ridgetop/ui-layout"

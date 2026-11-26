@@ -7,14 +7,12 @@ import { dirname as posixDirname, join as posixJoin, normalize as posixNormalize
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import type { ArtModel, ArtRecipe } from './art.ts'
 import type { InstanceBatch } from './types.ts'
-import type { LayoutNode } from './ui-layout.ts'
 import { createArtKit, modelFromArtRecipe } from './art.ts'
 import { exportGodotProject } from './export-godot.ts'
 import { multiply, orthographic, view } from './geometry.ts'
 import { renderMeshPixels } from './low-poly.ts'
 import { encodePng } from './png.ts'
 import { color } from './renderer.ts'
-import { boxNode, column, overlay, row } from './ui-layout.ts'
 
 export type PackageTarget = 'web' | 'steam' | 'mobile' | 'godot' | 'player' | 'all'
 export type PackageOrientation = 'landscape' | 'portrait' | 'any'
@@ -38,6 +36,8 @@ export interface RidgetopProjectConfig {
   assetPathRewrites?: Readonly<Record<string, Readonly<Record<string, string>>>>
   /** Optional path to a compiled JS module exporting `resolvePackageAssets()` for custom icon/Godot models & audio. */
   assetsModule?: string
+  /** Optional relative path to a project-owned GDScript host file written to Godot `scripts/main.gd`. */
+  godotMain?: string
   /** Optional list of TypeScript/JS entry files (or bare `'ridgetop/*'` specifiers) compiled to GDScript for Godot exports. */
   godotEntries?: readonly string[]
   /** Optional relative path inside the web bundle to reset to `{}\n` (e.g. `art/overrides.json`). */
@@ -834,23 +834,8 @@ export interface ResolvedGameAssets {
   models: Record<string, readonly InstanceBatch[]>
   audio: Record<string, { notes: readonly (readonly [number, number, number, number?])[]; waveform?: 'sine' | 'triangle' | 'square' | 'sawtooth' }>
   gameData: Record<string, unknown>
-  uiTree: LayoutNode
-}
-
-export function defaultMenuLayout(title: string, actions: readonly string[], anchor: 'center' | 'top-left' = 'center'): LayoutNode {
-  return overlay({ id: 'root', style: { anchor: 'fill' } }, [
-    column({ id: 'menu-card', style: { anchor, width: 320, inset: anchor === 'top-left' ? 40 : 16, padding: 20, gap: 10 }, widget: { type: 'panel' } }, [
-      boxNode({ id: 'menu-title', style: { height: 34 }, widget: { type: 'text', text: title, size: 24, weight: 800, align: 'center' } }),
-      ...actions.map((label, index) => boxNode({
-        id: 'action-' + slugify(label),
-        style: { height: 42 },
-        widget: { type: 'button', label, primary: index === 0 }
-      })),
-      row({ id: 'settings-row', style: { gap: 8 } }, [
-        boxNode({ id: 'sound-toggle', style: { height: 38, grow: 1 }, widget: { type: 'toggle', label: 'Sound', checked: true } })
-      ])
-    ])
-  ])
+  /** Optional project-supplied GDScript source written to Godot `scripts/main.gd` instead of the generic host. */
+  mainScript?: string
 }
 
 function resolvePackageRootDir(): string {
@@ -903,13 +888,29 @@ function detectProjectLayout(projectDir: string, config: RidgetopProjectConfig) 
   return { htmlRel, htmlPath, htmlDir, isCreateGameLayout, moduleDir }
 }
 
+async function resolveGodotMainScript(projectDir: string, config: RidgetopProjectConfig): Promise<string | undefined> {
+  if (config.godotMain) {
+    const mainPath = resolveContained(projectDir, config.godotMain, 'godotMain')
+    return await readFile(mainPath, 'utf8')
+  }
+  const defaultMain = join(projectDir, 'godot-main.gd')
+  if (existsSync(defaultMain)) {
+    return await readFile(defaultMain, 'utf8')
+  }
+  return undefined
+}
+
 async function resolveProjectAssets(projectDir: string, config: RidgetopProjectConfig): Promise<ResolvedGameAssets> {
   if (config.assetsModule) {
     const modPath = resolve(projectDir, config.assetsModule)
     try {
       const mod = await import(pathToFileURL(modPath).href)
       if (typeof mod.resolvePackageAssets === 'function') {
-        return await mod.resolvePackageAssets({ projectDir, defaultMenuLayout })
+        const resolved: ResolvedGameAssets = await mod.resolvePackageAssets({ projectDir })
+        if (!resolved.mainScript && config.godotMain) {
+          return { ...resolved, mainScript: await resolveGodotMainScript(projectDir, config) }
+        }
+        return resolved
       }
       throw new Error(`Expected resolvePackageAssets() export in ${config.assetsModule}`)
     } catch (error) {
@@ -993,7 +994,7 @@ async function resolveProjectAssets(projectDir: string, config: RidgetopProjectC
       victory: { notes: [[392, .16, 0], [523.25, .16, .11], [659.25, .24, .22]], waveform: 'triangle' }
     },
     gameData: gameConfig,
-    uiTree: defaultMenuLayout(title ?? 'Ridgetop Game', ['Resume', 'Restart', 'Quit'])
+    mainScript: await resolveGodotMainScript(projectDir, config)
   }
 }
 
@@ -1713,6 +1714,7 @@ func __init_module() -> void:
 `
 
 async function tryCompileGodotScripts(projectDir: string, config: RidgetopProjectConfig, godotDir: string): Promise<number> {
+  const hasExplicitEntries = Boolean(config.godotEntries?.length)
   const pkgRoot = resolvePackageRootDir()
   const candidates = [
     join(pkgRoot, 'tools', 'ts-to-gd.ts'),
@@ -1723,7 +1725,12 @@ async function tryCompileGodotScripts(projectDir: string, config: RidgetopProjec
   for (const candidate of candidates) {
     try { await access(candidate); compilerPath = candidate; break } catch { /* Candidate compiler path not present; try next. */ }
   }
-  if (!compilerPath) return 0
+  if (!compilerPath) {
+    if (hasExplicitEntries) {
+      throw new Error('Godot TypeScript compiler (ts-to-gd) not found; cannot compile configured godotEntries.')
+    }
+    return 0
+  }
 
   let entries: string[] = []
   if (config.godotEntries?.length) {
@@ -1740,7 +1747,12 @@ async function tryCompileGodotScripts(projectDir: string, config: RidgetopProjec
   const compiledDir = join(godotDir, 'scripts', 'compiled')
   try {
     const mod = await import(pathToFileURL(compilerPath).href)
-    if (typeof mod.compileTsProjectToGodot !== 'function') return 0
+    if (typeof mod.compileTsProjectToGodot !== 'function') {
+      if (hasExplicitEntries) {
+        throw new Error(`Godot compiler module at ${compilerPath} does not export compileTsProjectToGodot().`)
+      }
+      return 0
+    }
     const compiled = await mod.compileTsProjectToGodot({
       entries,
       rootDir: projectDir,
@@ -1752,8 +1764,13 @@ async function tryCompileGodotScripts(projectDir: string, config: RidgetopProjec
       await writeFile(verificationGd, GODOT_RUNTIME_RNG_GD)
     }
     return Array.isArray(compiled?.files) ? compiled.files.length : 0
-  } catch {
+  } catch (error) {
     await rm(compiledDir, { recursive: true, force: true }).catch(() => {})
+    const message = error instanceof Error ? error.message : String(error)
+    if (hasExplicitEntries) {
+      throw new Error(`Failed to compile configured godotEntries: ${message}`, { cause: error })
+    }
+    console.warn(`[ridgetop/packager] Skipping optional auto-detected Godot script compilation: ${message}`)
     return 0
   }
 }
@@ -2102,12 +2119,33 @@ export async function packageGame(options: PackageGameOptions): Promise<PackageR
     return png
   }
 
+  let baseWebBundleDir: string | null = null
+  let baseDetectedName: string | undefined
+  async function populateWebBundle(destDir: string, extraHead = ''): Promise<{ detectedName?: string }> {
+    if (!baseWebBundleDir) {
+      const result = await assembleWebBundle(projectDir, config, destDir, { themeColor, extraHead })
+      if (!extraHead) {
+        baseWebBundleDir = destDir
+        baseDetectedName = result.detectedName
+      }
+      return result
+    }
+    await rm(destDir, { recursive: true, force: true })
+    await cp(baseWebBundleDir, destDir, { recursive: true })
+    if (extraHead) {
+      const htmlPath = join(destDir, 'index.html')
+      const baseHtml = await readFile(htmlPath, 'utf8')
+      await writeFile(htmlPath, ensureMobileMeta(baseHtml, themeColor, extraHead))
+    }
+    return { detectedName: baseDetectedName }
+  }
+
   for (const target of targets) {
     const dir = options.target === 'all' ? join(outRoot, target) : outRoot
     await mkdir(dir, { recursive: true })
 
     if (target === 'web') {
-      const { detectedName } = await assembleWebBundle(projectDir, config, dir, { themeColor })
+      const { detectedName } = await populateWebBundle(dir)
       resolvedName = options.name ?? config.name ?? detectedName ?? assets.title ?? fallbackName
       resolvedSlug = slugify(resolvedName)
       resolvedAppId = options.appId ?? config.appId ?? defaultAppId(resolvedSlug)
@@ -2115,7 +2153,7 @@ export async function packageGame(options: PackageGameOptions): Promise<PackageR
       outputs.push({ target, dir, wwwDir: dir, ...stats })
     } else if (target === 'steam') {
       const wwwDir = join(dir, 'www')
-      const { detectedName } = await assembleWebBundle(projectDir, config, wwwDir, { themeColor })
+      const { detectedName } = await populateWebBundle(wwwDir)
       resolvedName = options.name ?? config.name ?? detectedName ?? assets.title ?? fallbackName
       resolvedSlug = slugify(resolvedName)
       resolvedAppId = options.appId ?? config.appId ?? defaultAppId(resolvedSlug)
@@ -2162,7 +2200,7 @@ export async function packageGame(options: PackageGameOptions): Promise<PackageR
         '  <meta name="mobile-web-app-capable" content="yes">',
         '  <script src="./ridgetop-mobile-bridge.js"></script>'
       ].join('\n')
-      const { detectedName } = await assembleWebBundle(projectDir, config, wwwDir, { themeColor, extraHead: mobileMeta })
+      const { detectedName } = await populateWebBundle(wwwDir, mobileMeta)
       resolvedName = options.name ?? config.name ?? detectedName ?? assets.title ?? fallbackName
       resolvedSlug = slugify(resolvedName)
       resolvedAppId = options.appId ?? config.appId ?? defaultAppId(resolvedSlug)
@@ -2265,7 +2303,7 @@ export async function packageGame(options: PackageGameOptions): Promise<PackageR
         models: assets.models,
         audio: assets.audio,
         gameData: assets.gameData,
-        uiTree: assets.uiTree,
+        mainScript: assets.mainScript,
         iconPng
       })
       await tryCompileGodotScripts(projectDir, config, dir)

@@ -1,6 +1,5 @@
 import { box, color, createMeshPool, cylinder, instances, octahedron, renderRig } from 'ridgetop'
 import type { InstanceBatch, Rig } from 'ridgetop'
-import { defaultMenuLayout } from 'ridgetop/server'
 import type { ResolvedGameAssets } from 'ridgetop/server'
 import {
   amberRig, arch, buildStaticIslandBatches, buoyRig, cone, domeMesh, drum, drum12,
@@ -90,7 +89,6 @@ export function resolvePackageAssets(): ResolvedGameAssets {
         muted: '#b5d0d1',
         glow: '#84f2d8'
       }
-    },
-    uiTree: defaultMenuLayout('Tidewatch', ['Begin Watch', 'Workshop Gear', 'Quit'])
+    }
   }
 }

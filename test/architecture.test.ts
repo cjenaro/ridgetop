@@ -79,6 +79,15 @@ test('packages/ridgetop is completely isolated with zero example-game imports an
     }
   }
 
+  // export-godot.ts must remain strictly game-agnostic with zero hardcoded example-game GDScript
+  const exportGodotSource = await readFile(new URL('export-godot.ts', ridgetopFrameworkRoot), 'utf8')
+  for (const forbiddenToken of ['signal-drift', 'racing/race.gd', 'racing/track.gd', 'Lantern Grove']) {
+    assert.ok(
+      !exportGodotSource.includes(forbiddenToken),
+      `packages/ridgetop/framework/export-godot.ts must not reference example-game logic (${forbiddenToken})`
+    )
+  }
+
   // Every browser framework module reachable from framework/index.ts or framework/ui.ts
   // is registered in framework/host.ts browserModules so it never 404s in hosted builds.
   const hostSource = await readFile(new URL('host.ts', ridgetopFrameworkRoot), 'utf8')

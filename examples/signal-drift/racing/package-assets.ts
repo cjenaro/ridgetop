@@ -1,12 +1,14 @@
+import { readFile } from 'node:fs/promises'
+import { join } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { createArtKit } from 'ridgetop'
 import type { InstanceBatch } from 'ridgetop'
-import { defaultMenuLayout } from 'ridgetop/server'
 import type { ResolvedGameAssets } from 'ridgetop/server'
 import { createCarModels } from './car-art.ts'
 import { buildCircuitBatches } from './scene.ts'
 import { circuits } from './track.ts'
 
-export function resolvePackageAssets(): ResolvedGameAssets {
+export async function resolvePackageAssets(ctx?: { projectDir?: string }): Promise<ResolvedGameAssets> {
   const models: Record<string, readonly InstanceBatch[]> = {}
   let iconBatches: readonly InstanceBatch[] | undefined
   const exportedCircuits: Record<string, unknown>[] = []
@@ -53,6 +55,9 @@ export function resolvePackageAssets(): ResolvedGameAssets {
     iconBatches = g.batches
   }
 
+  const rootDir = ctx?.projectDir ?? fileURLToPath(new URL(import.meta.url.endsWith('.ts') ? '..' : '../..', import.meta.url))
+  const mainScript = await readFile(join(rootDir, 'racing', 'godot-main.gd'), 'utf8')
+
   return {
     title: 'Signal Drift',
     icon: { batches: iconBatches, span: 3.6, centerY: 0.55, background: '#191b24', accent: '#623a2c' },
@@ -72,6 +77,6 @@ export function resolvePackageAssets(): ResolvedGameAssets {
       },
       circuits: exportedCircuits
     },
-    uiTree: defaultMenuLayout('Signal Drift', ['Start Race', 'Events', 'Quit'], 'top-left')
+    mainScript
   }
 }
