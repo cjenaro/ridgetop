@@ -389,6 +389,25 @@ export interface TurnPreviewEntry {
   readonly isCurrent: boolean
 }
 
+export type TurnActionKind = 'wait' | 'act' | 'move_only' | 'move_and_act'
+
+export interface TurnOrderActionPreview {
+  readonly actionKind: TurnActionKind
+  readonly activeUnitUid: string
+  readonly activeUnitName: string
+  readonly ctCost: number
+  readonly ctSaved: number
+  readonly remainingCt: number
+  /** Projected next-turn timeline starting with the unit that acts next (matches battle.turnOrder after endPlayerTurn). */
+  readonly projectedOrder: readonly TurnPreviewEntry[]
+  /** 0-based index in `projectedOrder` where the active hero acts next (-1 if beyond `count`). */
+  readonly projectedIndex: number
+  /** 0-based index in a full-spend (100 CT) timeline where the active hero would act next (-1 if beyond search depth). */
+  readonly baselineIndex: number
+  /** Number of turn-order slots gained earlier compared to spending a full 100 CT turn. */
+  readonly slotsGained: number
+}
+
 export interface MoveAttackTile {
   readonly col: number
   readonly row: number

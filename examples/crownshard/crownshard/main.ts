@@ -19,14 +19,14 @@ import {
   effectiveSpeed, endPlayerTurn, equipItem, findBestFitUpgrades, findEquipOwner, getEquipmentByUid,
   getHeroByUid, getHeroSkill, getMergeCandidates, getNextRecommendedStage, getStageUnlockHint,
   getTacticByUid, getUnitByUid, isEndlessUnlocked, isStageCleared, isStageUnlocked, loadSave,
-  maxSquadSize, mergeHero, persistSave, rotateActiveUnitFacing, salvageEquipCard, salvageHeroCard,
+  maxSquadSize, mergeHero, persistSave, previewTurnOrderAfterAction, rotateActiveUnitFacing, salvageEquipCard, salvageHeroCard,
   selectHeroByUid, selectTile, startChapterBattle, stepGame,
   toggleSquadMember, unequipItem
 } from './simulation.ts'
 import { cellHeightLevel } from './types.ts'
 import type {
   BattleUnit, ChapterSpec, CombatForecast, EnemyArchetypeId, GameState, OwnedEquipCard, OwnedHeroCard,
-  PackId, PackRevealItem, Rarity
+  PackId, PackRevealItem, Rarity, TurnActionKind, TurnOrderActionPreview
 } from './types.ts'
 import {
   COLOR, RADIUS, TIER_COLOR, TYPE, UI_THEME_PALETTE, WORLD_MAP_H, WORLD_MAP_W,
@@ -38,7 +38,8 @@ import {
   drawResultHeadlineAnimated, drawRevealCard, drawRewardRowAnimated, drawSegmentTrack,
   drawSettingRow, drawSheet, drawSkillRow, drawSkillTile, drawSpeakerPortrait, drawStatStrip,
   drawStoryHeading, drawTab, drawTacticCard, drawText, drawTimelineBg, drawTitleCard,
-  drawTitleLogo, drawToast, drawToolbarBg, drawTopFade, drawTurnToken, drawUnitCard,
+  drawTitleLogo, drawToast, drawToolbarBg, drawTopFade, drawTurnOrderCallout,
+  drawTurnOrderPreviewBanner, drawTurnTimelinePreviewOverlay, drawTurnToken, drawUnitCard,
   drawVictoryBackdrop, drawWell, drawWorldMapCanvas, drawWorldMapNode, worldMapScale, worldMapToScreen,
   FANFARE_DURATION, drawFanfare
 } from './ui-art.ts'
@@ -181,6 +182,9 @@ async function start() {
   let hudRev = 0
   let lastSimMs = 0
   let lockedForecastCell: { col: number; row: number } | null = null
+  let hoveredTurnUnitUid: string | null = null
+  let hoveredTurnSlotIdx = -1
+  let hoveredActionKind: TurnActionKind | null = null
   let mobileHandOpen = false
   let mobileCampCollapsed = false
   let lastForecastSig = ''
@@ -405,10 +409,38 @@ async function start() {
     }
   }
 
+  function clearBattleHoverFeedback() {
+    if (hoveredTurnUnitUid !== null || hoveredTurnSlotIdx !== -1 || hoveredActionKind !== null) {
+      hoveredTurnUnitUid = null
+      hoveredTurnSlotIdx = -1
+      hoveredActionKind = null
+      scene.setSpotlightUnit(null)
+    }
+  }
+
+  function resolveTurnActionPreviewKind(activeForecast: CombatForecast | null): TurnActionKind | null {
+    const battle = state.battle
+    if (screen !== 'battle' || !battle || battle.phase !== 'player') return null
+    if (battle.units.some(u => u.path.length > 0)) return null
+    const active = getUnitByUid(battle, battle.activeUnitUid)
+    if (!active || active.team !== 'ally') return null
+
+    if (hoveredActionKind) return hoveredActionKind
+    if (activeForecast && activeForecast.mode !== 'tactic') {
+      return activeForecast.requiresMove || active.moved ? 'move_and_act' : 'act'
+    }
+    const hov = scene.getHoveredCell()
+    if (hov && !active.moved && battle.moveTiles.some(t => t.col === hov.col && t.row === hov.row)) {
+      return 'move_only'
+    }
+    return null
+  }
+
   function setScreen(next: Screen) {
     screen = next
     lockedForecastCell = null
     mobileHandOpen = false
+    clearBattleHoverFeedback()
     if (next !== 'camp') { packAnim = null; fanfare = null }
     if (next === 'victory' || next === 'defeat') resultAnimTime = 0
     if (next === 'title' || next === 'camp' || next === 'story' || next === 'world') {
@@ -487,6 +519,7 @@ async function start() {
     if (state.battle?.phase === 'player') {
       lockedForecastCell = null
       mobileHandOpen = false
+      clearBattleHoverFeedback()
       endPlayerTurn(state)
       uiDirty = true
       hudRev++
@@ -645,6 +678,49 @@ async function start() {
       }
     }
     if (event.pointerType === 'touch') return
+    // Track turn-order hover spotlight & action-button CT shift preview from UI hit test
+    const uiHit = ui.hitTest(x, y)
+    let nextTurnUid: string | null = null
+    let nextTurnSlot = -1
+    let nextActionKind: TurnActionKind | null = null
+    if (uiHit) {
+      if (uiHit.id.startsWith('tl-')) {
+        const idx = Number(uiHit.id.slice(3))
+        const entry = Number.isInteger(idx) ? state.battle.turnOrder[idx] : undefined
+        if (entry) {
+          nextTurnUid = entry.uid
+          nextTurnSlot = idx
+        }
+      } else if (state.battle.phase === 'player') {
+        const active = getUnitByUid(state.battle, state.battle.activeUnitUid)
+        if (active && active.team === 'ally') {
+          if (uiHit.id === 'cs-end-turn') {
+            nextActionKind = 'wait'
+          } else if (uiHit.id === 'sk-basic' || uiHit.id.startsWith('sk-')) {
+            nextActionKind = active.moved || (state.battle.targetTiles.length === 0 && state.battle.moveAttackTiles.length > 0)
+              ? 'move_and_act'
+              : 'act'
+          } else if (uiHit.id === 'cs-confirm-attack') {
+            const fc = resolveActiveForecast()
+            if (fc && fc.mode !== 'tactic') {
+              nextActionKind = fc.requiresMove || active.moved ? 'move_and_act' : 'act'
+            }
+          }
+        }
+      }
+    }
+    if (
+      nextTurnUid !== hoveredTurnUnitUid ||
+      nextTurnSlot !== hoveredTurnSlotIdx ||
+      nextActionKind !== hoveredActionKind
+    ) {
+      hoveredTurnUnitUid = nextTurnUid
+      hoveredTurnSlotIdx = nextTurnSlot
+      hoveredActionKind = nextActionKind
+      scene.setSpotlightUnit(hoveredTurnUnitUid)
+      uiDirty = true
+      hudRev++
+    }
     if (ui.blocksPoint(x, y)) {
       if (scene.getHoveredCell()) {
         scene.setHoveredCell(null)
@@ -657,6 +733,15 @@ async function start() {
     const prev = scene.getHoveredCell()
     if (prev?.col !== cell?.col || prev?.row !== cell?.row) {
       scene.setHoveredCell(cell)
+      uiDirty = true
+      hudRev++
+    }
+  }, sig)
+
+  uiCanvas.addEventListener('pointerleave', () => {
+    if (hoveredTurnUnitUid !== null || hoveredActionKind !== null || scene.getHoveredCell() !== null) {
+      clearBattleHoverFeedback()
+      scene.setHoveredCell(null)
       uiDirty = true
       hudRev++
     }
@@ -1720,14 +1805,38 @@ async function start() {
     const isPlayerTurn = battle.phase === 'player' && Boolean(active && active.team === 'ally')
     const activeForecast = resolveActiveForecast()
 
-    // 1. Top Turn-Order Token Strip
+    // 1. Top Turn-Order Token Strip (with Hover Spotlight + CT Shift Preview!)
     const maxSlots = mobilePortrait ? 5 : mobileLandscape ? 5 : narrow ? 6 : 7
     const tokenW = mobilePortrait ? 42 : mobileLandscape ? 38 : 50
     const tokenH = mobilePortrait ? 46 : mobileLandscape ? 42 : 60
+    const ctPreviewKind = !hoveredTurnUnitUid ? resolveTurnActionPreviewKind(activeForecast) : null
+    const ctPreview: TurnOrderActionPreview | null = ctPreviewKind
+      ? previewTurnOrderAfterAction(battle, ctPreviewKind, maxSlots)
+      : null
+    const waitComparison: TurnOrderActionPreview | null = ctPreview && ctPreview.ctSaved === 0
+      ? previewTurnOrderAfterAction(battle, 'wait', maxSlots)
+      : null
+    const projectedBarSlot = ctPreview && ctPreview.projectedIndex >= 0
+      ? Math.min(maxSlots - 1, 1 + ctPreview.projectedIndex)
+      : -1
+    const baselineBarSlot = ctPreview && ctPreview.slotsGained > 0 && ctPreview.baselineIndex >= 0
+      ? 1 + ctPreview.baselineIndex
+      : -1
     const timelineNodes: LayoutNode[] = battle.turnOrder.slice(0, maxSlots).map((entry, idx) => {
       const unit = getUnitByUid(battle, entry.uid)
       const pKey = entry.heroId ?? entry.enemyId ?? 'knight'
       const icon = unit ? battleUnitPortrait(unit) : portraits[pKey]
+      const isProjectedLanding = Boolean(ctPreview && !entry.isCurrent && idx === projectedBarSlot)
+      const tokenOpts = {
+        spotlighted: Boolean(hoveredTurnUnitUid && entry.uid === hoveredTurnUnitUid),
+        dimmed: Boolean(hoveredTurnUnitUid && entry.uid !== hoveredTurnUnitUid),
+        projectedSlot: isProjectedLanding,
+        projectedBadge: isProjectedLanding && ctPreview
+          ? (ctPreview.ctSaved > 0 ? `+${ctPreview.ctSaved} CT` : `#${ctPreview.projectedIndex + 1}`)
+          : undefined,
+        projectedAccent: ctPreview ? (ctPreview.ctSaved > 0 ? COLOR.ap : '#ff9a44') : undefined,
+        wasBaselineSlot: Boolean(ctPreview && ctPreview.slotsGained > 0 && idx === baselineBarSlot && idx < maxSlots)
+      }
       return boxNode({
         id: `tl-${idx}`,
         style: { width: tokenW, height: tokenH },
@@ -1741,7 +1850,7 @@ async function start() {
             uiDirty = true
             hudRev++
           },
-          draw: (ctx: CanvasRenderingContext2D, rect: LayoutRect, st: CanvasWidgetDrawState) => drawTurnToken(ctx, rect, entry, icon, st)
+          draw: (ctx: CanvasRenderingContext2D, rect: LayoutRect, st: CanvasWidgetDrawState) => drawTurnToken(ctx, rect, entry, icon, st, tokenOpts)
         }
       })
     })
@@ -2555,6 +2664,84 @@ async function start() {
           draw: (ctx: CanvasRenderingContext2D, rect: LayoutRect) => drawTimelineBg(ctx, rect)
         }
       }, timelineNodes),
+
+      // Dashed CT Shift Preview arc + ghost hero marker overlaid cleanly on top of the turn bar
+      ...(ctPreview ? [boxNode({
+        id: 'turn-timeline-preview',
+        style: {
+          anchor: 'top',
+          width: Math.min(w - 16, timelineW),
+          height: tokenH + (isPhone ? 10 : 12),
+          inset: timelineInset,
+          respectSafeArea: true
+        },
+        widget: {
+          type: 'panel',
+          blocksPointer: false,
+          draw: (ctx: CanvasRenderingContext2D, rect: LayoutRect) => drawTurnTimelinePreviewOverlay(ctx, rect, ctPreview, {
+            activePortrait: battleUnitPortrait(active),
+            slotCount: timelineNodes.length,
+            tokenW,
+            gap: 5,
+            padX: 9,
+            time: state.time
+          })
+        }
+      })] : []),
+
+      // Floating Turn-Order Hover Spotlight callout OR CT Shift Preview banner right beneath the turn bar
+      ...(() => {
+        const subY = timelineInset[1] + tokenH + (isPhone ? 14 : 16)
+        if (hoveredTurnUnitUid) {
+          const spotUnit = getUnitByUid(battle, hoveredTurnUnitUid)
+          const spotEntry = hoveredTurnSlotIdx >= 0 ? battle.turnOrder[hoveredTurnSlotIdx] : battle.turnOrder.find(e => e.uid === hoveredTurnUnitUid)
+          if (spotUnit && spotEntry) {
+            return [boxNode({
+              id: 'turn-spotlight-callout',
+              style: {
+                anchor: 'top',
+                width: Math.min(w - 20, Math.max(timelineW, 340)),
+                height: 26,
+                inset: [8, subY],
+                respectSafeArea: true
+              },
+              widget: {
+                type: 'panel',
+                blocksPointer: false,
+                draw: (ctx: CanvasRenderingContext2D, rect: LayoutRect) => drawTurnOrderCallout(ctx, rect, {
+                  name: spotUnit.name,
+                  team: spotUnit.team,
+                  hp: spotUnit.hp,
+                  maxHp: spotUnit.maxHp,
+                  shield: spotUnit.shield,
+                  ct: spotUnit.ct,
+                  speed: effectiveSpeed(spotUnit),
+                  slotIndex: Math.max(0, hoveredTurnSlotIdx),
+                  isCurrent: spotEntry.isCurrent
+                })
+              }
+            })]
+          }
+        }
+        if (ctPreview) {
+          return [boxNode({
+            id: 'turn-ct-preview-banner',
+            style: {
+              anchor: 'top',
+              width: Math.min(w - 20, Math.max(timelineW, 352)),
+              height: 26,
+              inset: [8, subY],
+              respectSafeArea: true
+            },
+            widget: {
+              type: 'panel',
+              blocksPointer: false,
+              draw: (ctx: CanvasRenderingContext2D, rect: LayoutRect) => drawTurnOrderPreviewBanner(ctx, rect, ctPreview, waitComparison)
+            }
+          })]
+        }
+        return []
+      })(),
 
       // Context hint pill right above bottom dock (hidden on phone when idle or when forecast/hand open)
       ...(showHintPill ? [boxNode({
@@ -3947,6 +4134,7 @@ async function start() {
       const projected = scene.project(u.x, u.y + (u.isBoss ? 2.25 : 1.88), u.z, g.width, g.height)
       if (!projected) continue
       const isActive = u.uid === battle.activeUnitUid
+      const isSpotlight = u.uid === hoveredTurnUnitUid
       const bw = u.isBoss ? 90 : 66
       const bx = Math.round(projected.x - bw / 2)
       const by = Math.round(projected.y - 16)
@@ -3954,23 +4142,25 @@ async function start() {
 
       const shortName = u.team === 'ally' ? (u.name.split(' ').pop() ?? u.name) : u.name
       const tag = u.team === 'ally' && u.stars > 1 ? `${shortName} T${u.stars}` : shortName
-      const nameW = Math.max(bw + 8, tag.length * 6.8 + 16)
-      if (isActive) {
+      const spotRank = isSpotlight && hoveredTurnSlotIdx >= 0 ? (hoveredTurnSlotIdx === 0 ? ' · NOW' : ` · #${hoveredTurnSlotIdx + 1}`) : ''
+      const fullTag = `${tag}${spotRank}`
+      const nameW = Math.max(bw + 8, fullTag.length * 6.8 + 16)
+      if (isSpotlight || isActive) {
         g.panel(Math.round(projected.x - nameW / 2), by - 21, Math.round(nameW), 17, {
-          fill: '#2b3a63',
-          stroke: COLOR.accent,
+          fill: isSpotlight ? (u.team === 'ally' ? '#1b4768' : '#572230') : '#2b3a63',
+          stroke: isSpotlight ? (u.team === 'ally' ? '#7cf0ff' : '#ff9c6e') : COLOR.accent,
           radius: 8
         })
       }
-      g.text(tag, projected.x, by - 16.5, {
+      g.text(fullTag, projected.x, by - 16.5, {
         fill: '#080c18',
-        size: isActive ? 11 : 10.5,
+        size: isSpotlight || isActive ? 11 : 10.5,
         weight: 900,
         align: 'center'
       })
-      g.text(tag, projected.x, by - 18, {
-        fill: isActive ? COLOR.accentHi : u.team === 'ally' ? '#ffffff' : '#ffd2d6',
-        size: isActive ? 11 : 10.5,
+      g.text(fullTag, projected.x, by - 18, {
+        fill: isSpotlight ? '#ffffff' : isActive ? COLOR.accentHi : u.team === 'ally' ? '#ffffff' : '#ffd2d6',
+        size: isSpotlight || isActive ? 11 : 10.5,
         weight: 900,
         align: 'center'
       })
@@ -3978,7 +4168,7 @@ async function start() {
       // Chunky dark-outlined tactical HP + Shield + CT gauge
       g.panel(bx - 2, by - 2, bw + 4, 13, {
         fill: '#0b1020',
-        stroke: isActive ? COLOR.accent : u.team === 'ally' ? '#5cb8ff' : '#ff5e6e',
+        stroke: isSpotlight ? (u.team === 'ally' ? '#7cf0ff' : '#ff9c6e') : isActive ? COLOR.accent : u.team === 'ally' ? '#5cb8ff' : '#ff5e6e',
         radius: 5
       })
       g.panel(bx, by, bw, 7, { fill: '#18213b', radius: 3 })
@@ -4089,6 +4279,7 @@ async function start() {
       battleTurn: state.battle?.turn ?? 0,
       battleAp: state.battle?.ap ?? 0,
       activeUnitUid: state.battle?.activeUnitUid ?? null,
+      hoveredTurnUnitUid,
       turnOrder: state.battle?.turnOrder.map(t => t.name) ?? [],
       battleAlliesAlive: state.battle ? state.battle.units.filter(u => u.alive && u.team === 'ally').length : 0,
       battleEnemiesAlive: state.battle ? state.battle.units.filter(u => u.alive && u.team === 'enemy').length : 0,
@@ -4209,6 +4400,7 @@ async function start() {
         lastActiveUid = activeUid
         lockedForecastCell = null
         mobileHandOpen = false
+        clearBattleHoverFeedback()
         uiDirty = true
         hudRev++
         if (bPhase === 'victory' && screen === 'battle') {
@@ -4310,10 +4502,10 @@ async function start() {
         }
       }
       const animatingHud = Boolean(
-        b && (cameraMoving || b.floatingNumbers.length > 0 || b.bannerTimer > 0 || b.shake > 0 || b.units.some(u => u.path.length > 0))
+        b && (cameraMoving || hoveredTurnUnitUid !== null || b.floatingNumbers.length > 0 || b.bannerTimer > 0 || b.shake > 0 || b.units.some(u => u.path.length > 0))
       )
       const hudKey = screen === 'battle'
-        ? `b:${hudRev}:${animatingHud ? Math.floor(now / 33) : 0}:${scene.getHoveredCell()?.col ?? -1},${scene.getHoveredCell()?.row ?? -1}`
+        ? `b:${hudRev}:${hoveredTurnUnitUid ?? ''}:${animatingHud ? Math.floor(now / 33) : 0}:${scene.getHoveredCell()?.col ?? -1},${scene.getHoveredCell()?.row ?? -1}`
         : `s:${screen}`
       ui.setUnderlay(screen === 'battle' ? paintHud : null, hudKey)
 
