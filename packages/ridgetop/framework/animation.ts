@@ -326,6 +326,43 @@ export function sampleClip(clip: AnimationClip, seconds: number): Record<string,
   return result
 }
 
+const DEFAULT_MIRROR_PAIRS: readonly (readonly [string, string])[] = [['armL', 'armR'], ['legL', 'legR']]
+
+/**
+ * Mirror a clip across the rig's YZ plane: swaps paired left/right joint tracks and negates
+ * yaw, roll, and X translation on every key. Author one side of an asymmetric move
+ * (flank flinch, pivot turn, side-step) and derive the other side from it.
+ */
+export function mirrorClip(
+  clip: AnimationClip,
+  pairs: readonly (readonly [string, string])[] = DEFAULT_MIRROR_PAIRS
+): AnimationClip {
+  const swap = new Map<string, string>()
+  for (const [a, b] of pairs) { swap.set(a, b); swap.set(b, a) }
+  const tracks: Record<string, readonly Keyframe[]> = {}
+  for (const [jointId, frames] of Object.entries(clip.tracks)) {
+    tracks[swap.get(jointId) ?? jointId] = frames.map(f => ({
+      t: f.t,
+      ease: f.ease,
+      scale: f.scale,
+      position: f.position ? [-f.position[0], f.position[1], f.position[2]] : undefined,
+      rotation: f.rotation ? [f.rotation[0], -f.rotation[1], -f.rotation[2]] : undefined
+    }))
+  }
+  return { duration: clip.duration, loop: clip.loop, tracks }
+}
+
+/** Uniformly retime a clip to a new duration (keys keep their relative spacing and easing). */
+export function retimeClip(clip: AnimationClip, duration: number): AnimationClip {
+  if (!Number.isFinite(duration) || duration <= 0) throw new RangeError('retimeClip duration must be positive')
+  const k = duration / Math.max(1e-4, clip.duration)
+  const tracks: Record<string, readonly Keyframe[]> = {}
+  for (const [jointId, frames] of Object.entries(clip.tracks)) {
+    tracks[jointId] = frames.map(f => ({ ...f, t: f.t * k }))
+  }
+  return { duration, loop: clip.loop, tracks }
+}
+
 /** Blend two pose maps (0 = a, 1 = b) and optionally add procedural overrides. */
 export function blendPoses(
   a: Readonly<Record<string, JointPose | undefined>>,
@@ -367,15 +404,17 @@ export function createAnimator<Name extends string>(
   let fadeTime = 0
   let fadeDuration = 0
   let speed = 1
+  let prevSpeed = 1
 
   return {
     get clip(): Name { return current },
     get time(): number { return time },
     play(next: Name, fade = 0.14, rate = 1) {
-      speed = rate
-      if (next === current) return
+      if (next === current) { speed = rate; return }
       previous = current
       prevTime = time
+      prevSpeed = speed
+      speed = rate
       current = next
       time = 0
       fadeTime = 0
@@ -384,6 +423,7 @@ export function createAnimator<Name extends string>(
     trigger(next: Name, fade = 0.08, rate = 1) {
       previous = current
       prevTime = time
+      prevSpeed = speed
       current = next
       time = 0
       fadeTime = 0
@@ -393,7 +433,7 @@ export function createAnimator<Name extends string>(
     step(dt: number) {
       time += dt * speed
       if (previous !== null) {
-        prevTime += dt
+        prevTime += dt * prevSpeed
         fadeTime += dt
         if (fadeDuration <= 0 || fadeTime >= fadeDuration) previous = null
       }
@@ -424,6 +464,8 @@ interface Particle {
   sx: number; sy: number; sz: number
   endScale: number
   yaw: number; spin: number
+  pitch: number; roll: number
+  delay: number
   color: Color
   unlit: number
   age: number
@@ -456,6 +498,12 @@ export function createParticles(maxParticles = 240) {
       endScale?: number
       yaw?: number
       spin?: number
+      /** Fixed tilt around X applied after spin (e.g. stand a flat ribbon upright). */
+      pitch?: number
+      /** Fixed tilt around Z applied after spin. */
+      roll?: number
+      /** Seconds to wait (hidden, frozen) before the particle starts living. */
+      delay?: number
       color: Color
       unlit?: number
       life: number
@@ -475,6 +523,9 @@ export function createParticles(maxParticles = 240) {
         endScale: opts.endScale ?? 0.05,
         yaw: opts.yaw ?? 0,
         spin: opts.spin ?? 0,
+        pitch: opts.pitch ?? 0,
+        roll: opts.roll ?? 0,
+        delay: Math.max(0, opts.delay ?? 0),
         color: opts.color,
         unlit: opts.unlit ?? 0,
         age: 0,
@@ -508,6 +559,9 @@ export function createParticles(maxParticles = 240) {
         endScale: opts.endScale ?? 0.65,
         yaw: 0,
         spin: opts.spin ?? 6,
+        pitch: 0,
+        roll: 0,
+        delay: 0,
         color: opts.color,
         unlit: opts.unlit ?? 0.25,
         age: 0,
@@ -517,18 +571,25 @@ export function createParticles(maxParticles = 240) {
     step(dt: number) {
       for (let i = list.length - 1; i >= 0; i--) {
         const p = list[i]
-        p.age += dt
+        let pdt = dt
+        if (p.delay > 0) {
+          p.delay -= dt
+          if (p.delay > 0) continue
+          pdt = -p.delay
+          p.delay = 0
+        }
+        p.age += pdt
         if (p.age >= p.life) { list.splice(i, 1); continue }
-        p.yaw += p.spin * dt
+        p.yaw += p.spin * pdt
         if (p.mode === 'vel') {
-          p.vy -= p.gravity * dt
+          p.vy -= p.gravity * pdt
           if (p.drag > 0) {
-            const damp = Math.max(0, 1 - p.drag * dt)
+            const damp = Math.max(0, 1 - p.drag * pdt)
             p.vx *= damp; p.vy *= damp; p.vz *= damp
           }
-          p.x += p.vx * dt
-          p.y += p.vy * dt
-          p.z += p.vz * dt
+          p.x += p.vx * pdt
+          p.y += p.vy * pdt
+          p.z += p.vz * pdt
         } else {
           const u = p.age / p.life
           p.x = p.vx + (p.tx - p.vx) * u
@@ -540,6 +601,7 @@ export function createParticles(maxParticles = 240) {
     emit(pool: MeshPool) {
       for (let i = 0; i < list.length; i++) {
         const p = list[i]
+        if (p.delay > 0) continue
         const u = p.age / p.life
         const factor = p.mode === 'arc'
           ? 1 + Math.sin(u * Math.PI) * 0.22 - (1 - p.endScale) * u * 0.5
@@ -556,11 +618,16 @@ export function createParticles(maxParticles = 240) {
         _tmpScl[0] = Math.max(0.01, p.sx * factor)
         _tmpScl[1] = Math.max(0.01, p.sy * factor)
         _tmpScl[2] = Math.max(0.01, p.sz * factor)
+        let rot: number | Quaternion = p.yaw
+        if (p.pitch !== 0 || p.roll !== 0) {
+          quatFromEulerInto(_tmpQ, p.pitch, p.yaw, p.roll)
+          rot = _tmpQ
+        }
         pool.add(
           p.mesh,
           _tmpPos,
           _tmpScl,
-          p.yaw,
+          rot,
           tint,
           p.unlit,
           p.blend

@@ -342,8 +342,16 @@ export type SoundEvent =
   | { kind: 'defeat' }
 
 export type VfxEvent =
-  | { kind: 'projectile'; style: 'arrow' | 'arcane' | 'fire' | 'frost' | 'holy' | 'shadow'; from: Vec3; to: Vec3 }
-  | { kind: 'burst'; style: 'slash' | 'fire' | 'frost' | 'holy' | 'arcane' | 'shadow' | 'gold'; at: Vec3; radius?: number }
+  | { kind: 'projectile'; style: 'arrow' | 'arcane' | 'fire' | 'frost' | 'holy' | 'shadow'; from: Vec3; to: Vec3; uid?: string }
+  | { kind: 'burst'; style: 'slash' | 'fire' | 'frost' | 'holy' | 'arcane' | 'shadow' | 'gold'; at: Vec3; radius?: number; uid?: string }
+  /** Hero skill cast: the scene choreographs a bespoke rig clip + VFX keyed by skillId (cells = affected tile centres). */
+  | { kind: 'skill'; uid: string; skillId: string; style: SkillSpec['vfx']; from: Vec3; at: Vec3; cells: Vec3[] }
+  /** Tactic card resolved on the board (cells = affected tile centres, or every ally for all_allies cards). */
+  | { kind: 'tactic'; tacticId: string; style: TacticCardSpec['vfx']; at: Vec3; cells: Vec3[]; casterUid: string | null }
+  /** Damage landed on a unit: directional arc, crit, and whether a shield absorbed it entirely. */
+  | { kind: 'impact'; uid: string; attackerUid: string | null; arc: AttackArc; crit: boolean; blocked: boolean; absorbed: number; damage: number }
+  /** Enemy signature move (Archon Eclipse Nova, Bog Shaman totem mend, and raid-boss telegraphs). */
+  | { kind: 'special'; uid: string; move: 'eclipse_nova' | 'shaman_mend' | 'lich_summon' | 'frostwyrm_breath' | 'titan_slam'; at: Vec3; cells: Vec3[] }
   | { kind: 'heal'; at: Vec3 }
   | { kind: 'shield'; at: Vec3 }
   | { kind: 'ko'; at: Vec3; isBoss?: boolean }

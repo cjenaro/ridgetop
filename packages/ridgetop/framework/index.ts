@@ -25,8 +25,8 @@ export { auditSpriteSheet, createSpriteSheet, hueShiftRamp } from './sprite-shee
 export type { HueRamp, SpriteAuditReport, SpriteFrame } from './sprite-sheet.ts'
 export { createPixelRig, pixelClips, renderPixelRig } from './pixel-rig.ts'
 export type { PixelJoint, PixelJointPose, PixelRig, PixelStampSpec, WorldPixelJoint } from './pixel-rig.ts'
-export { archMesh, bakeVertexAO, bevelBox, capsuleMesh, chamferedPrism, extrudeMesh, gableMesh, intersectRayPlane, invertMatrix, normalTiltQuaternion, projectPoint, quaternionFromEuler, revolvedMesh, rotateVec3, scallopedCone, screenToRay, smoothMesh, tubeMesh, wedgeMesh, worldToScreen } from './geometry.ts'
-export { blendPoses, createAnimator, createMeshPool, createParticles, createRig, multiplyQuat, renderRig, sampleClip } from './animation.ts'
+export { archMesh, bakeVertexAO, bevelBox, capsuleMesh, chamferedPrism, crescentMesh, extrudeMesh, gableMesh, intersectRayPlane, invertMatrix, normalTiltQuaternion, projectPoint, quaternionFromEuler, revolvedMesh, rotateVec3, scallopedCone, screenToRay, smoothMesh, tubeMesh, wedgeMesh, worldToScreen } from './geometry.ts'
+export { blendPoses, createAnimator, createMeshPool, createParticles, createRig, mirrorClip, multiplyQuat, renderRig, retimeClip, sampleClip } from './animation.ts'
 export type { AnimationClip, Easing, JointPose, Keyframe, MeshPool, Rig, RigJoint, RigPart, WorldJoint } from './animation.ts'
 export {
   bakeZoneColors, CHARACTER_JOINT_PIVOTS, CHARACTER_SOCKETS, createCharacterBuilder,

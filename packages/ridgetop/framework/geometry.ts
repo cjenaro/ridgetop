@@ -469,6 +469,44 @@ export function cylinder(sides = 6, topRadius = 1, bottomRadius = 1) {
   return mesh(positions, indices)
 }
 
+/**
+ * Flat double-sided crescent ribbon in the XZ plane (y = 0), centred on +Z and sweeping
+ * `sweep` radians around +Y. Width tapers to points at both tips, so it reads as a
+ * weapon-slash arc, shockwave fragment, or swirl blade when scaled and rotated.
+ */
+export function crescentMesh(sweep = Math.PI, innerRadius = 0.72, outerRadius = 1, segments = 12): Mesh {
+  if (!Number.isFinite(sweep) || sweep <= 0 || sweep > Math.PI * 2 ||
+      !Number.isFinite(innerRadius) || !Number.isFinite(outerRadius) ||
+      innerRadius < 0 || outerRadius <= innerRadius ||
+      !Number.isInteger(segments) || segments < 2 || segments > 256) throw new RangeError('Invalid crescent dimensions')
+  const positions: number[] = []
+  const indices: number[] = []
+  const ring: [number, number, number, number][] = []
+  for (let i = 0; i <= segments; i++) {
+    const u = i / segments
+    const a = -sweep / 2 + sweep * u
+    const taper = Math.sin(u * Math.PI)
+    const rIn = outerRadius - (outerRadius - innerRadius) * taper
+    ring.push([Math.sin(a) * rIn, Math.cos(a) * rIn, Math.sin(a) * outerRadius, Math.cos(a) * outerRadius])
+  }
+  for (let side = 0; side < 2; side++) {
+    const base = positions.length / 3
+    for (const [ix, iz, ox, oz] of ring) positions.push(ix, 0, iz, ox, 0, oz)
+    for (let i = 0; i < segments; i++) {
+      const a = base + i * 2, b = a + 2
+      // Tips collapse inner onto outer; skip the zero-area half of those quads
+      const tri = (x: number, y: number, z: number) => {
+        const ux = positions[y * 3] - positions[x * 3], uz = positions[y * 3 + 2] - positions[x * 3 + 2]
+        const vx = positions[z * 3] - positions[x * 3], vz = positions[z * 3 + 2] - positions[x * 3 + 2]
+        if (Math.abs(ux * vz - uz * vx) > 1e-9) indices.push(x, y, z)
+      }
+      if (side === 0) { tri(a, a + 1, b + 1); tri(a, b + 1, b) }
+      else { tri(a, b + 1, a + 1); tri(a, b, b + 1) }
+    }
+  }
+  return mesh(positions, indices)
+}
+
 /** Revolve a section from its underside round to its inside. A zero radius closes a cap. */
 export function revolvedMesh(section: readonly (readonly [radius: number, height: number])[], sides = 10) {
   if (section.length < 2 || !Number.isSafeInteger(sides) || sides < 3 || sides > 256) throw new RangeError('Invalid revolved section')

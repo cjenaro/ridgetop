@@ -41,8 +41,10 @@ import {
   drawSettingRow, drawSheet, drawSkillRow, drawSkillTile, drawSpeakerPortrait, drawStatStrip,
   drawStoryHeading, drawTab, drawTacticCard, drawText, drawTimelineBg, drawTitleCard,
   drawTitleLogo, drawToast, drawToolbarBg, drawTopFade, drawTurnToken, drawUnitCard,
-  drawVictoryBackdrop, drawWell, drawWorldMapCanvas, drawWorldMapNode, worldMapScale, worldMapToScreen
+  drawVictoryBackdrop, drawWell, drawWorldMapCanvas, drawWorldMapNode, worldMapScale, worldMapToScreen,
+  FANFARE_DURATION, drawFanfare
 } from './ui-art.ts'
+import type { FanfareDrawOpts } from './ui-art.ts'
 import type { IconName, WorldMapViewport } from './ui-art.ts'
 
 type Screen = 'title' | 'world' | 'camp' | 'story' | 'battle' | 'victory' | 'defeat' | 'paused'
@@ -165,6 +167,50 @@ async function start() {
   let worldMapTargetZoom = 0.98
   let worldMapDrag: { pointerId: number; lastX: number; lastY: number; dragged: boolean } | null = null
   let packAnim: PackAnimState | null = null
+  /** Hero Ascension merge ceremony / Epic+ equip fanfare overlay (presentation only). */
+  let fanfare: (Omit<FanfareDrawOpts, 'elapsed'> & { elapsed: number }) | null = null
+
+  function startAscensionFanfare(hero: OwnedHeroCard) {
+    const spec = HERO_SPECS[hero.heroId]
+    const unlocked = spec.skills[hero.stars - 1]
+    fanfare = {
+      kind: 'ascend',
+      elapsed: 0,
+      title: `Ascended ${'★'.repeat(hero.stars)}`,
+      subtitle: `${spec.name}, ${spec.title} — Tier ${hero.stars}`,
+      accent: TIER_COLOR[hero.stars],
+      portrait: portraits[hero.heroId],
+      stars: hero.stars,
+      skill: unlocked
+        ? { tier: unlocked.tier, name: unlocked.name, desc: unlocked.desc, vfx: unlocked.vfx, skillId: unlocked.id }
+        : undefined
+    }
+    uiDirty = true
+  }
+
+  function startEquipFanfare(hero: OwnedHeroCard, equipId: string) {
+    const spec = EQUIPMENT_BY_ID[equipId]
+    if (!spec || (spec.rarity !== 'epic' && spec.rarity !== 'legendary')) return
+    const meta = RARITY_META[spec.rarity]
+    fanfare = {
+      kind: 'equip',
+      elapsed: 0,
+      title: `${meta.label} Equipped!`,
+      subtitle: `${spec.name} → ${HERO_SPECS[hero.heroId].name}`,
+      accent: meta.hex,
+      item: { slot: spec.slot, equipId: spec.id, accentHex: spec.accentHex, rarityLabel: meta.label }
+    }
+    state.sounds.push({ kind: 'pack', rarity: spec.rarity })
+    uiDirty = true
+  }
+
+  function dismissFanfare() {
+    if (!fanfare) return
+    // First tap fast-forwards to the settled pose; a second tap (or the timer) closes it
+    if (fanfare.elapsed < 1.6) fanfare.elapsed = 1.6
+    else fanfare = null
+    uiDirty = true
+  }
 
   function clampWorldMapView() {
     worldMapTargetZoom = Math.max(0.62, Math.min(1.75, worldMapTargetZoom))
@@ -298,6 +344,18 @@ async function start() {
       saveNow()
       const names = equipped.map(it => EQUIPMENT_BY_ID[it.equipId]?.name ?? it.equipId).join(', ')
       showToast(`Best Fit equipped ${names} on ${heroName}.`)
+      const targetHero = getHeroByUid(state.campaign, heroUid)
+      if (targetHero) {
+        let bestRare: OwnedEquipCard | null = null
+        let bestRank = -1
+        for (const it of equipped) {
+          const sp = EQUIPMENT_BY_ID[it.equipId]
+          if (!sp || (sp.rarity !== 'epic' && sp.rarity !== 'legendary')) continue
+          const rank = RARITY_ORDER.indexOf(sp.rarity)
+          if (rank > bestRank) { bestRank = rank; bestRare = it }
+        }
+        if (bestRare) startEquipFanfare(targetHero, bestRare.equipId)
+      }
     } else {
       showToast(`${heroName} is already wearing the best unequipped gear.`)
     }
@@ -314,7 +372,7 @@ async function start() {
     screen = next
     lockedForecastCell = null
     mobileHandOpen = false
-    if (next !== 'camp') packAnim = null
+    if (next !== 'camp') { packAnim = null; fanfare = null }
     if (next === 'victory' || next === 'defeat') resultAnimTime = 0
     if (next === 'title' || next === 'camp' || next === 'story' || next === 'world') {
       scene.setCampFraming(next)
@@ -468,7 +526,8 @@ async function start() {
     safeArea: { top: 8, right: 8, bottom: 8, left: 8 },
     keyboardEnabled: () => screen !== 'battle',
     onBack: () => {
-      if (packAnim) {
+      if (fanfare) dismissFanfare()
+      else if (packAnim) {
         if (isPackCeremonyComplete()) { packAnim = null; uiDirty = true }
         else skipPackCeremony()
       } else if (screen === 'paused') setScreen('battle')
@@ -2609,8 +2668,7 @@ async function start() {
                 audio.unlock()
                 if (mergeHero(state, selHero.uid)) {
                   saveNow()
-                  const unlocked = spec.skills[selHero.stars - 1]
-                  showToast(`${spec.name} ascended to Tier ${selHero.stars}! Unlocked ${unlocked.name}.`)
+                  startAscensionFanfare(selHero)
                 }
               },
               draw: (ctx: CanvasRenderingContext2D, rect: LayoutRect, st: CanvasWidgetDrawState) => drawButton(
@@ -2886,9 +2944,12 @@ async function start() {
                 onPress: () => {
                   audio.unlock()
                   if (selHero) {
-                    equipItem(state, selHero.uid, item.uid)
-                    saveNow()
-                    showToast(`Equipped ${spec?.name ?? 'item'} on ${HERO_SPECS[selHero.heroId].name}.`)
+                    const wasOnSel = findEquipOwner(camp, item.uid)?.uid === selHero.uid
+                    if (equipItem(state, selHero.uid, item.uid)) {
+                      saveNow()
+                      showToast(`Equipped ${spec?.name ?? 'item'} on ${HERO_SPECS[selHero.heroId].name}.`)
+                      if (!wasOnSel) startEquipFanfare(selHero, item.equipId)
+                    }
                   }
                 },
                 draw: (ctx: CanvasRenderingContext2D, rect: LayoutRect, st: CanvasWidgetDrawState) => drawEquipCard(ctx, rect, {
@@ -3115,6 +3176,19 @@ async function start() {
       : selectedStage.title
     const chapterSub = pendingEndless > 0 ? 'Arena' : `Diff ${DIFFICULTY_META[selectedStage.difficulty].short} · ${selectedStage.subtitle}`
     const packOverlayNodes: LayoutNode[] = packAnim ? [buildPackCeremonyOverlay(w, h, packAnim)] : []
+    const activeFanfare = fanfare
+    if (activeFanfare) {
+      packOverlayNodes.push(boxNode({
+        id: 'cs-fanfare',
+        style: { anchor: 'fill' },
+        widget: {
+          type: 'button',
+          label: 'Continue',
+          onPress: () => dismissFanfare(),
+          draw: (ctx: CanvasRenderingContext2D, rect: LayoutRect) => drawFanfare(ctx, rect, activeFanfare)
+        }
+      }))
+    }
 
     return overlay({ id: 'root', style: { anchor: 'fill' } }, [
       // Subtle top fade for crisp readability over the 3D sky
@@ -4061,6 +4135,11 @@ async function start() {
         uiDirty = true
       } else if (screen === 'victory' || screen === 'defeat') {
         resultAnimTime += renderDt
+        uiDirty = true
+      }
+      if (fanfare) {
+        fanfare.elapsed += renderDt
+        if (fanfare.elapsed >= FANFARE_DURATION) fanfare = null
         uiDirty = true
       }
       if (packAnim) {

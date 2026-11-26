@@ -466,10 +466,10 @@ export function resolveHeroRig(heroId: HeroClassId, loadout?: HeroVisualLoadout)
     palette.glow = '#d66bff'
   } else if (weaponId === 'iron_sword') {
     parts.mainHand = 'weapon_broadsword'
-  } else if (weaponId === 'yew_bow') {
+  } else if (weaponId === 'hunter_bow' || weaponId === 'yew_bow') {
     parts.mainHand = 'weapon_arrow_nocked'
     parts.offHand = 'offhand_bow_recurve'
-  } else if (weaponId === 'apprentice_staff') {
+  } else if (weaponId === 'ember_wand' || weaponId === 'apprentice_staff') {
     parts.mainHand = 'weapon_staff_arcane'
   }
 

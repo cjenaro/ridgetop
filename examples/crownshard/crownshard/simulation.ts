@@ -1,4 +1,5 @@
 import { nextRandom } from 'ridgetop'
+import type { Vec3 } from 'ridgetop'
 import {
   CHAPTERS, CHAPTER_BY_ID, ENEMY_SPECS, EQUIPMENT_BY_ID, EQUIPMENT_LIST, HERO_LIST, HERO_SPECS,
   MERGE_COPIES_REQUIRED, PACK_BY_ID, PLAYABLE_CHAPTERS, RARITY_META, RARITY_ORDER, TACTIC_BY_ID, TACTIC_LIST
@@ -1852,6 +1853,16 @@ function applyDamage(
   }
 
   defender.hp = Math.max(0, defender.hp - finalDmg)
+  state.vfx.push({
+    kind: 'impact',
+    uid: defender.uid,
+    attackerUid: attacker ? attacker.uid : null,
+    arc: attackArc,
+    crit: isCrit,
+    blocked: finalDmg === 0 && absorbed > 0,
+    absorbed,
+    damage: finalDmg
+  })
   defender.hitFlash = 0.28
   defender.animState = 'hit'
   defender.animTimer = 0.30
@@ -2109,6 +2120,21 @@ function awardBattleVictory(state: GameState): void {
   battle.bannerTimer = 3.0
 }
 
+/** World-space ground centres of grid cells (presentation hints for VFX events). */
+function cellCentres(battle: BattleState, cells: readonly { col: number; row: number }[]): Vec3[] {
+  const out: Vec3[] = []
+  for (const c of cells) {
+    out.push(gridToWorld(c.col, c.row, battle.cells[c.row][c.col].elevation, battle.cols, battle.rows))
+  }
+  return out
+}
+
+/** The ally whose turn it is plays the 'command' gesture when a tactic card resolves. */
+function tacticCasterUid(battle: BattleState): string | null {
+  const active = getUnitByUid(battle, battle.activeUnitUid)
+  return active && active.alive && active.team === 'ally' ? active.uid : null
+}
+
 function executeBasicAttack(state: GameState, attacker: BattleUnit, target: BattleUnit): void {
   const battle = state.battle
   if (!battle) return
@@ -2124,7 +2150,7 @@ function executeBasicAttack(state: GameState, attacker: BattleUnit, target: Batt
     attacker.lungeX = (dx / dist) * 0.48
     attacker.lungeZ = (dz / dist) * 0.48
     state.sounds.push({ kind: 'slash' })
-    state.vfx.push({ kind: 'burst', style: 'slash', at: [target.x, target.y + 0.75, target.z] })
+    state.vfx.push({ kind: 'burst', style: 'slash', at: [target.x, target.y + 0.75, target.z], uid: attacker.uid })
   } else {
     const style = attacker.heroId === 'archer' || attacker.enemyId === 'bone_archer'
       ? 'arrow'
@@ -2137,7 +2163,8 @@ function executeBasicAttack(state: GameState, attacker: BattleUnit, target: Batt
       kind: 'projectile',
       style,
       from: [attacker.x, attacker.y + 0.95, attacker.z],
-      to: [target.x, target.y + 0.75, target.z]
+      to: [target.x, target.y + 0.75, target.z],
+      uid: attacker.uid
     })
   }
 
@@ -2170,23 +2197,16 @@ function executeHeroSkill(
   else if (skill.vfx === 'holy' && skill.powerMul === 0) state.sounds.push({ kind: 'heal' })
   else state.sounds.push({ kind: 'magic', pitch: 1.05 })
 
-  if (skill.range > 1 && skill.target !== 'self') {
-    const pStyle = skill.vfx === 'slash' ? 'arcane' : skill.vfx
-    state.vfx.push({
-      kind: 'projectile',
-      style: pStyle,
-      from: [caster.x, caster.y + 1.0, caster.z],
-      to: [tx, ty + 0.65, tz]
-    })
-  }
-  state.vfx.push({
-    kind: 'burst',
-    style: skill.vfx === 'arrow' ? 'gold' : skill.vfx,
-    at: [tx, ty + 0.6, tz],
-    radius: skill.pattern === 'area3' ? 1.8 : skill.pattern === 'cross' ? 1.3 : 0.8
-  })
-
   const affected = getPatternCells(col, row, skill.pattern, battle.cols, battle.rows)
+  state.vfx.push({
+    kind: 'skill',
+    uid: caster.uid,
+    skillId: skill.id,
+    style: skill.vfx,
+    from: [caster.x, caster.y, caster.z],
+    at: [tx, ty, tz],
+    cells: cellCentres(battle, affected)
+  })
   let hitAny = false
 
   if (skill.target === 'self') {
@@ -2274,15 +2294,21 @@ function executeTacticCard(state: GameState, tacticUid: string, col: number, row
       applyHealAndShield(state, u, spec.heal, spec.shield)
       if (spec.status) applyStatus(battle, u, spec.status)
     }
-    state.vfx.push({ kind: 'burst', style: 'holy', at: [0, 0.8, 0], radius: 2.6 })
+    const allyCells: Vec3[] = []
+    for (const u of battle.units) {
+      if (u.alive && u.team === 'ally') allyCells.push([u.x, u.y, u.z])
+    }
+    state.vfx.push({ kind: 'tactic', tacticId: spec.id, style: spec.vfx, at: [tx, ty, tz], cells: allyCells, casterUid: tacticCasterUid(battle) })
   } else {
-    state.vfx.push({
-      kind: 'burst',
-      style: spec.vfx,
-      at: [tx, ty + 0.6, tz],
-      radius: spec.pattern === 'area3' ? 1.9 : spec.pattern === 'cross' ? 1.35 : 0.9
-    })
     const cells = getPatternCells(col, row, spec.pattern, battle.cols, battle.rows)
+    state.vfx.push({
+      kind: 'tactic',
+      tacticId: spec.id,
+      style: spec.vfx,
+      at: [tx, ty, tz],
+      cells: cellCentres(battle, cells),
+      casterUid: tacticCasterUid(battle)
+    })
     for (const c of cells) {
       const target = unitAt(battle, c.col, c.row)
       if (!target) continue
@@ -2622,6 +2648,7 @@ function executeEnemyUnitTurn(state: GameState, enemy: BattleUnit): void {
       faceToward(enemy, hurt.x, hurt.z)
       enemy.animState = 'cast'
       enemy.animTimer = 0.42
+      state.vfx.push({ kind: 'special', uid: enemy.uid, move: 'shaman_mend', at: [hurt.x, hurt.y, hurt.z], cells: [[hurt.x, hurt.y, hurt.z]] })
       applyHealAndShield(state, hurt, 22, 6)
       return
     }
@@ -2689,13 +2716,15 @@ function performEnemyAttack(state: GameState, enemy: BattleUnit, target: BattleU
     enemy.animTimer = 0.50
     enemy.acted = true
     state.sounds.push({ kind: 'magic', pitch: 0.72 })
+    const novaCells = getPatternCells(target.col, target.row, 'cross', battle.cols, battle.rows)
     state.vfx.push({
-      kind: 'burst',
-      style: 'shadow',
-      at: [target.x, target.y + 0.6, target.z],
-      radius: 1.65
+      kind: 'special',
+      uid: enemy.uid,
+      move: 'eclipse_nova',
+      at: [target.x, target.y, target.z],
+      cells: cellCentres(battle, novaCells)
     })
-    for (const c of getPatternCells(target.col, target.row, 'cross', battle.cols, battle.rows)) {
+    for (const c of novaCells) {
       const victim = unitAt(battle, c.col, c.row)
       if (victim && victim.team === 'ally') {
         applyDamage(state, enemy, victim, enemy.atk * 1.15, 0.35, false)

@@ -121,3 +121,21 @@ test('bevelBox, capsuleMesh, scallopedCone, and smoothMesh produce outward-facin
   }
   assert.ok(differed > 0, 'Expected smoothMesh to blend normals on cylinder sides')
 })
+
+test('crescentMesh builds a tapered double-sided arc centred on +Z', async () => {
+  const { crescentMesh } = await import('../packages/ridgetop/framework/geometry.ts')
+  const arc = crescentMesh(Math.PI, 0.6, 1, 8)
+  const p = arc.data // interleaved XYZ + flat normal
+  let maxZ = -Infinity, maxY = 0
+  assert.ok(arc.vertexCount > 0)
+  for (let i = 0; i < p.length; i += 6) {
+    maxZ = Math.max(maxZ, p[i + 2])
+    maxY = Math.max(maxY, Math.abs(p[i + 1]))
+    const r = Math.hypot(p[i], p[i + 2])
+    assert.ok(r >= 0.6 - 1e-6 && r <= 1 + 1e-6)
+  }
+  assert.ok(Math.abs(maxZ - 1) < 1e-6, 'outer edge reaches radius 1 at the arc centre')
+  assert.equal(maxY, 0, 'flat in the XZ plane')
+  assert.throws(() => crescentMesh(0))
+  assert.throws(() => crescentMesh(Math.PI, 1, 0.5))
+})

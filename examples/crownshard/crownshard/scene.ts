@@ -9,14 +9,17 @@ import {
   buildCampDioramaBatches, buildStaticBoardBatches, crownMesh, crystalMesh, flatRing, resolveHeroRig, roundPebble, tileQuad
 } from './art.ts'
 import {
-  CAMP_FIDGETS, LEAP_TUCK, UNIT_CLIPS,
-  aimClipFor, attackClipFor, castClipFor, celebrateClipFor, idleClipFor, idleRateFor, stanceOffsetFor, uidHash
+  CAMP_FIDGETS, CLIP_IMPACT, LEAP_TUCK, UNIT_CLIPS,
+  aimClipFor, attackClipFor, castClipFor, celebrateClipFor, deathClipFor, gaitFor, hitClipFor, idleClipFor, idleRateFor,
+  runClipFor, runRateFor, skillClipFor, stanceOffsetFor, statusClipFor, turnClipFor, uidHash
 } from './animations.ts'
-import type { UnitClipName } from './animations.ts'
+import type { Gait, UnitClipName } from './animations.ts'
+import { VFX_COLORS, arrowMesh, createBattleVfx } from './vfx.ts'
+import type { StrikeShape } from './vfx.ts'
 import { getEquipmentByUid, getHeroByUid, getPatternCells, getHeroSkill, getUnitByUid, getTacticByUid, unitAt } from './simulation.ts'
 import { TACTIC_BY_ID } from './data.ts'
 import { TILE_SIZE, facingToYaw, gridToWorld, worldToGrid } from './types.ts'
-import type { BattleState, BattleUnit, CombatForecast, GameState, OwnedHeroCard } from './types.ts'
+import type { AttackArc, BattleState, BattleUnit, CombatForecast, GameState, OwnedHeroCard } from './types.ts'
 
 const C_MOVE_TILE: Color = [0.22, 0.80, 1.0, 0.34]
 const C_MOVE_BORDER: Color = [0.84, 0.97, 1.0, 0.94]
@@ -69,40 +72,37 @@ const C_ENEMY_SOUL = color('d58cff')
 const DEATH_SINK_START = 1.0
 const DEATH_SINK_TIME = 0.7
 const DEATH_TOTAL = DEATH_SINK_START + DEATH_SINK_TIME
-/** Grid movement in the simulation advances 5.2 tiles/s; the run clip has 2 footfalls per 0.44 s cycle. */
-const RUN_RATE = (0.44 / 2) * 5.2
+/** Basic-attack strike trail shape per attack clip (weapon-specific swing arcs). */
+const STRIKE_BY_CLIP: Partial<Record<UnitClipName, StrikeShape>> = {
+  attack: 'slash',
+  attack_overhead: 'overhead',
+  attack_heavy: 'overhead',
+  attack_axe: 'diagonal',
+  attack_dark_cleave: 'dark',
+  attack_thrust: 'thrust',
+  attack_stab: 'thrust',
+  attack_daggers: 'twin',
+  attack_mace: 'mace',
+  attack_pound: 'pound'
+}
+
+/** Seconds into a clip at which its blow lands / spell releases. */
+function impactOf(clip: UnitClipName): number {
+  return CLIP_IMPACT[clip] ?? 0.16
+}
+
+interface PendingHit {
+  t: number
+  arc: AttackArc
+  crit: boolean
+  blocked: boolean
+  absorbed: number
+  fromX: number
+  fromZ: number
+  hasAttacker: boolean
+}
 
 const ADD_JOINTS = ['body', 'head', 'armL', 'armR', 'legL', 'legR', 'cape'] as const
-
-/** Double-sided low-poly arrow pointing down +Z (length 1, centred on origin). */
-const arrowMesh = (() => {
-  const pos: number[] = []
-  const idx: number[] = []
-  function tri(a: Vec3, b: Vec3, c: Vec3) {
-    const n = pos.length / 3
-    pos.push(...a, ...b, ...c, ...a, ...c, ...b)
-    idx.push(n, n + 1, n + 2, n + 3, n + 4, n + 5)
-  }
-  function quad(a: Vec3, b: Vec3, c: Vec3, d: Vec3) {
-    tri(a, b, c)
-    tri(a, c, d)
-  }
-  const w = 0.035
-  const z0 = -0.5, z1 = 0.24
-  const corners: Vec3[] = [[-w, -w, 0], [w, -w, 0], [w, w, 0], [-w, w, 0]]
-  for (let i = 0; i < 4; i++) {
-    const a = corners[i], b = corners[(i + 1) % 4]
-    quad([a[0], a[1], z0], [b[0], b[1], z0], [b[0], b[1], z1], [a[0], a[1], z1])
-  }
-  const h = 0.10
-  const base: Vec3[] = [[-h, -h, z1], [h, -h, z1], [h, h, z1], [-h, h, z1]]
-  for (let i = 0; i < 4; i++) tri(base[i], base[(i + 1) % 4], [0, 0, 0.5])
-  quad(base[0], base[1], base[2], base[3])
-  // Crossed fletching vanes
-  quad([-0.11, 0, -0.50], [0.11, 0, -0.50], [0.05, 0, -0.30], [-0.05, 0, -0.30])
-  quad([0, -0.11, -0.50], [0, 0.11, -0.50], [0, 0.05, -0.30], [0, -0.05, -0.30])
-  return mesh(pos, idx)
-})()
 
 /** Flat ground-hugging directional facing chevron pointing down +Z outside the unit ring. */
 const facingChevronMesh = (() => {
@@ -229,6 +229,20 @@ interface UnitFx {
   stanceW: number
   fidgetTimer: number
   fidgetCount: number
+  /** Clip chosen by a VFX event (skill/special/weapon) for the next attack/cast edge. */
+  pendingClip: UnitClipName | null
+  /** Hit reaction waiting for the attacker's clip to connect. */
+  hitQueue: PendingHit | null
+  /** Status onset reaction waiting for the current action to finish. */
+  statusQueue: UnitClipName | null
+  flashT: number
+  simYaw: number
+  prevBurn: number
+  prevSlow: number
+  prevStun: number
+  prevEmpower: number
+  auraTimer: number
+  deathClip: UnitClipName
   readonly pos: [number, number, number]
   readonly scl: [number, number, number]
   readonly additive: Record<string, { rotation: [number, number, number] }>
@@ -242,6 +256,7 @@ interface Shot {
   age: number
   life: number
   trail: number
+  delay: number
 }
 
 export function createCrownshardScene(renderer: LowPolyRenderer) {
@@ -287,6 +302,9 @@ export function createCrownshardScene(renderer: LowPolyRenderer) {
   let lastActiveUid: string | null = null
   let hitStop = 0
   let moteTimer = 0
+  /** Presentation-only camera shake (gait stomps, VFX slams) layered on the sim's battle.shake. */
+  let localShake = 0
+  const vfx = createBattleVfx(pool, particles, amount => { localShake = Math.max(localShake, amount) })
 
   function getFx(key: string, unit?: BattleUnit): UnitFx {
     let fx = unitFx.get(key)
@@ -320,6 +338,17 @@ export function createCrownshardScene(renderer: LowPolyRenderer) {
         stanceW: 1,
         fidgetTimer: 3 + seed * 6,
         fidgetCount: 0,
+        pendingClip: null,
+        hitQueue: null,
+        statusQueue: null,
+        flashT: 0,
+        simYaw: unit?.yaw ?? 0,
+        prevBurn: unit?.burnTurns ?? 0,
+        prevSlow: unit?.slowTurns ?? 0,
+        prevStun: unit?.stunTurns ?? 0,
+        prevEmpower: unit?.empowerTurns ?? 0,
+        auraTimer: seed,
+        deathClip: 'death',
         pos: [0, 0, 0],
         scl: [1, 1, 1],
         additive
@@ -473,20 +502,58 @@ export function createCrownshardScene(renderer: LowPolyRenderer) {
     }
   }
 
+  /** Queue a hit reaction on the defender, timed to land when the attacker's blow connects. */
+  function queueHit(battle: BattleState, ev: Extract<GameState['vfx'][number], { kind: 'impact' }>, delay: number) {
+    const defender = getUnitByUid(battle, ev.uid)
+    if (!defender) return
+    const attacker = ev.attackerUid ? getUnitByUid(battle, ev.attackerUid) : null
+    const dfx = getFx(defender.uid, defender)
+    const prev = dfx.hitQueue
+    // Multi-hit skills on one unit keep the strongest reaction at the earliest time
+    dfx.hitQueue = {
+      t: prev ? Math.min(prev.t, delay) : delay,
+      arc: prev && prev.arc !== 'front' ? prev.arc : ev.arc,
+      crit: ev.crit || Boolean(prev?.crit),
+      blocked: ev.blocked && (!prev || prev.blocked),
+      absorbed: ev.absorbed + (prev?.absorbed ?? 0),
+      fromX: attacker ? attacker.x : defender.x,
+      fromZ: attacker ? attacker.z : defender.z,
+      hasAttacker: Boolean(attacker && attacker !== defender)
+    }
+  }
+
   function consumeVfx(state: GameState) {
+    const battle = state.battle
+    // Delay (s) at which the most recent action in this batch lands; trailing heal/shield/ko events sync to it.
+    let landDelay = 0
+    const attackLand = new Map<string, number>()
     for (const ev of state.vfx) {
       if (ev.kind === 'projectile') {
         const arrow = ev.style === 'arrow'
-        shots.push({
-          style: ev.style,
-          from: ev.from,
-          to: ev.to,
-          peak: arrow ? 0.9 : 0.55,
-          age: 0,
-          life: arrow ? 0.28 : 0.34,
-          trail: 0
-        })
+        const owner = battle && ev.uid ? getUnitByUid(battle, ev.uid) : null
+        let delay = 0
+        if (owner) {
+          const clip = attackClipFor(owner.heroId, owner.enemyId, owner.weaponId)
+          const ofx = getFx(owner.uid, owner)
+          ofx.pendingClip = clip
+          delay = impactOf(clip)
+        }
+        const life = arrow ? 0.28 : 0.34
+        shots.push({ style: ev.style, from: ev.from, to: ev.to, peak: arrow ? 0.9 : 0.55, age: 0, life, trail: 0, delay })
+        landDelay = delay + life
+        if (owner) attackLand.set(owner.uid, landDelay)
       } else if (ev.kind === 'burst') {
+        const owner = battle && ev.uid ? getUnitByUid(battle, ev.uid) : null
+        if (owner) {
+          // Weapon-specific melee strike trail, timed to the attack clip's impact frame
+          const clip = attackClipFor(owner.heroId, owner.enemyId, owner.weaponId)
+          getFx(owner.uid, owner).pendingClip = clip
+          const d = impactOf(clip)
+          vfx.strike(STRIKE_BY_CLIP[clip] ?? 'slash', [owner.x, owner.y, owner.z], [ev.at[0], ev.at[1] - 0.75, ev.at[2]], d)
+          landDelay = d
+          attackLand.set(owner.uid, d)
+          continue
+        }
         const col = vfxColor(ev.style)
         const rad = ev.radius ?? 0.9
         const count = rad > 1.4 ? 16 : 9
@@ -505,52 +572,95 @@ export function createCrownshardScene(renderer: LowPolyRenderer) {
             life: 0.48
           })
         }
+      } else if (ev.kind === 'skill') {
+        const caster = battle ? getUnitByUid(battle, ev.uid) : null
+        const clip = skillClipFor(ev.skillId, caster?.heroId)
+        if (caster) getFx(caster.uid, caster).pendingClip = clip
+        landDelay = vfx.skill(ev, impactOf(clip))
+        attackLand.set(ev.uid, landDelay)
+      } else if (ev.kind === 'tactic') {
+        const caster = battle && ev.casterUid ? getUnitByUid(battle, ev.casterUid) : null
+        let d = 0
+        if (caster && caster.alive) {
+          const cfx = getFx(caster.uid, caster)
+          if (caster.path.length === 0) {
+            startAction(cfx, 'command', 0.06)
+            d = impactOf('command')
+          }
+        }
+        landDelay = vfx.tactic(ev, d)
+      } else if (ev.kind === 'special') {
+        const boss = battle ? getUnitByUid(battle, ev.uid) : null
+        const clip: UnitClipName = ev.move === 'eclipse_nova' ? 'boss_nova'
+          : ev.move === 'lich_summon' ? 'boss_summon'
+          : ev.move === 'frostwyrm_breath' ? 'boss_breath'
+          : ev.move === 'titan_slam' ? 'boss_slam'
+          : 'shaman_chant'
+        if (boss) getFx(boss.uid, boss).pendingClip = clip
+        const from: Vec3 = boss ? [boss.x, boss.y, boss.z] : ev.at
+        landDelay = vfx.special(ev.move, from, ev.at, ev.cells, impactOf(clip))
+        attackLand.set(ev.uid, landDelay)
+      } else if (ev.kind === 'impact') {
+        if (!battle) continue
+        const d = ev.attackerUid ? (attackLand.get(ev.attackerUid) ?? landDelay) : landDelay
+        queueHit(battle, ev, d)
+        landDelay = d
       } else if (ev.kind === 'heal') {
-        for (let i = 0; i < 8; i++) {
-          const a = (i / 8) * Math.PI * 2
-          particles.spawn({
-            mesh: crystalMesh,
-            position: [ev.at[0] + Math.cos(a) * 0.4, ev.at[1], ev.at[2] + Math.sin(a) * 0.4],
-            velocity: [0, 1.8 + (i % 3) * 0.3, 0],
-            gravity: 0.4,
-            spin: 6,
-            scale: [0.14, 0.18, 0.14],
-            color: C_HEAL,
-            unlit: 0.96,
-            life: 0.65
-          })
-        }
+        const at = ev.at
+        vfx.later(landDelay, () => {
+          for (let i = 0; i < 8; i++) {
+            const a = (i / 8) * Math.PI * 2
+            particles.spawn({
+              mesh: crystalMesh,
+              position: [at[0] + Math.cos(a) * 0.4, at[1], at[2] + Math.sin(a) * 0.4],
+              velocity: [0, 1.8 + (i % 3) * 0.3, 0],
+              gravity: 0.4,
+              spin: 6,
+              scale: [0.14, 0.18, 0.14],
+              color: C_HEAL,
+              unlit: 0.96,
+              life: 0.65
+            })
+          }
+        })
       } else if (ev.kind === 'shield') {
-        for (let i = 0; i < 8; i++) {
-          const a = (i / 8) * Math.PI * 2
-          particles.spawn({
-            mesh: crystalMesh,
-            position: [ev.at[0] + Math.cos(a) * 0.45, ev.at[1] + 0.2, ev.at[2] + Math.sin(a) * 0.45],
-            velocity: [Math.cos(a) * 0.5, 0.8, Math.sin(a) * 0.5],
-            gravity: 0.2,
-            scale: [0.14, 0.16, 0.14],
-            color: C_FROST,
-            unlit: 0.95,
-            life: 0.52
-          })
-        }
+        const at = ev.at
+        vfx.later(landDelay, () => {
+          for (let i = 0; i < 8; i++) {
+            const a = (i / 8) * Math.PI * 2
+            particles.spawn({
+              mesh: crystalMesh,
+              position: [at[0] + Math.cos(a) * 0.45, at[1] + 0.2, at[2] + Math.sin(a) * 0.45],
+              velocity: [Math.cos(a) * 0.5, 0.8, Math.sin(a) * 0.5],
+              gravity: 0.2,
+              scale: [0.14, 0.16, 0.14],
+              color: C_FROST,
+              unlit: 0.95,
+              life: 0.52
+            })
+          }
+        })
       } else if (ev.kind === 'ko') {
-        hitStop = Math.max(hitStop, ev.isBoss ? 0.22 : 0.12)
-        const count = ev.isBoss ? 22 : 12
-        for (let i = 0; i < count; i++) {
-          const a = (i / count) * Math.PI * 2
-          particles.spawn({
-            mesh: crystalMesh,
-            position: ev.at,
-            velocity: [Math.cos(a) * 2.6, 2.8 + (i % 4) * 0.8, Math.sin(a) * 2.6],
-            gravity: 6.4,
-            spin: 11,
-            scale: [0.20, 0.24, 0.20],
-            color: ev.isBoss ? C_SHADOW : C_FIRE_TIP,
-            unlit: 0.95,
-            life: 0.72
-          })
-        }
+        const at = ev.at
+        const isBoss = Boolean(ev.isBoss)
+        vfx.later(landDelay, () => {
+          hitStop = Math.max(hitStop, isBoss ? 0.22 : 0.12)
+          const count = isBoss ? 22 : 12
+          for (let i = 0; i < count; i++) {
+            const a = (i / count) * Math.PI * 2
+            particles.spawn({
+              mesh: crystalMesh,
+              position: at,
+              velocity: [Math.cos(a) * 2.6, 2.8 + (i % 4) * 0.8, Math.sin(a) * 2.6],
+              gravity: 6.4,
+              spin: 11,
+              scale: [0.20, 0.24, 0.20],
+              color: isBoss ? C_SHADOW : C_FIRE_TIP,
+              unlit: 0.95,
+              life: 0.72
+            })
+          }
+        })
       } else if (ev.kind === 'levelup') {
         for (let i = 0; i < 16; i++) {
           const a = (i / 16) * Math.PI * 2
@@ -575,6 +685,10 @@ export function createCrownshardScene(renderer: LowPolyRenderer) {
   function updateShots(dt: number, time: number) {
     for (let i = shots.length - 1; i >= 0; i--) {
       const s = shots[i]
+      if (s.delay > 0) {
+        s.delay -= dt
+        continue
+      }
       s.age += dt
       const u = Math.min(1, s.age / s.life)
       const dx = s.to[0] - s.from[0], dy = s.to[1] - s.from[1], dz = s.to[2] - s.from[2]
@@ -616,6 +730,100 @@ export function createCrownshardScene(renderer: LowPolyRenderer) {
     }
   }
 
+  /** Fire a queued hit reaction: directional/heavy/block clip, flash, knockback, hit-stop, impact streak. */
+  function fireHit(unit: BattleUnit, fx: UnitFx, hit: PendingHit) {
+    const dx = unit.x - hit.fromX, dz = unit.z - hit.fromZ
+    const dist = Math.hypot(dx, dz)
+    const directional = hit.hasAttacker && dist > 0.05
+    // Direction the blow travels (attacker -> defender); unsourced damage (burn, cards) knocks from the front
+    const attackYaw = directional ? Math.atan2(dx, dz) : fx.yaw + Math.PI
+    fx.flashT = hit.blocked ? 0.08 : 0.2
+    const at: Vec3 = [unit.x, unit.y, unit.z]
+    if (hit.blocked) {
+      vfx.impact(at, attackYaw, 'block', 0)
+    } else {
+      vfx.impact(at, attackYaw, hit.crit ? 'crit' : hit.arc === 'back' ? 'back' : hit.arc === 'flank' ? 'flank' : 'hit', 0)
+      if (hit.absorbed > 0) vfx.sparks([unit.x, unit.y + 0.85, unit.z], VFX_COLORS.frost, 6, 1.6)
+    }
+    if (hit.crit || hit.arc === 'back') hitStop = Math.max(hitStop, hit.crit && hit.arc === 'back' ? 0.15 : 0.1)
+    if (!unit.alive) return
+    // Which side of the defender the blow came from (clip convention: local +X is the unit's left)
+    const sideX = Math.cos(fx.yaw), sideZ = -Math.sin(fx.yaw)
+    const side = (-dx) * sideX + (-dz) * sideZ > 0 ? 'left' : 'right'
+    startAction(fx, hit.blocked ? 'block' : hitClipFor(hit.arc, side, hit.crit), 0.03)
+    const kb = hit.blocked ? 0.12 : (hit.arc === 'back' ? 0.34 : hit.arc === 'flank' ? 0.28 : 0.24) * (hit.crit ? 1.4 : 1)
+    if (directional) {
+      fx.kbX = (dx / dist) * kb
+      fx.kbZ = (dz / dist) * kb
+    }
+  }
+
+  /** Persistent status VFX: flickering embers (burn), frost rings (slow), rising gold aura (empower). */
+  function drawStatusAura(unit: BattleUnit, fx: UnitFx, px: number, py: number, pz: number, scale: number, realDt: number, time: number) {
+    fx.auraTimer -= realDt
+    if (fx.auraTimer <= 0) {
+      fx.auraTimer = 0.11
+      if (unit.burnTurns > 0) vfx.embers([px, py + 0.25, pz], 2, 0.28)
+      if (unit.empowerTurns > 0) vfx.motes([px, py, pz], VFX_COLORS.gold, 2, 0.42 * scale, 1.2, 0, 0.8)
+      if (unit.slowTurns > 0) vfx.motes([px, py + 0.9 * scale, pz], VFX_COLORS.ice, 1, 0.3 * scale, -0.4, 0, 0.6)
+    }
+    if (unit.burnTurns > 0) {
+      for (let i = 0; i < 3; i++) {
+        const a = time * 2.2 + (i / 3) * Math.PI * 2
+        const fl = 0.16 + Math.sin(time * 26 + i * 2.3) * 0.04
+        pool.add(crystalMesh, [px + Math.cos(a) * 0.24 * scale, py + 0.16, pz + Math.sin(a) * 0.24 * scale], [fl, fl * 1.9, fl], a, C_FIRE_CORE, 1, 'additive')
+      }
+    }
+    if (unit.slowTurns > 0) {
+      for (let i = 0; i < 2; i++) {
+        const h = 0.22 + i * 0.32 + Math.sin(time * 2.4 + i * 1.7) * 0.05
+        const r = (0.44 - i * 0.06) * scale
+        pool.add(flatRing, [px, py + h * scale, pz], [r, 1, r], time * (i ? -1.4 : 1.1), [0.52, 0.91, 1.0, 0.72], 1, 'additive')
+      }
+    }
+    if (unit.empowerTurns > 0) {
+      const r = (0.62 + Math.sin(time * 5) * 0.05) * scale
+      pool.add(flatRing, [px, py + 0.06, pz], [r, 1, r], -time * 1.8, [1.0, 0.84, 0.36, 0.8], 1, 'additive')
+      const h = ((time * 0.9) % 1)
+      pool.add(flatRing, [px, py + 0.1 + h * 1.5 * scale, pz], [r * (1 - h * 0.4), 1, r * (1 - h * 0.4)], time, [1.0, 0.9, 0.5, 0.7 * (1 - h)], 1, 'additive')
+    }
+  }
+
+  /** Archetype death flourishes: golem/brute crumble chunks, archon/shaman dissolve wisps, goblin tumble dust. */
+  function deathFlourish(unit: BattleUnit, fx: UnitFx, before: number, after: number, scale: number) {
+    const crossed = (t: number) => before < t && after >= t
+    if (fx.deathClip === 'death_crumble' && crossed(0.55)) {
+      localShake = Math.max(localShake, 0.12)
+      const ice = unit.enemyId === 'frost_golem'
+      for (let i = 0; i < 9; i++) {
+        const a = (i / 9) * Math.PI * 2
+        particles.spawn({
+          mesh: roundPebble,
+          position: [unit.x + Math.cos(a) * 0.2, unit.y + 0.6 * scale, unit.z + Math.sin(a) * 0.2],
+          velocity: [Math.cos(a) * 1.6, 1.8 + (i % 3) * 0.6, Math.sin(a) * 1.6],
+          gravity: 7,
+          spin: 6,
+          scale: [0.16, 0.13, 0.16],
+          endScale: 0.5,
+          color: ice ? [0.74, 0.90, 1.0, 1] : [0.42, 0.36, 0.30, 1],
+          unlit: ice ? 0.4 : 0.1,
+          life: 0.8
+        })
+      }
+      vfx.dust([unit.x, unit.y, unit.z], 10, 1.6)
+    } else if (fx.deathClip === 'death_dissolve' && after > 0.15) {
+      fx.auraTimer -= after - before
+      if (fx.auraTimer <= 0) {
+        fx.auraTimer = 0.05
+        vfx.motes([unit.x, unit.y + 0.4 * scale, unit.z], unit.isBoss ? C_SHADOW : C_ENEMY_SOUL, 2, 0.35 * scale, 1.6, 0, 0.7)
+      }
+    } else if (fx.deathClip === 'death_tumble' && crossed(0.5)) {
+      vfx.dust([unit.x, unit.y, unit.z], 6, 1.1)
+    } else if (fx.deathClip === 'death_kneel' && crossed(0.3)) {
+      vfx.dust([unit.x, unit.y, unit.z], 4, 0.7)
+    }
+  }
+
   function renderUnit(
     battle: BattleState,
     unit: BattleUnit,
@@ -643,13 +851,27 @@ export function createCrownshardScene(renderer: LowPolyRenderer) {
       : unit.stars === 2 ? 1.05
       : 1.0
 
-    // ---------------------------------------------------------------- death: topple, sink, soul burst
-    if (!unit.alive) {
+    fx.flashT = Math.max(0, fx.flashT - realDt)
+    const queued = fx.hitQueue
+    if (queued) {
+      queued.t -= dt
+      if (queued.t <= 0) {
+        fx.hitQueue = null
+        fireHit(unit, fx, queued)
+      }
+    }
+
+    // ---------------------------------------------------------------- death: archetype topple, sink, soul burst
+    // A unit killed by a blow still in flight stays standing until that blow visually connects.
+    if (!unit.alive && !fx.hitQueue) {
       if (fx.wasAlive) {
         fx.wasAlive = false
         fx.deathT = 0
         fx.action = null
-        anim.trigger('death', 0.04)
+        fx.statusQueue = null
+        fx.deathClip = deathClipFor(unit.heroId, unit.enemyId, unit.isBoss)
+        fx.flashT = Math.max(fx.flashT, 0.12)
+        anim.trigger(fx.deathClip, 0.04)
         const killer = getUnitByUid(battle, battle.activeUnitUid)
         if (killer && killer !== unit) {
           const kdx = killer.x - unit.x, kdz = killer.z - unit.z
@@ -660,6 +882,7 @@ export function createCrownshardScene(renderer: LowPolyRenderer) {
       if (fx.deathT < 0 || fx.deathT > DEATH_TOTAL) return
       const before = fx.deathT
       fx.deathT += dt
+      deathFlourish(unit, fx, before, fx.deathT, scale)
       if (before < DEATH_SINK_START && fx.deathT >= DEATH_SINK_START) {
         spawnDust(unit.x, unit.y, unit.z, 8, 1.4)
         const soul = unit.team === 'ally' ? C_ALLY_SOUL : C_ENEMY_SOUL
@@ -683,11 +906,16 @@ export function createCrownshardScene(renderer: LowPolyRenderer) {
       anim.step(dt)
       const pose = anim.evaluate()
       const sink = fx.deathT > DEATH_SINK_START ? Math.min(1, (fx.deathT - DEATH_SINK_START) / DEATH_SINK_TIME) : 0
-      const ds = scale * (1 - sink * sink * 0.6)
-      fx.pos[0] = unit.x
-      fx.pos[1] = unit.y - sink * 0.45
-      fx.pos[2] = unit.z
-      const flash = fx.deathT < 0.12
+      // Dissolving casters shrink away faster; everyone else sinks into the ground
+      const shrink = fx.deathClip === 'death_dissolve' ? 0.85 : 0.6
+      const ds = Math.max(0.02, scale * (1 - sink * sink * shrink))
+      fx.pos[0] = unit.x + fx.kbX
+      fx.pos[1] = unit.y - sink * (fx.deathClip === 'death_dissolve' ? 0.1 : 0.45)
+      fx.pos[2] = unit.z + fx.kbZ
+      const kbDecay = Math.pow(0.002, dt)
+      fx.kbX *= kbDecay
+      fx.kbZ *= kbDecay
+      const flash = fx.flashT > 0
       renderRig(rig, { position: fx.pos, yaw: fx.yaw, scale: ds }, pose, pool, (_jointId, part) => {
         if (flash) return C_HIT_FLASH
         if (part.name === 'weapon' && unit.weaponHex) return color(unit.weaponHex)
@@ -702,30 +930,49 @@ export function createCrownshardScene(renderer: LowPolyRenderer) {
     // ---------------------------------------------------------------- action triggers (edge-detected from sim state)
     const st = unit.animState
     const retrigger = st !== fx.lastState || unit.animTimer > fx.lastTimer + 1e-3
-    if (retrigger && (st === 'attack' || st === 'cast' || st === 'hit')) {
-      const clip: UnitClipName = st === 'attack' ? attackClipFor(unit.heroId, unit.enemyId)
-        : st === 'cast' ? castClipFor(unit.heroId, unit.enemyId)
-        : 'hit'
-      startAction(fx, clip, st === 'hit' ? 0.03 : 0.05)
-      if (st === 'hit') {
-        const attacker = getUnitByUid(battle, battle.activeUnitUid)
-        if (attacker && attacker !== unit) {
-          const kdx = unit.x - attacker.x, kdz = unit.z - attacker.z
-          const d = Math.hypot(kdx, kdz) || 1
-          fx.kbX = (kdx / d) * 0.24
-          fx.kbZ = (kdz / d) * 0.24
-        }
-      }
+    if (retrigger && (st === 'attack' || st === 'cast')) {
+      // Skills, enemy specials, and weapon overrides pick their clip from the matching VFX event
+      const clip: UnitClipName = fx.pendingClip
+        ?? (st === 'attack' ? attackClipFor(unit.heroId, unit.enemyId, unit.weaponId) : castClipFor(unit.heroId, unit.enemyId))
+      fx.pendingClip = null
+      startAction(fx, clip, 0.05)
     }
+    // Sim 'hit' edges are ignored: hits are queued from impact events and fire when the blow connects.
     fx.lastState = st
     fx.lastTimer = unit.animTimer
+
+    // Facing-pivot footwork when the unit is turned in place (Turn Facing / F)
+    const yawJump = wrapAngle(unit.yaw - fx.simYaw)
+    fx.simYaw = unit.yaw
+    if (Math.abs(yawJump) > 0.3 && st === 'idle' && !retrigger && !fx.action && unit.path.length === 0) {
+      startAction(fx, turnClipFor(Math.abs(yawJump) > 2.4 ? 'about' : yawJump > 0 ? 'left' : 'right'), 0.05)
+    }
+
+    // Status onset & burn-tick reactions (burn flinch, freeze shiver, stun stagger, empower flex) once the current action ends
+    const burnTicked = unit.burnTurns < fx.prevBurn && fx.hitQueue !== null && !fx.hitQueue.hasAttacker
+    const onset = unit.stunTurns > fx.prevStun ? 'stun'
+      : (unit.burnTurns > fx.prevBurn || burnTicked) ? 'burn'
+      : unit.slowTurns > fx.prevSlow ? 'slow'
+      : unit.empowerTurns > fx.prevEmpower ? 'empower'
+      : null
+    if (burnTicked) vfx.embers([unit.x, unit.y + 0.4, unit.z], 6, 0.35)
+    fx.prevStun = unit.stunTurns
+    fx.prevBurn = unit.burnTurns
+    fx.prevSlow = unit.slowTurns
+    fx.prevEmpower = unit.empowerTurns
+    if (onset) fx.statusQueue = statusClipFor(onset)
 
     if (fx.pendingReady && st === 'idle' && !fx.action && unit.path.length === 0) {
       fx.pendingReady = false
       startAction(fx, 'ready', 0.06)
     }
+    if (fx.statusQueue && !fx.action && !fx.hitQueue && st !== 'run' && unit.path.length === 0) {
+      startAction(fx, fx.statusQueue, 0.08)
+      fx.statusQueue = null
+    }
 
     // ---------------------------------------------------------------- clip selection
+    const gait: Gait = gaitFor(unit.heroId, unit.enemyId)
     const isForecastAttacker = Boolean(
       activeForecast &&
       battle.phase === 'player' &&
@@ -737,7 +984,7 @@ export function createCrownshardScene(renderer: LowPolyRenderer) {
     if (st === 'run') {
       fx.action = null
       fx.pendingReady = false
-      anim.play('run', 0.08, RUN_RATE)
+      anim.play(runClipFor(gait), 0.08, runRateFor(gait))
     } else if (fx.action) {
       fx.actionT += dt
       if (fx.actionT >= fx.actionDur) fx.action = null
@@ -754,7 +1001,7 @@ export function createCrownshardScene(renderer: LowPolyRenderer) {
       if (fx.celebrateDelay === 0) {
         anim.play(gloat ? 'taunt' : celebrateClipFor(fx.seed2), 0.12)
       } else if (isForecastAttacker && activeForecast) {
-        anim.play(aimClipFor(unit.heroId, unit.enemyId, activeForecast.mode !== 'strike'), 0.12)
+        anim.play(aimClipFor(unit.heroId, unit.enemyId, activeForecast.mode !== 'strike', unit.weaponId), 0.12)
       } else {
         anim.play(idleClipFor(unit.team, unit.hp / Math.max(1, unit.maxHp), unit.stunTurns > 0), 0.18, idleRateFor(unit.enemyId, fx.seed2))
       }
@@ -793,9 +1040,12 @@ export function createCrownshardScene(renderer: LowPolyRenderer) {
     if (unit.col !== fx.lastCol || unit.row !== fx.lastRow) {
       const elev = battle.cells[unit.row][unit.col].elevation
       const jumped = Math.abs(elev - fx.lastElev) > 0.1
-      spawnDust(unit.x, unit.y, unit.z, jumped ? 7 : 3, jumped ? 1.3 : 0.7)
+      const heavyStep = gait === 'stomp' || gait === 'heavy'
+      if (gait !== 'glide') spawnDust(unit.x, unit.y, unit.z, jumped ? 7 : heavyStep ? 5 : 3, jumped ? 1.3 : heavyStep ? 1.0 : 0.7)
+      // Lumbering stompers rattle the camera on every footfall
+      if (gait === 'stomp') localShake = Math.max(localShake, 0.07 * scale)
       fx.landT = 0
-      fx.landAmp = jumped ? 0.18 : 0.07
+      fx.landAmp = jumped ? 0.18 : gait === 'stomp' ? 0.12 : gait === 'glide' ? 0.02 : 0.07
       fx.lastCol = unit.col
       fx.lastRow = unit.row
       fx.lastElev = elev
@@ -812,7 +1062,7 @@ export function createCrownshardScene(renderer: LowPolyRenderer) {
     const px = unit.x + unit.lungeX + fx.kbX
     const pz = unit.z + unit.lungeZ + fx.kbZ
     const py = unit.y + extraY
-    const flash = unit.hitFlash > 0
+    const flash = fx.flashT > 0
     fx.pos[0] = px
     fx.pos[1] = py
     fx.pos[2] = pz
@@ -851,6 +1101,7 @@ export function createCrownshardScene(renderer: LowPolyRenderer) {
     if (unit.shield > 0) {
       pool.add(flatRing, [px, py + 0.56 * scale, pz], [0.58 * scale, 1, 0.58 * scale], time * 1.8, C_SHIELD, 0.9, 'additive')
     }
+    drawStatusAura(unit, fx, px, groundY, pz, scale, realDt, time)
     if (unit.stunTurns > 0) {
       for (let i = 0; i < 3; i++) {
         const a = time * 4 + (i / 3) * Math.PI * 2
@@ -872,13 +1123,15 @@ export function createCrownshardScene(renderer: LowPolyRenderer) {
     }
   }
 
-  /** Detect battle swaps, new active units (ready bounce), and fresh crits (hit-stop) from sim state. */
+  /** Detect battle swaps and new active units (ready bounce) from sim state. */
   function trackBattleEvents(battle: BattleState) {
     if (battle !== lastBattle) {
       lastBattle = battle
       unitFx.clear()
       shots.length = 0
       particles.clear()
+      vfx.clear()
+      localShake = 0
       lastFloatId = -1
       lastActiveUid = null
       hitStop = 0
@@ -890,11 +1143,7 @@ export function createCrownshardScene(renderer: LowPolyRenderer) {
       cameraPanZ = 0
       for (const fn of battle.floatingNumbers) lastFloatId = Math.max(lastFloatId, fn.id)
     }
-    for (const fn of battle.floatingNumbers) {
-      if (fn.id <= lastFloatId) continue
-      lastFloatId = fn.id
-      if (fn.text.startsWith('CRIT')) hitStop = Math.max(hitStop, 0.1)
-    }
+    for (const fn of battle.floatingNumbers) lastFloatId = Math.max(lastFloatId, fn.id)
     if (battle.activeUnitUid !== lastActiveUid) {
       lastActiveUid = battle.activeUnitUid
       const active = getUnitByUid(battle, battle.activeUnitUid)
@@ -920,8 +1169,10 @@ export function createCrownshardScene(renderer: LowPolyRenderer) {
     shadows.clear()
 
     const style = BIOME_STYLES[battle.biome]
-    const shakeX = battle.shake > 0 ? Math.sin(state.time * 48) * battle.shake * 0.18 : 0
-    const shakeY = battle.shake > 0 ? Math.cos(state.time * 54) * battle.shake * 0.12 : 0
+    localShake = Math.max(0, localShake - dt * 1.6)
+    const shake = battle.shake + localShake
+    const shakeX = shake > 0 ? Math.sin(state.time * 48) * shake * 0.18 : 0
+    const shakeY = shake > 0 ? Math.cos(state.time * 54) * shake * 0.12 : 0
 
     cameraZoomActual += (cameraZoom - cameraZoomActual) * Math.min(1, dt * 14)
     cameraPitchActual += (cameraPitch - cameraPitchActual) * Math.min(1, dt * 14)
@@ -1153,6 +1404,7 @@ export function createCrownshardScene(renderer: LowPolyRenderer) {
       renderUnit(battle, unit, animDt, dt, unit.uid === battle.activeUnitUid, unit.uid === battle.selectedUnitUid, state.time)
     }
 
+    vfx.update(dt)
     updateShots(dt, state.time)
     particles.emit(pool)
 
@@ -1170,6 +1422,8 @@ export function createCrownshardScene(renderer: LowPolyRenderer) {
       lastBattle = null
       shots.length = 0
       particles.clear()
+      vfx.clear()
+      localShake = 0
     }
     particles.step(dt)
     pool.clear()

@@ -5503,3 +5503,260 @@ export function drawRewardRowAnimated(
   }
   ctx.restore()
 }
+
+// =========================================================================
+// HERO ASCENSION MERGE CEREMONY & RARE EQUIP FANFARE
+// =========================================================================
+
+/** Total length of the ascension / equip fanfare before it auto-dismisses. */
+export const FANFARE_DURATION = 4.2
+
+export interface FanfareDrawOpts {
+  readonly kind: 'ascend' | 'equip'
+  readonly elapsed: number
+  readonly title: string
+  readonly subtitle: string
+  readonly accent: string
+  readonly portrait?: CanvasImageSource
+  /** Ascension only: new star count and the skill it unlocked. */
+  readonly stars?: 1 | 2 | 3
+  readonly skill?: { readonly tier: 1 | 2 | 3; readonly name: string; readonly desc: string; readonly vfx: SkillSpec['vfx']; readonly skillId: string }
+  /** Equip only: the item being equipped. */
+  readonly item?: { readonly slot: EquipSlot; readonly equipId: string; readonly accentHex: string; readonly rarityLabel: string }
+}
+
+function fanfareCard(ctx: CanvasRenderingContext2D, cx: number, cy: number, w: number, h: number, accent: string, portrait: CanvasImageSource | undefined, alpha: number) {
+  ctx.save()
+  ctx.globalAlpha = alpha
+  rr(ctx, cx - w / 2, cy - h / 2, w, h, 12)
+  const g = ctx.createLinearGradient(0, cy - h / 2, 0, cy + h / 2)
+  g.addColorStop(0, '#3a4c78')
+  g.addColorStop(1, '#141c33')
+  ctx.fillStyle = g
+  ctx.fill()
+  ctx.lineWidth = 3
+  ctx.strokeStyle = accent
+  ctx.stroke()
+  if (portrait) {
+    const ps = Math.min(w, h) * 0.86
+    ctx.save()
+    rr(ctx, cx - w / 2 + 4, cy - h / 2 + 4, w - 8, h - 8, 9)
+    ctx.clip()
+    ctx.drawImage(portrait, cx - ps / 2, cy - ps / 2 - h * 0.04, ps, ps)
+    ctx.restore()
+  }
+  ctx.restore()
+}
+
+/**
+ * Full-screen ceremony: for 'ascend', three ghost copies fly in and fuse in a light beam into the
+ * upgraded hero card, stars pop in, then the newly unlocked skill slides up; for 'equip' an
+ * Epic/Legendary item bursts onto a rarity sunburst with a shimmer sweep.
+ */
+export function drawFanfare(ctx: CanvasRenderingContext2D, rect: LayoutRect, o: FanfareDrawOpts) {
+  const { x, y, width: w, height: h } = rect
+  const t = o.elapsed
+  const cx = x + w / 2
+  const compact = h < 520 || w < 560
+  const cy = y + h * (compact ? 0.40 : 0.38)
+  const fadeIn = Math.min(1, t / 0.25)
+  const fadeOut = Math.min(1, Math.max(0, (FANFARE_DURATION - t) / 0.4))
+  const a = fadeIn * fadeOut
+  const fuseT = o.kind === 'ascend' ? 0.75 : 0.18
+
+  ctx.save()
+  ctx.fillStyle = `rgba(6, 9, 20, ${0.80 * a})`
+  ctx.fillRect(x, y, w, h)
+
+  // Rotating rarity/tier sunburst after the fusion moment
+  const burst = Math.max(0, Math.min(1, (t - fuseT) / 0.35))
+  if (burst > 0) {
+    ctx.save()
+    ctx.translate(cx, cy)
+    ctx.rotate(t * 0.3)
+    const maxR = Math.hypot(w, h) * 0.6
+    const rays = 16
+    for (let i = 0; i < rays; i++) {
+      const a0 = (i / rays) * Math.PI * 2
+      ctx.beginPath()
+      ctx.moveTo(0, 0)
+      ctx.arc(0, 0, maxR * easeOutCubic(burst), a0, a0 + (Math.PI / rays) * 0.6)
+      ctx.closePath()
+      const rg = ctx.createRadialGradient(0, 0, 10, 0, 0, maxR)
+      rg.addColorStop(0, `${o.accent}66`)
+      rg.addColorStop(1, `${o.accent}00`)
+      ctx.globalAlpha = a
+      ctx.fillStyle = rg
+      ctx.fill()
+    }
+    ctx.restore()
+  }
+
+  const cardW = compact ? 104 : 136
+  const cardH = cardW * 1.32
+
+  if (o.kind === 'ascend') {
+    // Phase 1: three ghost copies converge, spinning, trailing light
+    if (t < fuseT) {
+      const u = easeOutCubic(t / fuseT)
+      const starts: readonly (readonly [number, number])[] = [[-w * 0.42, -h * 0.1], [w * 0.42, -h * 0.1], [0, h * 0.5]]
+      for (let i = 0; i < 3; i++) {
+        const sx = cx + starts[i][0] * (1 - u)
+        const sy = cy + starts[i][1] * (1 - u)
+        ctx.save()
+        ctx.translate(sx, sy)
+        ctx.rotate((1 - u) * (i - 1) * 1.4)
+        fanfareCard(ctx, 0, 0, cardW * 0.82, cardH * 0.82, o.accent, o.portrait, a * (0.45 + 0.4 * u))
+        ctx.restore()
+        // energy trail
+        ctx.save()
+        ctx.globalAlpha = a * 0.5
+        ctx.strokeStyle = o.accent
+        ctx.lineWidth = 3
+        ctx.beginPath()
+        ctx.moveTo(sx, sy)
+        ctx.lineTo(cx + starts[i][0] * (1 - u * 0.6), cy + starts[i][1] * (1 - u * 0.6))
+        ctx.stroke()
+        ctx.restore()
+      }
+    }
+    // Phase 2: fusion beam + white flash
+    const beamT = (t - fuseT + 0.12) / 0.7
+    if (beamT > 0 && beamT < 1) {
+      const bw = cardW * 0.9 * Math.sin(beamT * Math.PI)
+      const bg = ctx.createLinearGradient(cx - bw / 2, 0, cx + bw / 2, 0)
+      bg.addColorStop(0, 'rgba(255,255,255,0)')
+      bg.addColorStop(0.5, `rgba(255, 246, 210, ${0.9 * a})`)
+      bg.addColorStop(1, 'rgba(255,255,255,0)')
+      ctx.fillStyle = bg
+      ctx.fillRect(cx - bw / 2, y, bw, h)
+    }
+    const flash = t > fuseT ? Math.max(0, 1 - (t - fuseT) / 0.3) : 0
+    if (flash > 0) {
+      ctx.fillStyle = `rgba(255, 250, 225, ${0.55 * flash * a})`
+      ctx.fillRect(x, y, w, h)
+    }
+  }
+
+  // Phase 3: hero card / item pops in
+  const popT = Math.max(0, (t - fuseT) / 0.45)
+  if (popT > 0) {
+    const pop = easeOutBack(popT)
+    ctx.save()
+    ctx.translate(cx, cy + Math.sin(t * 2.2) * 3)
+    ctx.scale(pop, pop)
+    if (o.kind === 'ascend') {
+      fanfareCard(ctx, 0, 0, cardW, cardH, o.accent, o.portrait, a)
+    } else if (o.item) {
+      ctx.globalAlpha = a
+      ctx.beginPath()
+      ctx.arc(0, 0, cardW * 0.52, 0, Math.PI * 2)
+      const ig = ctx.createRadialGradient(0, 0, 4, 0, 0, cardW * 0.52)
+      ig.addColorStop(0, '#2a3760')
+      ig.addColorStop(1, '#0f1528')
+      ctx.fillStyle = ig
+      ctx.fill()
+      ctx.lineWidth = 4
+      ctx.strokeStyle = o.accent
+      ctx.stroke()
+      drawEquipIcon(ctx, o.item.slot, o.item.equipId, o.item.accentHex, 0, 0, cardW * 0.36)
+      // diagonal shimmer sweep across the medallion
+      const sweep = ((t - fuseT) * 0.8) % 1.6 - 0.3
+      ctx.save()
+      ctx.beginPath()
+      ctx.arc(0, 0, cardW * 0.5, 0, Math.PI * 2)
+      ctx.clip()
+      const sx = (sweep - 0.5) * cardW * 1.6
+      const sg = ctx.createLinearGradient(sx - 18, -cardW, sx + 18, cardW)
+      sg.addColorStop(0, 'rgba(255,255,255,0)')
+      sg.addColorStop(0.5, 'rgba(255,255,255,0.55)')
+      sg.addColorStop(1, 'rgba(255,255,255,0)')
+      ctx.fillStyle = sg
+      ctx.fillRect(-cardW, -cardW, cardW * 2, cardW * 2)
+      ctx.restore()
+    }
+    ctx.restore()
+
+    // Stars pop in one by one under the card
+    if (o.kind === 'ascend' && o.stars) {
+      const starY = cy + cardH / 2 + (compact ? 16 : 22)
+      const size = compact ? 18 : 24
+      const gap = size * 1.25
+      for (let i = 0; i < o.stars; i++) {
+        const st = Math.max(0, Math.min(1, (t - fuseT - 0.25 - i * 0.16) / 0.3))
+        if (st <= 0) continue
+        const s = easeOutBack(st)
+        const sx = cx + (i - (o.stars - 1) / 2) * gap
+        ctx.save()
+        ctx.globalAlpha = a
+        ctx.translate(sx, starY)
+        ctx.scale(s, s)
+        drawStarShape(ctx, 0, 0, size * 0.54, size * 0.25)
+        ctx.fillStyle = COLOR.accent
+        ctx.fill()
+        ctx.lineWidth = 2
+        ctx.strokeStyle = COLOR.outline
+        ctx.stroke()
+        ctx.restore()
+      }
+    }
+  }
+
+  // Titles
+  const textT = Math.max(0, Math.min(1, (t - fuseT - 0.1) / 0.35))
+  if (textT > 0) {
+    const ty = cy - cardH / 2 - (compact ? 34 : 46)
+    ctx.save()
+    ctx.globalAlpha = a * textT
+    drawText(ctx, o.title, cx, ty - 14 * (1 - textT), { size: compact ? 22 : 30, display: true, align: 'center', color: o.accent, stroke: true, upper: true, spacing: 1.5, maxW: w - 24 })
+    drawText(ctx, o.subtitle, cx, ty + (compact ? 22 : 28), { size: compact ? 12 : 14, align: 'center', color: COLOR.text, shadow: true, maxW: w - 24 })
+    ctx.restore()
+  }
+
+  // Newly unlocked skill showcase slides up
+  if (o.kind === 'ascend' && o.skill) {
+    const sT = Math.max(0, Math.min(1, (t - fuseT - 0.85) / 0.45))
+    if (sT > 0) {
+      const pw = Math.min(w - 32, compact ? 300 : 380)
+      const ph = compact ? 62 : 74
+      const px = cx - pw / 2
+      const py = cy + cardH / 2 + (compact ? 38 : 52) + (1 - easeOutCubic(sT)) * 40
+      ctx.save()
+      ctx.globalAlpha = a * sT
+      rr(ctx, px, py, pw, ph, 12)
+      ctx.fillStyle = '#121a30ee'
+      ctx.fill()
+      ctx.lineWidth = 2
+      ctx.strokeStyle = TIER_COLOR[o.skill.tier]
+      ctx.stroke()
+      const ir = ph * 0.32
+      ctx.beginPath()
+      ctx.arc(px + ph / 2, py + ph / 2, ir + 4, 0, Math.PI * 2)
+      ctx.fillStyle = '#0b1020'
+      ctx.fill()
+      drawSkillIcon(ctx, o.skill.vfx, o.skill.skillId, px + ph / 2, py + ph / 2, ir)
+      drawText(ctx, 'NEW SKILL UNLOCKED', px + ph, py + ph * 0.26, { size: 10, color: TIER_COLOR[o.skill.tier], spacing: 1.2 })
+      drawText(ctx, o.skill.name, px + ph, py + ph * 0.50, { size: compact ? 14 : 16, display: true, maxW: pw - ph - 12 })
+      drawText(ctx, o.skill.desc, px + ph, py + ph * 0.76, { size: 10.5, weight: 600, color: COLOR.muted, maxW: pw - ph - 12 })
+      ctx.restore()
+    }
+  }
+
+  // Rising sparkles
+  for (let i = 0; i < 22; i++) {
+    const sx = x + hash1(i * 9.7) * w
+    const sy = y + (1 - ((hash1(i * 3.3) + t * (0.12 + hash1(i * 1.7) * 0.1)) % 1)) * h
+    ctx.save()
+    ctx.globalAlpha = a * burst * (0.35 + Math.sin(t * 5 + i) * 0.3)
+    drawStarShape(ctx, sx, sy, 5 + (i % 3) * 2, 2, 4)
+    ctx.fillStyle = i % 3 === 0 ? '#ffffff' : o.accent
+    ctx.fill()
+    ctx.restore()
+  }
+
+  if (t > 1.6) {
+    ctx.globalAlpha = a * (0.5 + Math.sin(t * 4) * 0.25)
+    drawText(ctx, 'Tap to continue', cx, y + h - (compact ? 22 : 34), { size: 11, align: 'center', color: COLOR.muted })
+  }
+  ctx.restore()
+}

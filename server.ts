@@ -58,7 +58,7 @@ function buildExampleRoutes(root: URL): Record<string, URL> {
       'crownshard/art.js', 'crownshard/animations.js', 'crownshard/characters.js',
       'crownshard/parts/bodies-hair.js', 'crownshard/parts/headgear.js',
       'crownshard/parts/armor.js', 'crownshard/parts/weapons.js',
-      'crownshard/scene.js', 'crownshard/audio.js', 'crownshard/ui-art.js'
+      'crownshard/scene.js', 'crownshard/vfx.js', 'crownshard/audio.js', 'crownshard/ui-art.js'
     ]
   )
   routes['/crownshard'] = new URL('examples/crownshard/index.html', root)
