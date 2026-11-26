@@ -16,32 +16,33 @@ import { cameraAlignedFacing, cameraCardinalHeading, createCrownshardScene, faci
 import {
   MAX_TACTIC_DECK, MIN_TACTIC_DECK,
   abandonBattle, armSkill, armTacticCard, autoBuildTacticDeck, autoEquipBestFit, beginWaitFacingPicker, buyPack, canBuyPack,
-  canMergeHero, canUndoMove, cancelWaitFacingPicker, clearSave, computeCombatForecast, computeDangerZone,
+  canCraftEquipment, canCraftHero, canMergeHero, canUndoMove, cancelWaitFacingPicker, clearSave, computeCombatForecast, computeDangerZone,
   computeDeckValue, computeEnemyThreat, computeHeroStats, computeSquadPower, computeTacticDeckCurve, computeZocPerimeterTiles,
-  confirmDeployment, confirmWaitFacingPicker, createInitialState, createTurnBoundaryTracker, effectiveSpeed,
+  confirmDeployment, confirmWaitFacingPicker, craftEquipment, craftHero, createInitialState, createTurnBoundaryTracker, effectiveSpeed,
   equipItem, evaluateAllFacingExposures, evaluateFacingExposure, findBestFitUpgrades, findEquipOwner, findGridPath,
-  formatOpportunityWarning, getActiveTacticDeckUids, getChapterObjectiveSummary, getEquipEffect, getEquipmentByUid,
-  getHeroByUid, getHeroPassive, getHeroSkill,
-  getMergeCandidates, getNextRecommendedStage, getObjectiveProgressText, getStageUnlockHint, getTacticByUid,
-  getUnitByUid, heroLevelProgress, isChestClaimed, isDeployTile, isEndlessUnlocked, isStageCleared, isStageUnlocked, loadSave,
-  maxSquadSize, mergeHero, moveDeployUnit, persistSave, previewPathOpportunityAttacks, previewTurnOrderAfterAction,
-  previewWaitFacing, restoreBattleState, rotateDeployUnit, salvageEquipCard, salvageHeroCard, selectHeroByUid,
-  selectTile, serializeBattleState, shouldAutoSaveOnTurnBoundary, startChapterBattle, stepGame, swapDeployUnit,
-  syncTurnBoundaryTracker, toggleSquadMember, toggleTacticInDeck, undoMove, unequipItem, unitAt
+  formatOpportunityWarning, getActiveTacticDeckUids, getChapterObjectiveSummary, getCraftableEquipment, getCraftableHeroes,
+  getEquipCraftCost, getEquipEffect, getEquipSalvageDust, getEquipmentByUid, getHeroByUid, getHeroCraftCost,
+  getHeroPassive, getHeroSalvageShards, getHeroSkill, getMergeCandidates, getNextRecommendedStage, getObjectiveProgressText,
+  getPackPityStatus, getStageUnlockHint, getTacticByUid, getUnitByUid, hasMaxedHero, heroLevelProgress, isChestClaimed,
+  isDeployTile, isEndlessUnlocked, isStageCleared, isStageUnlocked, loadSave, maxSquadSize, mergeHero, moveDeployUnit,
+  persistSave, previewPathOpportunityAttacks, previewTurnOrderAfterAction, previewWaitFacing, restoreBattleState,
+  rotateDeployUnit, salvageEquipCard, salvageHeroCard, selectHeroByUid, selectTile, serializeBattleState,
+  shouldAutoSaveOnTurnBoundary, startChapterBattle, stepGame, swapDeployUnit, syncTurnBoundaryTracker,
+  toggleSquadMember, toggleTacticInDeck, undoMove, unequipItem, unitAt
 } from './simulation.ts'
 import { FACING_DIRS, cellHeightLevel, gridToWorld, isUnitDowned } from './types.ts'
 import type {
   BattleSaveSnapshot, BattleUnit, ChapterSpec, CombatForecast, EnemyArchetypeId, FacingDir, GameState,
-  OwnedEquipCard, OwnedHeroCard, PackId, PackRevealItem, PathOpportunityPreview, Rarity, TurnActionKind,
-  TurnOrderActionPreview
+  HeroClassId, OwnedEquipCard, OwnedHeroCard, PackId, PackRevealItem, PathOpportunityPreview, Rarity,
+  TurnActionKind, TurnOrderActionPreview
 } from './types.ts'
 import {
   COLOR, RADIUS, TIER_COLOR, TYPE, UI_THEME_PALETTE, WORLD_MAP_H, WORLD_MAP_W,
   drawAnimatedRevealCard, drawApMeter, drawBattleInfo, drawBoosterPack, drawButton, drawCameraCompassButton, drawCampHeader,
   drawChapterPicker, drawChip, drawCombatForecast, drawControlHints, drawDefeatBackdrop, drawDeployHeroChip,
   drawDifficultyBadge, drawEmptyNote, drawEndTurnButton, drawEquipCard, drawForecastAltChip,
-  drawHeroHeader, drawHeroRosterCard, drawHeroXpSummaryAnimated, drawHintPill, drawIconButton, drawLabel, drawLetterbox,
-  drawLootRow, drawModal, drawObjectiveBadge, drawOverline, drawPackCeremonyBackdrop, drawPanel, drawPassiveBanner, drawPortraitTile,
+  drawForgeBalanceBanner, drawForgeRecipeCard, drawHeroHeader, drawHeroRosterCard, drawHeroXpSummaryAnimated, drawHintPill, drawIconButton, drawLabel, drawLetterbox,
+  drawLootRow, drawModal, drawObjectiveBadge, drawOverline, drawPackCeremonyBackdrop, drawPanel, drawPassiveBanner, drawPityBanner, drawPortraitTile,
   drawResultHeadlineAnimated, drawRevealCard, drawRewardRowAnimated, drawSegmentTrack,
   drawSettingRow, drawSheet, drawSkillRow, drawSkillTile, drawSpeakerPortrait, drawStatStrip,
   drawStoryHeading, drawTab, drawTacticCard, drawTacticDeckCard, drawTacticDeckHeader, drawText, drawTimelineBg, drawTitleCard,
@@ -54,8 +55,9 @@ import type { FanfareDrawOpts } from './ui-art.ts'
 import type { IconName, WorldMapViewport } from './ui-art.ts'
 
 type Screen = 'title' | 'world' | 'camp' | 'story' | 'battle' | 'victory' | 'defeat' | 'paused'
-type CampTab = 'squad' | 'armory' | 'deck' | 'decks'
+type CampTab = 'squad' | 'armory' | 'deck' | 'forge' | 'decks'
 type ArmoryFilter = 'all' | 'weapon' | 'armor' | 'relic'
+type ForgeCategory = 'heroes' | 'weapon' | 'armor' | 'relic'
 
 interface PackAnimState {
   readonly packId: PackId
@@ -73,6 +75,7 @@ const PACK_FLIP_DURATION = 0.42
 const PACK_FLIP_STAGGER = 0.36
 
 const ARMORY_FILTERS: readonly ArmoryFilter[] = ['all', 'weapon', 'armor', 'relic']
+const FORGE_CATEGORIES: readonly ForgeCategory[] = ['heroes', 'weapon', 'armor', 'relic']
 
 const TERRAIN_LABEL: Record<string, string> = {
   grass: 'Meadow',
@@ -194,9 +197,11 @@ async function start() {
   let pendingChapter = CHAPTER_BY_ID[state.campaign.selectedStageId]?.index ?? getNextRecommendedStage(state.campaign).index
   let pendingEndless = 0
   let armorySlotFilter: ArmoryFilter = 'all'
+  let forgeCategory: ForgeCategory = 'heroes'
   let rosterPage = 0
   let armoryPage = 0
   let deckPage = 0
+  let forgePage = 0
   let campToast = ''
   let campToastTimer = 0
   let uiDirty = true
@@ -3580,21 +3585,28 @@ async function start() {
             }
           }),
           boxNode({
-            id: 'cs-salvage-hero', style: { width: mobile ? 84 : 96, height: actRowH },
+            id: 'cs-salvage-hero', style: { width: mobile ? 92 : 112, height: actRowH },
             widget: {
               type: 'button',
-              label: `+${salvageVal}g`,
+              label: `+${salvageVal}g +${getHeroSalvageShards(HERO_SPECS[selHero.heroId].rarity, selHero.stars)} Shards`,
               disabled: camp.heroes.length <= 1 || (inSquad && camp.squadUids.length <= 1),
               onPress: () => {
                 audio.unlock()
+                const heroSpec = HERO_SPECS[selHero.heroId]
+                const shardsYield = getHeroSalvageShards(heroSpec.rarity, selHero.stars)
                 const g = salvageHeroCard(state, selHero.uid)
                 if (g > 0) {
                   saveNow()
-                  showToast(`Salvaged hero card for +${g}g.`)
+                  showToast(`Salvaged ${heroSpec.name} for +${g}g & +${shardsYield} Hero Shards.`)
                 }
               },
               draw: (ctx: CanvasRenderingContext2D, rect: LayoutRect, st: CanvasWidgetDrawState) => drawButton(
-                ctx, rect, `+${salvageVal}g`, st, { variant: 'danger', icon: 'sell', size: 11 }
+                ctx, rect, `+${salvageVal}g`, st, {
+                  variant: 'danger',
+                  icon: 'sell',
+                  sub: `+${getHeroSalvageShards(HERO_SPECS[selHero.heroId].rarity, selHero.stars)} Shards`,
+                  size: 10.5
+                }
               )
             }
           })
@@ -3868,20 +3880,25 @@ async function start() {
               }
             }),
             boxNode({
-              id: `arm-sell-${i + j}`, style: { width: 64, height: cardH },
+              id: `arm-sell-${i + j}`, style: { width: 76, height: cardH },
               widget: {
                 type: 'button',
-                label: `Sell +${meta.salvage}g`,
+                label: `Salvage +${meta.salvage}g +${spec ? getEquipSalvageDust(spec.rarity) : 0} Dust`,
                 onPress: () => {
                   audio.unlock()
+                  const dustYield = spec ? getEquipSalvageDust(spec.rarity) : 0
                   const g = salvageEquipCard(state, item.uid)
                   if (g > 0) {
                     saveNow()
-                    showToast(`Sold ${spec?.name ?? 'item'} for +${g}g.`)
+                    showToast(`Salvaged ${spec?.name ?? 'item'} for +${g}g & +${dustYield} Arcane Dust.`)
                   }
                 },
                 draw: (ctx: CanvasRenderingContext2D, rect: LayoutRect, st: CanvasWidgetDrawState) => drawButton(
-                  ctx, rect, `+${meta.salvage}g`, st, { variant: 'danger', sub: 'Sell', size: 11 }
+                  ctx, rect, `+${meta.salvage}g`, st, {
+                    variant: 'danger',
+                    sub: `+${spec ? getEquipSalvageDust(spec.rarity) : 0} Dust`,
+                    size: 10.5
+                  }
                 )
               }
             })
@@ -4152,10 +4169,215 @@ async function start() {
           })
         ])
       ])
+    } else if (campTab === 'forge') {
+      // Armory Forge: craft targeted Heroes (Hero Shards) & Weapons / Armor / Relics (Arcane Dust)
+      const cols = mobile ? 1 : 2
+      const rowsPerPage = mobile ? 4 : shortH ? 2 : 3
+      const perPage = cols * rowsPerPage
+      const cardH = shortH ? 46 : 52
+
+      const isHeroes = forgeCategory === 'heroes'
+      const heroRecipes = isHeroes ? getCraftableHeroes() : []
+      const equipRecipes = forgeCategory === 'heroes' ? [] : getCraftableEquipment(forgeCategory)
+      const totalItems = isHeroes ? heroRecipes.length : equipRecipes.length
+      const maxPage = Math.max(0, Math.ceil(totalItems / perPage) - 1)
+      forgePage = Math.min(forgePage, maxPage)
+
+      const recipeRows: LayoutNode[] = []
+      if (isHeroes) {
+        const shown = heroRecipes.slice(forgePage * perPage, forgePage * perPage + perPage)
+        for (let i = 0; i < shown.length; i += cols) {
+          const slice = shown.slice(i, i + cols)
+          const cards: LayoutNode[] = slice.map((spec, j) => {
+            const cost = getHeroCraftCost(spec.id)
+            const affordable = canCraftHero(camp, spec.id)
+            const ownedCount = camp.heroes.filter(h => h.heroId === spec.id).length
+            const maxed = hasMaxedHero(camp, spec.id)
+            return row({ id: `forge-h-row-${i + j}`, style: { grow: 1, gap: 6 } }, [
+              boxNode({
+                id: `forge-h-card-${i + j}`, style: { grow: 1, height: cardH },
+                widget: {
+                  type: 'panel',
+                  draw: (ctx: CanvasRenderingContext2D, rect: LayoutRect) => drawForgeRecipeCard(ctx, rect, {
+                    kind: 'hero',
+                    rarity: spec.rarity,
+                    name: `${spec.name} (${spec.title})`,
+                    subtitle: `HP ${spec.maxHp} · ATK ${spec.atk} · DEF ${spec.def} · SPD ${spec.speed}`,
+                    refId: spec.id,
+                    portrait: portraits[spec.id],
+                    ownedCount,
+                    maxed,
+                    cost,
+                    currency: 'shards',
+                    affordable
+                  })
+                }
+              }),
+              boxNode({
+                id: `cs-forge-hero-${spec.id}`, style: { width: 88, height: cardH },
+                widget: {
+                  type: 'button',
+                  label: `Craft ${spec.name} (${cost} Shards)`,
+                  disabled: !affordable,
+                  onPress: () => {
+                    audio.unlock()
+                    const crafted = craftHero(state, spec.id)
+                    if (crafted) {
+                      saveNow()
+                      showToast(`Forged ${spec.name} (${spec.title}) for ${cost} Hero Shards!`)
+                      uiDirty = true
+                    }
+                  },
+                  draw: (ctx: CanvasRenderingContext2D, rect: LayoutRect, st: CanvasWidgetDrawState) => drawButton(
+                    ctx, rect, 'Craft', st, {
+                      variant: affordable ? 'primary' : 'secondary',
+                      icon: 'gem',
+                      sub: `${cost} Shards`,
+                      size: 11
+                    }
+                  )
+                }
+              })
+            ])
+          })
+          while (cards.length < cols) cards.push(spacerNode(1))
+          recipeRows.push(row({ id: `forge-row-${i}`, style: { height: cardH, gap: 8 } }, cards))
+        }
+      } else {
+        const shown = equipRecipes.slice(forgePage * perPage, forgePage * perPage + perPage)
+        for (let i = 0; i < shown.length; i += cols) {
+          const slice = shown.slice(i, i + cols)
+          const cards: LayoutNode[] = slice.map((spec, j) => {
+            const cost = getEquipCraftCost(spec.id)
+            const affordable = canCraftEquipment(camp, spec.id)
+            const ownedCount = camp.equipment.filter(e => e.equipId === spec.id).length
+            return row({ id: `forge-e-row-${i + j}`, style: { grow: 1, gap: 6 } }, [
+              boxNode({
+                id: `forge-e-card-${i + j}`, style: { grow: 1, height: cardH },
+                widget: {
+                  type: 'panel',
+                  draw: (ctx: CanvasRenderingContext2D, rect: LayoutRect) => drawForgeRecipeCard(ctx, rect, {
+                    kind: spec.slot,
+                    rarity: spec.rarity,
+                    name: spec.name,
+                    subtitle: spec.desc,
+                    refId: spec.id,
+                    accentHex: spec.accentHex,
+                    ownedCount,
+                    cost,
+                    currency: 'dust',
+                    affordable
+                  })
+                }
+              }),
+              boxNode({
+                id: `cs-forge-equip-${spec.id}`, style: { width: 88, height: cardH },
+                widget: {
+                  type: 'button',
+                  label: `Craft ${spec.name} (${cost} Dust)`,
+                  disabled: !affordable,
+                  onPress: () => {
+                    audio.unlock()
+                    const crafted = craftEquipment(state, spec.id)
+                    if (crafted) {
+                      saveNow()
+                      showToast(`Forged ${spec.name} for ${cost} Arcane Dust!`)
+                      uiDirty = true
+                    }
+                  },
+                  draw: (ctx: CanvasRenderingContext2D, rect: LayoutRect, st: CanvasWidgetDrawState) => drawButton(
+                    ctx, rect, 'Craft', st, {
+                      variant: affordable ? 'primary' : 'secondary',
+                      icon: 'sparkle',
+                      sub: `${cost} Dust`,
+                      size: 11
+                    }
+                  )
+                }
+              })
+            ])
+          })
+          while (cards.length < cols) cards.push(spacerNode(1))
+          recipeRows.push(row({ id: `forge-row-${i}`, style: { height: cardH, gap: 8 } }, cards))
+        }
+      }
+
+      const forgeBalanceNode = boxNode({
+        id: 'forge-balances',
+        style: mobile ? { height: 34 } : { grow: 1.15, height: 34 },
+        widget: {
+          type: 'panel',
+          draw: (ctx: CanvasRenderingContext2D, rect: LayoutRect) => drawForgeBalanceBanner(ctx, rect, camp.dust, camp.shards, mobile)
+        }
+      })
+
+      const forgeCatStrip = row({
+        id: 'forge-cats',
+        style: mobile ? { height: 34, padding: 3, gap: 4 } : { grow: 1, height: 34, padding: 3, gap: 4 },
+        widget: { type: 'panel', draw: (ctx: CanvasRenderingContext2D, rect: LayoutRect) => drawSegmentTrack(ctx, rect) }
+      }, FORGE_CATEGORIES.map(cat => {
+        const label = cat === 'heroes' ? 'Heroes' : cat === 'weapon' ? 'Weapons' : cat === 'armor' ? 'Armor' : 'Relics'
+        return boxNode({
+          id: `forge-cat-${cat}`, style: { grow: 1, height: 28 },
+          widget: {
+            type: 'button',
+            label,
+            selected: forgeCategory === cat,
+            onPress: () => { forgeCategory = cat; forgePage = 0; uiDirty = true },
+            draw: (ctx: CanvasRenderingContext2D, rect: LayoutRect, st: CanvasWidgetDrawState) => drawTab(ctx, rect, label, st)
+          }
+        })
+      }))
+
+      bodyNode = column({ id: 'camp-forge-body', style: { grow: 1, gap: 8 } }, [
+        ...(mobile
+          ? [forgeBalanceNode, forgeCatStrip]
+          : [row({ id: 'forge-top-controls', style: { height: 34, gap: 8, align: 'center' } }, [forgeBalanceNode, forgeCatStrip])]),
+        ...recipeRows,
+        spacerNode(1),
+        row({ id: 'forge-pager', hidden: maxPage === 0, style: { height: 28, gap: 8, align: 'center' } }, [
+          boxNode({
+            id: 'forge-prev', style: { width: 88, height: 28 },
+            widget: {
+              type: 'button', label: 'Prev', disabled: forgePage <= 0,
+              onPress: () => { forgePage--; uiDirty = true },
+              draw: (ctx: CanvasRenderingContext2D, rect: LayoutRect, st: CanvasWidgetDrawState) => drawButton(ctx, rect, 'Prev', st, { variant: 'secondary', size: 11 })
+            }
+          }),
+          boxNode({
+            id: 'forge-pg', style: { width: 58, height: 28 },
+            widget: {
+              type: 'panel',
+              draw: (ctx: CanvasRenderingContext2D, rect: LayoutRect) => drawLabel(ctx, rect, `${forgePage + 1} / ${maxPage + 1}`, { size: 11, color: COLOR.muted, align: 'center' })
+            }
+          }),
+          boxNode({
+            id: 'forge-next', style: { width: 88, height: 28 },
+            widget: {
+              type: 'button', label: 'Next', disabled: forgePage >= maxPage,
+              onPress: () => { forgePage++; uiDirty = true },
+              draw: (ctx: CanvasRenderingContext2D, rect: LayoutRect, st: CanvasWidgetDrawState) => drawButton(ctx, rect, 'Next', st, { variant: 'secondary', size: 11 })
+            }
+          }),
+          spacerNode(1),
+          boxNode({
+            id: 'forge-count', style: { width: 140, height: 28 },
+            widget: {
+              type: 'panel',
+              draw: (ctx: CanvasRenderingContext2D, rect: LayoutRect) => drawLabel(
+                ctx, rect, `${totalItems} recipes · ${isHeroes ? `${camp.shards} Shards` : `${camp.dust} Dust`}`,
+                { size: 11, color: COLOR.muted, align: 'right' }
+              )
+            }
+          })
+        ])
+      ])
     } else {
-      // Booster Card Decks & Pack Reveal
+      // Booster Card Decks, Pity Counter & Pack Reveal
       const hasReveal = camp.lastPackReveal.length > 0 && !packAnim
-      const packH = hasReveal ? (shortH ? 52 : 64) : (shortH ? 148 : mobile ? 156 : 196)
+      const pity = getPackPityStatus(camp)
+      const pityH = hasReveal ? (shortH ? 32 : 38) : (shortH ? 36 : 42)
+      const packH = hasReveal ? (shortH ? 48 : 56) : (shortH ? 116 : mobile ? 136 : 158)
       const packCards: LayoutNode[] = PACK_LIST.map(pack => {
         const affordable = canBuyPack(camp, pack.id)
         return boxNode({
@@ -4171,7 +4393,9 @@ async function start() {
               if (pulled) {
                 saveNow()
                 startPackCeremony(pack.id, pulled)
-                showToast(`Opened ${pack.name} - ${pulled.length} cards added to collection.`)
+                const totalShards = pulled.reduce((acc, c) => acc + (c.convertedShards ?? 0), 0)
+                const shardMsg = totalShards > 0 ? ` (+${totalShards} excess Shards)` : ''
+                showToast(`Opened ${pack.name} - ${pulled.length} cards unsealed${shardMsg}.`)
                 uiDirty = true
               }
             },
@@ -4180,7 +4404,16 @@ async function start() {
         })
       })
 
-      const revealH = shortH ? 148 : mobile ? 176 : 168
+      const pityBannerNode = boxNode({
+        id: 'cs-pity-banner',
+        style: { height: pityH },
+        widget: {
+          type: 'panel',
+          draw: (ctx: CanvasRenderingContext2D, rect: LayoutRect) => drawPityBanner(ctx, rect, pity, mobile)
+        }
+      })
+
+      const revealH = shortH ? 124 : mobile ? 156 : 152
       const revealSection: LayoutNode[] = hasReveal
         ? [
             row({ id: 'rev-row', style: { height: revealH, gap: 10 } }, camp.lastPackReveal.map((card, idx) => {
@@ -4202,6 +4435,8 @@ async function start() {
                     detail: card.detail,
                     value: card.value,
                     isNew: card.isNew,
+                    convertedShards: card.convertedShards,
+                    pityTriggered: card.pityTriggered,
                     portrait: cardPortrait,
                     tacticSpec,
                     equipAccent: equipSpec?.accentHex
@@ -4212,20 +4447,21 @@ async function start() {
           ]
         : [
             boxNode({
-              id: 'dk-odds', style: { height: 22 },
+              id: 'dk-odds', style: { height: 20 },
               widget: {
                 type: 'panel',
                 draw: (ctx: CanvasRenderingContext2D, rect: LayoutRect) => drawLabel(
                   ctx,
                   rect,
-                  `Odds: Recruit (0.45% Epic / 0.05% Leg) · Vanguard (1.5% / 0.15%) · Sovereign (5.2% / 0.8%) · Packs: ${camp.packsOpened}`,
-                  { size: 10.5, color: COLOR.muted, align: 'center' }
+                  `Duplicate Protection active · Unowned Rare+ prioritized · 3★ dupes → Hero Shards · Packs: ${camp.packsOpened}`,
+                  { size: 10, color: COLOR.muted, align: 'center' }
                 )
               }
             })
           ]
 
-      bodyNode = column({ id: 'camp-decks-body', style: { grow: 1, gap: 10 } }, [
+      bodyNode = column({ id: 'camp-decks-body', style: { grow: 1, gap: 8 } }, [
+        pityBannerNode,
         row({ id: 'dk-packs', style: { height: packH, gap: 10 } }, packCards),
         ...revealSection
       ])
@@ -4269,7 +4505,10 @@ async function start() {
           style: { grow: 1, height: shortH ? 36 : 42 },
           widget: {
             type: 'panel',
-            draw: (ctx: CanvasRenderingContext2D, rect: LayoutRect) => drawCampHeader(ctx, rect, camp.gold, deckValue, isPhone)
+            draw: (ctx: CanvasRenderingContext2D, rect: LayoutRect) => drawCampHeader(ctx, rect, camp.gold, deckValue, isPhone, {
+              dust: camp.dust,
+              shards: camp.shards
+            })
           }
         }),
         // World Map + Quick Deploy bar
@@ -4386,6 +4625,19 @@ async function start() {
               }
             }),
             boxNode({
+              id: 'cs-tab-forge', style: { grow: 1, height: shortH ? 28 : 32 },
+              widget: {
+                type: 'button',
+                label: 'Forge',
+                selected: campTab === 'forge',
+                onPress: () => { setCampTab('forge'); mobileCampCollapsed = false; uiDirty = true },
+                draw: (ctx: CanvasRenderingContext2D, rect: LayoutRect, st: CanvasWidgetDrawState) => drawTab(ctx, rect, 'Forge', st, {
+                  icon: 'sparkle',
+                  count: mobile ? undefined : `${camp.dust + camp.shards}`
+                })
+              }
+            }),
+            boxNode({
               id: 'cs-tab-decks', style: { grow: 1, height: shortH ? 28 : 32 },
               widget: {
                 type: 'button',
@@ -4465,6 +4717,8 @@ async function start() {
                   detail: card.detail,
                   value: card.value,
                   isNew: card.isNew,
+                  convertedShards: card.convertedShards,
+                  pityTriggered: card.pityTriggered,
                   portrait: cardPortrait,
                   tacticSpec,
                   equipAccent: equipSpec?.accentHex
@@ -5331,6 +5585,11 @@ async function start() {
       showPerfPanel,
       fps: Math.round(perf.snapshot().fps),
       gold: state.campaign.gold,
+      dust: state.campaign.dust,
+      shards: state.campaign.shards,
+      packsSinceEpic: state.campaign.packsSinceEpic,
+      packsSinceLegendary: state.campaign.packsSinceLegendary,
+      pity: getPackPityStatus(state.campaign),
       chaptersCleared: state.campaign.chaptersCleared,
       clearedStageIds: state.campaign.clearedStageIds.slice(),
       selectedStageId: state.campaign.selectedStageId,
@@ -5483,6 +5742,24 @@ async function start() {
           renderUiNow()
         }
         return Boolean(res)
+      },
+      craftHero: (heroId: HeroClassId) => {
+        const card = craftHero(state, heroId)
+        if (card) {
+          saveNow()
+          uiDirty = true
+          renderUiNow()
+        }
+        return Boolean(card)
+      },
+      craftEquipment: (equipId: string) => {
+        const card = craftEquipment(state, equipId)
+        if (card) {
+          saveNow()
+          uiDirty = true
+          renderUiNow()
+        }
+        return Boolean(card)
       },
       resumeBattle: () => {
         const ok = resumeSavedBattle()
