@@ -73,6 +73,11 @@ const C_ACTIVE_RING: Color = [1.0, 0.85, 0.32, 0.96]
 const C_SELECT_RING: Color = [0.70, 0.94, 1.0, 0.82]
 const C_ENEMY_RING: Color = [0.98, 0.32, 0.30, 0.78]
 const C_ALLY_RING: Color = [0.40, 0.82, 1.0, 0.62]
+const C_SPOTLIGHT_ALLY: Color = [0.38, 0.94, 1.0, 0.96]
+const C_SPOTLIGHT_ALLY_BEAM: Color = [0.42, 0.94, 1.0, 0.24]
+const C_SPOTLIGHT_ENEMY: Color = [1.0, 0.48, 0.30, 0.96]
+const C_SPOTLIGHT_ENEMY_BEAM: Color = [1.0, 0.44, 0.28, 0.24]
+const C_SPOTLIGHT_GOLD: Color = [1.0, 0.92, 0.46, 0.94]
 const C_STAR2_GOLD = color('f5c84c')
 const C_STAR3_HALO: Color = [1.0, 0.88, 0.44, 0.86]
 const C_FIRE_CORE = color('ff8f38')
@@ -159,6 +164,30 @@ const facingArrowMesh = (() => {
   // Stem
   tri([-0.14, y, 0.05], [-0.14, y, -0.32], [0.14, y, 0.05])
   tri([0.14, y, 0.05], [-0.14, y, -0.32], [0.14, y, -0.32])
+  return mesh(pos, idx)
+})()
+
+/** Tapered double-sided octagonal light shaft for turn-order hover spotlight beacons (base radius 1, height 1). */
+const spotlightBeamMesh = (() => {
+  const pos: number[] = []
+  const idx: number[] = []
+  const sides = 8
+  const rBot = 0.68
+  const rTop = 0.46
+  for (let i = 0; i < sides; i++) {
+    const a0 = (i / sides) * Math.PI * 2
+    const a1 = ((i + 1) / sides) * Math.PI * 2
+    const c0 = Math.cos(a0), s0 = Math.sin(a0)
+    const c1 = Math.cos(a1), s1 = Math.sin(a1)
+    const n = pos.length / 3
+    pos.push(
+      c0 * rBot, 0, s0 * rBot,
+      c1 * rBot, 0, s1 * rBot,
+      c1 * rTop, 1, s1 * rTop,
+      c0 * rTop, 1, s0 * rTop
+    )
+    idx.push(n, n + 1, n + 2, n, n + 2, n + 3, n, n + 2, n + 1, n, n + 3, n + 2)
+  }
   return mesh(pos, idx)
 })()
 
@@ -513,6 +542,7 @@ export function createCrownshardScene(renderer: LowPolyRenderer) {
   let activeForecast: CombatForecast | null = null
   let dangerZoneVisible = false
   let inspectedEnemyUid: string | null = null
+  let spotlightUnitUid: string | null = null
   let cameraYawTarget = 0
   let cameraYawActual = 0
   const DEFAULT_CAMERA_PITCH = 0.72
@@ -1349,6 +1379,22 @@ export function createCrownshardScene(renderer: LowPolyRenderer) {
     if (unit.shield > 0) {
       pool.add(flatRing, [px, py + 0.56 * scale, pz], [0.58 * scale, 1, 0.58 * scale], time * 1.8, C_SHIELD, 0.9, 'additive')
     }
+    if (spotlightUnitUid && unit.uid === spotlightUnitUid) {
+      const spotCol = unit.team === 'ally' ? C_SPOTLIGHT_ALLY : C_SPOTLIGHT_ENEMY
+      const beamCol = unit.team === 'ally' ? C_SPOTLIGHT_ALLY_BEAM : C_SPOTLIGHT_ENEMY_BEAM
+      const pulse = 1 + Math.sin(time * 7.2) * 0.08
+      const beamH = (unit.isBoss ? 4.2 : 3.4) * scale
+      const beamW = (unit.isBoss ? 1.15 : 0.92) * scale * (1 + Math.sin(time * 5.0) * 0.05)
+      // Pulsing outer golden-cyan / amber-crimson ground ring + counter-rotating gold inner ring
+      pool.add(flatRing, [px, groundY + 0.062, pz], [0.88 * scale * pulse, 1, 0.88 * scale * pulse], time * 2.2, spotCol, 1.0, 'additive')
+      pool.add(flatRing, [px, groundY + 0.068, pz], [0.64 * scale, 1, 0.64 * scale], -time * 2.8, C_SPOTLIGHT_GOLD, 1.0, 'additive')
+      // Vertical translucent spotlight shaft rising from unit tile
+      pool.add(spotlightBeamMesh, [px, groundY + 0.05, pz], [beamW, beamH, beamW], time * 0.65, beamCol, 1.0, 'additive')
+      // Elevated hovering halo ring & spinning crystal beacon above the unit's head
+      const haloY = py + (unit.isBoss ? 2.55 : 2.12) * scale + Math.sin(time * 6.0) * 0.08
+      pool.add(flatRing, [px, haloY, pz], [0.54 * scale * pulse, 1, 0.54 * scale * pulse], -time * 2.6, C_SPOTLIGHT_GOLD, 1.0, 'additive')
+      pool.add(crystalMesh, [px, haloY + 0.24, pz], [0.14 * scale, 0.24 * scale, 0.14 * scale], time * 3.8, spotCol, 1.0, 'additive')
+    }
     drawStatusAura(unit, fx, px, groundY, pz, scale, realDt, time)
     if (unit.stunTurns > 0) {
       for (let i = 0; i < 3; i++) {
@@ -1382,6 +1428,7 @@ export function createCrownshardScene(renderer: LowPolyRenderer) {
       localShake = 0
       lastFloatId = -1
       lastActiveUid = null
+      spotlightUnitUid = null
       hitStop = 0
       cameraZoom = 1.0
       cameraZoomActual = 1.0
@@ -2183,6 +2230,12 @@ export function createCrownshardScene(renderer: LowPolyRenderer) {
       fx.landAmp = 0.08
       fx.anim.play(idleClipFor(unit.team, unit.hp / Math.max(1, unit.maxHp), unit.stunTurns > 0), 0.04)
       spawnDust(unit.x, unit.y, unit.z, 5, 0.8)
+    },
+    setSpotlightUnit(uid: string | null) {
+      spotlightUnitUid = uid
+    },
+    getSpotlightUnit() {
+      return spotlightUnitUid
     },
     rotateCamera(delta: number) {
       if (!Number.isFinite(delta)) return

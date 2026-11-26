@@ -2,7 +2,7 @@ import type { CanvasWidgetDrawState, LayoutRect } from 'ridgetop/ui'
 import type {
   BattleUnit, ChapterSpec, CombatForecast, CombatForecastAlt, DifficultyLevel, EquipSlot, EquipmentSpec,
   FacingDir, FacingExposureLevel, HeroSpec, LandmarkKind, OwnedHeroCard, PackRevealItem, PackSpec,
-  Rarity, SkillSpec, TacticCardSpec, TurnPreviewEntry
+  Rarity, SkillSpec, TacticCardSpec, TurnOrderActionPreview, TurnPreviewEntry
 } from './types.ts'
 import { DIFFICULTY_META, RARITY_META, RARITY_ORDER } from './data.ts'
 
@@ -1616,23 +1616,82 @@ export function drawTimelineBg(ctx: CanvasRenderingContext2D, rect: LayoutRect) 
   drawSurface(ctx, rect, { r: RADIUS.lg, lipH: 4, fill: '#2c3a61', fillBot: '#1b2540' })
 }
 
+export interface TurnTokenDrawOpts {
+  /** True when this unit is spotlighted via hovering any matching token in the turn-order bar. */
+  spotlighted?: boolean
+  /** True when this slot is the active hero's projected landing slot in a CT preview. */
+  projectedSlot?: boolean
+  /** Optional short badge shown on a projected slot (e.g. 'NEXT #2' or '+40 CT'). */
+  projectedBadge?: string
+  /** Accent color for projected slot highlight. */
+  projectedAccent?: string
+  /** True when this slot was the full-spend baseline slot shifted earlier by Waiting. */
+  wasBaselineSlot?: boolean
+  /** Subtle dimming for non-matching tokens while another unit is spotlighted. */
+  dimmed?: boolean
+}
+
+export interface TurnOrderCalloutInfo {
+  readonly name: string
+  readonly team: 'ally' | 'enemy'
+  readonly hp: number
+  readonly maxHp: number
+  readonly shield: number
+  readonly ct: number
+  readonly speed: number
+  readonly slotIndex: number
+  readonly isCurrent: boolean
+}
+
+export interface TurnTimelinePreviewOpts {
+  /** Active hero portrait drawn inside the ghost/projected token marker. */
+  readonly activePortrait?: CanvasImageSource
+  /** Total visible slots in the top bar. */
+  readonly slotCount: number
+  /** Width of each turn token slot in px. */
+  readonly tokenW: number
+  /** Horizontal gap between token slots in px. */
+  readonly gap: number
+  /** Horizontal inner padding of the timeline container in px. */
+  readonly padX: number
+  /** Optional animation time in seconds (for smooth pulse; falls back to 0 in headless tests). */
+  readonly time?: number
+}
+
 export function drawTurnToken(
   ctx: CanvasRenderingContext2D,
   rect: LayoutRect,
   entry: TurnPreviewEntry,
   portrait: CanvasImageSource | undefined,
-  st: CanvasWidgetDrawState
+  st: CanvasWidgetDrawState,
+  opts: TurnTokenDrawOpts = {}
 ) {
   const team = entry.team === 'ally' ? COLOR.ally : COLOR.enemy
   const current = entry.isCurrent
-  const lift = st.pressed ? 1 : st.hovered ? -2 : 0
+  const spotlighted = Boolean(st.hovered || opts.spotlighted)
+  const projectedSlot = Boolean(opts.projectedSlot)
+  const lift = st.pressed ? 1 : spotlighted ? -3 : projectedSlot ? -1.5 : 0
   const labelH = 15
   const s = Math.min(rect.width - 2, rect.height - labelH + (current ? 1 : 2))
   const x = rect.x + (rect.width - s) / 2
   const y = rect.y + lift
 
   ctx.save()
-  if (current) {
+  if (opts.dimmed && !spotlighted && !current && !projectedSlot) {
+    ctx.globalAlpha *= 0.62
+  }
+
+  if (spotlighted) {
+    const spotGlow = entry.team === 'ally' ? '#5ce1ffbb' : '#ff7b54bb'
+    const spotRing = entry.team === 'ally' ? '#7cf0ff' : '#ff9c6e'
+    ctx.save()
+    ctx.shadowColor = spotGlow
+    ctx.shadowBlur = 14
+    rr(ctx, x - 2.5, y - 2.5, s + 5, s + 5, s * 0.25)
+    ctx.fillStyle = spotRing
+    ctx.fill()
+    ctx.restore()
+  } else if (current) {
     ctx.save()
     ctx.shadowColor = COLOR.glow
     ctx.shadowBlur = 12
@@ -1640,16 +1699,43 @@ export function drawTurnToken(
     ctx.fillStyle = COLOR.accent
     ctx.fill()
     ctx.restore()
+  } else if (projectedSlot) {
+    const pAccent = opts.projectedAccent ?? COLOR.ap
+    ctx.save()
+    ctx.shadowColor = `${pAccent}99`
+    ctx.shadowBlur = 10
+    rr(ctx, x - 1.5, y - 1.5, s + 3, s + 3, s * 0.24)
+    ctx.strokeStyle = pAccent
+    ctx.lineWidth = 2.2
+    ctx.stroke()
+    ctx.restore()
   }
 
   drawPortraitTile(ctx, x, y, s, portrait, {
-    ring: current ? COLOR.accentHi : st.hovered ? '#ffffff' : team,
-    ringW: current ? 3 : 2.2,
+    ring: spotlighted
+      ? (entry.team === 'ally' ? '#8cf4ff' : '#ffaa7a')
+      : projectedSlot
+        ? (opts.projectedAccent ?? COLOR.ap)
+        : current
+          ? COLOR.accentHi
+          : team,
+    ringW: spotlighted || current ? 3 : projectedSlot ? 2.6 : 2.2,
     r: s * 0.22,
-    bg: entry.team === 'ally' ? '#365f99' : '#7a3040'
+    bg: entry.team === 'ally' ? '#365f99' : '#7a3040',
+    dim: Boolean(opts.wasBaselineSlot && !projectedSlot)
   })
 
-  // Bottom plaque: golden NOW ribbon or dark-outlined speed badge
+  if (opts.wasBaselineSlot && !projectedSlot) {
+    ctx.save()
+    ctx.setLineDash([4, 3])
+    rr(ctx, x - 1, y - 1, s + 2, s + 2, s * 0.22)
+    ctx.strokeStyle = '#ff9c6eaa'
+    ctx.lineWidth = 1.6
+    ctx.stroke()
+    ctx.restore()
+  }
+
+  // Bottom plaque: golden NOW ribbon, projected badge, or dark-outlined speed badge
   if (current) {
     const pw = Math.min(rect.width, 38)
     const py = y + s - 4
@@ -1669,13 +1755,30 @@ export function drawTurnToken(
       align: 'center',
       display: true
     })
+  } else if (projectedSlot && opts.projectedBadge) {
+    const pw = Math.min(rect.width + 6, Math.max(36, measureText(ctx, opts.projectedBadge, 8.5, 900, true) + 10))
+    const py = y + s - 3
+    const pAccent = opts.projectedAccent ?? COLOR.ap
+    rr(ctx, rect.x + (rect.width - pw) / 2, py, pw, 14, 7)
+    ctx.fillStyle = pAccent
+    ctx.fill()
+    ctx.strokeStyle = COLOR.outline
+    ctx.lineWidth = 1.6
+    ctx.stroke()
+    drawText(ctx, opts.projectedBadge, rect.x + rect.width / 2, py + 7.5, {
+      size: 8.5,
+      weight: 900,
+      color: COLOR.ink,
+      align: 'center',
+      display: true
+    })
   } else {
     const pw = 34
     const py = y + s - 2
     rr(ctx, rect.x + (rect.width - pw) / 2, py, pw, 14, 7)
-    ctx.fillStyle = COLOR.wellDeep
+    ctx.fillStyle = spotlighted ? '#24345c' : COLOR.wellDeep
     ctx.fill()
-    ctx.strokeStyle = COLOR.outline
+    ctx.strokeStyle = spotlighted ? (entry.team === 'ally' ? '#7cf0ff' : '#ff9c6e') : COLOR.outline
     ctx.lineWidth = 1.5
     ctx.stroke()
     drawIcon(ctx, 'bolt', rect.x + rect.width / 2 - 8, py + 7, 8, COLOR.accent)
@@ -1687,6 +1790,277 @@ export function drawTurnToken(
     })
   }
   ctx.restore()
+}
+
+/** Compact floating callout strip beneath the turn-order bar when hovering a unit token. */
+export function drawTurnOrderCallout(
+  ctx: CanvasRenderingContext2D,
+  rect: LayoutRect,
+  info: TurnOrderCalloutInfo
+) {
+  const accent = info.team === 'ally' ? COLOR.ally : COLOR.enemy
+  drawSurface(ctx, rect, {
+    r: rect.height / 2,
+    lipH: 3,
+    fill: '#233052',
+    fillBot: '#151e36',
+    border: accent,
+    glow: `${accent}55`
+  })
+  const cy = rect.y + (rect.height - 3) / 2
+  let cx = rect.x + 12
+
+  // Team dot
+  ctx.save()
+  ctx.beginPath()
+  ctx.arc(cx + 4, cy, 4.5, 0, Math.PI * 2)
+  ctx.fillStyle = accent
+  ctx.fill()
+  ctx.strokeStyle = COLOR.outline
+  ctx.lineWidth = 1.5
+  ctx.stroke()
+  ctx.restore()
+  cx += 14
+
+  // Unit name
+  const nameW = drawText(ctx, info.name, cx, cy + 0.5, {
+    size: 11.5,
+    weight: 900,
+    color: '#ffffff',
+    display: true,
+    maxW: Math.max(60, rect.width * 0.34),
+    shadow: true
+  })
+  cx += nameW + 8
+
+  // Rank chip (ACTING NOW or #N)
+  const rankLabel = info.isCurrent ? 'NOW' : `#${info.slotIndex + 1}`
+  const rankW = drawChip(ctx, cx, cy - 8.5, rankLabel, {
+    h: 17,
+    size: 9.5,
+    bg: info.isCurrent ? COLOR.accent : '#1b2645',
+    border: info.isCurrent ? COLOR.outline : accent,
+    color: info.isCurrent ? COLOR.accentText : accent
+  })
+  cx += rankW + 8
+
+  // HP / Shield / CT / SPD readout
+  const shieldPart = info.shield > 0 ? `+${info.shield}` : ''
+  const statText = `HP ${info.hp}/${info.maxHp}${shieldPart} · CT ${Math.round(info.ct)}/100 · SPD ${info.speed}`
+  drawText(ctx, statText, cx, cy + 0.5, {
+    size: 10.5,
+    weight: 800,
+    color: COLOR.muted,
+    maxW: Math.max(40, rect.x + rect.width - cx - 10)
+  })
+}
+
+/**
+ * Draws the dashed connector arc + ghost/projected hero token directly over the top turn-order bar
+ * when hovering Wait, Strike/Skill, or a board move/attack target.
+ */
+export function drawTurnTimelinePreviewOverlay(
+  ctx: CanvasRenderingContext2D,
+  barRect: LayoutRect,
+  preview: TurnOrderActionPreview,
+  opts: TurnTimelinePreviewOpts
+) {
+  if (opts.slotCount < 2) return
+  const isBonus = preview.ctSaved > 0
+  const accent = isBonus ? COLOR.ap : '#ff9a44'
+  const glow = isBonus ? '#5ce1ffaa' : '#ff9a44aa'
+
+  // Slot 0 is NOW; projectedIndex 0 = acts next (slot 1), etc.
+  const rawTargetSlot = preview.projectedIndex >= 0 ? 1 + preview.projectedIndex : opts.slotCount - 1
+  const clampedSlot = Math.max(1, Math.min(opts.slotCount - 1, rawTargetSlot))
+  const overflowRight = preview.projectedIndex < 0 || rawTargetSlot >= opts.slotCount
+
+  const slotCenterX = (idx: number) =>
+    barRect.x + opts.padX + idx * (opts.tokenW + opts.gap) + opts.tokenW * 0.5
+
+  const startX = slotCenterX(0)
+  // If Wait shifted the hero ahead of another unit, place ghost right at the left edge of the shifted slot
+  // so it visually inserts ahead of the unit it overtook; otherwise center on the landing slot.
+  const shiftInsert = preview.slotsGained > 0 && !overflowRight
+  const endX = overflowRight
+    ? barRect.x + barRect.width - 14
+    : shiftInsert
+      ? barRect.x + opts.padX + clampedSlot * (opts.tokenW + opts.gap) - opts.gap * 0.5
+      : slotCenterX(clampedSlot)
+
+  const topY = barRect.y + 4
+  const arcPeakY = Math.max(2, topY - 12)
+  const pulse = 0.5 + 0.5 * Math.sin((opts.time ?? 0) * 6.5)
+
+  ctx.save()
+
+  // Dashed connector arc from NOW (slot 0) to projected landing spot
+  ctx.save()
+  ctx.shadowColor = glow
+  ctx.shadowBlur = 8
+  ctx.strokeStyle = accent
+  ctx.lineWidth = 2.4
+  ctx.lineCap = 'round'
+  ctx.setLineDash([5, 4])
+  ctx.beginPath()
+  ctx.moveTo(startX, topY + 2)
+  ctx.quadraticCurveTo((startX + endX) * 0.5, arcPeakY, endX, topY + 3)
+  ctx.stroke()
+  ctx.setLineDash([])
+  ctx.restore()
+
+  // Origin dot on NOW slot
+  ctx.beginPath()
+  ctx.arc(startX, topY + 2, 3.8, 0, Math.PI * 2)
+  ctx.fillStyle = COLOR.accentHi
+  ctx.fill()
+  ctx.strokeStyle = COLOR.outline
+  ctx.lineWidth = 1.5
+  ctx.stroke()
+
+  // Vertical dashed insertion beam + ghost mini-portrait at projected landing position
+  const ghostS = Math.min(26, Math.max(20, opts.tokenW * 0.48))
+  const gx = Math.max(barRect.x + 4, Math.min(barRect.x + barRect.width - ghostS - 4, endX - ghostS * 0.5))
+  const gy = barRect.y + (barRect.height - ghostS) * 0.5 - 3
+
+  if (shiftInsert) {
+    ctx.save()
+    ctx.strokeStyle = accent
+    ctx.lineWidth = 2.2
+    ctx.setLineDash([4, 3])
+    ctx.beginPath()
+    ctx.moveTo(endX, barRect.y + 5)
+    ctx.lineTo(endX, barRect.y + barRect.height - 5)
+    ctx.stroke()
+    ctx.setLineDash([])
+    ctx.restore()
+  }
+
+  // Downward caret above landing spot
+  ctx.beginPath()
+  ctx.moveTo(endX, topY + 8)
+  ctx.lineTo(endX - 5, topY + 1)
+  ctx.lineTo(endX + 5, topY + 1)
+  ctx.closePath()
+  ctx.fillStyle = accent
+  ctx.fill()
+  ctx.strokeStyle = COLOR.outline
+  ctx.lineWidth = 1.4
+  ctx.stroke()
+
+  // Ghost projected hero portrait marker
+  ctx.save()
+  ctx.globalAlpha = 0.88 + pulse * 0.12
+  ctx.shadowColor = glow
+  ctx.shadowBlur = 10
+  drawPortraitTile(ctx, gx, gy, ghostS, opts.activePortrait, {
+    ring: accent,
+    ringW: 2.2,
+    r: ghostS * 0.25,
+    bg: '#234a7a'
+  })
+  ctx.restore()
+
+  // Dashed outer ring around the ghost marker to unmistakably mark it as a projection
+  ctx.save()
+  ctx.setLineDash([3.5, 2.5])
+  rr(ctx, gx - 2, gy - 2, ghostS + 4, ghostS + 4, ghostS * 0.28)
+  ctx.strokeStyle = '#ffffffdd'
+  ctx.lineWidth = 1.6
+  ctx.stroke()
+  ctx.restore()
+
+  ctx.restore()
+}
+
+/** Tactical CT Shift Preview summary pill shown beneath the top turn-order bar. */
+export function drawTurnOrderPreviewBanner(
+  ctx: CanvasRenderingContext2D,
+  rect: LayoutRect,
+  preview: TurnOrderActionPreview,
+  waitComparison?: TurnOrderActionPreview | null
+) {
+  const isBonus = preview.ctSaved > 0
+  const accent = isBonus ? COLOR.ap : '#ff9a44'
+  drawSurface(ctx, rect, {
+    r: rect.height / 2,
+    lipH: 3,
+    fill: isBonus ? '#1e3557' : '#3a293f',
+    fillBot: isBonus ? '#12213b' : '#23172b',
+    border: accent,
+    glow: `${accent}55`
+  })
+  const cy = rect.y + (rect.height - 3) / 2
+  let cx = rect.x + 10
+
+  // Action chip: WAIT +40 CT / MOVE +20 CT / ACT +20 CT / FULL TURN
+  const actionLabel = preview.actionKind === 'wait'
+    ? (preview.ctSaved > 0 ? `WAIT +${preview.ctSaved} CT` : 'END TURN')
+    : preview.actionKind === 'move_only'
+      ? (preview.ctSaved > 0 ? `MOVE +${preview.ctSaved} CT` : 'MOVE')
+      : preview.actionKind === 'act'
+        ? (preview.ctSaved > 0 ? `ACT +${preview.ctSaved} CT` : 'ACT -100 CT')
+        : 'MOVE+ACT -100 CT'
+
+  const chipW = drawChip(ctx, cx, cy - 8.5, actionLabel, {
+    h: 17,
+    size: 9.5,
+    bg: accent,
+    border: COLOR.outline,
+    color: COLOR.ink
+  })
+  cx += chipW + 8
+
+  const nextRank = preview.projectedIndex >= 0 ? `#${preview.projectedIndex + 1}` : '#9+'
+  const rankText = isBonus ? `NEXT ${nextRank}` : `${nextRank} AFTER ACT`
+  const rankW = drawText(ctx, rankText, cx, cy + 0.5, {
+    size: 11.5,
+    weight: 900,
+    color: '#ffffff',
+    display: true,
+    shadow: true
+  })
+  cx += rankW + 8
+
+  const avail = rect.x + rect.width - cx - 10
+  if (preview.slotsGained > 0 && avail >= 66) {
+    const gainText = `▲ +${preview.slotsGained} SLOT${preview.slotsGained > 1 ? 'S' : ''}`
+    const gw = drawChip(ctx, cx, cy - 8.5, gainText, {
+      h: 17,
+      size: 9.5,
+      bg: '#133d2c',
+      border: COLOR.good,
+      color: COLOR.good
+    })
+    cx += gw + 6
+    const rem = rect.x + rect.width - cx - 10
+    if (preview.baselineIndex >= 0 && rem >= 60) {
+      drawText(ctx, `vs #${preview.baselineIndex + 1} act`, cx, cy + 0.5, {
+        size: 10,
+        weight: 800,
+        color: COLOR.muted,
+        maxW: rem
+      })
+    }
+  } else if (!isBonus && waitComparison && waitComparison.ctSaved > 0 && avail >= 72) {
+    const waitRank = waitComparison.projectedIndex >= 0 ? `#${waitComparison.projectedIndex + 1}` : '#9+'
+    const cmpText = waitComparison.slotsGained > 0
+      ? `WAIT → ${waitRank} (▲${waitComparison.slotsGained})`
+      : `WAIT +${waitComparison.ctSaved} CT → ${waitRank}`
+    drawText(ctx, cmpText, cx, cy + 0.5, {
+      size: 10,
+      weight: 800,
+      color: COLOR.ap,
+      maxW: avail
+    })
+  } else if (avail >= 52) {
+    drawText(ctx, `CT ${Math.round(preview.remainingCt)}/100`, cx, cy + 0.5, {
+      size: 10,
+      weight: 800,
+      color: COLOR.muted,
+      maxW: avail
+    })
+  }
 }
 
 /**

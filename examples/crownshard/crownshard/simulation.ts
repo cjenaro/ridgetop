@@ -16,7 +16,7 @@ import type {
   EquipmentSpec, FacingDir, FacingExposureLevel, FacingExposureReport, FacingThreatEntry,
   FlankThreatTile, GameState, GridCell, GridCoord, HeroClassId, MoveAttackTile, OwnedEquipCard,
   OwnedHeroCard, OwnedTacticCard, PackId, PackRevealItem, Rarity, SaveData, SkillSpec,
-  TacticCardSpec, TileTerrain, TurnPreviewEntry
+  TacticCardSpec, TileTerrain, TurnActionKind, TurnOrderActionPreview, TurnPreviewEntry
 } from './types.ts'
 
 export const SAVE_KEY = 'ridgetop.crownshard.save.v1'
@@ -1693,6 +1693,208 @@ export function computeTurnOrderPreview(battle: BattleState, count = 8): TurnPre
     }
   }
   return out
+}
+
+/** Exact CT spent when ending a player turn under Crownshard's Wait/Move/Act rules. */
+export function computeTurnActionCtCost(
+  unit: Pick<BattleUnit, 'moved' | 'acted'>,
+  actionKind: TurnActionKind
+): number {
+  if (actionKind === 'move_and_act') return 100
+  if (actionKind === 'wait') {
+    return unit.moved && unit.acted ? 100 : (unit.moved || unit.acted) ? 80 : 60
+  }
+  if (actionKind === 'move_only') {
+    return unit.acted ? 100 : 80
+  }
+  return unit.moved ? 100 : 80
+}
+
+interface TurnOrderSimUnit {
+  readonly unit: BattleUnit
+  ct: number
+  hp: number
+  shield: number
+  alive: boolean
+  burnTurns: number
+  slowTurns: number
+  stunTurns: number
+}
+
+/**
+ * Pure simulation of `endPlayerTurn` + `advanceToNextUnitTurn` + `computeTurnOrderPreview`
+ * without mutating `battle` or any `BattleUnit`.
+ */
+function simulateNextTurnOrder(
+  battle: BattleState,
+  activeUid: string,
+  ctCost: number,
+  count: number
+): TurnPreviewEntry[] {
+  const sim: TurnOrderSimUnit[] = []
+  for (const u of battle.units) {
+    if (!u.alive) continue
+    sim.push({
+      unit: u,
+      ct: u.uid === activeUid ? Math.max(0, u.ct - ctCost) : u.ct,
+      hp: u.hp,
+      shield: u.shield,
+      alive: true,
+      burnTurns: u.burnTurns,
+      slowTurns: u.slowTurns,
+      stunTurns: u.stunTurns
+    })
+  }
+  if (!sim.length) return []
+
+  let nextActive: TurnOrderSimUnit | null = null
+  let guard = 0
+  while (guard++ < 300) {
+    const aliveAllies = sim.some(s => s.alive && s.unit.team === 'ally')
+    const aliveEnemies = sim.some(s => s.alive && s.unit.team === 'enemy')
+    if (!aliveAllies || !aliveEnemies) break
+
+    let best: TurnOrderSimUnit | null = null
+    for (const s of sim) {
+      if (!s.alive || s.ct < 100) continue
+      if (!best) { best = s; continue }
+      const sSpd = effectiveSpeed({ speed: s.unit.speed, slowTurns: s.slowTurns })
+      const bSpd = effectiveSpeed({ speed: best.unit.speed, slowTurns: best.slowTurns })
+      if (s.ct > best.ct) best = s
+      else if (s.ct === best.ct && sSpd > bSpd) best = s
+      else if (s.ct === best.ct && sSpd === bSpd && s.unit.team === 'ally' && best.unit.team === 'enemy') best = s
+    }
+
+    if (!best) {
+      for (const s of sim) {
+        if (s.alive) s.ct += effectiveSpeed({ speed: s.unit.speed, slowTurns: s.slowTurns })
+      }
+      continue
+    }
+
+    // Mirror exact start-of-unit-turn ticks from advanceToNextUnitTurn
+    if (best.burnTurns > 0) {
+      best.burnTurns -= 1
+      const absorbed = Math.min(best.shield, 8)
+      best.shield -= absorbed
+      best.hp = Math.max(0, best.hp - (8 - absorbed))
+      if (best.hp <= 0) {
+        best.alive = false
+        continue
+      }
+    }
+    if (best.slowTurns > 0) best.slowTurns -= 1
+    if (best.stunTurns > 0) {
+      best.stunTurns -= 1
+      best.ct = Math.max(0, best.ct - 100)
+      continue
+    }
+
+    nextActive = best
+    break
+  }
+
+  const aliveSim = sim
+    .filter(s => s.alive)
+    .map(s => ({
+      unit: s.unit,
+      ct: s.ct,
+      spd: effectiveSpeed({ speed: s.unit.speed, slowTurns: s.slowTurns })
+    }))
+  if (!aliveSim.length) return []
+
+  const out: TurnPreviewEntry[] = []
+  if (nextActive) {
+    const nextSpd = effectiveSpeed({ speed: nextActive.unit.speed, slowTurns: nextActive.slowTurns })
+    out.push({
+      uid: nextActive.unit.uid,
+      team: nextActive.unit.team,
+      name: nextActive.unit.name,
+      heroId: nextActive.unit.heroId,
+      enemyId: nextActive.unit.enemyId,
+      stars: nextActive.unit.stars,
+      speed: nextSpd,
+      isCurrent: true
+    })
+    const activeEntry = aliveSim.find(s => s.unit.uid === nextActive.unit.uid)
+    if (activeEntry) activeEntry.ct = Math.max(0, activeEntry.ct - 100)
+  }
+
+  let previewGuard = 0
+  while (out.length < count && previewGuard++ < 400) {
+    let bestIdx = -1
+    for (let i = 0; i < aliveSim.length; i++) {
+      if (aliveSim[i].ct < 100) continue
+      if (bestIdx < 0) { bestIdx = i; continue }
+      const a = aliveSim[i], b = aliveSim[bestIdx]
+      if (a.ct > b.ct) bestIdx = i
+      else if (a.ct === b.ct && a.spd > b.spd) bestIdx = i
+      else if (a.ct === b.ct && a.spd === b.spd && a.unit.team === 'ally' && b.unit.team === 'enemy') bestIdx = i
+    }
+    if (bestIdx >= 0) {
+      const winner = aliveSim[bestIdx]
+      out.push({
+        uid: winner.unit.uid,
+        team: winner.unit.team,
+        name: winner.unit.name,
+        heroId: winner.unit.heroId,
+        enemyId: winner.unit.enemyId,
+        stars: winner.unit.stars,
+        speed: winner.spd,
+        isCurrent: false
+      })
+      winner.ct -= 100
+    } else {
+      for (const s of aliveSim) s.ct += s.spd
+    }
+  }
+  return out
+}
+
+/**
+ * Pure non-mutating projection of the CT turn timeline after the active hero waits, moves, or acts.
+ * Matches the exact `battle.turnOrder` produced after `endPlayerTurn(state)`.
+ */
+export function previewTurnOrderAfterAction(
+  battle: BattleState,
+  actionKind: TurnActionKind,
+  count = 8
+): TurnOrderActionPreview | null {
+  if (battle.phase !== 'player') return null
+  const active = getUnitByUid(battle, battle.activeUnitUid)
+  if (!active || active.team !== 'ally') return null
+
+  const safeCount = Math.max(1, Math.floor(count))
+  const searchDepth = Math.max(safeCount, 24)
+  const ctCost = computeTurnActionCtCost(active, actionKind)
+  const ctSaved = Math.max(0, 100 - ctCost)
+  const remainingCt = Math.max(0, active.ct - ctCost)
+
+  const deepProjected = simulateNextTurnOrder(battle, active.uid, ctCost, searchDepth)
+  const projectedOrder = deepProjected.slice(0, safeCount)
+  const projectedIndex = projectedOrder.findIndex(e => e.uid === active.uid)
+  const deepProjectedIndex = deepProjected.findIndex(e => e.uid === active.uid)
+
+  const deepBaseline = ctCost === 100
+    ? deepProjected
+    : simulateNextTurnOrder(battle, active.uid, 100, searchDepth)
+  const baselineIndex = deepBaseline.findIndex(e => e.uid === active.uid)
+  const slotsGained = deepProjectedIndex >= 0 && baselineIndex >= 0
+    ? Math.max(0, baselineIndex - deepProjectedIndex)
+    : 0
+
+  return {
+    actionKind,
+    activeUnitUid: active.uid,
+    activeUnitName: active.name,
+    ctCost,
+    ctSaved,
+    remainingCt,
+    projectedOrder,
+    projectedIndex,
+    baselineIndex,
+    slotsGained
+  }
 }
 
 export function canTraverseStep(fromCell: GridCell, toCell: GridCell, jump: number): boolean {
