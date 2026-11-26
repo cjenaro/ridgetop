@@ -11,6 +11,20 @@ export const KO_COUNTDOWN_TURNS = 3
 
 export type StatusKind = 'burn' | 'slow' | 'stun' | 'empower' | 'taunt' | 'haste' | 'poison'
 
+export type ElementKind = 'fire' | 'frost' | 'poison' | 'holy' | 'arcane'
+
+export type ElementalComboId = 'shatter' | 'freeze' | 'wildfire' | 'combust'
+
+export interface ElementalComboPreview {
+  readonly id: ElementalComboId
+  readonly label: string
+  readonly badgeText: string
+  readonly bonusDamage: number
+  readonly extraStatus?: StatusKind
+  readonly consumesStatus?: StatusKind
+  readonly affectedTiles: readonly GridCoord[]
+}
+
 export const BARRICADE_DEFAULT_HP = 25
 export const LAVA_GEYSER_DAMAGE = 12
 export const LAVA_GEYSER_PERIOD = 2
@@ -579,6 +593,8 @@ export type VfxEvent =
     }
   /** Enemy signature move (Archon Eclipse Nova, Bog Shaman totem mend, and raid-boss telegraphs). */
   | { kind: 'special'; uid: string; move: 'eclipse_nova' | 'shaman_mend' | 'lich_summon' | 'frostwyrm_breath' | 'titan_slam'; at: Vec3; cells: Vec3[] }
+  /** Reactive elemental status combo detonation (Shatter, Freeze, Wildfire spread, Combust). */
+  | { kind: 'combo'; combo: ElementalComboId; at: Vec3; cells: Vec3[]; bonusDamage: number }
   | { kind: 'heal'; at: Vec3 }
   | { kind: 'revive'; at: Vec3; uid?: string }
   | { kind: 'shield'; at: Vec3 }
@@ -810,6 +826,7 @@ export interface CombatForecast {
   readonly counterAvoidReason?: CounterAvoidReason
   readonly opportunityAttacks?: PathOpportunityPreview
   readonly displacementPreview?: DisplacementPreview
+  readonly elementalCombo?: ElementalComboPreview
   readonly alternatives: readonly CombatForecastAlt[]
 }
 
