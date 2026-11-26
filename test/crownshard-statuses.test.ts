@@ -534,6 +534,7 @@ test('CrownshardScene and HUD render Taunt, Haste, and Poison 3D auras, VFX, and
       empowered: false,
       attackArc: 'front',
       isOffensive: true,
+      isRevive: false,
       friendlyFire: false,
       friendlyFireCount: 0,
       emptyTileTarget: false,
