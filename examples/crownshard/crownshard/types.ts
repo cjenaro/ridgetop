@@ -396,6 +396,54 @@ export interface MoveAttackTile {
   readonly fromRow: number
 }
 
+export interface GridCoord {
+  readonly col: number
+  readonly row: number
+}
+
+export interface MoveUndoRecord {
+  readonly uid: string
+  readonly col: number
+  readonly row: number
+  readonly x: number
+  readonly y: number
+  readonly z: number
+  readonly facing: FacingDir
+  readonly yaw: number
+}
+
+export interface FlankThreatTile {
+  readonly col: number
+  readonly row: number
+  readonly targetUid: string
+  readonly arc: 'flank' | 'back'
+  readonly fromCol: number
+  readonly fromRow: number
+}
+
+export interface EnemyThreatMap {
+  readonly enemyUid: string
+  readonly moveTiles: readonly GridCoord[]
+  readonly attackTiles: readonly GridCoord[]
+  readonly flankThreatTiles: readonly FlankThreatTile[]
+  readonly flankOriginTiles: readonly FlankThreatTile[]
+}
+
+export interface DangerZoneTile {
+  readonly col: number
+  readonly row: number
+  readonly threatCount: number
+  readonly enemyUids: readonly string[]
+  readonly highestArc: AttackArc
+  readonly hasFlankRisk: boolean
+  readonly hasBackstabRisk: boolean
+}
+
+export interface DangerZoneMap {
+  readonly tiles: readonly DangerZoneTile[]
+  readonly enemyThreats: readonly EnemyThreatMap[]
+}
+
 export interface PendingUnitAction {
   readonly col: number
   readonly row: number
@@ -491,6 +539,7 @@ export interface BattleState {
   moveTiles: { col: number; row: number }[]
   targetTiles: { col: number; row: number }[]
   moveAttackTiles: MoveAttackTile[]
+  moveUndo: MoveUndoRecord | null
   pendingAction: PendingUnitAction | null
   enemyDelay: number
   enemyActedThisTurn: boolean

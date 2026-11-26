@@ -11,7 +11,8 @@ import {
 } from './types.ts'
 import type {
   AttackArc, BattleReward, BattleState, BattleUnit, BiomeId, CampaignState, ChapterSpec, CombatForecast,
-  CombatForecastAlt, DifficultyLevel, EquipSlot, EquipmentSpec, FacingDir, GameState, GridCell, HeroClassId,
+  CombatForecastAlt, DangerZoneMap, DangerZoneTile, DifficultyLevel, EnemyThreatMap, EquipSlot,
+  EquipmentSpec, FacingDir, FlankThreatTile, GameState, GridCell, GridCoord, HeroClassId,
   MoveAttackTile, OwnedEquipCard, OwnedHeroCard, OwnedTacticCard, PackId, PackRevealItem, Rarity, SaveData,
   SkillSpec, TacticCardSpec, TileTerrain, TurnPreviewEntry
 } from './types.ts'
@@ -982,6 +983,7 @@ export function startChapterBattle(state: GameState, chapterIndex: number, endle
     moveTiles: [],
     targetTiles: [],
     moveAttackTiles: [],
+    moveUndo: null,
     pendingAction: null,
     enemyDelay: 0,
     enemyActedThisTurn: false,
@@ -1205,13 +1207,17 @@ export function computeCoverBonus(
   return best
 }
 
-export function computeMoveTiles(battle: BattleState, unit: BattleUnit): { col: number; row: number }[] {
-  if (!unit.alive || unit.moved || unit.stunTurns > 0) return []
+function computeReachableMoveTiles(
+  battle: BattleState,
+  unit: BattleUnit,
+  ignoreMoved: boolean
+): GridCoord[] {
+  if (!unit.alive || (!ignoreMoved && unit.moved) || unit.stunTurns > 0) return []
   const maxMove = Math.max(1, unit.move - (unit.slowTurns > 0 ? 1 : 0))
   const visited = new Map<string, number>()
   const queue: { col: number; row: number; dist: number }[] = [{ col: unit.col, row: unit.row, dist: 0 }]
   visited.set(`${unit.col},${unit.row}`, 0)
-  const result: { col: number; row: number }[] = []
+  const result: GridCoord[] = []
   const dirs = [[1, 0], [-1, 0], [0, 1], [0, -1]] as const
 
   while (queue.length > 0) {
@@ -1249,6 +1255,176 @@ export function computeMoveTiles(battle: BattleState, unit: BattleUnit): { col: 
     }
   }
   return result
+}
+
+export function computeMoveTiles(battle: BattleState, unit: BattleUnit): { col: number; row: number }[] {
+  return computeReachableMoveTiles(battle, unit, false)
+}
+
+function arcSeverity(arc: AttackArc): number {
+  return arc === 'back' ? 2 : arc === 'flank' ? 1 : 0
+}
+
+/**
+ * Pure simulation helper: compute a single enemy's reachable movement tiles, elevation/LoS-aware attack reach,
+ * and tiles where that enemy can land a Flank or Backstab against currently alive allies.
+ */
+export function computeEnemyThreat(battle: BattleState, enemyUid: string): EnemyThreatMap {
+  const enemy = getUnitByUid(battle, enemyUid)
+  if (!enemy || enemy.team !== 'enemy' || enemy.stunTurns > 0) {
+    return {
+      enemyUid,
+      moveTiles: [],
+      attackTiles: [],
+      flankThreatTiles: [],
+      flankOriginTiles: []
+    }
+  }
+
+  const moveTiles = computeReachableMoveTiles(battle, enemy, true)
+  const stagingTiles: GridCoord[] = [{ col: enemy.col, row: enemy.row }, ...moveTiles]
+  const allyByKey = new Map<string, BattleUnit>()
+  for (const unit of battle.units) {
+    if (unit.alive && unit.team === 'ally') {
+      allyByKey.set(`${unit.col},${unit.row}`, unit)
+    }
+  }
+
+  const attackSeen = new Set<string>()
+  const attackTiles: GridCoord[] = []
+  const flankByTargetKey = new Map<string, FlankThreatTile>()
+  const flankByOriginKey = new Map<string, FlankThreatTile>()
+  const indirect = enemy.isBoss
+  const maxSpan = enemy.range > 1 ? enemy.range + 1 : enemy.range
+
+  for (const stage of stagingTiles) {
+    const rMin = Math.max(0, stage.row - maxSpan)
+    const rMax = Math.min(battle.rows - 1, stage.row + maxSpan)
+    const cMin = Math.max(0, stage.col - maxSpan)
+    const cMax = Math.min(battle.cols - 1, stage.col + maxSpan)
+
+    for (let row = rMin; row <= rMax; row++) {
+      for (let col = cMin; col <= cMax; col++) {
+        const d = manhattan(stage.col, stage.row, col, row)
+        if (d < 1 || d > maxSpan) continue
+        const cell = battle.cells[row]?.[col]
+        if (!cell || !cell.walkable) continue
+        const effRange = effectiveAttackRange(battle, stage.col, stage.row, col, row, enemy.range)
+        if (d > effRange) continue
+        if (!hasLineOfSight(battle, stage.col, stage.row, col, row, indirect)) continue
+
+        const key = `${col},${row}`
+        if (!attackSeen.has(key)) {
+          attackSeen.add(key)
+          attackTiles.push({ col, row })
+        }
+
+        const ally = allyByKey.get(key)
+        if (ally) {
+          const arc = computeAttackArc(stage.col, stage.row, ally.col, ally.row, ally.facing)
+          if (arc === 'flank' || arc === 'back') {
+            const prevTgt = flankByTargetKey.get(key)
+            if (!prevTgt || arcSeverity(arc) > arcSeverity(prevTgt.arc)) {
+              flankByTargetKey.set(key, {
+                col: ally.col,
+                row: ally.row,
+                targetUid: ally.uid,
+                arc,
+                fromCol: stage.col,
+                fromRow: stage.row
+              })
+            }
+            const originKey = `${stage.col},${stage.row}`
+            const prevOrg = flankByOriginKey.get(originKey)
+            if (!prevOrg || arcSeverity(arc) > arcSeverity(prevOrg.arc)) {
+              flankByOriginKey.set(originKey, {
+                col: stage.col,
+                row: stage.row,
+                targetUid: ally.uid,
+                arc,
+                fromCol: ally.col,
+                fromRow: ally.row
+              })
+            }
+          }
+        }
+      }
+    }
+  }
+
+  return {
+    enemyUid: enemy.uid,
+    moveTiles,
+    attackTiles,
+    flankThreatTiles: Array.from(flankByTargetKey.values()),
+    flankOriginTiles: Array.from(flankByOriginKey.values())
+  }
+}
+
+/**
+ * Pure simulation helper: compute the union of all alive, non-stunned enemies' attack reaches across
+ * the board, along with per-tile threat counts and flank/backstab risk flags against current heroes.
+ */
+export function computeDangerZone(battle: BattleState): DangerZoneMap {
+  const enemyThreats: EnemyThreatMap[] = []
+  const byKey = new Map<string, {
+    col: number
+    row: number
+    enemyUids: string[]
+    highestArc: AttackArc
+    hasFlankRisk: boolean
+    hasBackstabRisk: boolean
+  }>()
+
+  for (const unit of battle.units) {
+    if (!unit.alive || unit.team !== 'enemy' || unit.stunTurns > 0) continue
+    const threat = computeEnemyThreat(battle, unit.uid)
+    enemyThreats.push(threat)
+
+    const flankMap = new Map<string, FlankThreatTile>()
+    for (const ft of threat.flankThreatTiles) {
+      flankMap.set(`${ft.col},${ft.row}`, ft)
+    }
+
+    for (const tile of threat.attackTiles) {
+      const key = `${tile.col},${tile.row}`
+      let entry = byKey.get(key)
+      if (!entry) {
+        entry = {
+          col: tile.col,
+          row: tile.row,
+          enemyUids: [],
+          highestArc: 'front',
+          hasFlankRisk: false,
+          hasBackstabRisk: false
+        }
+        byKey.set(key, entry)
+      }
+      entry.enemyUids.push(unit.uid)
+      const ft = flankMap.get(key)
+      if (ft) {
+        entry.hasFlankRisk = true
+        if (ft.arc === 'back') {
+          entry.hasBackstabRisk = true
+          entry.highestArc = 'back'
+        } else if (entry.highestArc === 'front') {
+          entry.highestArc = 'flank'
+        }
+      }
+    }
+  }
+
+  const tiles: DangerZoneTile[] = Array.from(byKey.values()).map(e => ({
+    col: e.col,
+    row: e.row,
+    threatCount: e.enemyUids.length,
+    enemyUids: e.enemyUids,
+    highestArc: e.highestArc,
+    hasFlankRisk: e.hasFlankRisk,
+    hasBackstabRisk: e.hasBackstabRisk
+  }))
+
+  return { tiles, enemyThreats }
 }
 
 export function findGridPath(
@@ -2199,6 +2375,7 @@ function checkBattleOutcome(state: GameState): void {
     battle.moveTiles = []
     battle.targetTiles = []
     battle.moveAttackTiles = []
+    battle.moveUndo = null
     battle.pendingAction = null
     battle.armedSkillIndex = null
     battle.armedTacticUid = null
@@ -2215,6 +2392,7 @@ function checkBattleOutcome(state: GameState): void {
     battle.moveTiles = []
     battle.targetTiles = []
     battle.moveAttackTiles = []
+    battle.moveUndo = null
     battle.pendingAction = null
     battle.bannerText = 'Vanguard Defeated'
     battle.bannerTimer = 3.0
@@ -2369,6 +2547,7 @@ function tacticCasterUid(battle: BattleState): string | null {
 function executeBasicAttack(state: GameState, attacker: BattleUnit, target: BattleUnit): void {
   const battle = state.battle
   if (!battle) return
+  battle.moveUndo = null
   faceToward(attacker, target.x, target.z)
   attacker.animState = 'attack'
   attacker.animTimer = 0.36
@@ -2414,6 +2593,7 @@ function executeHeroSkill(
   if (!battle) return
   const skill = getHeroSkill(caster, skillIndex)
   if (!skill) return
+  battle.moveUndo = null
 
   const cell = battle.cells[row][col]
   const [tx, ty, tz] = gridToWorld(col, row, cell.elevation, battle.cols, battle.rows)
@@ -2514,6 +2694,7 @@ function executeTacticCard(state: GameState, tacticUid: string, col: number, row
   battle.hand.splice(handIdx, 1)
   battle.discardPile.push(tacticUid)
   battle.armedTacticUid = null
+  battle.moveUndo = null
   state.sounds.push({ kind: 'card' })
 
   const cell = battle.cells[row][col]
@@ -2675,6 +2856,7 @@ export function selectTile(state: GameState, col: number, row: number): boolean 
         active.moved = true
         active.animState = 'run'
         battle.selectedUnitUid = active.uid
+        battle.moveUndo = null
         battle.pendingAction = { col, row, skillIndex: battle.armedSkillIndex }
         battle.moveTiles = []
         battle.targetTiles = []
@@ -2707,6 +2889,7 @@ export function selectTile(state: GameState, col: number, row: number): boolean 
         active.moved = true
         active.animState = 'run'
         battle.selectedUnitUid = active.uid
+        battle.moveUndo = null
         battle.pendingAction = { col, row, skillIndex: null }
         battle.moveTiles = []
         battle.targetTiles = []
@@ -2723,6 +2906,16 @@ export function selectTile(state: GameState, col: number, row: number): boolean 
     if (canMove) {
       const path = findGridPath(battle, active, col, row)
       if (path.length > 0) {
+        battle.moveUndo = {
+          uid: active.uid,
+          col: active.col,
+          row: active.row,
+          x: active.x,
+          y: active.y,
+          z: active.z,
+          facing: active.facing,
+          yaw: active.yaw
+        }
         active.path = path
         active.moveProgress = 0
         active.moved = true
@@ -2744,6 +2937,66 @@ export function selectTile(state: GameState, col: number, row: number): boolean 
   }
 
   return false
+}
+
+/** Lock out Undo Move (e.g., when a trap/reveal/shrine or irreversible combat action occurs). */
+export function lockMoveUndo(battle: BattleState | null | undefined): void {
+  if (battle) battle.moveUndo = null
+}
+
+/** True when the active player hero has moved this turn and can still snap back cleanly. */
+export function canUndoMove(battle: BattleState | null | undefined): boolean {
+  if (!battle || battle.phase !== 'player') return false
+  const undo = battle.moveUndo
+  if (!undo || battle.pendingAction !== null) return false
+  const active = getUnitByUid(battle, battle.activeUnitUid)
+  if (!active || active.team !== 'ally' || !active.alive) return false
+  if (active.uid !== undo.uid || !active.moved || active.acted) return false
+  const occ = unitAt(battle, undo.col, undo.row)
+  if (occ && occ.uid !== active.uid) return false
+  if (
+    (active.col !== undo.col || active.row !== undo.row) &&
+    battle.cells[active.row]?.[active.col]?.terrain === 'shrine'
+  ) {
+    return false
+  }
+  return true
+}
+
+/**
+ * Snap the active hero back to their turn-start tile & facing, refunding movement and
+ * recomputing full moveTiles & targetTiles while clearing any pending walk animation.
+ */
+export function undoMove(state: GameState): boolean {
+  const battle = state.battle
+  if (!battle || !canUndoMove(battle)) return false
+  const undo = battle.moveUndo
+  const active = getUnitByUid(battle, battle.activeUnitUid)
+  if (!undo || !active) return false
+
+  active.col = undo.col
+  active.row = undo.row
+  active.x = undo.x
+  active.y = undo.y
+  active.z = undo.z
+  active.facing = undo.facing
+  active.yaw = undo.yaw
+  active.path = []
+  active.moveProgress = 0
+  active.moved = false
+  active.animState = 'idle'
+  active.animTimer = 0
+  active.lungeX = 0
+  active.lungeZ = 0
+
+  battle.moveUndo = null
+  battle.pendingAction = null
+  battle.armedSkillIndex = null
+  battle.armedTacticUid = null
+  battle.selectedUnitUid = active.uid
+  refreshHighlights(battle, state.campaign)
+  state.sounds.push({ kind: 'card', pitch: 0.92 })
+  return true
 }
 
 function isBattleEnded(battle: BattleState): boolean {
@@ -2783,6 +3036,7 @@ function advanceToNextUnitTurn(state: GameState, initial = false): void {
     battle.selectedUnitUid = next.uid
     battle.armedSkillIndex = null
     battle.armedTacticUid = null
+    battle.moveUndo = null
     battle.pendingAction = null
     next.moved = false
     next.acted = false
@@ -2843,6 +3097,7 @@ function advanceToNextUnitTurn(state: GameState, initial = false): void {
 export function endPlayerTurn(state: GameState): void {
   const battle = state.battle
   if (!battle || battle.phase !== 'player') return
+  battle.moveUndo = null
   battle.pendingAction = null
   const active = getUnitByUid(battle, battle.activeUnitUid)
   if (active) {
@@ -3020,6 +3275,9 @@ export function stepGame(state: GameState, dt: number): void {
         u.z = tz
         u.path.shift()
         u.moveProgress = 0
+        if (u.team === 'ally' && battle.phase === 'player' && toCell.terrain === 'shrine') {
+          battle.moveUndo = null
+        }
         if (u.path.length === 0) {
           u.animState = 'idle'
           if (u.team === 'ally' && battle.phase === 'player') {

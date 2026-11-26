@@ -14,14 +14,14 @@ import {
 } from './data.ts'
 import { cameraCardinalHeading, createCrownshardScene } from './scene.ts'
 import {
-  armSkill, armTacticCard, autoEquipBestFit, buyPack, canBuyPack, canMergeHero, clearSave,
-  computeCombatForecast, computeDeckValue, computeHeroStats, computeSquadPower, createInitialState,
-  effectiveSpeed, endPlayerTurn, equipItem, findBestFitUpgrades, findEquipOwner, getEquipmentByUid,
-  getHeroByUid, getHeroSkill, getMergeCandidates, getNextRecommendedStage, getStageUnlockHint,
-  getTacticByUid, getUnitByUid, isEndlessUnlocked, isStageCleared, isStageUnlocked, loadSave,
-  maxSquadSize, mergeHero, persistSave, rotateActiveUnitFacing, salvageEquipCard, salvageHeroCard,
-  selectHeroByUid, selectTile, startChapterBattle, stepGame,
-  toggleSquadMember, unequipItem
+  armSkill, armTacticCard, autoEquipBestFit, buyPack, canBuyPack, canMergeHero, canUndoMove,
+  clearSave, computeCombatForecast, computeDangerZone, computeDeckValue, computeEnemyThreat,
+  computeHeroStats, computeSquadPower, createInitialState, effectiveSpeed, endPlayerTurn, equipItem,
+  findBestFitUpgrades, findEquipOwner, getEquipmentByUid, getHeroByUid, getHeroSkill,
+  getMergeCandidates, getNextRecommendedStage, getStageUnlockHint, getTacticByUid, getUnitByUid,
+  isEndlessUnlocked, isStageCleared, isStageUnlocked, loadSave, maxSquadSize, mergeHero,
+  persistSave, rotateActiveUnitFacing, salvageEquipCard, salvageHeroCard, selectHeroByUid,
+  selectTile, startChapterBattle, stepGame, toggleSquadMember, undoMove, unequipItem, unitAt
 } from './simulation.ts'
 import { cellHeightLevel } from './types.ts'
 import type {
@@ -181,6 +181,7 @@ async function start() {
   let hudRev = 0
   let lastSimMs = 0
   let lockedForecastCell: { col: number; row: number } | null = null
+  let dangerZoneOn = false
   let mobileHandOpen = false
   let mobileCampCollapsed = false
   let lastForecastSig = ''
@@ -466,6 +467,8 @@ async function start() {
     startChapterBattle(state, pendingChapter, pendingEndless)
     scene.resetCamera()
     scene.setCameraYaw(0, true)
+    scene.setDangerZoneVisible(dangerZoneOn)
+    scene.setInspectedEnemyUid(null)
     setScreen('battle')
     renderer.canvas.focus()
   }
@@ -491,6 +494,29 @@ async function start() {
       uiDirty = true
       hudRev++
     }
+  }
+
+  function performUndoMove(): boolean {
+    if (!state.battle || !canUndoMove(state.battle)) return false
+    audio.unlock()
+    const uid = state.battle.activeUnitUid
+    if (!undoMove(state)) return false
+    lockedForecastCell = null
+    mobileHandOpen = false
+    const restored = uid ? getUnitByUid(state.battle, uid) : undefined
+    if (restored) scene.snapUnit(restored)
+    uiDirty = true
+    hudRev++
+    return true
+  }
+
+  function toggleDangerZone() {
+    audio.unlock()
+    dangerZoneOn = !dangerZoneOn
+    scene.setDangerZoneVisible(dangerZoneOn)
+    state.sounds.push({ kind: 'card', pitch: dangerZoneOn ? 1.18 : 0.92 })
+    uiDirty = true
+    hudRev++
   }
 
   function togglePauseScreen() {
@@ -875,6 +901,16 @@ async function start() {
           uiDirty = true
           hudRev++
         }
+        return
+      }
+      if ((event.code === 'Backspace' || event.code === 'KeyZ') && !event.repeat && state.battle.phase === 'player') {
+        event.preventDefault()
+        performUndoMove()
+        return
+      }
+      if (event.code === 'KeyT' && !event.repeat) {
+        event.preventDefault()
+        toggleDangerZone()
         return
       }
       if (event.code === 'Space' && !event.repeat && state.battle.phase === 'player') {
@@ -1866,9 +1902,12 @@ async function start() {
       ? (active.moved && active.acted ? 0 : (active.moved || active.acted) ? 20 : 40)
       : 0
 
-    let statusLine = 'Click [.] frame to move, [X] crosshair to strike, or arm a skill (1-4). Q/E snap 90°, right-drag 360° orbit.'
+    const undoAvailable = canUndoMove(battle)
+    let statusLine = undoAvailable
+      ? 'Moved — strike/cast, press Z / Backspace to Undo Move, T for Danger Zone, or Space to End Turn.'
+      : 'Click [.] frame to move, [X] crosshair to strike, T for Danger Zone, or arm a skill (1-4).'
     let statusAccent: string = COLOR.accent
-    let statusImportant = false
+    let statusImportant = undoAvailable
     if (!isPlayerTurn && active) {
       statusLine = `${active.name}'s turn - resolving maneuver...`
       statusAccent = COLOR.enemy
@@ -1889,7 +1928,8 @@ async function start() {
         statusImportant = true
       }
     } else if (inspected && inspected.uid !== active?.uid) {
-      statusLine = `Inspecting ${inspected.name} - HP ${inspected.hp}/${inspected.maxHp}, ATK ${inspected.atk}, DEF ${inspected.def}, SPD ${effectiveSpeed(inspected)}`
+      const threatSuffix = inspected.team === 'enemy' ? ` · MOV ${inspected.move} · RNG ${inspected.range}` : ''
+      statusLine = `Inspecting ${inspected.name} - HP ${inspected.hp}/${inspected.maxHp}, ATK ${inspected.atk}, DEF ${inspected.def}, SPD ${effectiveSpeed(inspected)}${threatSuffix}`
       statusAccent = inspected.team === 'ally' ? COLOR.ally : COLOR.enemy
       statusImportant = true
     }
@@ -1901,12 +1941,43 @@ async function start() {
     const fpsShort = `${Math.round(perf.snapshot().fps || 60)}`
     const chapterShort = battle.endlessWave > 0 ? `Endless Wave ${battle.endlessWave}` : `${ch.title} · D${battle.difficulty}`
 
-    // Top-right toolbar (compact on phone: Music + Pause only, touch drags to orbit + side pill snaps 90°!)
+    // Top-right toolbar (compact on phone: Undo when active, Danger Zone, Face, Music, Pause)
     const tbIconS = isPhone ? 28 : 30
     const facingLabel = active ? active.facing.toUpperCase() : 'E'
     const camYawActual = scene.getCameraYawActual()
     const camHeading = cameraCardinalHeading(camYawActual)
+    const showUndoBtn = isPhone ? undoAvailable : (isPlayerTurn && Boolean(active && active.team === 'ally'))
     const toolbarItems: LayoutNode[] = [
+      ...(showUndoBtn ? [
+        boxNode({
+          id: 'cs-undo-move', style: { width: isPhone ? 58 : 74, height: tbIconS },
+          widget: {
+            type: 'button',
+            label: 'Undo Move (Z / Backspace)',
+            disabled: !undoAvailable,
+            onPress: () => { performUndoMove() },
+            draw: (ctx: CanvasRenderingContext2D, rect: LayoutRect, st: CanvasWidgetDrawState) => drawIconButton(ctx, rect, 'retreat', st, {
+              active: undoAvailable,
+              label: isPhone ? 'Undo' : 'Undo Z',
+              color: undoAvailable ? COLOR.accentText : undefined
+            })
+          }
+        })
+      ] : []),
+      boxNode({
+        id: 'cs-danger-zone', style: { width: isPhone ? 46 : 64, height: tbIconS },
+        widget: {
+          type: 'button',
+          label: dangerZoneOn ? 'Hide Danger Zone (T)' : 'Show Danger Zone (T)',
+          selected: dangerZoneOn,
+          onPress: toggleDangerZone,
+          draw: (ctx: CanvasRenderingContext2D, rect: LayoutRect, st: CanvasWidgetDrawState) => drawIconButton(ctx, rect, 'skull', st, {
+            active: dangerZoneOn,
+            label: isPhone ? 'T' : 'Zone T',
+            color: dangerZoneOn ? COLOR.dangerLip : '#ff9ca6'
+          })
+        }
+      }),
       ...(isPlayerTurn && active && active.team === 'ally' ? [
         boxNode({
           id: 'tb-face-turn', style: { width: isPhone ? 46 : 56, height: tbIconS },
@@ -1997,8 +2068,11 @@ async function start() {
         }
       })
     ]
-    const hasFaceBtn = isPlayerTurn && active && active.team === 'ally'
-    const toolbarW = (isPhone ? 74 : 346) + (hasFaceBtn ? (isPhone ? 52 : 62) : 0)
+    const tbGap = isPhone ? 4 : 6
+    const tbPadX = isPhone ? 6 : 7
+    const toolbarW = toolbarItems.reduce((sum, n) => sum + (typeof n.style?.width === 'number' ? n.style.width : tbIconS), 0)
+      + Math.max(0, toolbarItems.length - 1) * tbGap
+      + tbPadX * 2
     const topBarH = isPhone ? 36 : 42
 
     // Mobile Tactic Hand Toggle Button (keeps battlefield spacious on phones!)
@@ -3942,6 +4016,34 @@ async function start() {
     const battle = state.battle
     if (screen !== 'battle' || !battle) return
 
+    const hovered = scene.getHoveredCell()
+    const hoveredEnemy = hovered && hovered.row < battle.rows && hovered.col < battle.cols
+      ? unitAt(battle, hovered.col, hovered.row)
+      : undefined
+    const selectedUnit = getUnitByUid(battle, battle.selectedUnitUid)
+    const inspectedEnemy = hoveredEnemy?.team === 'enemy'
+      ? hoveredEnemy
+      : selectedUnit?.team === 'enemy'
+        ? selectedUnit
+        : undefined
+    const dangerMap = dangerZoneOn ? computeDangerZone(battle) : null
+    const allyFlankRisk = new Map<string, 'flank' | 'back'>()
+    if (dangerMap) {
+      for (const et of dangerMap.enemyThreats) {
+        for (const ft of et.flankThreatTiles) {
+          const prev = allyFlankRisk.get(ft.targetUid)
+          if (!prev || ft.arc === 'back') allyFlankRisk.set(ft.targetUid, ft.arc)
+        }
+      }
+    }
+    if (inspectedEnemy) {
+      const et = computeEnemyThreat(battle, inspectedEnemy.uid)
+      for (const ft of et.flankThreatTiles) {
+        const prev = allyFlankRisk.get(ft.targetUid)
+        if (!prev || ft.arc === 'back') allyFlankRisk.set(ft.targetUid, ft.arc)
+      }
+    }
+
     for (const u of battle.units) {
       if (!u.alive) continue
       const projected = scene.project(u.x, u.y + (u.isBoss ? 2.25 : 1.88), u.z, g.width, g.height)
@@ -4009,6 +4111,23 @@ async function start() {
         g.panel(Math.round(projected.x - sw / 2), by + 13, Math.round(sw), 15, { fill: '#1a2442', stroke: COLOR.accent, radius: 7 })
         g.text(stText, projected.x, by + 15.5, { fill: COLOR.accentHi, size: 8.5, weight: 900, align: 'center' })
       }
+      const flankRisk = u.team === 'ally' ? allyFlankRisk.get(u.uid) : undefined
+      if (flankRisk) {
+        const warnText = flankRisk === 'back' ? 'BACKSTAB!' : 'FLANK!'
+        const ww = warnText.length * 6.4 + 14
+        const wyOff = statuses.length ? 30 : 13
+        g.panel(Math.round(projected.x - ww / 2), by + wyOff, Math.round(ww), 15, {
+          fill: flankRisk === 'back' ? '#5e1438' : '#4a320c',
+          stroke: flankRisk === 'back' ? '#ff5ca8' : '#ffd15c',
+          radius: 7
+        })
+        g.text(warnText, projected.x, by + wyOff + 2.5, {
+          fill: flankRisk === 'back' ? '#ffd6ec' : '#fff0b3',
+          size: 8.5,
+          weight: 900,
+          align: 'center'
+        })
+      }
     }
 
     for (const fn of battle.floatingNumbers) {
@@ -4018,16 +4137,27 @@ async function start() {
       g.text(fn.text, p.x, p.y, { fill: fn.color, size: 17, weight: 900, align: 'center' })
     }
 
-    const hovered = scene.getHoveredCell()
     if (hovered && g.width >= 660) {
       const cell = battle.cells[hovered.row]?.[hovered.col]
       if (cell && cell.terrain !== 'void') {
         const desc = TERRAIN_LABEL[cell.terrain] ?? cell.terrain
         const hLvl = cellHeightLevel(cell)
-        const text = `${desc} · H${hLvl} (${hovered.col + 1},${hovered.row + 1})`
-        const pw = Math.min(284, Math.max(148, text.length * 7 + 24))
+        const dzTile = dangerMap?.tiles.find(t => t.col === hovered.col && t.row === hovered.row)
+        const threatTag = dzTile
+          ? dzTile.hasBackstabRisk
+            ? ` · Threat x${dzTile.threatCount} BACKSTAB!`
+            : dzTile.hasFlankRisk
+              ? ` · Threat x${dzTile.threatCount} FLANK!`
+              : ` · Threat x${dzTile.threatCount}`
+          : ''
+        const text = `${desc} · H${hLvl} (${hovered.col + 1},${hovered.row + 1})${threatTag}`
+        const pw = Math.min(390, Math.max(148, text.length * 7 + 24))
         const py = g.height < 480 ? 48 : 58
-        g.panel(10, py, pw, 28, { fill: '#253357', stroke: COLOR.borderHi, radius: 10 })
+        g.panel(10, py, pw, 28, {
+          fill: dzTile ? '#3d1e2e' : '#253357',
+          stroke: dzTile ? '#ff7d6b' : COLOR.borderHi,
+          radius: 10
+        })
         g.text(text, 22, py + 8, { fill: '#ffffff', size: 11.5, weight: 800 })
       }
     }
@@ -4093,6 +4223,8 @@ async function start() {
       battleAlliesAlive: state.battle ? state.battle.units.filter(u => u.alive && u.team === 'ally').length : 0,
       battleEnemiesAlive: state.battle ? state.battle.units.filter(u => u.alive && u.team === 'enemy').length : 0,
       moveAttackTargets: state.battle ? state.battle.moveAttackTiles.map(t => ({ col: t.col, row: t.row, fromCol: t.fromCol, fromRow: t.fromRow })) : [],
+      canUndoMove: canUndoMove(state.battle),
+      dangerZoneOn,
       mobileHandOpen,
       campCollapsed: mobileCampCollapsed,
       cameraZoom: Math.round(scene.getCameraZoom() * 1000) / 1000,
@@ -4157,6 +4289,16 @@ async function start() {
         const ok = selectTile(state, col, row)
         if (ok) { uiDirty = true; hudRev++; renderUiNow() }
         return ok
+      },
+      undoMove: () => {
+        const ok = performUndoMove()
+        if (ok) renderUiNow()
+        return ok
+      },
+      toggleDangerZone: () => {
+        toggleDangerZone()
+        renderUiNow()
+        return dangerZoneOn
       },
       previewTile: (col: number, row: number) => {
         const fc = computeCombatForecast(state, col, row)
