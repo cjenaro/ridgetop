@@ -13,7 +13,8 @@ import {
   terrainElevation, terrainMoveCost, terrainWalkable, vectorToFacing
 } from './types.ts'
 import type {
-  AttackArc, BattleCellSnapshot, BattleReward, BattleSaveSnapshot, BattleState, BattleUnit,
+  AttackArc, BattleCellSnapshot, BattleObjectiveEvaluation, BattleObjectiveKind, BattleObjectiveSnapshot,
+  BattleObjectiveState, BattleReward, BattleSaveSnapshot, BattleState, BattleUnit,
   BattleUnitSnapshot, BiomeId, CampaignState, ChapterSpec, CombatForecast, CombatForecastAlt,
   DangerZoneMap, DangerZoneTile, DifficultyLevel, EnemyArchetypeId, EnemyThreatMap, EquipSlot,
   EquipmentSpec, FacingDir, FacingExposureLevel, FacingExposureReport, FacingThreatEntry,
@@ -743,6 +744,102 @@ function cloneCampaignFromSave(c: CampaignState, fallbackSeed: number): Campaign
   return cloned
 }
 
+const OBJECTIVE_KIND_LOOKUP: ReadonlyMap<string, BattleObjectiveKind> = new Map<string, BattleObjectiveKind>([
+  ['rout', 'rout'],
+  ['assassinate', 'assassinate'],
+  ['defend', 'defend'],
+  ['seize', 'seize']
+])
+
+function serializeObjective(obj: BattleObjectiveState): BattleObjectiveSnapshot {
+  return {
+    kind: obj.kind,
+    label: obj.label,
+    description: obj.description,
+    ...(obj.targetEnemyUid !== undefined ? { targetEnemyUid: obj.targetEnemyUid } : {}),
+    ...(obj.targetName !== undefined ? { targetName: obj.targetName } : {}),
+    ...(obj.targetTurns !== undefined ? { targetTurns: obj.targetTurns } : {}),
+    ...(obj.protectTile !== undefined ? { protectTile: { col: obj.protectTile.col, row: obj.protectTile.row } } : {}),
+    ...(obj.protectLabel !== undefined ? { protectLabel: obj.protectLabel } : {}),
+    ...(obj.protectBreached ? { protectBreached: true } : {}),
+    ...(obj.goalTile !== undefined ? { goalTile: { col: obj.goalTile.col, row: obj.goalTile.row } } : {}),
+    ...(obj.goalLabel !== undefined ? { goalLabel: obj.goalLabel } : {}),
+    ...(obj.seized ? { seized: true } : {}),
+    ...(obj.chestTiles.length > 0 ? { chestTiles: obj.chestTiles.map(c => ({ col: c.col, row: c.row })) } : {}),
+    ...(obj.claimedChests.length > 0 ? { claimedChests: obj.claimedChests.map(c => ({ col: c.col, row: c.row })) } : {}),
+    ...(obj.requiredChests > 0 ? { requiredChests: obj.requiredChests } : {}),
+    ...(obj.turnLimit !== undefined ? { turnLimit: obj.turnLimit } : {}),
+    roundsElapsed: obj.roundsElapsed
+  }
+}
+
+function validateCoord(raw: unknown, cols: number, rows: number): GridCoord | null {
+  if (!isRecord(raw) || !isFiniteNum(raw.col) || !isFiniteNum(raw.row)) return null
+  const col = Math.floor(raw.col)
+  const row = Math.floor(raw.row)
+  if (!isCellInBounds(col, row, cols, rows)) return null
+  return { col, row }
+}
+
+function validateObjectiveSnapshot(
+  raw: unknown,
+  cols: number,
+  rows: number
+): BattleObjectiveSnapshot | null {
+  if (!isRecord(raw)) return null
+  const kind = typeof raw.kind === 'string' ? OBJECTIVE_KIND_LOOKUP.get(raw.kind) : undefined
+  if (!kind) return null
+  if (typeof raw.label !== 'string' || typeof raw.description !== 'string') return null
+  if (!isFiniteNum(raw.roundsElapsed) || raw.roundsElapsed < 0) return null
+
+  const targetEnemyUid = typeof raw.targetEnemyUid === 'string' && raw.targetEnemyUid.length > 0 ? raw.targetEnemyUid : undefined
+  const targetName = typeof raw.targetName === 'string' && raw.targetName.length > 0 ? raw.targetName : undefined
+  const targetTurns = isFiniteNum(raw.targetTurns) && raw.targetTurns > 0 ? Math.floor(raw.targetTurns) : undefined
+  const protectTile = raw.protectTile !== undefined ? validateCoord(raw.protectTile, cols, rows) ?? undefined : undefined
+  const protectLabel = typeof raw.protectLabel === 'string' && raw.protectLabel.length > 0 ? raw.protectLabel : undefined
+  const protectBreached = raw.protectBreached === true
+  const goalTile = raw.goalTile !== undefined ? validateCoord(raw.goalTile, cols, rows) ?? undefined : undefined
+  const goalLabel = typeof raw.goalLabel === 'string' && raw.goalLabel.length > 0 ? raw.goalLabel : undefined
+  const seized = raw.seized === true
+
+  const chestTiles: GridCoord[] = []
+  if (Array.isArray(raw.chestTiles)) {
+    for (const item of raw.chestTiles) {
+      const c = validateCoord(item, cols, rows)
+      if (c) chestTiles.push(c)
+    }
+  }
+  const claimedChests: GridCoord[] = []
+  if (Array.isArray(raw.claimedChests)) {
+    for (const item of raw.claimedChests) {
+      const c = validateCoord(item, cols, rows)
+      if (c) claimedChests.push(c)
+    }
+  }
+  const requiredChests = isFiniteNum(raw.requiredChests) && raw.requiredChests >= 0 ? Math.floor(raw.requiredChests) : 0
+  const turnLimit = isFiniteNum(raw.turnLimit) && raw.turnLimit > 0 ? Math.floor(raw.turnLimit) : undefined
+
+  return {
+    kind,
+    label: raw.label,
+    description: raw.description,
+    ...(targetEnemyUid !== undefined ? { targetEnemyUid } : {}),
+    ...(targetName !== undefined ? { targetName } : {}),
+    ...(targetTurns !== undefined ? { targetTurns } : {}),
+    ...(protectTile !== undefined ? { protectTile } : {}),
+    ...(protectLabel !== undefined ? { protectLabel } : {}),
+    ...(protectBreached ? { protectBreached: true } : {}),
+    ...(goalTile !== undefined ? { goalTile } : {}),
+    ...(goalLabel !== undefined ? { goalLabel } : {}),
+    ...(seized ? { seized: true } : {}),
+    ...(chestTiles.length > 0 ? { chestTiles } : {}),
+    ...(claimedChests.length > 0 ? { claimedChests } : {}),
+    ...(requiredChests > 0 ? { requiredChests } : {}),
+    ...(turnLimit !== undefined ? { turnLimit } : {}),
+    roundsElapsed: Math.floor(raw.roundsElapsed)
+  }
+}
+
 export function serializeBattleState(
   battle: BattleState | null,
   rngSeed?: number
@@ -854,7 +951,8 @@ export function serializeBattleState(
     tacticsPlayed: battle.tacticsPlayed,
     enemyDelay: battle.enemyDelay,
     enemyActedThisTurn: enemyMidMoveReset ? false : battle.enemyActedThisTurn,
-    ...(rngSeed !== undefined && Number.isFinite(rngSeed) ? { rngSeed: (rngSeed >>> 0) || 1337 } : {})
+    ...(rngSeed !== undefined && Number.isFinite(rngSeed) ? { rngSeed: (rngSeed >>> 0) || 1337 } : {}),
+    objective: serializeObjective(battle.objective)
   }
 }
 
@@ -1101,6 +1199,7 @@ export function validateBattleSnapshot(raw: unknown): BattleSaveSnapshot | null 
   const enemyDelay = isFiniteNum(raw.enemyDelay) ? clamp(raw.enemyDelay, 0, 2) : 0.34
   const enemyActedThisTurn = typeof raw.enemyActedThisTurn === 'boolean' ? raw.enemyActedThisTurn : false
   const rngSeed = isFiniteNum(raw.rngSeed) ? ((raw.rngSeed >>> 0) || 1337) : undefined
+  const objective = raw.objective !== undefined ? validateObjectiveSnapshot(raw.objective, cols, rows) ?? undefined : undefined
 
   return {
     version: 1,
@@ -1125,7 +1224,8 @@ export function validateBattleSnapshot(raw: unknown): BattleSaveSnapshot | null 
     tacticsPlayed,
     enemyDelay,
     enemyActedThisTurn,
-    ...(rngSeed !== undefined ? { rngSeed } : {})
+    ...(rngSeed !== undefined ? { rngSeed } : {}),
+    ...(objective !== undefined ? { objective } : {})
   }
 }
 
@@ -1226,6 +1326,30 @@ export function restoreBattleState(state: GameState, snapshot: unknown): boolean
   const drawPile = filterPile(valid.drawPile)
   const discardPile = filterPile(valid.discardPile)
 
+  const chapter = CHAPTER_BY_ID[valid.stageId] ?? CHAPTERS[valid.chapterIndex] ?? CHAPTERS[0]
+  const restoredObjective: BattleObjectiveState = valid.objective
+    ? {
+        kind: valid.objective.kind,
+        label: valid.objective.label,
+        description: valid.objective.description,
+        ...(valid.objective.targetEnemyUid !== undefined ? { targetEnemyUid: valid.objective.targetEnemyUid } : {}),
+        ...(valid.objective.targetName !== undefined ? { targetName: valid.objective.targetName } : {}),
+        ...(valid.objective.targetTurns !== undefined ? { targetTurns: valid.objective.targetTurns } : {}),
+        ...(valid.objective.protectTile !== undefined ? { protectTile: { ...valid.objective.protectTile } } : {}),
+        ...(valid.objective.protectLabel !== undefined ? { protectLabel: valid.objective.protectLabel } : {}),
+        protectBreached: Boolean(valid.objective.protectBreached),
+        ...(valid.objective.goalTile !== undefined ? { goalTile: { ...valid.objective.goalTile } } : {}),
+        ...(valid.objective.goalLabel !== undefined ? { goalLabel: valid.objective.goalLabel } : {}),
+        seized: Boolean(valid.objective.seized),
+        chestTiles: (valid.objective.chestTiles ?? []).map(c => ({ col: c.col, row: c.row })),
+        claimedChests: (valid.objective.claimedChests ?? []).map(c => ({ col: c.col, row: c.row })),
+        requiredChests: valid.objective.requiredChests ?? 0,
+        ...(valid.objective.turnLimit !== undefined ? { turnLimit: valid.objective.turnLimit } : {}),
+        roundsElapsed: valid.objective.roundsElapsed
+      }
+    : buildBattleObjective(chapter, units, valid.endlessWave)
+  const deployTiles = computeDeployTiles(chapter, cells, restoredObjective)
+
   const battle: BattleState = {
     stageId: valid.stageId,
     chapterIndex: valid.chapterIndex,
@@ -1236,6 +1360,8 @@ export function restoreBattleState(state: GameState, snapshot: unknown): boolean
     biome: valid.biome,
     cells,
     units,
+    deployTiles,
+    objective: restoredObjective,
     turn: valid.turn,
     phase: valid.phase,
     activeUnitUid: valid.activeUnitUid,
@@ -1543,12 +1669,451 @@ function drawTacticCards(battle: BattleState, campaign: CampaignState, targetHan
   }
 }
 
-export function startStageBattle(state: GameState, stageId: string, endlessWave = 0): BattleState {
-  const stage = CHAPTER_BY_ID[stageId] ?? CHAPTERS[0]
-  return startChapterBattle(state, stage.index, endlessWave)
+export interface StartBattleOptions {
+  readonly deployPhase?: boolean
 }
 
-export function startChapterBattle(state: GameState, chapterIndex: number, endlessWave = 0): BattleState {
+export function isChestClaimed(
+  objective: Pick<BattleObjectiveState, 'claimedChests'>,
+  col: number,
+  row: number
+): boolean {
+  return objective.claimedChests.some(c => c.col === col && c.row === row)
+}
+
+export function computeDeployTiles(
+  chapter: ChapterSpec,
+  cells: readonly (readonly GridCell[])[],
+  objective?: Pick<BattleObjectiveState, 'goalTile' | 'chestTiles'> | null
+): GridCoord[] {
+  const rows = cells.length
+  const cols = cells[0]?.length ?? GRID_COLS
+  const blocked = new Set<string>()
+  for (const e of chapter.enemies) blocked.add(`${e.col},${e.row}`)
+  if (objective?.goalTile) blocked.add(`${objective.goalTile.col},${objective.goalTile.row}`)
+  if (objective?.chestTiles) {
+    for (const c of objective.chestTiles) blocked.add(`${c.col},${c.row}`)
+  }
+
+  const seen = new Set<string>()
+  const out: GridCoord[] = []
+  const addTile = (col: number, row: number): boolean => {
+    if (!isCellInBounds(col, row, cols, rows)) return false
+    const cell = cells[row]?.[col]
+    if (!cell || !cell.walkable) return false
+    const key = `${col},${row}`
+    if (seen.has(key) || blocked.has(key)) return false
+    seen.add(key)
+    out.push({ col, row })
+    return true
+  }
+
+  // Always include all hero spawn coordinates first
+  for (const [col, row] of chapter.heroSpawns) {
+    addTile(col, row)
+  }
+
+  // Include explicit chapter deployTiles if authored
+  if (chapter.deployTiles && chapter.deployTiles.length > 0) {
+    for (const [col, row] of chapter.deployTiles) {
+      addTile(col, row)
+    }
+    return out
+  }
+
+  // Expand blue spawn zone with 2-4 adjacent valid walkable tiles near the spawn flank
+  const extraTarget = Math.min(4, Math.max(2, Math.floor(cols * 0.45)))
+  let centroidCol = 0
+  let centroidRow = 0
+  for (const t of out) {
+    centroidCol += t.col
+    centroidRow += t.row
+  }
+  if (out.length > 0) {
+    centroidCol /= out.length
+    centroidRow /= out.length
+  }
+
+  const candidates: GridCoord[] = []
+  const candSeen = new Set<string>(seen)
+  const dirs = [[0, -1], [0, 1], [1, 0], [-1, 0]] as const
+  for (const base of out) {
+    for (const [dc, dr] of dirs) {
+      const nc = base.col + dc
+      const nr = base.row + dr
+      if (!isCellInBounds(nc, nr, cols, rows)) continue
+      const key = `${nc},${nr}`
+      if (candSeen.has(key) || blocked.has(key)) continue
+      const cell = cells[nr]?.[nc]
+      if (!cell || !cell.walkable) continue
+      candSeen.add(key)
+      candidates.push({ col: nc, row: nr })
+    }
+  }
+
+  candidates.sort((a, b) => {
+    if (a.col !== b.col) return a.col - b.col
+    const da = Math.abs(a.col - centroidCol) + Math.abs(a.row - centroidRow)
+    const db = Math.abs(b.col - centroidCol) + Math.abs(b.row - centroidRow)
+    if (da !== db) return da - db
+    return a.row - b.row
+  })
+
+  for (let i = 0; i < candidates.length && i < extraTarget; i++) {
+    addTile(candidates[i].col, candidates[i].row)
+  }
+
+  return out
+}
+
+export function buildBattleObjective(
+  chapter: ChapterSpec,
+  units: readonly BattleUnit[],
+  endlessWave = 0
+): BattleObjectiveState {
+  if (endlessWave > 0) {
+    return {
+      kind: 'rout',
+      label: `Endless Wave ${endlessWave}`,
+      description: 'Defeat all enemies in this Endless Arena wave.',
+      protectBreached: false,
+      seized: false,
+      chestTiles: [],
+      claimedChests: [],
+      requiredChests: 0,
+      roundsElapsed: 0
+    }
+  }
+
+  const spec = chapter.objective
+  const kind: BattleObjectiveKind = spec?.kind ?? 'rout'
+
+  if (kind === 'assassinate') {
+    const enemies = units.filter(u => u.team === 'enemy')
+    let target: BattleUnit | undefined
+    if (spec?.targetEnemyIndex !== undefined && spec.targetEnemyIndex >= 0 && spec.targetEnemyIndex < enemies.length) {
+      target = enemies[spec.targetEnemyIndex]
+    }
+    if (!target && spec?.targetEnemyId) {
+      target = enemies.find(u => u.enemyId === spec.targetEnemyId)
+    }
+    if (!target) {
+      target = enemies.find(u => u.isBoss) ?? enemies[0]
+    }
+    const targetName = spec?.targetName ?? target?.name ?? 'Commander'
+    return {
+      kind: 'assassinate',
+      label: spec?.label ?? `Slay ${targetName}`,
+      description: spec?.description ?? `Defeat ${targetName} to win immediately.`,
+      targetEnemyUid: target?.uid,
+      targetName,
+      protectBreached: false,
+      seized: false,
+      chestTiles: [],
+      claimedChests: [],
+      requiredChests: 0,
+      ...(spec?.turnLimit !== undefined ? { turnLimit: spec.turnLimit } : {}),
+      roundsElapsed: 0
+    }
+  }
+
+  if (kind === 'defend') {
+    const targetTurns = spec?.targetTurns ?? 6
+    const protectTile = spec?.protectTile ? { col: spec.protectTile.col, row: spec.protectTile.row } : undefined
+    const protectLabel = spec?.protectLabel ?? 'Relic Altar'
+    return {
+      kind: 'defend',
+      label: spec?.label ?? `Defend ${protectLabel}`,
+      description: spec?.description ?? `Survive ${targetTurns} turns and keep enemies off ${protectLabel}.`,
+      targetTurns,
+      ...(protectTile ? { protectTile, protectLabel } : {}),
+      protectBreached: false,
+      seized: false,
+      chestTiles: [],
+      claimedChests: [],
+      requiredChests: 0,
+      roundsElapsed: 0
+    }
+  }
+
+  if (kind === 'seize') {
+    const goalTile = spec?.goalTile ? { col: spec.goalTile.col, row: spec.goalTile.row } : undefined
+    const goalLabel = spec?.goalLabel ?? 'Objective'
+    const chestTiles = (spec?.chestTiles ?? []).map(c => ({ col: c.col, row: c.row }))
+    const requiredChests = spec?.requiredChests !== undefined
+      ? clamp(Math.floor(spec.requiredChests), 0, chestTiles.length)
+      : goalTile ? 0 : chestTiles.length
+    const defaultLabel = goalTile ? `Seize ${goalLabel}` : `Claim ${requiredChests} Chests`
+    return {
+      kind: 'seize',
+      label: spec?.label ?? defaultLabel,
+      description: spec?.description ?? (goalTile ? `Move a hero onto ${goalLabel} to win.` : `Claim ${requiredChests} battlefield chests to win.`),
+      protectBreached: false,
+      ...(goalTile ? { goalTile, goalLabel } : {}),
+      seized: false,
+      chestTiles,
+      claimedChests: [],
+      requiredChests,
+      ...(spec?.turnLimit !== undefined ? { turnLimit: spec.turnLimit } : {}),
+      roundsElapsed: 0
+    }
+  }
+
+  return {
+    kind: 'rout',
+    label: spec?.label ?? 'Rout All Enemies',
+    description: spec?.description ?? 'Defeat all enemies on the battlefield.',
+    protectBreached: false,
+    seized: false,
+    chestTiles: [],
+    claimedChests: [],
+    requiredChests: 0,
+    ...(spec?.turnLimit !== undefined ? { turnLimit: spec.turnLimit } : {}),
+    roundsElapsed: 0
+  }
+}
+
+/** Pure evaluation of the battle's mission objective (used by victory/defeat checks and tests). */
+export function evaluateBattleObjective(battle: BattleState): BattleObjectiveEvaluation {
+  const alliesAlive = battle.units.some(u => u.alive && u.team === 'ally')
+  if (!alliesAlive) {
+    return { status: 'defeat', reason: 'Vanguard Defeated' }
+  }
+
+  const obj = battle.objective
+
+  // 1. Defend breach check -> immediate Defeat
+  if (obj.kind === 'defend') {
+    if (obj.protectBreached) {
+      return { status: 'defeat', reason: `${obj.protectLabel ?? 'Relic Altar'} Breached!` }
+    }
+    if (obj.protectTile) {
+      const occ = unitAt(battle, obj.protectTile.col, obj.protectTile.row)
+      if (occ && occ.team === 'enemy') {
+        return { status: 'defeat', reason: `${obj.protectLabel ?? 'Relic Altar'} Breached!` }
+      }
+    }
+  }
+
+  // 2. Objective-specific Victory checks (can trigger even while enemies remain alive!)
+  if (obj.kind === 'assassinate') {
+    const target = obj.targetEnemyUid
+      ? battle.units.find(u => u.uid === obj.targetEnemyUid)
+      : battle.units.find(u => u.team === 'enemy' && u.isBoss)
+    if (target && !target.alive) {
+      return { status: 'victory', reason: `${obj.targetName ?? target.name} Defeated!` }
+    }
+  } else if (obj.kind === 'defend') {
+    if (obj.targetTurns !== undefined && obj.roundsElapsed >= obj.targetTurns) {
+      return { status: 'victory', reason: `Held for ${obj.targetTurns} Turns!` }
+    }
+  } else if (obj.kind === 'seize') {
+    const chestsMet = obj.claimedChests.length >= obj.requiredChests
+    if (obj.seized && chestsMet) {
+      return { status: 'victory', reason: `${obj.goalLabel ?? 'Objective'} Seized!` }
+    }
+    if (obj.goalTile && chestsMet) {
+      const occ = unitAt(battle, obj.goalTile.col, obj.goalTile.row)
+      if (occ && occ.team === 'ally') {
+        return { status: 'victory', reason: `${obj.goalLabel ?? 'Objective'} Seized!` }
+      }
+    }
+    if (!obj.goalTile && obj.requiredChests > 0 && chestsMet) {
+      return { status: 'victory', reason: 'All Supply Chests Claimed!' }
+    }
+  }
+
+  // 3. Clearing every enemy on the board always secures Victory
+  const enemiesAlive = battle.units.some(u => u.alive && u.team === 'enemy')
+  if (!enemiesAlive) {
+    return { status: 'victory', reason: 'All Enemies Routed!' }
+  }
+
+  // 4. Turn limit check (for timed Seize or timed missions)
+  if (obj.turnLimit !== undefined && obj.roundsElapsed >= obj.turnLimit) {
+    return { status: 'defeat', reason: 'Turn Limit Expired!' }
+  }
+
+  return { status: 'ongoing', reason: null }
+}
+
+/** Concise live HUD progress string for the active battle objective. */
+export function getObjectiveProgressText(battle: BattleState): string {
+  const obj = battle.objective
+  if (obj.kind === 'assassinate') {
+    const target = obj.targetEnemyUid
+      ? battle.units.find(u => u.uid === obj.targetEnemyUid)
+      : battle.units.find(u => u.team === 'enemy' && u.isBoss)
+    const name = obj.targetName ?? target?.name ?? 'Boss'
+    if (!target || !target.alive) return `${name} Slain!`
+    return `Slay ${name} (${target.hp}/${target.maxHp} HP)`
+  }
+  if (obj.kind === 'defend') {
+    const turnsTotal = obj.targetTurns ?? 6
+    const turnsDone = Math.min(turnsTotal, obj.roundsElapsed)
+    if (obj.protectTile) {
+      return `Hold ${obj.protectLabel ?? 'Altar'} · ${turnsDone}/${turnsTotal}T`
+    }
+    return `Survive · ${turnsDone}/${turnsTotal} Turns`
+  }
+  if (obj.kind === 'seize') {
+    const parts: string[] = []
+    if (obj.goalTile) {
+      parts.push(`Seize ${obj.goalLabel ?? 'Goal'}`)
+    }
+    if (obj.chestTiles.length > 0) {
+      const targetCount = obj.requiredChests > 0 ? obj.requiredChests : obj.chestTiles.length
+      parts.push(`Chests ${obj.claimedChests.length}/${targetCount}`)
+    }
+    if (obj.turnLimit !== undefined) {
+      const left = Math.max(0, obj.turnLimit - obj.roundsElapsed)
+      parts.push(`${left}T Left`)
+    }
+    return parts.join(' · ') || obj.label
+  }
+  const totalEnemies = battle.units.filter(u => u.team === 'enemy').length
+  const aliveEnemies = battle.units.filter(u => u.alive && u.team === 'enemy').length
+  const defeated = totalEnemies - aliveEnemies
+  return `Rout Enemies · ${defeated}/${totalEnemies}`
+}
+
+/** Short summary of a chapter's mission objective for Story Briefing / World Map. */
+export function getChapterObjectiveSummary(chapter: ChapterSpec): {
+  readonly kind: BattleObjectiveKind
+  readonly label: string
+  readonly short: string
+} {
+  const spec = chapter.objective
+  const kind: BattleObjectiveKind = spec?.kind ?? 'rout'
+  if (kind === 'assassinate') {
+    const name = spec?.targetName ?? 'Commander'
+    return { kind, label: spec?.label ?? `Slay ${name}`, short: `Assassinate: ${name}` }
+  }
+  if (kind === 'defend') {
+    const turns = spec?.targetTurns ?? 6
+    return { kind, label: spec?.label ?? `Defend (${turns}T)`, short: `Defend ${turns}T` }
+  }
+  if (kind === 'seize') {
+    const limit = spec?.turnLimit ? ` (${spec.turnLimit}T)` : ''
+    return { kind, label: spec?.label ?? 'Seize Objective', short: `Seize${limit}` }
+  }
+  return { kind: 'rout', label: spec?.label ?? 'Rout All Enemies', short: 'Rout All' }
+}
+
+export function isDeployTile(battle: BattleState, col: number, row: number): boolean {
+  return battle.deployTiles.some(t => t.col === col && t.row === row)
+}
+
+/** Move a hero to an open deployment tile, or swap positions if another hero occupies it. */
+export function moveDeployUnit(state: GameState, unitUid: string, col: number, row: number): boolean {
+  const battle = state.battle
+  if (!battle || battle.phase !== 'deploy') return false
+  if (!isCellInBounds(col, row, battle.cols, battle.rows)) return false
+  if (!isDeployTile(battle, col, row)) return false
+
+  const unit = getUnitByUid(battle, unitUid)
+  if (!unit || unit.team !== 'ally') return false
+  if (unit.col === col && unit.row === row) {
+    battle.selectedUnitUid = unit.uid
+    return true
+  }
+
+  const occupant = unitAt(battle, col, row)
+  if (occupant) {
+    if (occupant.team !== 'ally') return false
+    return swapDeployUnit(state, unit.uid, occupant.uid)
+  }
+
+  const cell = battle.cells[row][col]
+  const [wx, wy, wz] = gridToWorld(col, row, cell.elevation, battle.cols, battle.rows)
+  unit.col = col
+  unit.row = row
+  unit.x = wx
+  unit.y = wy
+  unit.z = wz
+  battle.selectedUnitUid = unit.uid
+  state.sounds.push({ kind: 'step', pitch: 1.05 })
+  return true
+}
+
+/** Swap the deployment positions of two ally heroes during the pre-battle deploy phase. */
+export function swapDeployUnit(state: GameState, uidA: string, uidB: string): boolean {
+  const battle = state.battle
+  if (!battle || battle.phase !== 'deploy' || uidA === uidB) return false
+  const a = getUnitByUid(battle, uidA)
+  const b = getUnitByUid(battle, uidB)
+  if (!a || !b || a.team !== 'ally' || b.team !== 'ally') return false
+  if (!isDeployTile(battle, a.col, a.row) || !isDeployTile(battle, b.col, b.row)) return false
+
+  const tmpCol = a.col
+  const tmpRow = a.row
+  const tmpX = a.x
+  const tmpY = a.y
+  const tmpZ = a.z
+
+  a.col = b.col
+  a.row = b.row
+  a.x = b.x
+  a.y = b.y
+  a.z = b.z
+
+  b.col = tmpCol
+  b.row = tmpRow
+  b.x = tmpX
+  b.y = tmpY
+  b.z = tmpZ
+
+  battle.selectedUnitUid = null
+  state.sounds.push({ kind: 'step', pitch: 1.15 })
+  return true
+}
+
+/** Rotate a hero's initial facing direction (N/E/S/W) during pre-battle deployment. */
+export function rotateDeployUnit(state: GameState, unitUid?: string, dir?: FacingDir): boolean {
+  const battle = state.battle
+  if (!battle || battle.phase !== 'deploy') return false
+  const targetUid = unitUid ?? battle.selectedUnitUid
+  let unit = targetUid ? getUnitByUid(battle, targetUid) : undefined
+  if (!unit || unit.team !== 'ally') {
+    unit = battle.units.find(u => u.alive && u.team === 'ally')
+  }
+  if (!unit) return false
+  const nextDir = dir ?? FACING_DIRS[(FACING_DIRS.indexOf(unit.facing) + 1) % FACING_DIRS.length]
+  setUnitFacing(unit, nextDir)
+  battle.selectedUnitUid = unit.uid
+  state.sounds.push({ kind: 'card', pitch: 1.12 })
+  return true
+}
+
+/** Lock in pre-battle hero placements and launch Turn 1 preserving exact positions & facings. */
+export function confirmDeployment(state: GameState): boolean {
+  const battle = state.battle
+  if (!battle || battle.phase !== 'deploy') return false
+  battle.selectedUnitUid = null
+  battle.bannerText = 'BATTLE START!'
+  battle.bannerTimer = 1.4
+  advanceToNextUnitTurn(state, true)
+  return true
+}
+
+export const beginBattleFromDeploy = confirmDeployment
+
+export function startStageBattle(
+  state: GameState,
+  stageId: string,
+  endlessWave = 0,
+  options?: StartBattleOptions
+): BattleState {
+  const stage = CHAPTER_BY_ID[stageId] ?? CHAPTERS[0]
+  return startChapterBattle(state, stage.index, endlessWave, options)
+}
+
+export function startChapterBattle(
+  state: GameState,
+  chapterIndex: number,
+  endlessWave = 0,
+  options?: StartBattleOptions
+): BattleState {
   const { campaign } = state
   const safeIdx = clamp(chapterIndex, 0, CHAPTERS.length - 1)
   const chapter = CHAPTERS[safeIdx]
@@ -1650,7 +2215,7 @@ export function startChapterBattle(state: GameState, chapterIndex: number, endle
     units.push({
       uid: `enemy_${i}_${spawn.id}`,
       team: 'enemy',
-      name: spec.name,
+      name: spawn.name ?? spec.name,
       enemyId: spawn.id,
       stars: spec.isBoss ? 3 : 1,
       isBoss: Boolean(spec.isBoss),
@@ -1696,6 +2261,9 @@ export function startChapterBattle(state: GameState, chapterIndex: number, endle
     })
   }
 
+  const objective = buildBattleObjective(chapter, units, endlessWave)
+  const deployTiles = computeDeployTiles(chapter, cells, objective)
+  const useDeploy = Boolean(options?.deployPhase)
   const deckUids = shuffleStrings(campaign.tactics.map(t => t.uid), campaign)
   const battle: BattleState = {
     stageId: chapter.id,
@@ -1707,8 +2275,10 @@ export function startChapterBattle(state: GameState, chapterIndex: number, endle
     biome,
     cells,
     units,
+    deployTiles,
+    objective,
     turn: 0,
-    phase: 'player',
+    phase: useDeploy ? 'deploy' : 'player',
     activeUnitUid: null,
     selectedUnitUid: null,
     turnOrder: [],
@@ -1730,7 +2300,7 @@ export function startChapterBattle(state: GameState, chapterIndex: number, endle
     enemyActedThisTurn: false,
     floatingNumbers: [],
     nextFloatId: 1,
-    bannerText: endlessWave > 0 ? `Endless Wave ${endlessWave}` : chapter.title,
+    bannerText: useDeploy ? 'DEPLOY SQUAD' : endlessWave > 0 ? `Endless Wave ${endlessWave}` : chapter.title,
     bannerTimer: 2.1,
     shake: 0,
     reward: null
@@ -1738,7 +2308,11 @@ export function startChapterBattle(state: GameState, chapterIndex: number, endle
 
   drawTacticCards(battle, campaign, 3)
   state.battle = battle
-  advanceToNextUnitTurn(state, true)
+  if (useDeploy) {
+    battle.turnOrder = computeTurnOrderPreview(battle, 8)
+  } else {
+    advanceToNextUnitTurn(state, true)
+  }
   return battle
 }
 
@@ -3980,19 +4554,60 @@ function faceToward(unit: BattleUnit, tx: number, tz: number): void {
   }
 }
 
+function checkTileObjectiveInteractions(state: GameState, unit: BattleUnit): void {
+  const battle = state.battle
+  if (!battle || !unit.alive || battle.phase === 'deploy' || battle.phase === 'victory' || battle.phase === 'defeat') return
+  const obj = battle.objective
+
+  if (unit.team === 'ally' && obj.kind === 'seize') {
+    const chest = obj.chestTiles.find(c => c.col === unit.col && c.row === unit.row)
+    if (chest && !isChestClaimed(obj, chest.col, chest.row)) {
+      obj.claimedChests.push({ col: chest.col, row: chest.row })
+      battle.moveUndo = null
+      const bonusGold = 25
+      state.campaign.gold += bonusGold
+      addFloat(battle, unit.x, unit.y + 0.5, unit.z, `CHEST +${bonusGold}g!`, '#ffe16b')
+      state.sounds.push({ kind: 'coin', pitch: 1.15 })
+      state.vfx.push({ kind: 'burst', style: 'gold', at: [unit.x, unit.y + 0.6, unit.z], radius: 1.1 })
+      checkBattleOutcome(state)
+      if (isBattleEnded(battle)) return
+    }
+    if (obj.goalTile && obj.goalTile.col === unit.col && obj.goalTile.row === unit.row) {
+      if (obj.claimedChests.length >= obj.requiredChests) {
+        obj.seized = true
+        battle.moveUndo = null
+        addFloat(battle, unit.x, unit.y + 0.65, unit.z, 'SEIZED!', '#ffe16b')
+        state.vfx.push({ kind: 'burst', style: 'gold', at: [unit.x, unit.y + 0.7, unit.z], radius: 1.5 })
+        checkBattleOutcome(state)
+      } else {
+        const rem = obj.requiredChests - obj.claimedChests.length
+        addFloat(battle, unit.x, unit.y + 0.55, unit.z, `NEED ${rem} CHEST${rem > 1 ? 'S' : ''}`, '#ffcb57')
+      }
+    }
+  } else if (unit.team === 'enemy' && obj.kind === 'defend' && obj.protectTile) {
+    if (obj.protectTile.col === unit.col && obj.protectTile.row === unit.row) {
+      obj.protectBreached = true
+      addFloat(battle, unit.x, unit.y + 0.65, unit.z, 'BREACHED!', '#ff5266')
+      state.vfx.push({ kind: 'burst', style: 'shadow', at: [unit.x, unit.y + 0.7, unit.z], radius: 1.4 })
+      checkBattleOutcome(state)
+    }
+  }
+}
+
 function checkBattleOutcome(state: GameState): void {
   const battle = state.battle
-  if (!battle || battle.phase === 'victory' || battle.phase === 'defeat') return
-  const alliesAlive = battle.units.some(u => u.alive && u.team === 'ally')
-  const enemiesAlive = battle.units.some(u => u.alive && u.team === 'enemy')
+  if (!battle || battle.phase === 'deploy' || battle.phase === 'victory' || battle.phase === 'defeat') return
+  const outcome = evaluateBattleObjective(battle)
 
-  if (!enemiesAlive) {
+  if (outcome.status === 'victory') {
     battle.phase = 'victory'
+    battle.objective.outcomeReason = outcome.reason ?? undefined
     battle.moveTiles = []
     battle.targetTiles = []
     battle.moveAttackTiles = []
     battle.moveUndo = null
     battle.pendingAction = null
+    battle.facingPicker = null
     battle.armedSkillIndex = null
     battle.armedTacticUid = null
     for (const u of battle.units) {
@@ -4002,15 +4617,22 @@ function checkBattleOutcome(state: GameState): void {
       }
     }
     awardBattleVictory(state)
+    if (outcome.reason) {
+      battle.bannerText = `VICTORY — ${outcome.reason}`
+    }
     state.sounds.push({ kind: 'victory' })
-  } else if (!alliesAlive) {
+  } else if (outcome.status === 'defeat') {
     battle.phase = 'defeat'
+    battle.objective.outcomeReason = outcome.reason ?? undefined
     battle.moveTiles = []
     battle.targetTiles = []
     battle.moveAttackTiles = []
     battle.moveUndo = null
     battle.pendingAction = null
-    battle.bannerText = 'Vanguard Defeated'
+    battle.facingPicker = null
+    battle.armedSkillIndex = null
+    battle.armedTacticUid = null
+    battle.bannerText = outcome.reason ?? 'Vanguard Defeated'
     battle.bannerTimer = 3.0
     state.sounds.push({ kind: 'defeat' })
   }
@@ -4586,7 +5208,48 @@ export function armTacticCard(state: GameState, tacticUid: string | null): boole
 
 export function selectTile(state: GameState, col: number, row: number): boolean {
   const battle = state.battle
-  if (!battle || battle.phase !== 'player' || !isCellInBounds(col, row, battle.cols, battle.rows)) return false
+  if (!battle || !isCellInBounds(col, row, battle.cols, battle.rows)) return false
+
+  // Pre-Battle Deployment Phase: select ally, move to open blue deploy tile, or swap with another ally!
+  if (battle.phase === 'deploy') {
+    const clicked = unitAt(battle, col, row)
+    const selected = getUnitByUid(battle, battle.selectedUnitUid)
+    const selectedAlly = selected && selected.team === 'ally' ? selected : null
+
+    if (isDeployTile(battle, col, row)) {
+      if (selectedAlly) {
+        if (clicked && clicked.uid === selectedAlly.uid) {
+          battle.selectedUnitUid = null
+          state.sounds.push({ kind: 'card', pitch: 0.95 })
+          return true
+        }
+        if (clicked && clicked.team === 'ally') {
+          const swapped = swapDeployUnit(state, selectedAlly.uid, clicked.uid)
+          if (swapped) battle.selectedUnitUid = null
+          return swapped
+        }
+        if (!clicked) {
+          return moveDeployUnit(state, selectedAlly.uid, col, row)
+        }
+      }
+      if (clicked && clicked.team === 'ally') {
+        battle.selectedUnitUid = clicked.uid
+        state.sounds.push({ kind: 'card', pitch: 1.15 })
+        return true
+      }
+      return false
+    }
+
+    // Allow inspecting enemies on the board during deployment without allowing placement outside deployTiles
+    if (clicked && clicked.team === 'enemy') {
+      battle.selectedUnitUid = clicked.uid
+      state.sounds.push({ kind: 'card', pitch: 1.05 })
+      return true
+    }
+    return false
+  }
+
+  if (battle.phase !== 'player') return false
   if (battle.facingPicker) return false
 
   // Wait if a unit is currently mid-stride along a path
@@ -4943,6 +5606,7 @@ function advanceToNextUnitTurn(state: GameState, initial = false): void {
     if (next.stunTurns > 0) {
       next.stunTurns -= 1
       next.ct = Math.max(0, next.ct - 100)
+      if (next.team === 'ally') battle.objective.roundsElapsed += 1
       addFloat(battle, next.x, next.y, next.z, 'STUNNED', '#ffdf59')
       continue
     }
@@ -4990,6 +5654,7 @@ export function endPlayerTurn(state: GameState): void {
       addFloat(battle, active.x, active.y, active.z, `WAIT +${100 - ctCost} CT`, '#8ce8ff')
     }
   }
+  battle.objective.roundsElapsed += 1
   advanceToNextUnitTurn(state)
 }
 
@@ -5078,11 +5743,14 @@ function executeEnemyUnitTurn(state: GameState, enemy: BattleUnit): void {
 
   if (!target) return
 
-  // Move if not already in ideal range or LoS is blocked
+  // Move if not already in ideal range or LoS is blocked (or if a melee foe can breach a Defend objective!)
+  const defendTile = battle.objective.kind === 'defend' ? battle.objective.protectTile : undefined
   const distNow = manhattan(enemy.col, enemy.row, target.col, target.row)
   const effRangeNow = effectiveAttackRange(battle, enemy.col, enemy.row, target.col, target.row, enemy.range)
   const hasLoSNow = hasLineOfSight(battle, enemy.col, enemy.row, target.col, target.row, false)
-  if (distNow > effRangeNow || !hasLoSNow || (spec.ai === 'ranged' && distNow === 1)) {
+  const wantMove = distNow > effRangeNow || !hasLoSNow || (spec.ai === 'ranged' && distNow === 1) ||
+    Boolean(defendTile && spec.ai === 'melee' && !unitAt(battle, defendTile.col, defendTile.row))
+  if (wantMove) {
     const moveOptions = computeMoveTiles(battle, enemy)
     let bestTile: { col: number; row: number } | null = null
     let bestScore = -9999
@@ -5102,6 +5770,13 @@ function executeEnemyUnitTurn(state: GameState, enemy: BattleUnit): void {
         if (arc === 'back') score += 18
         else if (arc === 'flank') score += 9
       }
+      if (defendTile && spec.ai === 'melee') {
+        if (tile.col === defendTile.col && tile.row === defendTile.row) {
+          score += 240
+        } else {
+          score -= manhattan(tile.col, tile.row, defendTile.col, defendTile.row) * 4
+        }
+      }
       if (spec.ai === 'ranged') {
         score = canHit && d >= 2 ? 50 - d * 2 + elev * 10 : -Math.abs(d - enemy.range) * 10 + elev * 4
       }
@@ -5110,7 +5785,11 @@ function executeEnemyUnitTurn(state: GameState, enemy: BattleUnit): void {
         bestTile = tile
       }
     }
-    if (bestTile) {
+    const shouldTakeTile = bestTile && (
+      distNow > effRangeNow || !hasLoSNow || (spec.ai === 'ranged' && distNow === 1) ||
+      Boolean(defendTile && bestTile.col === defendTile.col && bestTile.row === defendTile.row)
+    )
+    if (shouldTakeTile && bestTile) {
       const path = findGridPath(battle, enemy, bestTile.col, bestTile.row)
       if (path.length > 0) {
         enemy.path = path
@@ -5208,6 +5887,12 @@ export function stepGame(state: GameState, dt: number): void {
         triggerStepOnHazard(state, u, toCell)
         if (!u.alive || isBattleEnded(battle)) {
           continue
+        }
+        checkTileObjectiveInteractions(state, u)
+        if (isBattleEnded(battle)) {
+          u.path = []
+          u.animState = u.team === 'ally' && battle.phase === 'victory' ? 'celebrate' : 'idle'
+          break
         }
         if (u.path.length === 0) {
           u.animState = 'idle'

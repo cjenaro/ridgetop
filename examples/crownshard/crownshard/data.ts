@@ -695,6 +695,11 @@ export const CHAPTERS: readonly ChapterSpec[] = [
       [0, 0, 0, 0, 0, 0, 0]
     ],
     heroSpawns: [[0, 1], [1, 2], [0, 3], [1, 1]],
+    objective: {
+      kind: 'rout',
+      label: 'Rout All Enemies',
+      description: 'Defeat all Eclipse raiders holding the Watchtower road.'
+    },
     enemies: [
       { id: 'goblin', col: 4, row: 2 },
       { id: 'goblin', col: 5, row: 3 },
@@ -713,12 +718,12 @@ export const CHAPTERS: readonly ChapterSpec[] = [
     mapY: 0.54,
     requires: ['border_watch'],
     specialTag: 'Ford Ambush',
-    modifierDesc: '6x5 Tight Creek Crossing · Fast Skirmish',
+    modifierDesc: '6x5 Tight Creek Crossing · Seize 2 Supply Chests',
     title: 'Millers\' Ford',
     subtitle: 'Special: Twin Creek Crossing',
     biome: 'meadow',
     introSpeaker: 'Lyra',
-    introText: 'Raiders are looting the grain wagons at Millers\' Ford! Two narrow footbridges span the creek — strike quickly and seize their copper signet.',
+    introText: 'Raiders are looting the grain wagons at Millers\' Ford! Two narrow footbridges span the creek — strike quickly and seize their supply chests.',
     outroSpeaker: 'Sir Aldric',
     outroText: 'The villagers are safe and their supply chests are ours! The southern road now links cleanly toward Sunken Bridge.',
     rewardGold: 95,
@@ -740,6 +745,14 @@ export const CHAPTERS: readonly ChapterSpec[] = [
       [0, 0, 0, 0, 2, 0]
     ],
     heroSpawns: [[0, 1], [0, 3], [1, 1], [1, 3]],
+    objective: {
+      kind: 'seize',
+      label: 'Seize Supply Chests',
+      description: 'Claim both raided supply chests within 10 turns (or rout all foes).',
+      chestTiles: [{ col: 3, row: 2 }, { col: 5, row: 3 }],
+      requiredChests: 2,
+      turnLimit: 10
+    },
     enemies: [
       { id: 'goblin', col: 3, row: 1 },
       { id: 'goblin', col: 3, row: 3 },
@@ -764,7 +777,7 @@ export const CHAPTERS: readonly ChapterSpec[] = [
     subtitle: 'Misty River Crossing',
     biome: 'river',
     introSpeaker: 'Vesper',
-    introText: 'Ironclad Orcs hold the old stone arches while their Shaman channels from the far bank. Control the bridges or blast across the water!',
+    introText: 'Ironclad Orcs surge across the old stone arches toward our River Shrine! Hold the ward for 6 turns or break their line.',
     outroSpeaker: 'Sir Aldric',
     outroText: 'The crossing is ours! Reinforcements joined our banner — you can now deploy 4 Heroes, and multiple roads branch across Solis.',
     rewardGold: 110,
@@ -788,6 +801,14 @@ export const CHAPTERS: readonly ChapterSpec[] = [
       [0, 0, 0, 0, 1, 1, 1, 0]
     ],
     heroSpawns: [[0, 1], [1, 2], [0, 4], [1, 3]],
+    objective: {
+      kind: 'defend',
+      label: 'Defend River Shrine',
+      description: 'Keep enemies off the River Shrine for 6 turns (or defeat all foes).',
+      targetTurns: 6,
+      protectTile: { col: 1, row: 3 },
+      protectLabel: 'River Shrine'
+    },
     enemies: [
       { id: 'orc_brute', col: 4, row: 1 },
       { id: 'goblin', col: 4, row: 4 },
@@ -885,6 +906,14 @@ export const CHAPTERS: readonly ChapterSpec[] = [
       [0, 2, 1, 0, 1, 2, 0]
     ],
     heroSpawns: [[0, 2], [1, 3], [0, 4], [1, 2]],
+    objective: {
+      kind: 'defend',
+      label: 'Defend Sunwell Altar',
+      description: 'Protect the Sunwell Altar for 6 turns or defeat all raiders.',
+      targetTurns: 6,
+      protectTile: { col: 1, row: 3 },
+      protectLabel: 'Sunwell Altar'
+    },
     enemies: [
       { id: 'goblin', col: 5, row: 2 },
       { id: 'goblin', col: 5, row: 4 },
@@ -912,7 +941,7 @@ export const CHAPTERS: readonly ChapterSpec[] = [
     subtitle: 'Torchlit Catacomb Vault',
     biome: 'crypt',
     introSpeaker: 'Vesper',
-    introText: 'Ancient Dread Knights awaken in the blue lantern mist. Use the stone pillars to break archer sightlines and focus down their Shaman.',
+    introText: 'The Crypt Warden awakens in the blue lantern mist! Use the stone pillars to break archer sightlines and cut down their commander.',
     outroSpeaker: 'Vesper',
     outroText: 'The catacombs are silent! Beyond these halls lie Whispering Barrow, the Cursed Vault, and the northern pass.',
     rewardGold: 130,
@@ -936,8 +965,16 @@ export const CHAPTERS: readonly ChapterSpec[] = [
       [0, 2, 2, 1, 2, 2, 2, 0]
     ],
     heroSpawns: [[1, 1], [1, 2], [1, 3], [1, 4]],
+    objective: {
+      kind: 'assassinate',
+      label: 'Slay Crypt Warden',
+      description: 'Defeat the Crypt Warden leading the catacomb garrison.',
+      targetEnemyIndex: 0,
+      targetEnemyId: 'crypt_knight',
+      targetName: 'Crypt Warden'
+    },
     enemies: [
-      { id: 'crypt_knight', col: 5, row: 2 },
+      { id: 'crypt_knight', col: 5, row: 2, name: 'Crypt Warden' },
       { id: 'orc_brute', col: 5, row: 3 },
       { id: 'bone_archer', col: 7, row: 1 },
       { id: 'bog_shaman', col: 7, row: 4 }
@@ -1032,6 +1069,16 @@ export const CHAPTERS: readonly ChapterSpec[] = [
       [0, 1, 2, 2, 1, 0]
     ],
     heroSpawns: [[0, 2], [0, 3], [1, 2], [1, 3]],
+    objective: {
+      kind: 'seize',
+      label: 'Seize Reliquary Seal',
+      description: 'Reach the Reliquary Seal within 10 turns. Optional chests hold bonus gold!',
+      goalTile: { col: 5, row: 2 },
+      goalLabel: 'Reliquary Seal',
+      chestTiles: [{ col: 2, row: 2 }, { col: 5, row: 3 }],
+      requiredChests: 0,
+      turnLimit: 10
+    },
     enemies: [
       { id: 'crypt_knight', col: 4, row: 2, levelScale: 1.08 },
       { id: 'crypt_knight', col: 4, row: 3, levelScale: 1.08 },
@@ -1129,6 +1176,14 @@ export const CHAPTERS: readonly ChapterSpec[] = [
       [0, 0, 1, 1, 1, 1, 1, 0]
     ],
     heroSpawns: [[0, 2], [0, 3], [0, 4], [1, 3]],
+    objective: {
+      kind: 'seize',
+      label: 'Seize Mirror Shrine',
+      description: 'Claim the central Mirror Shrine within 9 turns (or rout all foes).',
+      goalTile: { col: 3, row: 3 },
+      goalLabel: 'Mirror Shrine',
+      turnLimit: 9
+    },
     enemies: [
       { id: 'frost_golem', col: 4, row: 3, levelScale: 1.12 },
       { id: 'crypt_knight', col: 6, row: 1, levelScale: 1.08 },
@@ -1154,7 +1209,7 @@ export const CHAPTERS: readonly ChapterSpec[] = [
     subtitle: 'Special: Elite Ice Stronghold',
     biome: 'frost',
     introSpeaker: 'Sir Aldric',
-    introText: 'An optional elite stronghold perched over twin ice chasms. Breaking this garrison will claim the rare Dragonfang Halberd!',
+    introText: 'An optional elite stronghold perched over twin ice chasms. Strike down the Citadel Marshal to break this garrison and claim the Dragonfang Halberd!',
     outroSpeaker: 'Lyra',
     outroText: 'The Glacial Citadel yields its Dragonfang Halberd! Our champions are truly forged for the Throne.',
     rewardGold: 240,
@@ -1178,10 +1233,18 @@ export const CHAPTERS: readonly ChapterSpec[] = [
       [0, 1, 1, 0, 0, 1, 2, 3, 3, 0]
     ],
     heroSpawns: [[0, 1], [1, 1], [0, 4], [1, 4]],
+    objective: {
+      kind: 'assassinate',
+      label: 'Slay Citadel Marshal',
+      description: 'Defeat the Citadel Marshal commanding the ice stronghold.',
+      targetEnemyIndex: 2,
+      targetEnemyId: 'crypt_knight',
+      targetName: 'Citadel Marshal'
+    },
     enemies: [
       { id: 'frost_golem', col: 5, row: 1, levelScale: 1.2 },
       { id: 'frost_golem', col: 5, row: 4, levelScale: 1.2 },
-      { id: 'crypt_knight', col: 7, row: 2, levelScale: 1.2 },
+      { id: 'crypt_knight', col: 7, row: 2, levelScale: 1.2, name: 'Citadel Marshal' },
       { id: 'bone_archer', col: 9, row: 1, levelScale: 1.25 },
       { id: 'bog_shaman', col: 9, row: 4, levelScale: 1.25 }
     ]
@@ -1206,7 +1269,7 @@ export const CHAPTERS: readonly ChapterSpec[] = [
     subtitle: 'Volcanic Ember Bastion',
     biome: 'volcano',
     introSpeaker: 'Sir Aldric',
-    introText: 'Molten rifts split the wide basalt causeway. Cross the ember bridges together and shatter Malakor\'s royal guard!',
+    introText: 'Molten rifts split the basalt causeway! Hold the Ember Ward for 6 turns against Malakor\'s royal guard or shatter their line.',
     outroSpeaker: 'Vesper',
     outroText: 'The outer bastion falls and Dame Isolde joins our vanguard! Raid Ashfall Foundry or storm the Eclipse Throne!',
     rewardGold: 210,
@@ -1230,6 +1293,14 @@ export const CHAPTERS: readonly ChapterSpec[] = [
       [0, 2, 1, 0, 0, 1, 2, 2, 0]
     ],
     heroSpawns: [[0, 1], [1, 1], [0, 3], [1, 3]],
+    objective: {
+      kind: 'defend',
+      label: 'Defend Ember Ward',
+      description: 'Protect the Ember Ward for 6 turns or defeat all foes.',
+      targetTurns: 6,
+      protectTile: { col: 1, row: 2 },
+      protectLabel: 'Ember Ward'
+    },
     enemies: [
       { id: 'crypt_knight', col: 4, row: 1, levelScale: 1.15 },
       { id: 'frost_golem', col: 4, row: 3, levelScale: 1.15 },
@@ -1281,6 +1352,16 @@ export const CHAPTERS: readonly ChapterSpec[] = [
       [0, 1, 0, 1, 0, 1, 0]
     ],
     heroSpawns: [[0, 3], [1, 1], [1, 3], [1, 5]],
+    objective: {
+      kind: 'seize',
+      label: 'Seize Anvil Shrine',
+      description: 'Claim the central Anvil Shrine within 10 turns. Armory chests grant bonus gold!',
+      goalTile: { col: 3, row: 3 },
+      goalLabel: 'Anvil Shrine',
+      chestTiles: [{ col: 3, row: 1 }, { col: 3, row: 5 }],
+      requiredChests: 0,
+      turnLimit: 10
+    },
     enemies: [
       { id: 'crypt_knight', col: 4, row: 3, levelScale: 1.2 },
       { id: 'frost_golem', col: 5, row: 1, levelScale: 1.2 },
@@ -1333,6 +1414,14 @@ export const CHAPTERS: readonly ChapterSpec[] = [
       [0, 0, 1, 0, 0, 0, 2, 0, 0, 0]
     ],
     heroSpawns: [[0, 2], [1, 2], [0, 4], [1, 4]],
+    objective: {
+      kind: 'assassinate',
+      label: 'Slay Archon Malakor',
+      description: 'Defeat Archon Malakor to shatter the Eclipse Vanguard!',
+      targetEnemyIndex: 0,
+      targetEnemyId: 'eclipse_archon',
+      targetName: 'Archon Malakor'
+    },
     enemies: [
       { id: 'eclipse_archon', col: 7, row: 3 },
       { id: 'crypt_knight', col: 6, row: 2 },

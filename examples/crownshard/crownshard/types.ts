@@ -249,6 +249,81 @@ export interface ChapterEnemySpawn {
   readonly col: number
   readonly row: number
   readonly levelScale?: number
+  readonly name?: string
+}
+
+export type BattlePhase = 'deploy' | 'player' | 'enemy' | 'victory' | 'defeat'
+
+export type BattleObjectiveKind = 'rout' | 'assassinate' | 'defend' | 'seize'
+
+export interface BattleObjectiveSpec {
+  readonly kind: BattleObjectiveKind
+  readonly label?: string
+  readonly description?: string
+  /** For 'assassinate': specific index in chapter.enemies or archetype ID (defaults to boss / index 0). */
+  readonly targetEnemyIndex?: number
+  readonly targetEnemyId?: EnemyArchetypeId
+  readonly targetName?: string
+  /** For 'defend': survive N player turns (or rout all enemies). */
+  readonly targetTurns?: number
+  /** For 'defend': sacred tile to protect; if an enemy steps onto it, Defeat. */
+  readonly protectTile?: GridCoord
+  readonly protectLabel?: string
+  /** For 'seize': golden goal tile an ally must reach to win. */
+  readonly goalTile?: GridCoord
+  readonly goalLabel?: string
+  /** For 'seize': battlefield treasure chests allies can claim by stepping onto them. */
+  readonly chestTiles?: readonly GridCoord[]
+  /** Number of chests required for victory (defaults to chestTiles.length when no goalTile, else 0). */
+  readonly requiredChests?: number
+  /** Optional turn limit (exceeding causes Defeat). */
+  readonly turnLimit?: number
+}
+
+export interface BattleObjectiveState {
+  readonly kind: BattleObjectiveKind
+  readonly label: string
+  readonly description: string
+  readonly targetEnemyUid?: string
+  readonly targetName?: string
+  readonly targetTurns?: number
+  readonly protectTile?: GridCoord
+  readonly protectLabel?: string
+  protectBreached: boolean
+  readonly goalTile?: GridCoord
+  readonly goalLabel?: string
+  seized: boolean
+  readonly chestTiles: readonly GridCoord[]
+  claimedChests: GridCoord[]
+  readonly requiredChests: number
+  readonly turnLimit?: number
+  roundsElapsed: number
+  outcomeReason?: string
+}
+
+export interface BattleObjectiveEvaluation {
+  readonly status: 'ongoing' | 'victory' | 'defeat'
+  readonly reason: string | null
+}
+
+export interface BattleObjectiveSnapshot {
+  readonly kind: BattleObjectiveKind
+  readonly label: string
+  readonly description: string
+  readonly targetEnemyUid?: string
+  readonly targetName?: string
+  readonly targetTurns?: number
+  readonly protectTile?: GridCoord
+  readonly protectLabel?: string
+  readonly protectBreached?: boolean
+  readonly goalTile?: GridCoord
+  readonly goalLabel?: string
+  readonly seized?: boolean
+  readonly chestTiles?: readonly GridCoord[]
+  readonly claimedChests?: readonly GridCoord[]
+  readonly requiredChests?: number
+  readonly turnLimit?: number
+  readonly roundsElapsed: number
 }
 
 export interface ChapterSpec {
@@ -284,6 +359,8 @@ export interface ChapterSpec {
   readonly grid: readonly (readonly TileTerrain[])[]
   readonly heights?: readonly (readonly number[])[]
   readonly heroSpawns: readonly (readonly [number, number])[]
+  readonly deployTiles?: readonly (readonly [number, number])[]
+  readonly objective?: BattleObjectiveSpec
   readonly enemies: readonly ChapterEnemySpawn[]
 }
 
@@ -615,8 +692,10 @@ export interface BattleState {
   readonly biome: BiomeId
   readonly cells: GridCell[][]
   readonly units: BattleUnit[]
+  readonly deployTiles: readonly GridCoord[]
+  readonly objective: BattleObjectiveState
   turn: number
-  phase: 'player' | 'enemy' | 'victory' | 'defeat'
+  phase: BattlePhase
   activeUnitUid: string | null
   selectedUnitUid: string | null
   turnOrder: TurnPreviewEntry[]
@@ -719,6 +798,7 @@ export interface BattleSaveSnapshot {
   readonly enemyDelay: number
   readonly enemyActedThisTurn: boolean
   readonly rngSeed?: number
+  readonly objective?: BattleObjectiveSnapshot
 }
 
 export interface CampaignState {

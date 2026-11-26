@@ -19,7 +19,7 @@ import { VFX_COLORS, arrowMesh, createBattleVfx } from './vfx.ts'
 import type { StrikeShape } from './vfx.ts'
 import {
   computeDangerZone, computeEnemyThreat, evaluateAllFacingExposures, getEquipmentByUid,
-  getHeroByUid, getHeroSkill, getPatternCells, getTacticByUid, getUnitByUid, isIntactBarricade, unitAt, unitOrDownedAt
+  getHeroByUid, getHeroSkill, getPatternCells, getTacticByUid, getUnitByUid, isChestClaimed, isIntactBarricade, unitAt, unitOrDownedAt
 } from './simulation.ts'
 import { TACTIC_BY_ID } from './data.ts'
 import { BARRICADE_DEFAULT_HP, FACING_DIRS, TILE_SIZE, facingToYaw, facingVector, gridToWorld, isUnitDowned, vectorToFacing } from './types.ts'
@@ -30,6 +30,20 @@ import type {
 
 const C_MOVE_TILE: Color = [0.22, 0.80, 1.0, 0.34]
 const C_MOVE_BORDER: Color = [0.84, 0.97, 1.0, 0.94]
+const C_DEPLOY_TILE: Color = [0.16, 0.54, 1.0, 0.36]
+const C_DEPLOY_TILE_HOVER: Color = [0.34, 0.86, 1.0, 0.48]
+const C_DEPLOY_BORDER: Color = [0.58, 0.90, 1.0, 0.96]
+const C_DEPLOY_SEL_RING: Color = [1.0, 0.88, 0.36, 0.98]
+const C_OBJ_SEIZE_TILE: Color = [1.0, 0.82, 0.22, 0.34]
+const C_OBJ_SEIZE_GOLD: Color = [1.0, 0.90, 0.38, 0.98]
+const C_OBJ_SEIZE_BEAM: Color = [1.0, 0.86, 0.34, 0.22]
+const C_OBJ_DEFEND_TILE: Color = [0.22, 0.90, 0.96, 0.30]
+const C_OBJ_DEFEND_CYAN: Color = [0.34, 0.96, 1.0, 0.96]
+const C_OBJ_DEFEND_BEAM: Color = [0.32, 0.92, 0.96, 0.20]
+const C_OBJ_DEFEND_BREACH: Color = [1.0, 0.22, 0.26, 0.96]
+const C_OBJ_ASSASSINATE: Color = [1.0, 0.22, 0.32, 0.98]
+const C_OBJ_CHEST_WOOD = color('8c5228')
+const C_OBJ_CHEST_GOLD = color('ffd44f')
 const C_ATTACK_TILE: Color = [1.0, 0.32, 0.14, 0.42]
 const C_ATTACK_MARK: Color = [1.0, 0.94, 0.80, 0.98]
 const C_FREE_RANGE_TILE: Color = [0.76, 0.86, 1.0, 0.12]
@@ -315,6 +329,32 @@ const flankWarningChevronMesh = (() => {
   // Inner trailing chevron
   tri([0, y, 0.12], [-0.20, y, -0.16], [0, y, -0.06])
   tri([0, y, 0.12], [0, y, -0.06], [0.20, y, -0.16])
+  return mesh(pos, idx)
+})()
+
+// 10. Low-poly battlefield treasure chest coffer (used by Seize objective chest markers)
+const chestMarkerMesh = (() => {
+  const pos: number[] = []
+  const idx: number[] = []
+  function addBox(x0: number, y0: number, z0: number, x1: number, y1: number, z1: number) {
+    const n = pos.length / 3
+    pos.push(
+      x0, y0, z0, x1, y0, z0, x1, y1, z0, x0, y1, z0, // back
+      x0, y0, z1, x1, y0, z1, x1, y1, z1, x0, y1, z1  // front
+    )
+    const faces = [
+      [0, 2, 1], [0, 3, 2], // -Z
+      [4, 5, 6], [4, 6, 7], // +Z
+      [0, 1, 5], [0, 5, 4], // -Y
+      [3, 7, 6], [3, 6, 2], // +Y
+      [0, 4, 7], [0, 7, 3], // -X
+      [1, 2, 6], [1, 6, 5]  // +X
+    ]
+    for (const [a, b, c] of faces) idx.push(n + a, n + b, n + c)
+  }
+  // Main chest body + beveled top lid
+  addBox(-0.32, 0.02, -0.22, 0.32, 0.34, 0.22)
+  addBox(-0.34, 0.34, -0.24, 0.34, 0.48, 0.24)
   return mesh(pos, idx)
 })()
 
@@ -1843,7 +1883,7 @@ export function createCrownshardScene(renderer: LowPolyRenderer) {
     }
 
     // 0. Enemy Danger Zone & Individual Enemy Threat overlays (layered cleanly below Move/Target/AoE!)
-    const isBattleActive = battle.phase === 'player' || battle.phase === 'enemy'
+    const isBattleActive = battle.phase === 'deploy' || battle.phase === 'player' || battle.phase === 'enemy'
     let dangerZone: DangerZoneMap | null = null
     let focusedThreat: EnemyThreatMap | null = null
     if (isBattleActive) {
@@ -1898,6 +1938,100 @@ export function createCrownshardScene(renderer: LowPolyRenderer) {
           const yaw = Math.atan2(origin.fromCol - origin.col, origin.fromRow - origin.row)
           const warnCol = origin.arc === 'back' ? C_BACKSTAB_WARN : C_FLANK_WARN
           pool.add(flankWarningChevronMesh, [wx, wy + 0.036, wz], [TILE_SIZE * 0.56, 1, TILE_SIZE * 0.56], yaw, warnCol, 0.96, 'alpha')
+        }
+      }
+    }
+
+    // 0.5 Pre-Battle Deployment Blue Spawn Zones
+    if (battle.phase === 'deploy') {
+      const deployPulse = 1 + Math.sin(state.time * 4.2) * 0.035
+      for (const tile of battle.deployTiles) {
+        const cell = battle.cells[tile.row]?.[tile.col]
+        if (!cell || cell.terrain === 'void') continue
+        const [wx, wy, wz] = gridToWorld(tile.col, tile.row, cell.elevation, battle.cols, battle.rows)
+        const isHov = Boolean(hoveredCell && hoveredCell.col === tile.col && hoveredCell.row === tile.row)
+        const occ = unitAt(battle, tile.col, tile.row)
+        const isSelHero = Boolean(occ && occ.team === 'ally' && occ.uid === battle.selectedUnitUid)
+        pool.add(tileQuad, [wx, wy + 0.024, wz], [TILE_SIZE * 0.88, 1, TILE_SIZE * 0.88], 0, isHov ? C_DEPLOY_TILE_HOVER : C_DEPLOY_TILE, 0.94, 'alpha')
+        pool.add(tileFrameMesh, [wx, wy + 0.032, wz], [TILE_SIZE * 0.90, 1, TILE_SIZE * 0.90], 0, isSelHero ? C_DEPLOY_SEL_RING : C_DEPLOY_BORDER, 0.98, 'alpha')
+        if (!occ) {
+          pool.add(tileCornersMesh, [wx, wy + 0.035, wz], [TILE_SIZE * 0.84 * deployPulse, 1, TILE_SIZE * 0.84 * deployPulse], 0, C_DEPLOY_BORDER, 0.92, 'alpha')
+          pool.add(tileDotMesh, [wx, wy + 0.036, wz], [TILE_SIZE * 0.72, 1, TILE_SIZE * 0.72], 0, C_DEPLOY_BORDER, 0.90, 'alpha')
+        } else if (isSelHero) {
+          const ringPulse = 0.78 + Math.sin(state.time * 6.5) * 0.06
+          pool.add(flatRing, [wx, wy + 0.056, wz], [ringPulse, 1, ringPulse], state.time * 2.0, C_DEPLOY_SEL_RING, 1.0, 'additive')
+        }
+      }
+    }
+
+    // 0.6 3D Mission Objective Markers (Seize Beacon, Treasure Chests, Defend Relic Ward, Assassinate Target Crown)
+    if (isBattleActive) {
+      const obj = battle.objective
+      const objPulse = 1 + Math.sin(state.time * 4.8) * 0.065
+
+      if (obj.kind === 'seize' && obj.goalTile) {
+        const gCell = battle.cells[obj.goalTile.row]?.[obj.goalTile.col]
+        if (gCell && gCell.terrain !== 'void') {
+          const [gx, gy, gz] = gridToWorld(obj.goalTile.col, obj.goalTile.row, gCell.elevation, battle.cols, battle.rows)
+          pool.add(tileQuad, [gx, gy + 0.026, gz], [TILE_SIZE * 0.88, 1, TILE_SIZE * 0.88], 0, C_OBJ_SEIZE_TILE, 0.96, 'alpha')
+          pool.add(tileDiamondMesh, [gx, gy + 0.038, gz], [TILE_SIZE * 0.90 * objPulse, 1, TILE_SIZE * 0.90 * objPulse], 0, C_OBJ_SEIZE_GOLD, 0.98, 'alpha')
+          pool.add(flatRing, [gx, gy + 0.048, gz], [0.76 * objPulse, 1, 0.76 * objPulse], state.time * 1.6, C_OBJ_SEIZE_GOLD, 1.0, 'additive')
+          pool.add(flatRing, [gx, gy + 0.054, gz], [0.54, 1, 0.54], -state.time * 2.2, C_STAR3_HALO, 1.0, 'additive')
+          pool.add(spotlightBeamMesh, [gx, gy + 0.05, gz], [0.74, 2.8, 0.74], state.time * 0.6, C_OBJ_SEIZE_BEAM, 1.0, 'additive')
+          const beaconY = gy + 1.55 + Math.sin(state.time * 3.4) * 0.14
+          pool.add(crownMesh, [gx, beaconY, gz], [0.42, 0.34, 0.42], state.time * 1.4, C_OBJ_SEIZE_GOLD, 0.95)
+        }
+      }
+
+      if (obj.kind === 'seize' && obj.chestTiles.length > 0) {
+        for (let i = 0; i < obj.chestTiles.length; i++) {
+          const ct = obj.chestTiles[i]
+          if (isChestClaimed(obj, ct.col, ct.row)) continue
+          const cCell = battle.cells[ct.row]?.[ct.col]
+          if (!cCell || cCell.terrain === 'void') continue
+          const [cx, cy, cz] = gridToWorld(ct.col, ct.row, cCell.elevation, battle.cols, battle.rows)
+          const bob = Math.sin(state.time * 3.6 + i * 1.4) * 0.05
+          pool.add(tileQuad, [cx, cy + 0.025, cz], [TILE_SIZE * 0.76, 1, TILE_SIZE * 0.76], 0, C_OBJ_SEIZE_TILE, 0.94, 'alpha')
+          pool.add(flatRing, [cx, cy + 0.042, cz], [0.58 * objPulse, 1, 0.58 * objPulse], state.time * 1.8 + i, C_OBJ_SEIZE_GOLD, 0.98, 'additive')
+          pool.add(chestMarkerMesh, [cx, cy + 0.03 + bob, cz], [0.92, 0.92, 0.92], Math.sin(state.time * 0.9 + i) * 0.25, C_OBJ_CHEST_WOOD, 0.22)
+          pool.add(crystalMesh, [cx, cy + 0.68 + bob * 1.6, cz], [0.14, 0.22, 0.14], state.time * 3.2 + i, C_OBJ_CHEST_GOLD, 1.0, 'additive')
+        }
+      }
+
+      if (obj.kind === 'defend' && obj.protectTile) {
+        const pCell = battle.cells[obj.protectTile.row]?.[obj.protectTile.col]
+        if (pCell && pCell.terrain !== 'void') {
+          const [px, py, pz] = gridToWorld(obj.protectTile.col, obj.protectTile.row, pCell.elevation, battle.cols, battle.rows)
+          const wardCol = obj.protectBreached ? C_OBJ_DEFEND_BREACH : C_OBJ_DEFEND_CYAN
+          pool.add(tileQuad, [px, py + 0.026, pz], [TILE_SIZE * 0.90, 1, TILE_SIZE * 0.90], 0, C_OBJ_DEFEND_TILE, 0.96, 'alpha')
+          pool.add(tileCornersMesh, [px, py + 0.036, pz], [TILE_SIZE * 0.92 * objPulse, 1, TILE_SIZE * 0.92 * objPulse], 0, wardCol, 0.98, 'alpha')
+          pool.add(flatRing, [px, py + 0.048, pz], [0.80 * objPulse, 1, 0.80 * objPulse], state.time * 1.5, wardCol, 1.0, 'additive')
+          pool.add(flatRing, [px, py + 0.056, pz], [0.58, 1, 0.58], -state.time * 2.0, C_OBJ_SEIZE_GOLD, 0.98, 'additive')
+          pool.add(spotlightBeamMesh, [px, py + 0.05, pz], [0.82, 2.5, 0.82], -state.time * 0.55, C_OBJ_DEFEND_BEAM, 1.0, 'additive')
+          for (let i = 0; i < 3; i++) {
+            const a = state.time * 2.1 + (i / 3) * Math.PI * 2
+            pool.add(
+              crystalMesh,
+              [px + Math.cos(a) * 0.64, py + 0.95 + Math.sin(state.time * 3.8 + i) * 0.14, pz + Math.sin(a) * 0.64],
+              [0.12, 0.20, 0.12],
+              a,
+              i === 0 ? C_OBJ_SEIZE_GOLD : wardCol,
+              1.0,
+              'additive'
+            )
+          }
+        }
+      }
+
+      if (obj.kind === 'assassinate' && obj.targetEnemyUid) {
+        const targetUnit = getUnitByUid(battle, obj.targetEnemyUid)
+        if (targetUnit && targetUnit.alive) {
+          const tScale = targetUnit.isBoss ? 1.38 : 1.06
+          const ringR = 0.86 * tScale * objPulse
+          pool.add(flatRing, [targetUnit.x, targetUnit.y + 0.054, targetUnit.z], [ringR, 1, ringR], -state.time * 2.2, C_OBJ_ASSASSINATE, 1.0, 'additive')
+          pool.add(tileDiamondMesh, [targetUnit.x, targetUnit.y + 0.058, targetUnit.z], [TILE_SIZE * 0.96 * objPulse, 1, TILE_SIZE * 0.96 * objPulse], 0, C_OBJ_ASSASSINATE, 0.98, 'alpha')
+          const crownY = targetUnit.y + (targetUnit.isBoss ? 2.55 : 2.05) + Math.sin(state.time * 4.5) * 0.10
+          pool.add(crownMesh, [targetUnit.x, crownY, targetUnit.z], [0.36 * tScale, 0.30 * tScale, 0.36 * tScale], state.time * 1.8, C_OBJ_ASSASSINATE, 0.96)
         }
       }
     }
@@ -2080,7 +2214,7 @@ export function createCrownshardScene(renderer: LowPolyRenderer) {
         ? { col: activeForecast.targetCol, row: activeForecast.targetRow }
         : hoveredCell
 
-    if (previewCell && battle.phase === 'player' && previewCell.row < battle.rows && previewCell.col < battle.cols) {
+    if (previewCell && (battle.phase === 'player' || battle.phase === 'deploy') && previewCell.row < battle.rows && previewCell.col < battle.cols) {
       const hCell = battle.cells[previewCell.row][previewCell.col]
       if (hCell.terrain !== 'void') {
         const [hx, hy, hz] = gridToWorld(previewCell.col, previewCell.row, hCell.elevation, battle.cols, battle.rows)

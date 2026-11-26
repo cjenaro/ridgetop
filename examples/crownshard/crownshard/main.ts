@@ -16,16 +16,16 @@ import { cameraAlignedFacing, cameraCardinalHeading, createCrownshardScene, faci
 import {
   abandonBattle, armSkill, armTacticCard, autoEquipBestFit, beginWaitFacingPicker, buyPack, canBuyPack,
   canMergeHero, canUndoMove, cancelWaitFacingPicker, clearSave, computeCombatForecast, computeDangerZone,
-  computeDeckValue, computeEnemyThreat, computeHeroStats, computeSquadPower, confirmWaitFacingPicker,
+  computeDeckValue, computeEnemyThreat, computeHeroStats, computeSquadPower, confirmDeployment, confirmWaitFacingPicker,
   createInitialState, createTurnBoundaryTracker, effectiveSpeed, equipItem, evaluateAllFacingExposures,
-  evaluateFacingExposure, findBestFitUpgrades, findEquipOwner, getEquipmentByUid, getHeroByUid,
-  getHeroSkill, getMergeCandidates, getNextRecommendedStage, getStageUnlockHint, getTacticByUid,
-  getUnitByUid, isEndlessUnlocked, isStageCleared, isStageUnlocked, loadSave, maxSquadSize, mergeHero,
-  persistSave, previewTurnOrderAfterAction, previewWaitFacing, restoreBattleState, salvageEquipCard,
+  evaluateFacingExposure, findBestFitUpgrades, findEquipOwner, getChapterObjectiveSummary, getEquipmentByUid, getHeroByUid,
+  getHeroSkill, getMergeCandidates, getNextRecommendedStage, getObjectiveProgressText, getStageUnlockHint, getTacticByUid,
+  getUnitByUid, isChestClaimed, isDeployTile, isEndlessUnlocked, isStageCleared, isStageUnlocked, loadSave, maxSquadSize, mergeHero,
+  moveDeployUnit, persistSave, previewTurnOrderAfterAction, previewWaitFacing, restoreBattleState, rotateDeployUnit, salvageEquipCard,
   salvageHeroCard, selectHeroByUid, selectTile, serializeBattleState, shouldAutoSaveOnTurnBoundary,
-  startChapterBattle, stepGame, syncTurnBoundaryTracker, toggleSquadMember, undoMove, unequipItem, unitAt
+  startChapterBattle, stepGame, swapDeployUnit, syncTurnBoundaryTracker, toggleSquadMember, undoMove, unequipItem, unitAt
 } from './simulation.ts'
-import { FACING_DIRS, cellHeightLevel, isUnitDowned } from './types.ts'
+import { FACING_DIRS, cellHeightLevel, gridToWorld, isUnitDowned } from './types.ts'
 import type {
   BattleSaveSnapshot, BattleUnit, ChapterSpec, CombatForecast, EnemyArchetypeId, FacingDir, GameState, OwnedEquipCard,
   OwnedHeroCard, PackId, PackRevealItem, Rarity, TurnActionKind, TurnOrderActionPreview
@@ -33,10 +33,10 @@ import type {
 import {
   COLOR, RADIUS, TIER_COLOR, TYPE, UI_THEME_PALETTE, WORLD_MAP_H, WORLD_MAP_W,
   drawAnimatedRevealCard, drawApMeter, drawBattleInfo, drawBoosterPack, drawButton, drawCameraCompassButton, drawCampHeader,
-  drawChapterPicker, drawChip, drawCombatForecast, drawControlHints, drawDefeatBackdrop,
+  drawChapterPicker, drawChip, drawCombatForecast, drawControlHints, drawDefeatBackdrop, drawDeployHeroChip,
   drawDifficultyBadge, drawEmptyNote, drawEndTurnButton, drawEquipCard, drawForecastAltChip,
   drawHeroHeader, drawHeroRosterCard, drawHintPill, drawIconButton, drawLabel, drawLetterbox,
-  drawLootRow, drawModal, drawOverline, drawPackCeremonyBackdrop, drawPanel, drawPortraitTile,
+  drawLootRow, drawModal, drawObjectiveBadge, drawOverline, drawPackCeremonyBackdrop, drawPanel, drawPortraitTile,
   drawResultHeadlineAnimated, drawRevealCard, drawRewardRowAnimated, drawSegmentTrack,
   drawSettingRow, drawSheet, drawSkillRow, drawSkillTile, drawSpeakerPortrait, drawStatStrip,
   drawStoryHeading, drawTab, drawTacticCard, drawText, drawTimelineBg, drawTitleCard,
@@ -568,18 +568,41 @@ async function start() {
   function launchBattle() {
     audio.unlock()
     resumableBattle = null
-    startChapterBattle(state, pendingChapter, pendingEndless)
+    startChapterBattle(state, pendingChapter, pendingEndless, { deployPhase: true })
     lastBattlePhase = state.battle?.phase ?? null
     lastActiveUid = state.battle?.activeUnitUid ?? null
-    if (shouldAutoSaveOnTurnBoundary(turnSaveTracker, state.battle)) {
-      saveNow()
-    }
+    lastBattleTurn = state.battle?.turn ?? 0
+    syncTurnBoundaryTracker(turnSaveTracker, state.battle)
     scene.resetCamera()
     scene.setCameraYaw(0, true)
     scene.setDangerZoneVisible(dangerZoneOn)
     scene.setInspectedEnemyUid(null)
     setScreen('battle')
     renderer.canvas.focus()
+  }
+
+  function confirmDeployAndStart(): boolean {
+    audio.unlock()
+    if (!state.battle || state.battle.phase !== 'deploy') return false
+    if (!confirmDeployment(state)) return false
+    lastBattlePhase = state.battle.phase
+    lastActiveUid = state.battle.activeUnitUid
+    lastBattleTurn = state.battle.turn
+    if (shouldAutoSaveOnTurnBoundary(turnSaveTracker, state.battle)) {
+      saveNow()
+    }
+    uiDirty = true
+    hudRev++
+    return true
+  }
+
+  function rotateSelectedDeployUnit(): boolean {
+    audio.unlock()
+    if (!state.battle || state.battle.phase !== 'deploy') return false
+    if (!rotateDeployUnit(state)) return false
+    uiDirty = true
+    hudRev++
+    return true
   }
 
   function startCampaign(fresh = false) {
@@ -1118,6 +1141,11 @@ async function start() {
         return
       }
       if (event.code === 'Enter' && !event.repeat) {
+        if (state.battle.phase === 'deploy') {
+          event.preventDefault()
+          confirmDeployAndStart()
+          return
+        }
         if (state.battle.facingPicker && state.battle.phase === 'player') {
           event.preventDefault()
           audio.unlock()
@@ -1129,6 +1157,11 @@ async function start() {
           confirmLockedForecast()
           return
         }
+      }
+      if (event.code === 'KeyF' && !event.repeat && state.battle.phase === 'deploy') {
+        event.preventDefault()
+        rotateSelectedDeployUnit()
+        return
       }
       if (event.code === 'KeyF' && !event.repeat && state.battle.phase === 'player') {
         audio.unlock()
@@ -1158,6 +1191,11 @@ async function start() {
       if (event.code === 'KeyT' && !event.repeat) {
         event.preventDefault()
         toggleDangerZone()
+        return
+      }
+      if (event.code === 'Space' && !event.repeat && state.battle.phase === 'deploy') {
+        event.preventDefault()
+        confirmDeployAndStart()
         return
       }
       if (event.code === 'Space' && !event.repeat && state.battle.phase === 'player') {
@@ -1993,6 +2031,22 @@ async function start() {
         { icon: 'check', text: 'Specials Claimed', color: COLOR.muted }
       )
     } else {
+      const objSum = getChapterObjectiveSummary(ch)
+      const objIcon: IconName = objSum.kind === 'assassinate'
+        ? 'target'
+        : objSum.kind === 'defend'
+          ? 'shield'
+          : objSum.kind === 'seize'
+            ? 'flag'
+            : 'sword'
+      const objColor = objSum.kind === 'assassinate'
+        ? '#ff8590'
+        : objSum.kind === 'defend'
+          ? '#7cf0ff'
+          : objSum.kind === 'seize'
+            ? COLOR.accentHi
+            : '#9ff0c4'
+      lootItems.push({ icon: objIcon, text: objSum.short, color: objColor })
       lootItems.push({ icon: 'coin', text: `+${ch.rewardGold}g`, color: COLOR.accentHi })
       if (eq) lootItems.push({ icon: 'bag', text: `${eq.name} (1x)`, color: RARITY_META[eq.rarity].hex })
       if (hero) lootItems.push({ icon: 'users', text: `${hero.name} (1x)`, color: '#9ff0c4' })
@@ -2113,6 +2167,7 @@ async function start() {
     const ch = CHAPTERS[battle.chapterIndex]
     const active = getUnitByUid(battle, battle.activeUnitUid)
     const inspected = getUnitByUid(battle, battle.selectedUnitUid) ?? active
+    const isDeployPhase = battle.phase === 'deploy'
     const isPlayerTurn = battle.phase === 'player' && Boolean(active && active.team === 'ally')
     const activeForecast = resolveActiveForecast()
 
@@ -2301,7 +2356,14 @@ async function start() {
       : 'Click [.] frame to move, [X] crosshair to strike, T for Danger Zone, or arm a skill (1-4). Space Wait-to-Face.'
     let statusAccent: string = COLOR.accent
     let statusImportant = undoAvailable
-    if (!isPlayerTurn && active) {
+    if (isDeployPhase) {
+      const selHero = inspected && inspected.team === 'ally' ? inspected : null
+      statusLine = selHero
+        ? `DEPLOY ${selHero.name}: click any blue tile to move/swap · F Rotate (${selHero.facing.toUpperCase()}) · Space Start Battle`
+        : 'DEPLOY SQUAD: click a hero & any blue spawn tile to reposition/swap · F Rotate · Space / Enter Start Battle'
+      statusAccent = '#5eeeff'
+      statusImportant = true
+    } else if (!isPlayerTurn && active) {
       statusLine = `${active.name}'s turn - resolving maneuver...`
       statusAccent = COLOR.enemy
       statusImportant = true
@@ -2500,11 +2562,110 @@ async function start() {
       }
     })
 
-    // Bottom Dock (Desktop / Phone Portrait / Phone Landscape)
+    // Bottom Dock (Pre-Battle Deployment Bar OR Active Combat Dock)
     let dockNode: LayoutNode
     let dockH: number
 
-    if (mobilePortrait) {
+    if (isDeployPhase) {
+      const deployAllies = battle.units.filter(u => u.alive && u.team === 'ally')
+      const chipH = isPhone ? 46 : 54
+      const deployChips: LayoutNode[] = deployAllies.map((ally, idx) => boxNode({
+        id: `deploy-hero-${idx}`,
+        style: { grow: 1, height: chipH },
+        widget: {
+          type: 'button',
+          label: ally.name,
+          selected: battle.selectedUnitUid === ally.uid,
+          onPress: () => {
+            audio.unlock()
+            battle.selectedUnitUid = ally.uid
+            uiDirty = true
+            hudRev++
+          },
+          draw: (ctx: CanvasRenderingContext2D, rect: LayoutRect, st: CanvasWidgetDrawState) => drawDeployHeroChip(ctx, rect, {
+            name: ally.name,
+            facing: ally.facing,
+            portrait: battleUnitPortrait(ally),
+            selected: battle.selectedUnitUid === ally.uid,
+            compact: isPhone
+          }, st)
+        }
+      }))
+
+      const rotateBtn = boxNode({
+        id: 'cs-deploy-rotate',
+        style: { width: mobilePortrait ? 92 : isPhone ? 96 : 124, height: chipH },
+        widget: {
+          type: 'button',
+          label: 'Rotate Facing (F)',
+          onPress: () => { rotateSelectedDeployUnit() },
+          draw: (ctx: CanvasRenderingContext2D, rect: LayoutRect, st: CanvasWidgetDrawState) => drawButton(
+            ctx, rect, isPhone ? 'Rotate' : 'Rotate (F)', st, { variant: 'secondary', icon: 'rotate-right', size: isPhone ? 12 : 13 }
+          )
+        }
+      })
+
+      const startBtn = boxNode({
+        id: 'cs-start-battle',
+        style: { width: mobilePortrait ? 132 : isPhone ? 132 : 176, height: chipH },
+        widget: {
+          type: 'button',
+          label: 'Start Battle',
+          primary: true,
+          onPress: () => { confirmDeployAndStart() },
+          draw: (ctx: CanvasRenderingContext2D, rect: LayoutRect, st: CanvasWidgetDrawState) => drawButton(
+            ctx, rect, isPhone ? 'Start Battle' : 'Start Battle', st, { variant: 'primary', icon: 'sword', size: isPhone ? 13 : 14 }
+          )
+        }
+      })
+
+      if (mobilePortrait) {
+        dockH = chipH * 2 + 22
+        dockNode = column({
+          id: 'battle-dock',
+          style: { anchor: 'bottom', width: w - 12, height: dockH, inset: 6, padding: 7, gap: 6, respectSafeArea: true },
+          widget: {
+            type: 'panel',
+            blocksPointer: true,
+            draw: (ctx: CanvasRenderingContext2D, rect: LayoutRect) => drawPanel(ctx, rect, { r: RADIUS.lg, lipH: 4 })
+          }
+        }, [
+          row({ id: 'deploy-heroes-row', style: { height: chipH, gap: 6 } }, deployChips),
+          row({ id: 'deploy-actions-row', style: { height: chipH, gap: 6 } }, [
+            rotateBtn,
+            boxNode({
+              id: 'cs-start-battle',
+              style: { grow: 1, height: chipH },
+              widget: {
+                type: 'button',
+                label: 'Start Battle',
+                primary: true,
+                onPress: () => { confirmDeployAndStart() },
+                draw: (ctx: CanvasRenderingContext2D, rect: LayoutRect, st: CanvasWidgetDrawState) => drawButton(
+                  ctx, rect, 'Start Battle', st, { variant: 'primary', icon: 'sword', size: 13 }
+                )
+              }
+            })
+          ])
+        ])
+      } else {
+        dockH = chipH + 18
+        const dockW = Math.min(w - 20, 960)
+        dockNode = row({
+          id: 'battle-dock',
+          style: { anchor: 'bottom', width: dockW, height: dockH, inset: isPhone ? 6 : 10, padding: 8, gap: 8, align: 'center', respectSafeArea: true },
+          widget: {
+            type: 'panel',
+            blocksPointer: true,
+            draw: (ctx: CanvasRenderingContext2D, rect: LayoutRect) => drawPanel(ctx, rect, { r: RADIUS.xl, lipH: 5 })
+          }
+        }, [
+          ...deployChips,
+          rotateBtn,
+          startBtn
+        ])
+      }
+    } else if (mobilePortrait) {
       const topRowH = 54
       const skillRowH = 52
       dockH = topRowH + skillRowH + 20
@@ -2885,13 +3046,22 @@ async function start() {
     const zoomBounds = scene.getCameraZoomBounds()
     const showPhoneZoom = isPhone && !mobileHandOpen && !(mobileLandscape && activeForecast)
 
+    const objText = getObjectiveProgressText(battle)
+    const objUrgent = Boolean(
+      battle.objective.protectBreached ||
+      (battle.objective.turnLimit !== undefined && battle.objective.turnLimit - battle.objective.roundsElapsed <= 2)
+    )
+    const topLeftW = mobilePortrait ? w - toolbarW - 22 : mobileLandscape ? 208 : 264
+    const objBadgeH = isPhone ? 26 : 30
+    const objBadgeW = mobilePortrait ? Math.min(w - 16, 250) : mobileLandscape ? 208 : 264
+
     return overlay({ id: 'root', style: { anchor: 'fill' } }, [
       // Top-left chapter + gold capsule
       boxNode({
         id: 'top-left-bar',
         style: {
           anchor: 'top-left',
-          width: mobilePortrait ? w - toolbarW - 22 : mobileLandscape ? 208 : 264,
+          width: topLeftW,
           height: topBarH,
           inset: isPhone ? 6 : 8,
           respectSafeArea: true
@@ -2900,6 +3070,29 @@ async function start() {
           type: 'panel',
           blocksPointer: true,
           draw: (ctx: CanvasRenderingContext2D, rect: LayoutRect) => drawBattleInfo(ctx, rect, chapterShort, state.campaign.gold)
+        }
+      }),
+
+      // Mission Objective Tracker Badge right below top-left chapter bar
+      boxNode({
+        id: 'battle-objective-badge',
+        style: {
+          anchor: 'top-left',
+          width: objBadgeW,
+          height: objBadgeH,
+          inset: [isPhone ? 6 : 8, (isPhone ? 6 : 8) + topBarH + 6],
+          respectSafeArea: true
+        },
+        widget: {
+          type: 'panel',
+          blocksPointer: false,
+          draw: (ctx: CanvasRenderingContext2D, rect: LayoutRect) => drawObjectiveBadge(ctx, rect, {
+            kind: battle.objective.kind,
+            label: battle.objective.label,
+            progressText: objText,
+            urgent: objUrgent,
+            compact: isPhone
+          })
         }
       }),
 
@@ -4763,6 +4956,66 @@ async function start() {
       }
     }
 
+    // World-space Objective Marker Labels (SEIZE, CHEST, DEFEND, TARGET)
+    if (battle.phase === 'deploy' || battle.phase === 'player' || battle.phase === 'enemy') {
+      const obj = battle.objective
+      if (obj.kind === 'seize' && obj.goalTile) {
+        const gCell = battle.cells[obj.goalTile.row]?.[obj.goalTile.col]
+        if (gCell && gCell.terrain !== 'void') {
+          const [gx, gy, gz] = gridToWorld(obj.goalTile.col, obj.goalTile.row, gCell.elevation, battle.cols, battle.rows)
+          const p = scene.project(gx, gy + 1.95, gz, g.width, g.height)
+          if (p) {
+            const label = 'SEIZE'
+            const pw = 54
+            g.panel(Math.round(p.x - pw / 2), Math.round(p.y - 10), pw, 18, { fill: '#3d2f12e8', stroke: COLOR.accentHi, radius: 9 })
+            g.text(label, p.x, Math.round(p.y - 5.5), { fill: COLOR.accentHi, size: 9.5, weight: 900, align: 'center' })
+          }
+        }
+      }
+      if (obj.kind === 'seize' && obj.chestTiles.length > 0) {
+        for (const ct of obj.chestTiles) {
+          if (isChestClaimed(obj, ct.col, ct.row)) continue
+          const cCell = battle.cells[ct.row]?.[ct.col]
+          if (!cCell || cCell.terrain === 'void') continue
+          const [cx, cy, cz] = gridToWorld(ct.col, ct.row, cCell.elevation, battle.cols, battle.rows)
+          const p = scene.project(cx, cy + 1.05, cz, g.width, g.height)
+          if (p) {
+            const pw = 52
+            g.panel(Math.round(p.x - pw / 2), Math.round(p.y - 9), pw, 17, { fill: '#3d2a12e4', stroke: '#ffd44f', radius: 8 })
+            g.text('CHEST', p.x, Math.round(p.y - 5), { fill: '#ffe585', size: 9, weight: 900, align: 'center' })
+          }
+        }
+      }
+      if (obj.kind === 'defend' && obj.protectTile) {
+        const pCell = battle.cells[obj.protectTile.row]?.[obj.protectTile.col]
+        if (pCell && pCell.terrain !== 'void') {
+          const [px, py, pz] = gridToWorld(obj.protectTile.col, obj.protectTile.row, pCell.elevation, battle.cols, battle.rows)
+          const p = scene.project(px, py + 1.85, pz, g.width, g.height)
+          if (p) {
+            const label = obj.protectBreached ? 'BREACHED!' : 'DEFEND'
+            const pw = obj.protectBreached ? 72 : 62
+            g.panel(Math.round(p.x - pw / 2), Math.round(p.y - 10), pw, 18, {
+              fill: obj.protectBreached ? '#5c1420e8' : '#12394ae8',
+              stroke: obj.protectBreached ? COLOR.danger : '#5eeeff',
+              radius: 9
+            })
+            g.text(label, p.x, Math.round(p.y - 5.5), { fill: obj.protectBreached ? '#ffd6dc' : '#b8f8ff', size: 9.5, weight: 900, align: 'center' })
+          }
+        }
+      }
+      if (obj.kind === 'assassinate' && obj.targetEnemyUid) {
+        const tUnit = getUnitByUid(battle, obj.targetEnemyUid)
+        if (tUnit && tUnit.alive) {
+          const p = scene.project(tUnit.x, tUnit.y + (tUnit.isBoss ? 2.95 : 2.45), tUnit.z, g.width, g.height)
+          if (p) {
+            const pw = 62
+            g.panel(Math.round(p.x - pw / 2), Math.round(p.y - 10), pw, 18, { fill: '#571524e8', stroke: '#ff5266', radius: 9 })
+            g.text('TARGET', p.x, Math.round(p.y - 5.5), { fill: '#ffd4da', size: 9.5, weight: 900, align: 'center' })
+          }
+        }
+      }
+    }
+
     if (hovered && !battle.facingPicker && g.width >= 660) {
       const cell = battle.cells[hovered.row]?.[hovered.col]
       if (cell && cell.terrain !== 'void') {
@@ -4777,6 +5030,7 @@ async function start() {
         const desc = `${baseDesc}${stateSuffix}`
         const hLvl = cellHeightLevel(cell)
         const dzTile = dangerMap?.tiles.find(t => t.col === hovered.col && t.row === hovered.row)
+        const deployTag = battle.phase === 'deploy' && isDeployTile(battle, hovered.col, hovered.row) ? ' · DEPLOY ZONE' : ''
         const threatTag = dzTile
           ? dzTile.hasBackstabRisk
             ? ` · Threat x${dzTile.threatCount} BACKSTAB!`
@@ -4784,12 +5038,12 @@ async function start() {
               ? ` · Threat x${dzTile.threatCount} FLANK!`
               : ` · Threat x${dzTile.threatCount}`
           : ''
-        const text = `${desc} · H${hLvl} (${hovered.col + 1},${hovered.row + 1})${threatTag}`
+        const text = `${desc} · H${hLvl} (${hovered.col + 1},${hovered.row + 1})${deployTag}${threatTag}`
         const pw = Math.min(460, Math.max(148, text.length * 6.8 + 24))
-        const py = g.height < 480 ? 48 : 58
+        const py = g.height < 480 ? 80 : 94
         g.panel(10, py, pw, 28, {
-          fill: dzTile ? '#3d1e2e' : '#253357',
-          stroke: dzTile ? '#ff7d6b' : COLOR.borderHi,
+          fill: dzTile ? '#3d1e2e' : deployTag ? '#1b365e' : '#253357',
+          stroke: dzTile ? '#ff7d6b' : deployTag ? '#68c8ff' : COLOR.borderHi,
           radius: 10
         })
         g.text(text, 22, py + 8, { fill: '#ffffff', size: 11.5, weight: 800 })
@@ -4849,6 +5103,8 @@ async function start() {
       tacticsCount: state.campaign.tactics.length,
       deckValue: computeDeckValue(state.campaign),
       battlePhase: state.battle?.phase ?? null,
+      battleObjective: state.battle ? { kind: state.battle.objective.kind, label: state.battle.objective.label, progress: getObjectiveProgressText(state.battle) } : null,
+      deployTilesCount: state.battle?.deployTiles.length ?? 0,
       battleCols: state.battle?.cols ?? 0,
       battleRows: state.battle?.rows ?? 0,
       battleTurn: state.battle?.turn ?? 0,
@@ -4928,6 +5184,26 @@ async function start() {
       selectTile: (col: number, row: number) => {
         lockedForecastCell = null
         const ok = selectTile(state, col, row)
+        if (ok) { uiDirty = true; hudRev++; renderUiNow() }
+        return ok
+      },
+      confirmDeployment: () => {
+        const ok = confirmDeployAndStart()
+        if (ok) renderUiNow()
+        return ok
+      },
+      moveDeployUnit: (unitUid: string, col: number, row: number) => {
+        const ok = moveDeployUnit(state, unitUid, col, row)
+        if (ok) { uiDirty = true; hudRev++; renderUiNow() }
+        return ok
+      },
+      swapDeployUnit: (uidA: string, uidB: string) => {
+        const ok = swapDeployUnit(state, uidA, uidB)
+        if (ok) { uiDirty = true; hudRev++; renderUiNow() }
+        return ok
+      },
+      rotateDeployUnit: (unitUid?: string, dir?: FacingDir) => {
+        const ok = rotateDeployUnit(state, unitUid, dir)
         if (ok) { uiDirty = true; hudRev++; renderUiNow() }
         return ok
       },
