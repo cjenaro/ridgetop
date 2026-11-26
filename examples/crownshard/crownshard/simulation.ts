@@ -4389,14 +4389,21 @@ export function computeCombatForecast(state: GameState, col: number, row: number
         : 0
       const skElement = classifyElement(sk)
       const skCombo = skElement ? previewElementalCombo(battle, skElement, primary, primary.col, primary.row) : null
-      const skHpAfter = Math.max(0, primary.hp - Math.max(0, m.normalDmg + skPincerDmg - primary.shield) - (skCombo?.bonusDamage ?? 0))
+      const skDispPreview = sk.displacement
+        ? resolveDisplacementPreview(battle, active, primary, sk.displacement, { col: skApproach.col, row: skApproach.row })
+        : undefined
+      const skHpAfter = Math.max(0, primary.hp - Math.max(0, m.normalDmg + skPincerDmg + (skDispPreview?.totalBonusDmg ?? 0) - primary.shield) - (skCombo?.bonusDamage ?? 0))
       const skLethal = skHpAfter <= 0
-      const skRangedOrNonMelee = !isMeleeSkillEligibleForCounter(sk)
+      const skPushedOutOfMelee = Boolean(
+        skDispPreview && skDispPreview.kind !== 'swap' &&
+        manhattan(skApproach.col, skApproach.row, skDispPreview.toCol, skDispPreview.toRow) > 1
+      )
+      const skRangedOrNonMelee = !isMeleeSkillEligibleForCounter(sk) || skPushedOutOfMelee
       const skCanCounter = canCounterAttack(battle, active, primary, m.attackArc, skRangedOrNonMelee, {
         attackerCol: skApproach.col,
         attackerRow: skApproach.row,
         incomingLethal: skLethal,
-        incomingStun: sk.status === 'stun' || skCombo?.causesStun || equipInflictsStun
+        incomingStun: sk.status === 'stun' || skCombo?.extraStatus === 'stun' || Boolean(skDispPreview?.causesStun) || equipInflictsStun
       })
       const skHitHp = Math.max(0, m.normalDmg - primary.shield)
       const skLifesteal = active.lifesteal > 0 && skHitHp > 0 ? Math.max(2, Math.round(skHitHp * active.lifesteal)) : 0
@@ -4442,10 +4449,14 @@ export function computeCombatForecast(state: GameState, col: number, row: number
   let counterAvoidReason: CounterAvoidReason = null
   if (effectiveIsOffensive && primary.team !== active.team && primary.alive) {
     const primaryDist = manhattan(approachCol, approachRow, primary.col, primary.row)
+    const pushedOutOfMelee = Boolean(
+      displacementPreview && displacementPreview.kind !== 'swap' &&
+      manhattan(approachCol, approachRow, displacementPreview.toCol, displacementPreview.toRow) > 1
+    )
     const isRangedOrSkill = armedSkill
-      ? !isMeleeSkillEligibleForCounter(armedSkill)
+      ? (!isMeleeSkillEligibleForCounter(armedSkill) || pushedOutOfMelee)
       : (active.range > 1 || primaryDist !== 1)
-    const incomingStun = armedSkill?.status === 'stun' || equipInflictsStun
+    const incomingStun = armedSkill?.status === 'stun' || elementalCombo?.extraStatus === 'stun' || Boolean(displacementPreview?.causesStun) || equipInflictsStun
     const counterOpts = {
       attackerCol: approachCol,
       attackerRow: approachRow,

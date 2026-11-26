@@ -241,7 +241,8 @@ test('Shatter: Fire on Slowed and Frost on Burned deal bonus burst damage, consu
   const fcThermal = computeCombatForecast(state, target.col, target.row)!
   assert.equal(fcThermal.elementalCombo?.id, 'shatter')
   assert.equal(fcThermal.elementalCombo?.consumesStatus, 'burn')
-  assert.equal(fcThermal.targetHpAfterNormal, target.hp - fcThermal.normalDmg - expectedBonus)
+  const thermalDispBonus = fcThermal.displacementPreview?.totalBonusDmg ?? 0
+  assert.equal(fcThermal.targetHpAfterNormal, target.hp - fcThermal.normalDmg - expectedBonus - thermalDispBonus)
 
   battle.floatingNumbers = []
   state.vfx = []

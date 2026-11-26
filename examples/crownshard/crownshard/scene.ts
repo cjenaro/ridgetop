@@ -2572,8 +2572,8 @@ export function createCrownshardScene(renderer: LowPolyRenderer) {
       }
 
       // Projected forced-displacement slide arrow, landing ring & collision/hazard marker
-      if (fc.displacementPreview) {
-        const dp = fc.displacementPreview
+      if (activeForecast?.displacementPreview) {
+        const dp = activeForecast.displacementPreview
         const dFromCell = battle.cells[dp.fromRow]?.[dp.fromCol]
         const dToCell = battle.cells[dp.toRow]?.[dp.toCol]
         if (dFromCell && dToCell) {

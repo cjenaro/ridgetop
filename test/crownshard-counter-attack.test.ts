@@ -272,49 +272,84 @@ test('Frontal melee strike triggers deterministic Counter-Attack matching Combat
   assert.equal(incomingImpacts.length, 1, 'Defender must receive only 1 impact VFX (no counter-counter)')
 })
 
-test('Single-target melee skill (Shield Bash) triggers frontal counter-attack and applies self-shield before counter lands', () => {
+test('Single-target melee skill (Radiant Smite) triggers frontal counter-attack with self-shield before counter, while knockback (Shield Bash) pushes out of counter range', () => {
   const state = createInitialState(7103)
+  state.campaign.heroes.push({
+    uid: 'hero_paladin_counter',
+    heroId: 'paladin',
+    stars: 1,
+    weaponUid: null,
+    armorUid: null,
+    relicUid: null
+  })
+  state.campaign.squadUids = [state.campaign.heroes[0].uid, 'hero_paladin_counter']
   const battle = startChapterBattle(state, 0)
   flattenArena(battle, 'grass', 0)
 
   const knight = battle.units.find(u => u.heroId === 'knight')!
+  const paladin = battle.units.find(u => u.heroId === 'paladin')!
   const goblin = battle.units.find(u => u.enemyId === 'goblin')!
   for (const u of battle.units) {
-    if (u.uid !== knight.uid && u.uid !== goblin.uid) {
+    if (u.uid !== knight.uid && u.uid !== paladin.uid && u.uid !== goblin.uid) {
       u.hp = 0
       u.alive = false
     }
   }
 
-  knight.hp = 50
-  knight.shield = 0
-  knight.crit = 0
-  goblin.hp = 120
-  goblin.maxHp = 120
+  // 1. Paladin Radiant Smite (single-target melee skill, no knockback): applies self-shield before frontal counter lands
+  paladin.hp = 50
+  paladin.maxHp = 100
+  paladin.shield = 0
+  paladin.crit = 0
+  goblin.hp = 140
+  goblin.maxHp = 140
   goblin.atk = 22
   goblin.stunTurns = 0
 
-  placeUnit(battle, knight, 2, 2)
+  placeUnit(battle, knight, 0, 0)
+  placeUnit(battle, paladin, 2, 2)
   placeUnit(battle, goblin, 3, 2)
-  setUnitFacing(knight, 'e')
+  setUnitFacing(paladin, 'e')
   setUnitFacing(goblin, 'w')
-  setActivePlayer(battle, state.campaign, knight)
+  setActivePlayer(battle, state.campaign, paladin)
 
-  assert.equal(armSkill(state, 0), true, 'Arm Knight Shield Bash (range 1, single)')
+  assert.equal(armSkill(state, 0), true, 'Arm Paladin Radiant Smite (range 1, single)')
   const fc = computeCombatForecast(state, goblin.col, goblin.row)
   assert.ok(fc)
   assert.equal(fc.canCounter, true)
   const expectedCounterDmg = fc.counterDmg ?? 0
   assert.ok(expectedCounterDmg > 0)
 
-  const shieldGain = HERO_SPECS.knight.skills[0].shieldAmount
-  assert.equal(shieldGain, 12)
+  const shieldGain = HERO_SPECS.paladin.skills[0].shieldAmount
+  const healGain = HERO_SPECS.paladin.skills[0].healAmount
+  assert.equal(shieldGain, 8)
   const expectedAbsorbed = Math.min(shieldGain, expectedCounterDmg)
   const expectedHpLoss = Math.max(0, expectedCounterDmg - expectedAbsorbed)
 
   assert.equal(selectTile(state, goblin.col, goblin.row), true)
-  assert.equal(knight.shield, shieldGain - expectedAbsorbed, 'Shield Bash self-shield must absorb counter damage')
-  assert.equal(knight.hp, 50 - expectedHpLoss, 'Remaining counter damage applies to HP after shield')
+  assert.equal(paladin.shield, shieldGain - expectedAbsorbed, 'Radiant Smite self-shield must absorb counter damage')
+  assert.equal(paladin.hp, Math.min(paladin.maxHp, 50 + healGain) - expectedHpLoss, 'Remaining counter damage applies to HP after self-heal & shield')
+
+  // 2. Knight Shield Bash (knockback 1): pushes goblin out of melee reach, avoiding counter-attack in BOTH forecast & execution
+  knight.hp = 50
+  knight.shield = 0
+  goblin.hp = 120
+  goblin.stunTurns = 0
+  placeUnit(battle, paladin, 0, 0)
+  placeUnit(battle, knight, 2, 2)
+  placeUnit(battle, goblin, 3, 2)
+  setUnitFacing(knight, 'e')
+  setUnitFacing(goblin, 'w')
+  setActivePlayer(battle, state.campaign, knight)
+
+  assert.equal(armSkill(state, 0), true, 'Arm Knight Shield Bash (knockback 1)')
+  const fcBash = computeCombatForecast(state, goblin.col, goblin.row)
+  assert.ok(fcBash)
+  assert.equal(fcBash.canCounter, false, 'Shield Bash pushing enemy out of melee range avoids Counter-Attack in forecast')
+  assert.equal(selectTile(state, goblin.col, goblin.row), true)
+  assert.equal(goblin.col, 4, 'Goblin was knocked back 1 tile')
+  assert.equal(knight.hp, 50, 'Knight takes 0 counter damage when knockback pushes foe out of reach')
+  assert.equal(knight.shield, HERO_SPECS.knight.skills[0].shieldAmount, 'Knight keeps full Shield Bash shield')
 })
 
 test('Flanking and backstabbing melee hits avoid Counter-Attack in both CombatForecast and execution', () => {
