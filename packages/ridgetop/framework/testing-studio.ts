@@ -2,7 +2,7 @@ import { createArtKit } from './art.ts'
 import { modelFromArtRecipe } from './art-recipe.ts'
 import type { ArtShape } from './art-recipe.ts'
 import { modelReviewFrame } from './art-review.ts'
-import { multiply, orthographic, view } from './geometry.ts'
+import { createTurntableCamera } from './geometry.ts'
 import { bakeSpriteDirections, renderMeshFrame } from './low-poly.ts'
 import { allowedScopesForSurface, isReviewScope, resolveTestingUrlActivation } from './testing-protocol.ts'
 import type { ReviewStorePort } from './testing-protocol.ts'
@@ -10,7 +10,7 @@ import { createTestingStudioSession, surfaceLabel } from './testing-session.ts'
 import type { ArtRecipeEditor, StudioSelection, TestingStudioSession } from './testing-session.ts'
 import { getLastFrame, isTestingPaused, setTestingActive } from './testing-runtime.ts'
 import type { HudRegion, RecognizedAsset, SpriteDrawRecord } from './testing-runtime.ts'
-import type { BlendMode, InstanceBatch, Vec3 } from './types.ts'
+import type { BlendMode, InstanceBatch } from './types.ts'
 
 function errorMessage(error: unknown): string {
   if (error instanceof Error) return error.message
@@ -81,14 +81,7 @@ function renderRecognizedPreview(recognized: RecognizedAsset, size = 256, yaw = 
   if (!frame) return canvas
   const { center, size: dim } = recognized.bounds
   const span = Math.max(0.5, Math.hypot(dim[0], dim[1], dim[2]) * 1.25)
-  const r = span * 4
-  const horiz = r * Math.cos(elevation)
-  const eye: Vec3 = [
-    center[0] + horiz * Math.sin(yaw),
-    center[1] + r * Math.sin(elevation),
-    center[2] + horiz * Math.cos(yaw)
-  ]
-  const cam = multiply(orthographic(span, span, span / 100, span * 8), view(eye, center))
+  const cam = createTurntableCamera(span, center, yaw, elevation)
   const batchIndices = new Set(recognized.members.map(m => m.batchIndex))
   const subset: InstanceBatch[] = []
   for (const bi of batchIndices) {

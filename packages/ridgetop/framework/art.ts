@@ -1,9 +1,10 @@
 import { createAnimator, createMeshPool, createRig, renderRig, sampleClip } from './animation.ts'
 import type { AnimationClip, Keyframe, Rig, RigJoint, RigPart } from './animation.ts'
 import { instances } from './instances.ts'
-import { multiply, orthographic, quaternionFromEuler, uncoloredMesh, view } from './geometry.ts'
+import { createTurntableCameras, quaternionFromEuler, uncoloredMesh } from './geometry.ts'
 import { applySpriteOutline, bakeSpriteDirections, bakeSpritePixels, renderMeshPixels, spriteDirections } from './low-poly.ts'
 import { color } from './renderer.ts'
+import { canvasFromRgbaPixels } from './sprite-sheet.ts'
 import type { SpriteAtlasSource, SpriteClip, SpriteSheetImage } from './sprites.ts'
 import {
   artPalette, artPoseBounds, artShapes, checkArtModel, checkArtPalette, checkFrameSize,
@@ -11,7 +12,7 @@ import {
 } from './art-recipe.ts'
 import type { ArtModel, ArtPart, ArtRecipe, ArtTone } from './art-recipe.ts'
 import { captureSourceSite, isTestingActive, nextTestingGroupId, registerArtKitRuntime } from './testing-runtime.ts'
-import type { BlendMode, Color, InstanceBatch, LightingOptions, Mesh, Vec3 } from './types.ts'
+import type { BlendMode, Color, InstanceBatch, LightingOptions, Matrix, Mesh, Vec3 } from './types.ts'
 export { artPalette, artShapes, modelFromArtRecipe, recipeFromArtModel } from './art-recipe.ts'
 export type { ArtBounds, ArtModel, ArtPart, ArtRecipe, ArtRecipeClip, ArtRecipeClipFrame, ArtRecipeJoint, ArtRecipeJointPose, ArtRecipePart, ArtShape, ArtTone, ArtTubeSpec } from './art-recipe.ts'
 
@@ -326,8 +327,6 @@ export function bakeAnimatedSpritePixels(source: ArtModel | ArtRecipe, options: 
 
   const alignFeet = options.alignFeet ?? true
   const centerY = options.centerY ?? model.centerY
-  const cosEl = Math.cos(elevation)
-  const sinEl = Math.sin(elevation)
   const framer = options.span === undefined
     ? createOrthoFrameAccumulator({ elevation, angles: dirAngles, centerY })
     : undefined
@@ -378,14 +377,9 @@ export function bakeAnimatedSpritePixels(source: ArtModel | ArtRecipe, options: 
   const allEightCanonical = directions.length === spriteDirections.length &&
     directions.every((d, i) => d === spriteDirections[i])
 
-  let cameras: ReturnType<typeof multiply>[] | null = null
+  let cameras: Matrix[] | null = null
   if (!allEightCanonical) {
-    const projection = orthographic(span, span, span / 100, span * 8)
-    const radius = span * 4
-    const horizontal = radius * cosEl
-    cameras = dirAngles.map(angle =>
-      multiply(projection, view([horizontal * Math.sin(angle), centerY + radius * sinEl, horizontal * Math.cos(angle)], [0, centerY, 0]))
-    )
+    cameras = createTurntableCameras(span, [0, centerY, 0], dirAngles, elevation)
   }
 
   const pool = createMeshPool(Math.max(16, model.parts.length))
@@ -448,12 +442,7 @@ export function bakeAnimatedSpritePixels(source: ArtModel | ArtRecipe, options: 
 /** Bake a rigged model's animation clip(s) across directions into a browser HTMLCanvasElement sprite sheet. */
 export function bakeAnimatedSpriteDirections(source: ArtModel | ArtRecipe, options: AnimatedSpriteOptions = {}): BakedSpriteSheet {
   const { width, height, pixels, manifest } = bakeAnimatedSpritePixels(source, options)
-  const image = document.createElement('canvas')
-  image.width = width
-  image.height = height
-  const context = image.getContext('2d')
-  if (!context) throw new Error('Could not create the animated sprite sheet')
-  context.putImageData(new ImageData(pixels, width, height), 0, 0)
+  const image = canvasFromRgbaPixels(pixels, width, height, 'Could not create the animated sprite sheet')
   return { image, manifest }
 }
 

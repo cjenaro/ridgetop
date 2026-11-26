@@ -49,6 +49,41 @@ export function orthographic(width: number, height: number, near: number, far: n
   ])
 }
 
+/** Build one orthographic turntable camera orbiting `center` at horizontal yaw `angle` and vertical `elevation`. */
+export function createTurntableCamera(
+  span: number,
+  center: Vec3,
+  angle: number,
+  elevation: number,
+  projection?: Matrix
+): Matrix {
+  const proj = projection ?? orthographic(span, span, span / 100, span * 8)
+  const radius = span * 4
+  const horizontal = radius * Math.cos(elevation)
+  return multiply(
+    proj,
+    view(
+      [
+        center[0] + horizontal * Math.sin(angle),
+        center[1] + radius * Math.sin(elevation),
+        center[2] + horizontal * Math.cos(angle)
+      ],
+      center
+    )
+  )
+}
+
+/** Build a sequence of orthographic turntable cameras sharing one projection matrix around `center`. */
+export function createTurntableCameras(
+  span: number,
+  center: Vec3,
+  angles: readonly number[],
+  elevation: number
+): Matrix[] {
+  const projection = orthographic(span, span, span / 100, span * 8)
+  return angles.map(angle => createTurntableCamera(span, center, angle, elevation, projection))
+}
+
 export function perspective(fieldOfView: number, aspect: number, near: number, far: number): Matrix {
   if (!(fieldOfView > 0 && fieldOfView < Math.PI && aspect > 0 && near > 0 && far > near) ||
       ![aspect, near, far].every(Number.isFinite)) throw new RangeError('Invalid perspective volume')

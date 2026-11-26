@@ -59,6 +59,7 @@ export interface MeshPool {
 const ZERO3: Vec3 = [0, 0, 0]
 const ONE3: Vec3 = [1, 1, 1]
 const IDENTITY_Q: Quaternion = [0, 0, 0, 1]
+const FORBIDDEN_JOINT_KEYS = new Set(['__proto__', 'constructor', 'prototype'])
 
 export interface CompiledHierarchy {
   readonly order: readonly number[]
@@ -81,7 +82,7 @@ export function sortJointHierarchy(
   const indexById = new Map<string, number>()
   for (let i = 0; i < joints.length; i++) {
     const id = joints[i].id
-    if (!id || indexById.has(id)) {
+    if (!id || FORBIDDEN_JOINT_KEYS.has(id) || indexById.has(id)) {
       throw errors.duplicate ? errors.duplicate(id) : new Error('Duplicate or empty rig joint id: ' + id)
     }
     indexById.set(id, i)

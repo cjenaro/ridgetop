@@ -1,3 +1,12 @@
+export type SpriteOutlineMode = '4-way' | '8-way' | 'selout'
+
+export interface SpriteOutlineOptions {
+  readonly mode?: SpriteOutlineMode
+  readonly palette?: readonly string[] | Readonly<Record<string, string | null>>
+  /** Pixels with alpha <= this threshold are treated as transparent exterior (default `0`). */
+  readonly emptyAlphaThreshold?: number
+}
+
 export interface SpriteFrame {
   readonly width: number
   readonly height: number
@@ -19,15 +28,17 @@ export interface SpriteFrame {
   mirrorX(axisX?: number): void
   /** Copy opaque pixels from another cell in this sheet with optional `(dx, dy)` pixel shift. */
   copyFrom(column: number, row?: number, dx?: number, dy?: number): void
+  /** Composite an RGBA pixel buffer into this cell at optional `(dx, dy)` pixel offset with alpha blending and bounds clipping. */
+  blit(source: Uint8ClampedArray | Uint8Array, sourceWidth: number, sourceHeight: number, dx?: number, dy?: number): void
   /** Draw an airy, orphan-free 3×3 or 5×5 cross-star glint sparkle (recommended after `outline()`). */
   glint(cx: number, cy: number, coreColor: string, armColor?: string, size?: 3 | 5): void
   /**
    * Add a crisp 1px exterior outline around existing opaque pixels without overwriting interior art.
-   * Pass a 6-digit hex color with `'4-way'` or `'8-way'`, OR pass `'selout'` for automatic
+   * Pass a 6- or 8-digit hex color with `'4-way'` or `'8-way'`, OR pass `'selout'` for automatic
    * directional hue-shifted selective outlines. Pass `{ palette }` to snap selout colors onto
    * existing dark palette shades (zero palette bloat!).
    */
-  outline(colorOrSelout: string, modeOrOptions?: '4-way' | '8-way' | 'selout' | { mode?: '4-way' | '8-way' | 'selout'; palette?: readonly string[] | Readonly<Record<string, string | null>> }): void
+  outline(colorOrSelout: string, modeOrOptions?: SpriteOutlineMode | SpriteOutlineOptions): void
 }
 
 export interface HueRamp {
@@ -57,7 +68,8 @@ export interface SpriteAuditReport {
 const channelPack = new Uint8ClampedArray(4)
 const wordPack = new Uint32Array(channelPack.buffer)
 
-function parseHexRgba(color: string): [number, number, number, number] {
+/** Parse `#rrggbb`, `#rrggbbaa` (or `#rgb` when `allowShort` is true) into `[r, g, b, a]` bytes (0–255). */
+export function parseHexRgba(color: string, allowShort = false): [number, number, number, number] {
   if (typeof color !== 'string') throw new RangeError('Expected a six-digit RGB color')
   const raw = color.charCodeAt(0) === 35 ? color.slice(1) : color
   if (/^[0-9a-f]{6}$/i.test(raw)) {
@@ -68,6 +80,11 @@ function parseHexRgba(color: string): [number, number, number, number] {
     const n = Number.parseInt(raw, 16) >>> 0
     return [(n >>> 24) & 255, (n >>> 16) & 255, (n >>> 8) & 255, n & 255]
   }
+  if (allowShort && /^[0-9a-f]{3}$/i.test(raw)) {
+    const n = Number.parseInt(raw, 16)
+    const r = (n >>> 8) & 15, g = (n >>> 4) & 15, b = n & 15
+    return [(r << 4) | r, (g << 4) | g, (b << 4) | b, 255]
+  }
   throw new RangeError('Expected a six-digit RGB color')
 }
 
@@ -75,10 +92,10 @@ function packColor(color: string) {
   if (typeof color !== 'string' || !/^#?[0-9a-f]{6}$/i.test(color)) {
     throw new RangeError('Expected a six-digit RGB color')
   }
-  const tint = Number.parseInt(color.charCodeAt(0) === 35 ? color.slice(1) : color, 16)
-  channelPack[0] = (tint >>> 16) & 255
-  channelPack[1] = (tint >>> 8) & 255
-  channelPack[2] = tint & 255
+  const [r, g, b] = parseHexRgba(color)
+  channelPack[0] = r
+  channelPack[1] = g
+  channelPack[2] = b
   channelPack[3] = 255
   return wordPack[0]
 }
@@ -151,6 +168,132 @@ export function hueShiftRamp(baseHex: string, { shadowHue, highlightHue = 48 }: 
   }
 }
 
+/** Wrap an RGBA pixel buffer into a browser `HTMLCanvasElement`. */
+export function canvasFromRgbaPixels(
+  pixels: Uint8ClampedArray<ArrayBuffer>,
+  width: number,
+  height: number,
+  errorMessage = 'Could not create the sprite sheet'
+): HTMLCanvasElement {
+  const image = document.createElement('canvas')
+  image.width = width
+  image.height = height
+  const context = image.getContext('2d')
+  if (!context) throw new Error(errorMessage)
+  context.putImageData(new ImageData(pixels, width, height), 0, 0)
+  return image
+}
+
+/**
+ * Add a crisp 1px exterior outline around opaque pixels inside the `(x0, y0, regionWidth, regionHeight)`
+ * sub-rectangle of an RGBA buffer of pixel stride `stride`, without overwriting interior pixels or bleeding
+ * outside the region. Supports 6- or 8-digit hex colors (`'4-way'` / `'8-way'`) and hue-shifted `'selout'`
+ * with optional palette snapping.
+ */
+export function outlinePixelRegion(
+  pixels: Uint8ClampedArray,
+  stride: number,
+  x0: number,
+  y0: number,
+  regionWidth: number,
+  regionHeight: number,
+  colorOrSelout: string,
+  modeOrOptions?: SpriteOutlineMode | SpriteOutlineOptions,
+  scratch?: Uint8ClampedArray
+): void {
+  if (
+    !Number.isSafeInteger(stride) || stride <= 0 ||
+    !Number.isSafeInteger(x0) || x0 < 0 ||
+    !Number.isSafeInteger(y0) || y0 < 0 ||
+    !Number.isSafeInteger(regionWidth) || regionWidth <= 0 ||
+    !Number.isSafeInteger(regionHeight) || regionHeight <= 0 ||
+    x0 + regionWidth > stride ||
+    ((y0 + regionHeight - 1) * stride + x0 + regionWidth) * 4 > pixels.length
+  ) {
+    throw new RangeError('outlinePixelRegion requires valid positive integer region bounds within the pixel buffer')
+  }
+  const opts = typeof modeOrOptions === 'object' && modeOrOptions !== null ? modeOrOptions : { mode: modeOrOptions }
+  const mode = opts.mode
+  const emptyAlphaThreshold = opts.emptyAlphaThreshold ?? 0
+  const isSelout = colorOrSelout === 'selout' || mode === 'selout'
+  const use8 = mode === '8-way'
+  const fixed = isSelout ? null : parseHexRgba(colorOrSelout)
+  const baseInk = isSelout && colorOrSelout !== 'selout' ? parseHexRgba(colorOrSelout) : [20, 28, 42, 255]
+  let snapColors: [number, number, number][] | null = null
+  if (isSelout && opts.palette) {
+    const rawList = Array.isArray(opts.palette) ? opts.palette : Object.values(opts.palette)
+    const parsed: [number, number, number][] = []
+    for (const hex of rawList) {
+      if (typeof hex !== 'string' || !hex) continue
+      const [pr, pg, pb, pa] = parseHexRgba(hex)
+      if (pa > 200) parsed.push([pr, pg, pb])
+    }
+    if (parsed.length) snapColors = parsed
+  }
+  const regionBytes = regionWidth * regionHeight * 4
+  const snap = scratch && scratch.length >= regionBytes ? scratch : new Uint8ClampedArray(regionBytes)
+  const rowBytes = regionWidth * 4
+  for (let py = 0; py < regionHeight; py++) {
+    const rowStart = ((y0 + py) * stride + x0) * 4
+    snap.set(pixels.subarray(rowStart, rowStart + rowBytes), py * rowBytes)
+  }
+  const offsets = use8
+    ? [[-1, 0], [1, 0], [0, -1], [0, 1], [-1, -1], [1, -1], [-1, 1], [1, 1]]
+    : [[-1, 0], [1, 0], [0, -1], [0, 1]]
+  for (let py = 0; py < regionHeight; py++) {
+    for (let px = 0; px < regionWidth; px++) {
+      const si = (py * regionWidth + px) * 4
+      if (snap[si + 3] > emptyAlphaThreshold) continue
+      let nr = 0, ng = 0, nb = 0, hits = 0, topLeftBias = 0
+      for (const [ox, oy] of offsets) {
+        const nx = px + ox, ny = py + oy
+        if (nx < 0 || nx >= regionWidth || ny < 0 || ny >= regionHeight) continue
+        const ni = (ny * regionWidth + nx) * 4
+        if (snap[ni + 3] > 128) {
+          nr += snap[ni]; ng += snap[ni + 1]; nb += snap[ni + 2]; hits++
+          if (oy > 0 || ox > 0) topLeftBias++
+        }
+      }
+      if (!hits) continue
+      const di = ((y0 + py) * stride + x0 + px) * 4
+      if (fixed) {
+        pixels[di] = fixed[0]; pixels[di + 1] = fixed[1]; pixels[di + 2] = fixed[2]; pixels[di + 3] = fixed[3]
+      } else {
+        const ar = nr / hits, ag = ng / hits, ab = nb / hits
+        const [h, s, l] = rgbToHsl(ar, ag, ab)
+        const litEdge = topLeftBias > 0
+        const darkL = litEdge ? Math.max(0.14, l * 0.48) : Math.max(0.08, l * 0.24)
+        const [or, og, ob] = hslToRgb(shiftTowardHue(h, 232, litEdge ? 0.30 : 0.55), Math.min(0.85, s * 1.05 + 0.08), darkL)
+        const mix = litEdge ? 0.25 : 0.60
+        let tr = Math.round(or * (1 - mix) + baseInk[0] * mix)
+        let tg = Math.round(og * (1 - mix) + baseInk[1] * mix)
+        let tb = Math.round(ob * (1 - mix) + baseInk[2] * mix)
+        if (snapColors) {
+          let bestD = Infinity, best = snapColors[0]
+          for (let ci = 0; ci < snapColors.length; ci++) {
+            const c = snapColors[ci]
+            const cLum = 0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2]
+            if (cLum > (litEdge ? 145 : 75)) continue
+            const dr = c[0] - tr, dg = c[1] - tg, db = c[2] - tb
+            const d = dr * dr + dg * dg + db * db
+            if (d < bestD) { bestD = d; best = c }
+          }
+          if (bestD === Infinity) {
+            let minLum = Infinity
+            for (let ci = 0; ci < snapColors.length; ci++) {
+              const c = snapColors[ci]
+              const cLum = 0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2]
+              if (cLum < minLum) { minLum = cLum; best = c }
+            }
+          }
+          tr = best[0]; tg = best[1]; tb = best[2]
+        }
+        pixels[di] = tr; pixels[di + 1] = tg; pixels[di + 2] = tb; pixels[di + 3] = 255
+      }
+    }
+  }
+}
+
 /** A transparent RGBA sheet. Drawing coordinates are local to the selected cell. */
 export function createSpriteSheet(frameWidth: number, frameHeight: number, columns: number, rows = 1) {
   if (![frameWidth, frameHeight, columns, rows].every(n => Number.isSafeInteger(n) && n > 0)) {
@@ -164,13 +307,28 @@ export function createSpriteSheet(frameWidth: number, frameHeight: number, colum
   function frame(column: number, row = 0): SpriteFrame {
     if (!Number.isInteger(column) || column < 0 || column >= columns ||
         !Number.isInteger(row) || row < 0 || row >= rows) throw new RangeError('Cell outside sprite sheet')
-    const origin = row * frameHeight * width + column * frameWidth
+    const cellX = column * frameWidth
+    const cellY = row * frameHeight
+    const origin = cellY * width + cellX
 
     function span(x: number, end: number, y: number, packed: number) {
       if (x < 0 || end > frameWidth || y < 0 || y >= frameHeight) throw new RangeError('Drawing outside sprite frame')
       if (x >= end) return
       const start = origin + y * width + x
       words.fill(packed, start, start + (end - x))
+    }
+
+    function blendPixel(idx: number, r: number, g: number, b: number, a: number) {
+      if (a === 255 || pixels[idx + 3] === 0) {
+        pixels[idx] = r; pixels[idx + 1] = g; pixels[idx + 2] = b; pixels[idx + 3] = a
+      } else if (a > 0) {
+        const sa = a / 255, da = pixels[idx + 3] / 255
+        const oa = sa + da * (1 - sa)
+        pixels[idx] = Math.round((r * sa + pixels[idx] * da * (1 - sa)) / oa)
+        pixels[idx + 1] = Math.round((g * sa + pixels[idx + 1] * da * (1 - sa)) / oa)
+        pixels[idx + 2] = Math.round((b * sa + pixels[idx + 2] * da * (1 - sa)) / oa)
+        pixels[idx + 3] = Math.round(oa * 255)
+      }
     }
 
     function setPixelClipped(px: number, py: number, color: string | null) {
@@ -182,16 +340,7 @@ export function createSpriteSheet(frameWidth: number, frameHeight: number, colum
         return
       }
       const [r, g, b, a] = parseHexRgba(color)
-      if (a === 255 || pixels[idx + 3] === 0) {
-        pixels[idx] = r; pixels[idx + 1] = g; pixels[idx + 2] = b; pixels[idx + 3] = a
-      } else if (a > 0) {
-        const sa = a / 255, da = pixels[idx + 3] / 255
-        const oa = sa + da * (1 - sa)
-        pixels[idx] = Math.round((r * sa + pixels[idx] * da * (1 - sa)) / oa)
-        pixels[idx + 1] = Math.round((g * sa + pixels[idx + 1] * da * (1 - sa)) / oa)
-        pixels[idx + 2] = Math.round((b * sa + pixels[idx + 2] * da * (1 - sa)) / oa)
-        pixels[idx + 3] = Math.round(oa * 255)
-      }
+      blendPixel(idx, r, g, b, a)
     }
 
     function readPixel(px: number, py: number): string | null {
@@ -369,6 +518,31 @@ export function createSpriteSheet(frameWidth: number, frameHeight: number, colum
           }
         }
       },
+      blit(source, sourceWidth, sourceHeight, dx = 0, dy = 0) {
+        if (!Number.isSafeInteger(sourceWidth) || sourceWidth < 0 ||
+            !Number.isSafeInteger(sourceHeight) || sourceHeight < 0 ||
+            source.length < sourceWidth * sourceHeight * 4) {
+          throw new RangeError('Invalid blit source dimensions')
+        }
+        if (sourceWidth === 0 || sourceHeight === 0 || !Number.isFinite(dx) || !Number.isFinite(dy)) return
+        const ox = Math.round(dx), oy = Math.round(dy)
+        const sx0 = Math.max(0, -ox)
+        const sy0 = Math.max(0, -oy)
+        const sx1 = Math.min(sourceWidth, frameWidth - ox)
+        const sy1 = Math.min(sourceHeight, frameHeight - oy)
+        if (sx0 >= sx1 || sy0 >= sy1) return
+        const src = source.buffer === pixels.buffer ? new Uint8ClampedArray(source) : source
+        for (let sy = sy0; sy < sy1; sy++) {
+          const dstRow = origin + (sy + oy) * width + ox
+          const srcRow = sy * sourceWidth
+          for (let sx = sx0; sx < sx1; sx++) {
+            const si = (srcRow + sx) * 4
+            const a = src[si + 3]
+            if (a === 0) continue
+            blendPixel((dstRow + sx) * 4, src[si], src[si + 1], src[si + 2], a)
+          }
+        }
+      },
       glint(cx, cy, coreColor, armColor = coreColor, size: 3 | 5 = 3) {
         const ix = Math.round(cx), iy = Math.round(cy)
         setPixelClipped(ix, iy, coreColor)
@@ -384,83 +558,7 @@ export function createSpriteSheet(frameWidth: number, frameHeight: number, colum
         }
       },
       outline(colorOrSelout, modeOrOptions) {
-        const opts = typeof modeOrOptions === 'object' && modeOrOptions !== null ? modeOrOptions : { mode: modeOrOptions }
-        const mode = opts.mode
-        const isSelout = colorOrSelout === 'selout' || mode === 'selout'
-        const use8 = mode === '8-way'
-        const fixed = isSelout ? null : parseHexRgba(colorOrSelout)
-        const baseInk = isSelout && colorOrSelout !== 'selout' ? parseHexRgba(colorOrSelout) : [20, 28, 42, 255]
-        let snapColors: [number, number, number][] | null = null
-        if (isSelout && opts.palette) {
-          const rawList = Array.isArray(opts.palette) ? opts.palette : Object.values(opts.palette)
-          const parsed: [number, number, number][] = []
-          for (const hex of rawList) {
-            if (typeof hex !== 'string' || !hex) continue
-            const [pr, pg, pb, pa] = parseHexRgba(hex)
-            if (pa > 200) parsed.push([pr, pg, pb])
-          }
-          if (parsed.length) snapColors = parsed
-        }
-        const snap = new Uint8ClampedArray(frameWidth * frameHeight * 4)
-        for (let py = 0; py < frameHeight; py++) {
-          const rowStart = (origin + py * width) * 4
-          snap.set(pixels.subarray(rowStart, rowStart + frameWidth * 4), py * frameWidth * 4)
-        }
-        const offsets = use8
-          ? [[-1, 0], [1, 0], [0, -1], [0, 1], [-1, -1], [1, -1], [-1, 1], [1, 1]]
-          : [[-1, 0], [1, 0], [0, -1], [0, 1]]
-        for (let py = 0; py < frameHeight; py++) {
-          for (let px = 0; px < frameWidth; px++) {
-            const si = (py * frameWidth + px) * 4
-            if (snap[si + 3] > 0) continue
-            let nr = 0, ng = 0, nb = 0, hits = 0, topLeftBias = 0
-            for (const [ox, oy] of offsets) {
-              const nx = px + ox, ny = py + oy
-              if (nx < 0 || nx >= frameWidth || ny < 0 || ny >= frameHeight) continue
-              const ni = (ny * frameWidth + nx) * 4
-              if (snap[ni + 3] > 128) {
-                nr += snap[ni]; ng += snap[ni + 1]; nb += snap[ni + 2]; hits++
-                if (oy > 0 || ox > 0) topLeftBias++
-              }
-            }
-            if (!hits) continue
-            const di = (origin + py * width + px) * 4
-            if (fixed) {
-              pixels[di] = fixed[0]; pixels[di + 1] = fixed[1]; pixels[di + 2] = fixed[2]; pixels[di + 3] = fixed[3]
-            } else {
-              const ar = nr / hits, ag = ng / hits, ab = nb / hits
-              const [h, s, l] = rgbToHsl(ar, ag, ab)
-              const litEdge = topLeftBias > 0
-              const darkL = litEdge ? Math.max(0.14, l * 0.48) : Math.max(0.08, l * 0.24)
-              const [or, og, ob] = hslToRgb(shiftTowardHue(h, 232, litEdge ? 0.30 : 0.55), Math.min(0.85, s * 1.05 + 0.08), darkL)
-              const mix = litEdge ? 0.25 : 0.60
-              let tr = Math.round(or * (1 - mix) + baseInk[0] * mix)
-              let tg = Math.round(og * (1 - mix) + baseInk[1] * mix)
-              let tb = Math.round(ob * (1 - mix) + baseInk[2] * mix)
-              if (snapColors) {
-                let bestD = Infinity, best = snapColors[0]
-                for (let ci = 0; ci < snapColors.length; ci++) {
-                  const c = snapColors[ci]
-                  const cLum = 0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2]
-                  if (cLum > (litEdge ? 145 : 75)) continue
-                  const dr = c[0] - tr, dg = c[1] - tg, db = c[2] - tb
-                  const d = dr * dr + dg * dg + db * db
-                  if (d < bestD) { bestD = d; best = c }
-                }
-                if (bestD === Infinity) {
-                  let minLum = Infinity
-                  for (let ci = 0; ci < snapColors.length; ci++) {
-                    const c = snapColors[ci]
-                    const cLum = 0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2]
-                    if (cLum < minLum) { minLum = cLum; best = c }
-                  }
-                }
-                tr = best[0]; tg = best[1]; tb = best[2]
-              }
-              pixels[di] = tr; pixels[di + 1] = tg; pixels[di + 2] = tb; pixels[di + 3] = 255
-            }
-          }
-        }
+        outlinePixelRegion(pixels, width, cellX, cellY, frameWidth, frameHeight, colorOrSelout, modeOrOptions)
       }
     }
   }

@@ -1,5 +1,6 @@
 import { createAlphaSorter, multiply, orthographic, view } from './geometry.ts'
 import { frustum, visible } from './instances.ts'
+import { parseHexRgba } from './sprite-sheet.ts'
 import type {
   BlendMode, Color, InstanceBatch, LightingInput, LightingOptions, Matrix, Mesh,
   PreparedLighting, RenderStats, Vec3
@@ -31,24 +32,12 @@ const IDENTITY_MATRIX: Matrix = new Float32Array([
 ])
 
 export function color(hex: string): Color {
-  const clean = typeof hex === 'string' ? hex.replace(/^#/, '') : ''
-  if (/^[0-9a-f]{6}$/i.test(clean)) {
-    const rgb = Number.parseInt(clean, 16)
-    return [((rgb >>> 16) & 255) / 255, ((rgb >>> 8) & 255) / 255, (rgb & 255) / 255, 1]
+  try {
+    const [r, g, b, a] = parseHexRgba(hex, true)
+    return [r / 255, g / 255, b / 255, a / 255]
+  } catch {
+    throw new RangeError('Invalid hex color: ' + hex)
   }
-  if (/^[0-9a-f]{8}$/i.test(clean)) {
-    const rgba = Number.parseInt(clean, 16)
-    return [((rgba >>> 24) & 255) / 255, ((rgba >>> 16) & 255) / 255, ((rgba >>> 8) & 255) / 255, (rgba & 255) / 255]
-  }
-  if (/^[0-9a-f]{3}$/i.test(clean)) {
-    return [
-      Number.parseInt(clean[0] + clean[0], 16) / 255,
-      Number.parseInt(clean[1] + clean[1], 16) / 255,
-      Number.parseInt(clean[2] + clean[2], 16) / 255,
-      1
-    ]
-  }
-  throw new RangeError('Invalid hex color: ' + hex)
 }
 
 function resetDefaultLight(out: Float32Array<ArrayBuffer>) {
