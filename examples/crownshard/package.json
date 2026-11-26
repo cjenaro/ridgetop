@@ -24,6 +24,8 @@
     "godotEntries": [
       "crownshard/simulation.ts",
       "crownshard/counter-attack.ts",
+      "crownshard/pincer.ts",
+      "crownshard/zoc.ts",
       "crownshard/data.ts",
       "crownshard/types.ts",
       "ridgetop/ui"

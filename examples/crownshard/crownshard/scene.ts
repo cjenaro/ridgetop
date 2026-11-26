@@ -18,8 +18,9 @@ import type { Gait, UnitClipName } from './animations.ts'
 import { VFX_COLORS, arrowMesh, createBattleVfx } from './vfx.ts'
 import type { StrikeShape } from './vfx.ts'
 import {
-  computeDangerZone, computeEnemyThreat, evaluateAllFacingExposures, getEquipmentByUid,
-  getHeroByUid, getHeroSkill, getPatternCells, getTacticByUid, getUnitByUid, isChestClaimed, isIntactBarricade, unitAt, unitOrDownedAt
+  computeDangerZone, computeEnemyThreat, computeZocPerimeterTiles, evaluateAllFacingExposures, findGridPath,
+  getEquipmentByUid, getHeroByUid, getHeroSkill, getPatternCells, getTacticByUid, getUnitByUid,
+  isChestClaimed, isIntactBarricade, previewPathOpportunityAttacks, unitAt, unitOrDownedAt
 } from './simulation.ts'
 import { TACTIC_BY_ID } from './data.ts'
 import { BARRICADE_DEFAULT_HP, FACING_DIRS, TILE_SIZE, facingToYaw, facingVector, gridToWorld, isUnitDowned, vectorToFacing } from './types.ts'
@@ -66,6 +67,13 @@ const C_ENEMY_REACH_TILE: Color = [0.98, 0.22, 0.18, 0.28]
 const C_ENEMY_REACH_HATCH: Color = [1.0, 0.62, 0.34, 0.82]
 const C_FLANK_WARN: Color = [1.0, 0.78, 0.16, 0.96]
 const C_BACKSTAB_WARN: Color = [1.0, 0.24, 0.66, 0.98]
+const C_ZOC_PERIMETER: Color = [1.0, 0.44, 0.14, 0.16]
+const C_ZOC_PERIMETER_MARK: Color = [1.0, 0.60, 0.22, 0.56]
+const C_MOVE_PATH_STEP: Color = [0.46, 0.94, 1.0, 0.92]
+const C_OA_WARN_TILE: Color = [1.0, 0.30, 0.10, 0.52]
+const C_OA_WARN_MARK: Color = [1.0, 0.78, 0.22, 0.98]
+const C_OA_ARC: Color = [1.0, 0.36, 0.14, 0.98]
+const C_OA_SENTINEL_RING: Color = [1.0, 0.42, 0.14, 0.96]
 const C_HOVER_TILE: Color = [1.0, 0.98, 0.90, 0.28]
 const C_HOVER_BORDER: Color = [1.0, 1.0, 1.0, 0.98]
 const C_APPROACH_RING: Color = [0.42, 0.95, 1.0, 0.96]
@@ -276,6 +284,13 @@ const tileCrossMesh = flatSegmentsMesh([
   [-0.30, -0.30, 0.30, 0.30],
   [0.30, -0.30, -0.30, 0.30]
 ], 0.055)
+// 2b. Crossed-Swords Warning Emblem (blades + crossguards) -> OPPORTUNITY ATTACK provoked tile!
+const tileCrossedSwordsMesh = flatSegmentsMesh([
+  [-0.34, 0.34, 0.34, -0.34],
+  [0.34, 0.34, -0.34, -0.34],
+  [-0.28, 0.12, -0.12, 0.28],
+  [0.28, 0.12, 0.12, 0.28]
+], 0.052)
 // 3. Four Corner L-Brackets [ ] -> Attack lock-on / Free skill range footprint
 const tileCornersMesh = flatOverlayMesh([
   [-0.46, -0.46, -0.22, -0.39], [-0.46, -0.46, -0.39, -0.22],
@@ -2057,6 +2072,19 @@ export function createCrownshardScene(renderer: LowPolyRenderer) {
     }
 
     const activeUnit = getUnitByUid(battle, battle.activeUnitUid)
+    const noUnitsMoving = !battle.units.some(u => u.path.length > 0)
+
+    // 1b. Subtle Enemy Zone of Control (ZoC) perimeter markings while player hero can move
+    if (battle.phase === 'player' && activeUnit && activeUnit.alive && !activeUnit.moved && !battle.facingPicker && noUnitsMoving) {
+      const zocTiles = computeZocPerimeterTiles(battle, 'enemy')
+      for (const zt of zocTiles) {
+        const zCell = battle.cells[zt.row]?.[zt.col]
+        if (!zCell || zCell.terrain === 'void') continue
+        const [zx, zy, zz] = gridToWorld(zt.col, zt.row, zCell.elevation, battle.cols, battle.rows)
+        pool.add(tileQuad, [zx, zy + 0.020, zz], [TILE_SIZE * 0.88, 1, TILE_SIZE * 0.88], 0, C_ZOC_PERIMETER, 0.90, 'alpha')
+        pool.add(tileDangerCornersMesh, [zx, zy + 0.028, zz], [TILE_SIZE * 0.90, 1, TILE_SIZE * 0.90], 0, C_ZOC_PERIMETER_MARK, 0.94, 'alpha')
+      }
+    }
     const armedSkill = activeUnit && battle.armedSkillIndex !== null && battle.armedSkillIndex >= 0
       ? getHeroSkill(activeUnit, battle.armedSkillIndex)
       : null
@@ -2358,6 +2386,103 @@ export function createCrownshardScene(renderer: LowPolyRenderer) {
               const sz = 0.10 + Math.sin(u * Math.PI) * 0.06
               const bCol = i % 2 === 0 ? C_PINCER_GOLD : C_PINCER_CYAN
               pool.add(crystalMesh, [bx, by, bz], [sz, sz, sz], -state.time * 4.6 + i, bCol, 1.0, 'additive')
+            }
+          }
+        }
+      }
+    }
+
+    // Move-path preview & Opportunity Attack telegraphing (blue move tiles + Move+Attack paths)
+    if (battle.phase === 'player' && activeUnit && activeUnit.alive && !battle.facingPicker && noUnitsMoving) {
+      let candidatePath: readonly { readonly col: number; readonly row: number }[] = []
+      let drawMoveBreadcrumbs = false
+      let oaPreview = activeForecast?.opportunityAttacks ?? null
+
+      const hov = hoveredCell
+      if (activeForecast && activeForecast.requiresMove && activeForecast.path.length > 0) {
+        candidatePath = activeForecast.path
+        if (!oaPreview) {
+          oaPreview = previewPathOpportunityAttacks(battle, activeUnit, candidatePath)
+        }
+      } else if (
+        !activeForecast &&
+        !activeUnit.moved &&
+        hov &&
+        battle.moveTiles.some(t => t.col === hov.col && t.row === hov.row)
+      ) {
+        candidatePath = findGridPath(battle, activeUnit, hov.col, hov.row)
+        drawMoveBreadcrumbs = candidatePath.length > 0
+        if (candidatePath.length > 0) {
+          oaPreview = previewPathOpportunityAttacks(battle, activeUnit, candidatePath)
+        }
+      }
+
+      const provokedStepSet = new Set<number>()
+      if (oaPreview) {
+        for (const tr of oaPreview.triggers) provokedStepSet.add(tr.stepIndex)
+      }
+
+      if (drawMoveBreadcrumbs && candidatePath.length > 0) {
+        const dest = candidatePath[candidatePath.length - 1]
+        const destCell = battle.cells[dest.row]?.[dest.col]
+        if (destCell && destCell.terrain !== 'void') {
+          const [dx, dy, dz] = gridToWorld(dest.col, dest.row, destCell.elevation, battle.cols, battle.rows)
+          const ringPulse = 0.58 + Math.sin(state.time * 6.0) * 0.05
+          const ringCol = provokedStepSet.size > 0 ? C_OA_WARN_MARK : C_APPROACH_RING
+          pool.add(flatRing, [dx, dy + 0.052, dz], [ringPulse, 1, ringPulse], state.time * 1.8, ringCol, 0.98, 'additive')
+        }
+        for (let i = 0; i < candidatePath.length; i++) {
+          const step = candidatePath[i]
+          const sc = battle.cells[step.row]?.[step.col]
+          if (!sc || sc.terrain === 'void') continue
+          const [sx, sy, sz] = gridToWorld(step.col, step.row, sc.elevation, battle.cols, battle.rows)
+          const bob = Math.sin(state.time * 6.2 - i * 0.85) * 0.05
+          const isProvokedStep = provokedStepSet.has(i)
+          const stepCol = isProvokedStep ? C_OA_ARC : C_MOVE_PATH_STEP
+          const stepSize = isProvokedStep ? 0.16 : 0.11
+          pool.add(crystalMesh, [sx, sy + 0.24 + bob, sz], [stepSize, stepSize, stepSize], state.time * 2.8 + i, stepCol, 0.98, 'additive')
+        }
+      }
+
+      if (oaPreview && oaPreview.triggers.length > 0) {
+        const oaPulse = 1 + Math.sin(state.time * 8.5) * 0.075
+        const oaFlow = (state.time * 1.65) % 1
+        for (const trig of oaPreview.triggers) {
+          const fromCell = battle.cells[trig.fromRow]?.[trig.fromCol]
+          const attCell = battle.cells[trig.attackerRow]?.[trig.attackerCol]
+          if (!fromCell || fromCell.terrain === 'void') continue
+          const [px, py, pz] = gridToWorld(trig.fromCol, trig.fromRow, fromCell.elevation, battle.cols, battle.rows)
+
+          // Pulsing amber-red warning wash + crossed-swords emblem on the tile leaving enemy ZoC
+          pool.add(tileQuad, [px, py + 0.050, pz], [TILE_SIZE * 0.88, 1, TILE_SIZE * 0.88], 0, C_OA_WARN_TILE, 0.96, 'alpha')
+          pool.add(
+            tileCrossedSwordsMesh,
+            [px, py + 0.058, pz],
+            [TILE_SIZE * 0.84 * oaPulse, 1, TILE_SIZE * 0.84 * oaPulse],
+            0,
+            C_OA_WARN_MARK,
+            0.99,
+            'alpha'
+          )
+          pool.add(flatRing, [px, py + 0.055, pz], [0.66 * oaPulse, 1, 0.66 * oaPulse], -state.time * 2.6, C_OA_ARC, 0.98, 'additive')
+
+          if (attCell && attCell.terrain !== 'void') {
+            const [ax, ay, az] = gridToWorld(trig.attackerCol, trig.attackerRow, attCell.elevation, battle.cols, battle.rows)
+            // Pulsing warning ring beneath the threatening ZoC sentinel
+            pool.add(flatRing, [ax, ay + 0.056, az], [0.74 * oaPulse, 1, 0.74 * oaPulse], state.time * 2.8, C_OA_SENTINEL_RING, 0.98, 'additive')
+
+            // Animated strike-threat arc from threatening sentinel -> provoked tile
+            const adx = px - ax
+            const adz = pz - az
+            const beadCount = 6
+            for (let b = 0; b < beadCount; b++) {
+              const u = (b + oaFlow) / beadCount
+              if (u < 0.08 || u > 0.94) continue
+              const bx = ax + adx * u
+              const bz = az + adz * u
+              const by = (ay + 0.82) + ((py + 0.56) - (ay + 0.82)) * u + Math.sin(u * Math.PI) * 0.68
+              const bsz = 0.085 + Math.sin(u * Math.PI) * 0.055
+              pool.add(crystalMesh, [bx, by, bz], [bsz, bsz, bsz], state.time * 4.5 + b, C_OA_ARC, 1.0, 'additive')
             }
           }
         }
