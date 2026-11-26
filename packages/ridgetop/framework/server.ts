@@ -16,6 +16,8 @@ export type {
 } from './room-server.ts'
 export { createCookieSession, createIdentity, createRecords, openRecords } from './records.ts'
 export { createDecisionApi } from './decision-api.ts'
+export { bundleStandaloneHtml, shakeModuleGraph } from './module-bundle.ts'
+export type { BundleStandaloneHtmlOptions, EmbeddedAssetEntry, ShakeModuleGraphOptions } from './module-bundle.ts'
 export { bakeIconPng, formatPackageSummary, packageGame, parsePackageArgs } from './packager.ts'
 export type { PackageGameOptions, PackageOrientation, PackageResult, PackageTarget, PackagedOutput, ResolvedGameAssets, RidgetopProjectConfig } from './packager.ts'
 export { bakeMotifWav, encodeGlb, encodeWav } from './binary-encoders.ts'

@@ -10,7 +10,8 @@ import { fileURLToPath, pathToFileURL } from 'node:url'
 import { promisify } from 'node:util'
 import vm from 'node:vm'
 import { createArtKit, box, instances } from '../packages/ridgetop/framework/index.ts'
-import { bakeIconPng, bakeMotifWav, encodeGlb, encodeWav, packageGame, parsePackageArgs } from '../packages/ridgetop/framework/server.ts'
+import { ART_REVIEW_JS_NOOPS, ASSET_MIME_TYPES, lookupAssetMime } from '../packages/ridgetop/framework/manifest.ts'
+import { bakeIconPng, bakeMotifWav, encodeGlb, encodeWav, packageGame, parsePackageArgs, shakeModuleGraph } from '../packages/ridgetop/framework/server.ts'
 import { createGame } from '../packages/ridgetop/tools/create-game.ts'
 
 const execFileAsync = promisify(execFile)
@@ -755,4 +756,107 @@ test('packageGame fails loudly when configured godotEntries fail to compile, whi
   assert.equal(plainRes.outputs[0].target, 'godot')
   const mainGd = await readFile(join(outPlain, 'scripts', 'main.gd'), 'utf8')
   assert.ok(mainGd.includes('_setup_generic_game'))
+})
+
+test('shakeModuleGraph prunes barrels in-memory, toggles stripStudio, and inlines manifest art-review/testing no-ops', async () => {
+  const virtualFs: Record<string, string> = {
+    'main.js': [
+      "import { alpha, auditArtModel, isTestingActive } from 'ridgetop'",
+      "import { createArtRecipeEditor } from 'ridgetop/art-review'",
+      'export const result = { a: alpha(), audit: auditArtModel(), active: isTestingActive(), ed: typeof createArtRecipeEditor }'
+    ].join('\n'),
+    'framework/index.js': [
+      "export { alpha } from './alpha.js'",
+      "export { unusedBeta } from './beta.js'",
+      "export { verifyTrace } from './verification.js'",
+      "export { auditArtModel } from './art-review.js'",
+      "export { isTestingActive, setTestingActive } from './testing-runtime.js'"
+    ].join('\n'),
+    'framework/alpha.js': [
+      "import { recordFrame } from './testing-runtime.js'",
+      'export function alpha() { recordFrame({}); return 42 }'
+    ].join('\n'),
+    'framework/beta.js': 'export function unusedBeta() { return 99 }\n',
+    'framework/verification.js': 'export function verifyTrace() { return true }\n',
+    'framework/art-review.js': [
+      'export function auditArtModel() { return { passed: false, parts: 9 } }',
+      'export function createArtRecipeEditor() { return { kind: "editor" } }'
+    ].join('\n'),
+    'framework/testing-runtime.js': [
+      'export function isTestingActive() { return true }',
+      'export function setTestingActive() {}',
+      'export function recordFrame() {}'
+    ].join('\n')
+  }
+
+  const readModule = async (relPath: string) => {
+    if (!Object.hasOwn(virtualFs, relPath)) throw new Error('Missing virtual module: ' + relPath)
+    return virtualFs[relPath]
+  }
+
+  // 1. Default stripStudio: true prunes unused barrel branches AND drops all studio/testing modules
+  const stripped = await shakeModuleGraph({ entry: 'main.js', readModule })
+  assert.deepEqual([...stripped.keys()].sort(), ['framework/alpha.js', 'framework/index.js', 'main.js'])
+
+  const prunedBarrel = stripped.get('framework/index.js')!
+  assert.ok(prunedBarrel.includes('./alpha.js'), 'used runtime export must survive barrel pruning')
+  assert.ok(!prunedBarrel.includes('./beta.js'), 'unused runtime export must be pruned from barrel')
+  assert.ok(!prunedBarrel.includes('./verification.js'), 'verification.js must be dropped from barrel')
+  assert.ok(!prunedBarrel.includes('./art-review.js'), 'art-review.js must not be re-exported when stripStudio is true')
+  assert.ok(!prunedBarrel.includes('./testing-runtime.js'), 'testing-runtime.js must not be re-exported when stripStudio is true')
+  assert.ok(
+    prunedBarrel.includes(`export const auditArtModel = ${ART_REVIEW_JS_NOOPS.auditArtModel};`),
+    'barrel must inline canonical ART_REVIEW_JS_NOOPS.auditArtModel from manifest.ts'
+  )
+  assert.ok(prunedBarrel.includes('export const isTestingActive = () => false;'))
+  assert.ok(!prunedBarrel.includes('setTestingActive'), 'unused testing export must not be emitted in pruned barrel')
+
+  const strippedMain = stripped.get('main.js')!
+  assert.ok(!strippedMain.includes('art-review.js'), 'direct art-review import must be stripped when stripStudio is true')
+  assert.ok(strippedMain.includes('const createArtRecipeEditor = () => undefined;'))
+
+  const strippedAlpha = stripped.get('framework/alpha.js')!
+  assert.ok(!strippedAlpha.includes('testing-runtime.js'), 'runtime module testing-runtime import must be stripped')
+  assert.ok(strippedAlpha.includes('const recordFrame = () => {};'))
+
+  // Evaluate the manifest art-review no-op to confirm safe return contract
+  const noopAudit = vm.runInNewContext(`(${ART_REVIEW_JS_NOOPS.auditArtModel})`) as () => Record<string, unknown>
+  assert.deepEqual(structuredClone(noopAudit()), {
+    passed: true,
+    parts: 0,
+    triangles: 0,
+    components: 0,
+    hiddenParts: [],
+    detachedParts: [],
+    edgeTouches: 0,
+    fillRatio: 0,
+    lumRange: 0,
+    warnings: []
+  })
+
+  // 2. stripStudio: false retains studio modules (e.g. for Sprite Workshop) while still pruning unused barrel exports
+  const kept = await shakeModuleGraph({ entry: 'main.js', readModule, stripStudio: false })
+  assert.deepEqual(
+    [...kept.keys()].sort(),
+    ['framework/alpha.js', 'framework/art-review.js', 'framework/index.js', 'framework/testing-runtime.js', 'main.js']
+  )
+  assert.ok(!kept.has('framework/beta.js'), 'unused runtime module must still be pruned when stripStudio is false')
+  assert.ok(!kept.has('framework/verification.js'), 'unused studio module must still be pruned from barrel')
+  assert.ok(kept.get('framework/index.js')!.includes('./art-review.js'))
+  assert.ok(kept.get('framework/index.js')!.includes('./testing-runtime.js'))
+  assert.ok(kept.get('main.js')!.includes('./framework/art-review.js'))
+})
+
+test('canonical ASSET_MIME_TYPES and lookupAssetMime stay consistent across host, Electron, and embedded assets', () => {
+  assert.equal(lookupAssetMime('.html'), 'text/html; charset=utf-8')
+  assert.equal(lookupAssetMime('js'), 'text/javascript; charset=utf-8')
+  assert.equal(lookupAssetMime('.svg'), 'image/svg+xml')
+  assert.equal(lookupAssetMime('.webp'), 'image/webp')
+  assert.equal(lookupAssetMime('.wasm'), 'application/wasm')
+  assert.equal(lookupAssetMime('.woff2'), 'font/woff2')
+  assert.equal(lookupAssetMime('.ttf'), 'font/ttf')
+  assert.equal(lookupAssetMime('.obj'), 'text/plain; charset=utf-8')
+  assert.equal(lookupAssetMime('.unknown'), 'application/octet-stream')
+  assert.equal(lookupAssetMime(''), 'application/octet-stream')
+  assert.ok(Object.isFrozen(ASSET_MIME_TYPES))
 })

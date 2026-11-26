@@ -6,10 +6,10 @@ import { createHash } from 'node:crypto'
 import { createServer } from 'node:http'
 import { existsSync } from 'node:fs'
 import { appendFile, lstat, mkdir, readFile, stat, writeFile } from 'node:fs/promises'
-import { dirname, resolve, sep } from 'node:path'
+import { dirname, extname, resolve, sep } from 'node:path'
 import process from 'node:process'
 import { fileURLToPath, pathToFileURL } from 'node:url'
-import { HOSTED_BROWSER_MODULES, RIDGETOP_BROWSER_IMPORT_MAP } from './manifest.ts'
+import { HOSTED_BROWSER_MODULES, RIDGETOP_BROWSER_IMPORT_MAP, lookupAssetMime } from './manifest.ts'
 import { defaultHttpReason, rejectUpgrade } from './ws.ts'
 
 export type UpgradeResult = boolean | void | { readonly reject: number; readonly reason?: string }
@@ -40,11 +40,6 @@ const contentSecurityPolicy =
   `default-src 'self'; script-src 'self' 'sha256-${importMapHash}'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'`
 
 const testingStudioTag = '\n<script type="module" src="/framework/testing-studio.js"></script>\n'
-const mime: Record<string, string> = {
-  html: 'text/html', css: 'text/css', js: 'text/javascript', png: 'image/png', json: 'application/json',
-  glb: 'model/gltf-binary', obj: 'text/plain', wav: 'audio/wav', ogg: 'audio/ogg', mp3: 'audio/mpeg'
-}
-const binaryExtensions = new Set(['png', 'glb', 'wav', 'ogg', 'mp3'])
 
 function injectImportMap(text: string): string {
   if (/<script\b[^>]*\btype\s*=\s*["']importmap["']/i.test(text)) return text
@@ -343,10 +338,9 @@ export function createGameHost({
       const asset = assets.get(pathname) ?? await mountFile(pathname, mountedDirs) ?? await artFile(pathname, artFolders)
       if (!asset && pathname === '/favicon.ico') return sendText(res, 204)
       if (!asset) return sendText(res, 404, 'Not found')
-      const extension = (asset.pathname.split('.').at(-1) ?? '').toLowerCase()
-      const type = Object.hasOwn(mime, extension) ? mime[extension] : undefined
-      const contentType = binaryExtensions.has(extension) ? type : type ? type + '; charset=utf-8' : 'application/octet-stream'
-      if (extension === 'html') {
+      const extension = extname(asset.pathname).toLowerCase()
+      const contentType = lookupAssetMime(extension)
+      if (extension === '.html') {
         const body = prepareHtml(await readFile(asset), testingEnabled, hosted)
         res.writeHead(200, {
           'Content-Type': contentType,

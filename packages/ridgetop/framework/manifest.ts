@@ -90,6 +90,9 @@ export const SERVER_FRAMEWORK_MODULES: readonly string[] = Object.freeze([
   'room-server.js',
   'records.js',
   'server.js',
+  'module-bundle.js',
+  'target-steam.js',
+  'target-mobile.js',
   'packager.js',
   'export-godot.js',
   'binary-encoders.js',
@@ -195,6 +198,59 @@ export const TESTING_RUNTIME_JS_NOOPS: Readonly<Record<string, string>> = Object
 export function renderTestingNoopNamespaceJs(): string {
   const entries = Object.entries(TESTING_RUNTIME_JS_NOOPS).map(([k, v]) => `${k}: ${v}`).join(', ')
   return `Object.freeze({ ${entries} })`
+}
+
+/**
+ * Authoritative no-op JS expressions for stripped `art-review.js` exports in release bundles.
+ * Keeps `auditArtModel` safe to call when imported via the `ridgetop` barrel or `ridgetop/art-review`.
+ */
+export const ART_REVIEW_JS_NOOPS: Readonly<Record<string, string>> = Object.freeze({
+  auditArtModel: '() => ({ passed: true, parts: 0, triangles: 0, components: 0, hiddenParts: [], detachedParts: [], edgeTouches: 0, fillRatio: 0, lumRange: 0, warnings: [] })'
+})
+
+/** Fallback JS expression for stripped `art-review.js` exports without a dedicated return shape. */
+export const ART_REVIEW_DEFAULT_JS_NOOP = '() => undefined'
+
+/** Render a frozen JS namespace object containing all stripped art-review no-ops. */
+export function renderArtReviewNoopNamespaceJs(): string {
+  const entries = Object.entries(ART_REVIEW_JS_NOOPS).map(([k, v]) => `${k}: ${v}`).join(', ')
+  return `Object.freeze({ ${entries} })`
+}
+
+/**
+ * Canonical Content-Type table keyed by lowercase dotted file extension.
+ * Shared across the dev HTTP host (`host.ts`), Electron custom protocol (`target-steam.ts`),
+ * and offline portable HTML asset embedding (`packager.ts`).
+ */
+export const ASSET_MIME_TYPES: Readonly<Record<string, string>> = Object.freeze({
+  '.html': 'text/html; charset=utf-8',
+  '.css': 'text/css; charset=utf-8',
+  '.js': 'text/javascript; charset=utf-8',
+  '.mjs': 'text/javascript; charset=utf-8',
+  '.json': 'application/json; charset=utf-8',
+  '.txt': 'text/plain; charset=utf-8',
+  '.obj': 'text/plain; charset=utf-8',
+  '.png': 'image/png',
+  '.svg': 'image/svg+xml',
+  '.ico': 'image/x-icon',
+  '.webp': 'image/webp',
+  '.jpg': 'image/jpeg',
+  '.jpeg': 'image/jpeg',
+  '.wasm': 'application/wasm',
+  '.wav': 'audio/wav',
+  '.mp3': 'audio/mpeg',
+  '.ogg': 'audio/ogg',
+  '.glb': 'model/gltf-binary',
+  '.woff2': 'font/woff2',
+  '.ttf': 'font/ttf'
+})
+
+/** Resolve a canonical Content-Type header for a file extension (with or without leading dot). */
+export function lookupAssetMime(ext: string): string {
+  if (!ext) return 'application/octet-stream'
+  const lower = ext.toLowerCase()
+  const key = lower.startsWith('.') ? lower : '.' + lower
+  return Object.hasOwn(ASSET_MIME_TYPES, key) ? ASSET_MIME_TYPES[key] : 'application/octet-stream'
 }
 
 const GD_NOOP_RETURN: Readonly<Record<TestingNoopKind, { ret: string; body: string }>> = Object.freeze({

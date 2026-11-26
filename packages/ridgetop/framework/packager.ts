@@ -1,9 +1,8 @@
 import { Buffer } from 'node:buffer'
 import { existsSync } from 'node:fs'
-import { access, cp, mkdir, mkdtemp, readdir, readFile, rm, stat, writeFile } from 'node:fs/promises'
-import { tmpdir } from 'node:os'
+import { access, cp, mkdir, readdir, readFile, rm, stat, writeFile } from 'node:fs/promises'
 import { basename, dirname, extname, join, relative, resolve, sep } from 'node:path'
-import { dirname as posixDirname, join as posixJoin, normalize as posixNormalize } from 'node:path/posix'
+import { join as posixJoin } from 'node:path/posix'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import type { ArtModel, ArtRecipe } from './art.ts'
 import type { InstanceBatch } from './types.ts'
@@ -11,15 +10,24 @@ import { createArtKit, modelFromArtRecipe } from './art.ts'
 import { exportGodotProject } from './export-godot.ts'
 import { multiply, orthographic, view } from './geometry.ts'
 import { renderMeshPixels } from './low-poly.ts'
+import { BLOCKED_STUDIO_DIRS, BLOCKED_STUDIO_FILES, lookupAssetMime } from './manifest.ts'
+import type { BundleStandaloneHtmlOptions, EmbeddedAssetEntry, ShakeModuleGraphOptions } from './module-bundle.ts'
 import {
-  BLOCKED_STUDIO_DIRS,
-  BLOCKED_STUDIO_FILES,
-  RIDGETOP_BROWSER_SPECIFIER_FILES,
-  TESTING_RUNTIME_JS_NOOPS,
-  renderTestingNoopNamespaceJs
-} from './manifest.ts'
+  bundleStandaloneHtml,
+  findLocalStylesheetPaths,
+  findModuleEntryScript,
+  getHtmlAttr,
+  isExternalUrl,
+  normalizeAssetPath,
+  shakeModuleGraph
+} from './module-bundle.ts'
 import { encodePng } from './png.ts'
 import { color } from './renderer.ts'
+import { MOBILE_EXTRA_HEAD, emitMobileShell } from './target-mobile.ts'
+import { emitSteamShell } from './target-steam.ts'
+
+export { bundleStandaloneHtml, shakeModuleGraph }
+export type { BundleStandaloneHtmlOptions, EmbeddedAssetEntry, ShakeModuleGraphOptions }
 
 export type PackageTarget = 'web' | 'steam' | 'mobile' | 'godot' | 'player' | 'all'
 export type PackageOrientation = 'landscape' | 'portrait' | 'any'
@@ -93,9 +101,15 @@ export interface PackageResult {
   outputs: PackagedOutput[]
 }
 
-const blockedStudioFiles = BLOCKED_STUDIO_FILES
-
-const blockedStudioDirs = BLOCKED_STUDIO_DIRS
+export interface ResolvedGameAssets {
+  title?: string
+  icon: { batches: readonly InstanceBatch[]; span: number; centerY: number; background: string; accent: string }
+  models: Record<string, readonly InstanceBatch[]>
+  audio: Record<string, { notes: readonly (readonly [number, number, number, number?])[]; waveform?: 'sine' | 'triangle' | 'square' | 'sawtooth' }>
+  gameData: Record<string, unknown>
+  /** Optional project-supplied GDScript source written to Godot `scripts/main.gd` instead of the generic host. */
+  mainScript?: string
+}
 
 function slugify(name: string) {
   return name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'ridgetop-game'
@@ -109,10 +123,6 @@ function defaultAppId(slug: string) {
 function parseHexRgb(hex: string): [number, number, number] {
   const [r, g, b] = color(hex)
   return [Math.round(r * 255), Math.round(g * 255), Math.round(b * 255)]
-}
-
-function stripSourceMap(source: string) {
-  return source.replace(/^\/\/# sourceMappingURL=.*$/gm, '')
 }
 
 function escapeHtmlAttr(value: string) {
@@ -136,6 +146,15 @@ function ensureMobileMeta(html: string, themeColor: string, extraHead = '') {
     out = out.replace(/<\/head>/i, () => `${extraHead}\n</head>`)
   }
   return out
+}
+
+function resolveContained(baseDir: string, relPath: string, label: string): string {
+  const base = resolve(baseDir)
+  const target = resolve(base, relPath)
+  if (target !== base && !target.startsWith(base + sep)) {
+    throw new Error(`${label} escapes project root: ${relPath}`)
+  }
+  return target
 }
 
 /** Bake a crisp PNG app icon or splash screen from a 3D Ridgetop model without external image tools. */
@@ -221,292 +240,6 @@ export function bakeIconPng({
   return encodePng(size, size, pixels)
 }
 
-interface ModuleStatement {
-  kind: 'import' | 'export'
-  start: number
-  end: number
-  specifier: string
-  specifierStart: number
-  specifierEnd: number
-  names: Set<string> | '*'
-  exportedNames?: string[]
-  pairs?: readonly (readonly [string, string])[]
-  namespace?: string
-}
-
-function resolveContained(baseDir: string, relPath: string, label: string): string {
-  const base = resolve(baseDir)
-  const target = resolve(base, relPath)
-  if (target !== base && !target.startsWith(base + sep)) {
-    throw new Error(`${label} escapes project root: ${relPath}`)
-  }
-  return target
-}
-
-/** Zero-dependency scanner for top-level static ES import/export-from statements, skipping comments, strings, and templates. */
-function scanStaticModuleStatements(code: string): ModuleStatement[] {
-  const results: ModuleStatement[] = []
-  const len = code.length
-  let i = 0
-  let braceDepth = 0
-  let parenDepth = 0
-  let prevToken = ''
-
-  function skipWsAndComments() {
-    while (i < len) {
-      const c = code.charCodeAt(i)
-      if (c === 32 || c === 9 || c === 10 || c === 13) { i++; continue }
-      if (c === 47 && code.charCodeAt(i + 1) === 47) {
-        i += 2
-        while (i < len && code.charCodeAt(i) !== 10) i++
-        continue
-      }
-      if (c === 47 && code.charCodeAt(i + 1) === 42) {
-        i += 2
-        while (i + 1 < len && !(code.charCodeAt(i) === 42 && code.charCodeAt(i + 1) === 47)) i++
-        i = Math.min(len, i + 2)
-        continue
-      }
-      break
-    }
-  }
-
-  function readString(): string | null {
-    const quote = code.charCodeAt(i)
-    if (quote !== 39 && quote !== 34) return null
-    i++
-    let out = ''
-    while (i < len) {
-      const c = code.charCodeAt(i++)
-      if (c === 92 && i < len) { out += code[i++]; continue }
-      if (c === quote) return out
-      out += String.fromCharCode(c)
-    }
-    return out
-  }
-
-  const regexPrevKeywords = new Set([
-    'return', 'case', 'throw', 'typeof', 'void', 'delete', 'in', 'instanceof', 'of', 'new', 'yield', 'await', 'else', 'do'
-  ])
-  const regexPrevPunct = new Set([
-    '', '(', '[', '{', ',', ';', ':', '?', '!', '=', '&', '|', '^', '~', '+', '-', '*', '%', '<', '>', '/'
-  ])
-  function canStartRegex(prev: string) {
-    return regexPrevPunct.has(prev) || regexPrevKeywords.has(prev)
-  }
-
-  function skipRegExp() {
-    i++ // opening '/'
-    let inClass = false
-    while (i < len) {
-      const c = code.charCodeAt(i++)
-      if (c === 92 && i < len) { i++; continue }
-      if (c === 91) { inClass = true; continue }
-      if (c === 93) { inClass = false; continue }
-      if (c === 47 && !inClass) break
-      if (c === 10 || c === 13) break
-    }
-    while (i < len) {
-      const c = code.charCodeAt(i)
-      if ((c >= 65 && c <= 90) || (c >= 97 && c <= 122)) i++
-      else break
-    }
-  }
-
-  function skipTemplate() {
-    i++ // opening `
-    while (i < len) {
-      const c = code.charCodeAt(i++)
-      if (c === 92) { i++; continue }
-      if (c === 96) return
-      if (c === 36 && code.charCodeAt(i) === 123) {
-        i++
-        let depth = 1
-        let tplPrev = '{'
-        while (i < len && depth > 0) {
-          skipWsAndComments()
-          if (i >= len) break
-          const ch = code.charCodeAt(i)
-          if (ch === 39 || ch === 34) { readString(); tplPrev = 'str'; continue }
-          if (ch === 96) { skipTemplate(); tplPrev = 'tpl'; continue }
-          if (ch === 47 && canStartRegex(tplPrev)) { skipRegExp(); tplPrev = 'regex'; continue }
-          if ((ch >= 65 && ch <= 90) || (ch >= 97 && ch <= 122) || ch === 95 || ch === 36) {
-            tplPrev = readIdent()
-            continue
-          }
-          if (ch === 123) depth++
-          else if (ch === 125) depth--
-          if ((ch === 43 || ch === 45) && code.charCodeAt(i + 1) === ch) {
-            tplPrev = ch === 43 ? '++' : '--'
-            i += 2
-            continue
-          }
-          tplPrev = code[i++]
-        }
-      }
-    }
-  }
-
-  function readIdent(): string {
-    const start = i
-    while (i < len) {
-      const c = code.charCodeAt(i)
-      if ((c >= 65 && c <= 90) || (c >= 97 && c <= 122) || (c >= 48 && c <= 57) || c === 95 || c === 36) i++
-      else break
-    }
-    return code.slice(start, i)
-  }
-
-  function parseNamedList(): { localOrOrig: Set<string>; exported: string[]; pairs: [string, string][] } | null {
-    if (code.charCodeAt(i) !== 123) return null
-    i++ // '{'
-    const localOrOrig = new Set<string>()
-    const exported: string[] = []
-    const pairs: [string, string][] = []
-    while (i < len) {
-      skipWsAndComments()
-      if (i >= len) return null
-      if (code.charCodeAt(i) === 125) { i++; return { localOrOrig, exported, pairs } }
-      const first = readString() ?? readIdent()
-      if (!first) return null
-      skipWsAndComments()
-      let second = first
-      if (code.startsWith('as', i) && !/[A-Za-z0-9_$]/.test(code[i + 2] ?? '')) {
-        i += 2
-        skipWsAndComments()
-        second = readString() ?? readIdent()
-      }
-      localOrOrig.add(first)
-      exported.push(second)
-      pairs.push([first, second])
-      skipWsAndComments()
-      if (code.charCodeAt(i) === 44) i++
-      else if (code.charCodeAt(i) === 125) { i++; return { localOrOrig, exported, pairs } }
-      else return null
-    }
-    return null
-  }
-
-  while (i < len) {
-    skipWsAndComments()
-    if (i >= len) break
-    const ch = code.charCodeAt(i)
-    if (ch === 39 || ch === 34) { readString(); prevToken = 'str'; continue }
-    if (ch === 96) { skipTemplate(); prevToken = 'tpl'; continue }
-    if (ch === 47 && canStartRegex(prevToken)) { skipRegExp(); prevToken = 'regex'; continue }
-    if (ch === 123) { braceDepth++; i++; prevToken = '{'; continue }
-    if (ch === 125) { braceDepth = Math.max(0, braceDepth - 1); i++; prevToken = '}'; continue }
-    if (ch === 40) { parenDepth++; i++; prevToken = '('; continue }
-    if (ch === 41) { parenDepth = Math.max(0, parenDepth - 1); i++; prevToken = ')'; continue }
-    if ((ch >= 65 && ch <= 90) || (ch >= 97 && ch <= 122) || ch === 95 || ch === 36) {
-      const start = i
-      const word = readIdent()
-      if ((word === 'import' || word === 'export') && braceDepth === 0 && parenDepth === 0 && prevToken !== '.') {
-        const saved = i
-        skipWsAndComments()
-        // Side-effect import: import './foo.js'
-        if (word === 'import' && (code.charCodeAt(i) === 39 || code.charCodeAt(i) === 34)) {
-          const specifierStart = i
-          const spec = readString()
-          const specifierEnd = i
-          if (spec !== null) {
-            skipWsAndComments()
-            if (code.charCodeAt(i) === 59) i++
-            results.push({ kind: 'import', start, end: i, specifier: spec, specifierStart, specifierEnd, names: '*' })
-            prevToken = ';'
-            continue
-          }
-        }
-        // Skip dynamic import(...) or import.meta
-        if (word === 'import' && (code.charCodeAt(i) === 40 || code.charCodeAt(i) === 46)) {
-          i = saved
-          prevToken = word
-          continue
-        }
-        // Parse import/export clause up to `from`
-        let names: Set<string> | '*' = '*'
-        let exportedNames: string[] | undefined
-        let pairs: [string, string][] | undefined
-        let namespace: string | undefined
-        let hasClause = false
-        let valid = true
-        if (code.charCodeAt(i) === 42) {
-          // * [as ns]
-          hasClause = true
-          i++
-          skipWsAndComments()
-          if (code.startsWith('as', i) && !/[A-Za-z0-9_$]/.test(code[i + 2] ?? '')) {
-            i += 2
-            skipWsAndComments()
-            namespace = readIdent() || undefined
-          }
-          names = '*'
-        } else if (code.charCodeAt(i) === 123) {
-          const list = parseNamedList()
-          if (!list) valid = false
-          else {
-            hasClause = true
-            names = list.localOrOrig
-            exportedNames = list.exported
-            pairs = list.pairs
-          }
-        } else if (word === 'import') {
-          const defName = readIdent()
-          if (defName) {
-            hasClause = true
-            names = '*'
-            skipWsAndComments()
-            if (code.charCodeAt(i) === 44) {
-              i++
-              skipWsAndComments()
-              if (code.charCodeAt(i) === 42) {
-                i++
-                skipWsAndComments()
-                if (code.startsWith('as', i) && !/[A-Za-z0-9_$]/.test(code[i + 2] ?? '')) {
-                  i += 2
-                  skipWsAndComments()
-                  namespace = readIdent() || undefined
-                }
-              } else if (code.charCodeAt(i) === 123) {
-                if (!parseNamedList()) valid = false
-              }
-            }
-          }
-        }
-        if (valid && hasClause) {
-          skipWsAndComments()
-          if (code.startsWith('from', i) && !/[A-Za-z0-9_$]/.test(code[i + 4] ?? '')) {
-            i += 4
-            skipWsAndComments()
-            const specifierStart = i
-            const spec = readString()
-            const specifierEnd = i
-            if (spec !== null) {
-              skipWsAndComments()
-              if (code.charCodeAt(i) === 59) i++
-              results.push({ kind: word, start, end: i, specifier: spec, specifierStart, specifierEnd, names, exportedNames, pairs, namespace })
-              prevToken = ';'
-              continue
-            }
-          }
-        }
-        i = saved
-      }
-      prevToken = word
-      continue
-    }
-    if ((ch === 43 || ch === 45) && code.charCodeAt(i + 1) === ch) {
-      prevToken = ch === 43 ? '++' : '--'
-      i += 2
-      continue
-    }
-    prevToken = code[i++]
-  }
-  return results
-}
-
-const RIDGETOP_SPECIFIER_FILES = RIDGETOP_BROWSER_SPECIFIER_FILES
-
 function resolvePackageFrameworkDir(): string {
   if (import.meta.url.endsWith('.ts')) {
     return resolve(fileURLToPath(new URL('../dist/framework', import.meta.url)))
@@ -514,227 +247,13 @@ function resolvePackageFrameworkDir(): string {
   return resolve(fileURLToPath(new URL('.', import.meta.url)))
 }
 
-function rewriteBareRidgetopSpecifiers(relPath: string, code: string): string {
-  const stmts = scanStaticModuleStatements(code).filter(s => Object.hasOwn(RIDGETOP_SPECIFIER_FILES, s.specifier))
-  if (!stmts.length) return code
-  const depth = relPath.split('/').length - 1
-  const prefix = (depth === 0 ? './' : '../'.repeat(depth)) + 'framework/'
-  let out = code
-  for (const stmt of [...stmts].sort((a, b) => b.specifierStart - a.specifierStart)) {
-    const file = RIDGETOP_SPECIFIER_FILES[stmt.specifier]
-    const quote = out[stmt.specifierStart] === '"' ? '"' : "'"
-    out = out.slice(0, stmt.specifierStart) + quote + prefix + file + quote + out.slice(stmt.specifierEnd)
+function resolvePackageRootDir(): string {
+  if (import.meta.url.endsWith('.ts')) {
+    return resolve(fileURLToPath(new URL('..', import.meta.url)))
   }
-  return out
-}
-
-function parseStaticImports(code: string) {
-  return scanStaticModuleStatements(code)
-    .filter(s => s.specifier.startsWith('.'))
-    .map(s => ({ specifier: s.specifier, names: s.names }))
-}
-
-function stripTestingRuntimeImports(code: string) {
-  const stmts = scanStaticModuleStatements(code).filter(
-    s => basename(s.specifier) === 'testing-runtime.js'
-  )
-  if (!stmts.length) return code
-  let out = ''
-  let cursor = 0
-  for (const stmt of stmts) {
-    out += code.slice(cursor, stmt.start)
-    cursor = stmt.end
-    if (stmt.kind === 'import') {
-      if (stmt.pairs?.length) {
-        const decls = stmt.pairs.map(([orig, local]) => `${local} = ${TESTING_RUNTIME_JS_NOOPS[orig] ?? '() => {}'}`)
-        out += `const ${decls.join(', ')};`
-      } else if (stmt.namespace) {
-        out += `const ${stmt.namespace} = ${renderTestingNoopNamespaceJs()};`
-      }
-    } else if (stmt.kind === 'export') {
-      if (stmt.pairs?.length) {
-        for (const [orig, exported] of stmt.pairs) {
-          out += `export const ${exported} = ${TESTING_RUNTIME_JS_NOOPS[orig] ?? '() => {}'};\n`
-        }
-      } else if (stmt.namespace) {
-        out += `export const ${stmt.namespace} = ${renderTestingNoopNamespaceJs()};\n`
-      } else if (stmt.names === '*') {
-        for (const [orig, body] of Object.entries(TESTING_RUNTIME_JS_NOOPS)) {
-          out += `export const ${orig} = ${body};\n`
-        }
-      }
-    }
-  }
-  out += code.slice(cursor)
-  return out
-}
-
-function pruneBarrelSource(code: string, usedNames: Set<string> | '*') {
-  const stmts = scanStaticModuleStatements(code).filter(s => s.kind === 'export')
-  if (!stmts.length) return code
-  let out = ''
-  let cursor = 0
-  for (const stmt of stmts) {
-    out += code.slice(cursor, stmt.start)
-    cursor = stmt.end
-    const targetFile = basename(stmt.specifier)
-    if (blockedStudioFiles.has(targetFile)) {
-      if (targetFile === 'testing-runtime.js' && stmt.pairs?.length) {
-        for (const [orig, exported] of stmt.pairs) {
-          if (usedNames === '*' || usedNames.has(exported)) {
-            out += `export const ${exported} = ${TESTING_RUNTIME_JS_NOOPS[orig] ?? '() => {}'};\n`
-          }
-        }
-      } else if (targetFile === 'art-review.js' && stmt.pairs?.length) {
-        for (const [, exported] of stmt.pairs) {
-          if (usedNames === '*' || usedNames.has(exported)) {
-            out += `export const ${exported} = () => ({ passed: true, parts: 0, triangles: 0, components: 0, hiddenParts: [], detachedParts: [], edgeTouches: 0, fillRatio: 0, lumRange: 0, warnings: [] });\n`
-          }
-        }
-      }
-      continue
-    }
-    if (stmt.names === '*' || usedNames === '*') {
-      out += code.slice(stmt.start, stmt.end)
-      continue
-    }
-    if (stmt.exportedNames?.some(name => usedNames.has(name))) {
-      out += code.slice(stmt.start, stmt.end)
-    }
-  }
-  out += code.slice(cursor)
-  return out.replace(/\n{3,}/g, '\n\n').trim() + '\n'
-}
-
-/** Trace only statically reachable runtime ES modules, pruning unused barrel exports and dropping all studio/testing files. */
-async function emitShakenModules({
-  entryRelPath,
-  resolveSource,
-  rewriteSource,
-  wwwDir
-}: {
-  entryRelPath: string
-  resolveSource(relPath: string): string
-  rewriteSource?(relPath: string, code: string): string
-  wwwDir: string
-}) {
-  const barrelNames = new Map<string, Set<string> | '*'>()
-  const rawSources = new Map<string, string>()
-
-  function recordBarrelUsage(targetRel: string, names: Set<string> | '*'): boolean {
-    const existing = barrelNames.get(targetRel)
-    if (existing === '*') return false
-    if (names === '*') {
-      barrelNames.set(targetRel, '*')
-      return true
-    }
-    const set = existing ?? new Set<string>()
-    let changed = !existing
-    for (const name of names) {
-      if (!set.has(name)) {
-        set.add(name)
-        changed = true
-      }
-    }
-    barrelNames.set(targetRel, set)
-    return changed
-  }
-
-  function isBarrel(relPath: string) {
-    return relPath === 'framework/index.js' || relPath === 'framework/ui.js'
-  }
-
-  function normalizeRel(fromRel: string, specifier: string) {
-    return join(dirname(fromRel), specifier).replace(/\\/g, '/')
-  }
-
-  const resolvedRoot = resolve(wwwDir)
-  function assertWithinRoot(relPath: string) {
-    const dst = resolve(resolvedRoot, relPath)
-    if (dst !== resolvedRoot && !dst.startsWith(resolvedRoot + sep)) {
-      throw new Error('Module path escapes bundle root: ' + relPath)
-    }
-    return dst
-  }
-
-  async function loadModule(relPath: string): Promise<string> {
-    assertWithinRoot(relPath)
-    const cached = rawSources.get(relPath)
-    if (cached !== undefined) return cached
-    let code = stripSourceMap(await readFile(resolveSource(relPath), 'utf8'))
-    code = rewriteBareRidgetopSpecifiers(relPath, code)
-    if (rewriteSource) code = rewriteSource(relPath, code)
-    if (!isBarrel(relPath)) code = stripTestingRuntimeImports(code)
-    rawSources.set(relPath, code)
-    return code
-  }
-
-  // Pass 1: discover non-barrel modules and record exact symbols imported from barrels.
-  const visitedNonBarrel = new Set<string>()
-  async function scan(relPath: string) {
-    if (blockedStudioFiles.has(basename(relPath))) return
-    if (isBarrel(relPath)) return
-    if (visitedNonBarrel.has(relPath)) return
-    visitedNonBarrel.add(relPath)
-    const code = await loadModule(relPath)
-    for (const imp of parseStaticImports(code)) {
-      const nextRel = normalizeRel(relPath, imp.specifier)
-      if (blockedStudioFiles.has(basename(nextRel))) continue
-      if (isBarrel(nextRel)) recordBarrelUsage(nextRel, imp.names)
-      else await scan(nextRel)
-    }
-  }
-
-  await scan(entryRelPath)
-
-  // Pass 2: prune any reached barrels to ONLY imported symbols, then trace their surviving re-exports (including transitive barrels).
-  const finalSources = new Map<string, string>()
-  for (const relPath of visitedNonBarrel) {
-    const src = rawSources.get(relPath)
-    if (src !== undefined) finalSources.set(relPath, src)
-  }
-
-  async function traceFinal(relPath: string) {
-    if (finalSources.has(relPath) && !isBarrel(relPath)) return
-    if (blockedStudioFiles.has(basename(relPath))) return
-    let code = await loadModule(relPath)
-    if (isBarrel(relPath)) {
-      code = pruneBarrelSource(code, barrelNames.get(relPath) ?? new Set())
-    }
-    finalSources.set(relPath, code)
-    for (const imp of parseStaticImports(code)) {
-      const nextRel = normalizeRel(relPath, imp.specifier)
-      if (blockedStudioFiles.has(basename(nextRel))) continue
-      if (isBarrel(nextRel)) {
-        const changed = recordBarrelUsage(nextRel, imp.names)
-        if (!finalSources.has(nextRel) || changed) await traceFinal(nextRel)
-      } else if (!finalSources.has(nextRel)) {
-        await traceFinal(nextRel)
-      }
-    }
-  }
-
-  for (const barrelRel of Array.from(barrelNames.keys())) await traceFinal(barrelRel)
-
-  for (const [relPath, code] of finalSources) {
-    const dst = assertWithinRoot(relPath)
-    await mkdir(dirname(dst), { recursive: true })
-    await writeFile(dst, code)
-  }
-}
-
-async function copyDirFiltered(src: string, dst: string, { skipJs = false } = {}) {
-  await mkdir(dst, { recursive: true })
-  for (const entry of await readdir(src, { withFileTypes: true })) {
-    if (entry.isDirectory()) {
-      if (blockedStudioDirs.has(entry.name)) continue
-      await copyDirFiltered(join(src, entry.name), join(dst, entry.name), { skipJs })
-    } else if (entry.isFile()) {
-      if (blockedStudioFiles.has(entry.name)) continue
-      if (skipJs && entry.name.endsWith('.js')) continue
-      await cp(join(src, entry.name), join(dst, entry.name))
-    }
-  }
+  const parentTwo = resolve(fileURLToPath(new URL('../..', import.meta.url)))
+  if (existsSync(join(parentTwo, 'package.json'))) return parentTwo
+  return resolve(fileURLToPath(new URL('..', import.meta.url)))
 }
 
 async function measureDirectory(dir: string): Promise<{ files: number; totalBytes: number }> {
@@ -752,25 +271,6 @@ async function measureDirectory(dir: string): Promise<{ files: number; totalByte
     }
   }
   return { files, totalBytes }
-}
-
-export interface ResolvedGameAssets {
-  title?: string
-  icon: { batches: readonly InstanceBatch[]; span: number; centerY: number; background: string; accent: string }
-  models: Record<string, readonly InstanceBatch[]>
-  audio: Record<string, { notes: readonly (readonly [number, number, number, number?])[]; waveform?: 'sine' | 'triangle' | 'square' | 'sawtooth' }>
-  gameData: Record<string, unknown>
-  /** Optional project-supplied GDScript source written to Godot `scripts/main.gd` instead of the generic host. */
-  mainScript?: string
-}
-
-function resolvePackageRootDir(): string {
-  if (import.meta.url.endsWith('.ts')) {
-    return resolve(fileURLToPath(new URL('..', import.meta.url)))
-  }
-  const parentTwo = resolve(fileURLToPath(new URL('../..', import.meta.url)))
-  if (existsSync(join(parentTwo, 'package.json'))) return parentTwo
-  return resolve(fileURLToPath(new URL('..', import.meta.url)))
 }
 
 async function resolveTargetProjectDir(options: PackageGameOptions): Promise<string> {
@@ -934,16 +434,6 @@ function rewriteFrameworkImports(relPath: string, code: string) {
     .replaceAll(`"${expectedPrefix}`, `"${targetPrefix}`)
 }
 
-function findModuleEntryScript(html: string): string {
-  for (const tag of html.matchAll(/<script\b([^>]*)>/gi)) {
-    const attrs = tag[1]
-    if (!/\btype\s*=\s*["']module["']/i.test(attrs)) continue
-    const src = /\bsrc\s*=\s*["']\.?\/?([^"']+)["']/i.exec(attrs)
-    if (src) return src[1]
-  }
-  return 'main.js'
-}
-
 const skippedProjectRootFiles = new Set([
   'index.html', 'package.json', 'package-lock.json', 'pnpm-lock.yaml',
   'tsconfig.json', 'tsconfig.build.json', 'ridgetop.package.json',
@@ -957,15 +447,45 @@ function normalizeStandaloneHtmlPaths(html: string): string {
     .replace(/\b(href|src)=(')\/(?!\/)/g, '$1=$2./')
 }
 
-async function assembleWebBundle(
+type StaticFileSource =
+  | { readonly kind: 'file'; readonly srcPath: string }
+  | { readonly kind: 'buffer'; readonly data: Buffer }
+
+interface PreparedWebProject {
+  layout: ReturnType<typeof detectProjectLayout>
+  html: string
+  entry: string
+  staticFiles: Map<string, StaticFileSource>
+  detectedName?: string
+  readModule(relPath: string): Promise<string>
+  rewriteSource(relPath: string, code: string): string
+}
+
+async function collectFilteredDir(
+  srcDir: string,
+  relBase: string,
+  out: Map<string, StaticFileSource>,
+  { skipJs = false } = {}
+) {
+  for (const entry of await readdir(srcDir, { withFileTypes: true })) {
+    const full = join(srcDir, entry.name)
+    const rel = relBase ? posixJoin(relBase, entry.name) : entry.name
+    if (entry.isDirectory()) {
+      if (BLOCKED_STUDIO_DIRS.has(entry.name)) continue
+      await collectFilteredDir(full, rel, out, { skipJs })
+    } else if (entry.isFile()) {
+      if (BLOCKED_STUDIO_FILES.has(entry.name)) continue
+      if (skipJs && entry.name.endsWith('.js')) continue
+      out.set(normalizeAssetPath(rel), { kind: 'file', srcPath: full })
+    }
+  }
+}
+
+async function prepareWebProject(
   projectDir: string,
   config: RidgetopProjectConfig,
-  wwwDir: string,
   { themeColor, extraHead = '' }: { themeColor: string; extraHead?: string }
-): Promise<{ detectedName?: string }> {
-  await rm(wwwDir, { recursive: true, force: true })
-  await mkdir(wwwDir, { recursive: true })
-
+): Promise<PreparedWebProject> {
   const layout = detectProjectLayout(projectDir, config)
   await access(layout.htmlPath).catch(() => {
     throw new Error(`Expected ${layout.htmlRel} inside project directory: ${projectDir}`)
@@ -981,23 +501,27 @@ async function assembleWebBundle(
 
   const rawHtml = await readFile(layout.htmlPath, 'utf8')
   const normalizedHtml = normalizeStandaloneHtmlPaths(rawHtml)
-  await writeFile(join(wwwDir, 'index.html'), ensureMobileMeta(normalizedHtml, themeColor, extraHead))
+  const html = ensureMobileMeta(normalizedHtml, themeColor, extraHead)
 
-  const copiedFiles = new Set<string>()
+  const staticFiles = new Map<string, StaticFileSource>()
   if (config.staticFiles?.length || config.staticDirs?.length) {
     for (const relFile of config.staticFiles ?? []) {
       const src = resolveContained(projectDir, relFile, 'staticFile')
-      const dst = resolveContained(wwwDir, relFile, 'staticFile')
-      await mkdir(dirname(dst), { recursive: true })
-      await cp(src, dst)
-      copiedFiles.add(relFile)
+      const norm = normalizeAssetPath(relFile)
+      if (!norm || norm === '..' || norm.startsWith('../')) {
+        throw new Error(`staticFile escapes project root: ${relFile}`)
+      }
+      staticFiles.set(norm, { kind: 'file', srcPath: src })
     }
     for (const relDir of config.staticDirs ?? []) {
       const srcDir = resolveContained(projectDir, relDir, 'staticDir')
-      const dstDir = resolveContained(wwwDir, relDir, 'staticDir')
-      await copyDirFiltered(srcDir, dstDir)
+      const normDir = normalizeAssetPath(relDir)
+      if (!normDir || normDir === '..' || normDir.startsWith('../')) {
+        throw new Error(`staticDir escapes project root: ${relDir}`)
+      }
+      await collectFilteredDir(srcDir, normDir, staticFiles)
     }
-    // Also copy any local stylesheet or icon linked from index.html if not already copied.
+    // Also include any local stylesheet or icon linked from index.html if not already listed.
     for (const match of normalizedHtml.matchAll(/<link\b([^>]*)>/gi)) {
       const attrs = match[1]
       const rel = (getHtmlAttr(attrs, 'rel') ?? '').toLowerCase().split(/\s+/).filter(Boolean)
@@ -1008,58 +532,38 @@ async function assembleWebBundle(
       if (!normHref || normHref === '..' || normHref.startsWith('../')) {
         throw new Error(`Linked asset escapes project root: ${href}`)
       }
-      if (copiedFiles.has(normHref)) continue
+      if (staticFiles.has(normHref)) continue
       const src = resolveContained(layout.htmlDir, normHref, 'linked asset')
       if (existsSync(src)) {
-        const dst = resolveContained(wwwDir, normHref, 'linked asset')
-        await mkdir(dirname(dst), { recursive: true })
-        await cp(src, dst)
-        copiedFiles.add(normHref)
+        staticFiles.set(normHref, { kind: 'file', srcPath: src })
       }
     }
   } else {
     for (const entry of await readdir(layout.htmlDir, { withFileTypes: true })) {
       if (entry.isDirectory()) {
-        if (blockedStudioDirs.has(entry.name) || entry.name === 'framework') continue
-        await copyDirFiltered(join(layout.htmlDir, entry.name), join(wwwDir, entry.name), { skipJs: true })
+        if (BLOCKED_STUDIO_DIRS.has(entry.name) || entry.name === 'framework') continue
+        await collectFilteredDir(join(layout.htmlDir, entry.name), entry.name, staticFiles, { skipJs: true })
       } else if (
         entry.isFile() &&
         !entry.name.endsWith('.js') &&
         !entry.name.endsWith('.ts') &&
         !entry.name.endsWith('.map') &&
         !skippedProjectRootFiles.has(entry.name) &&
-        !blockedStudioFiles.has(entry.name)
+        !BLOCKED_STUDIO_FILES.has(entry.name)
       ) {
-        await cp(join(layout.htmlDir, entry.name), join(wwwDir, entry.name))
+        staticFiles.set(normalizeAssetPath(entry.name), { kind: 'file', srcPath: join(layout.htmlDir, entry.name) })
       }
     }
   }
 
   if (config.overridesReset) {
-    const resetPath = resolveContained(wwwDir, config.overridesReset, 'overridesReset')
-    await mkdir(dirname(resetPath), { recursive: true })
-    await writeFile(resetPath, '{}\n')
-  }
-
-  const entryRel = config.entry ?? findModuleEntryScript(normalizedHtml)
-  await emitShakenModules({
-    entryRelPath: entryRel,
-    wwwDir,
-    resolveSource(relPath) {
-      if (relPath.startsWith('framework/')) return join(frameworkDir, relPath.slice('framework/'.length))
-      return join(layout.moduleDir, relPath)
-    },
-    rewriteSource(relPath, code) {
-      let out = layout.isCreateGameLayout ? rewriteFrameworkImports(relPath, code) : code
-      const rewrites = config.assetPathRewrites?.[relPath]
-      if (rewrites) {
-        for (const [from, to] of Object.entries(rewrites)) {
-          out = out.replaceAll(from, to)
-        }
-      }
-      return out
+    resolveContained(projectDir, config.overridesReset, 'overridesReset')
+    const normReset = normalizeAssetPath(config.overridesReset)
+    if (!normReset || normReset === '..' || normReset.startsWith('../')) {
+      throw new Error(`overridesReset escapes project root: ${config.overridesReset}`)
     }
-  })
+    staticFiles.set(normReset, { kind: 'buffer', data: Buffer.from('{}\n', 'utf8') })
+  }
 
   let detectedName: string | undefined = config.name
   if (!detectedName) {
@@ -1071,539 +575,64 @@ async function assembleWebBundle(
       } catch { /* Ignore unimportable candidate game module. */ }
     }
   }
-  return { detectedName }
-}
 
-function renderElectronMain(name: string, slug: string) {
-  return `'use strict'
-const fs = require('node:fs')
-const path = require('node:path')
-const { app, BrowserWindow, ipcMain, protocol } = require('electron')
-const steam = require('./steam.cjs')
-
-const APP_NAME = ${JSON.stringify(name)}
-const SCHEME = 'ridgetop'
-const WWW_ROOT = path.resolve(__dirname, '..', 'www')
-const MIME = {
-  '.html': 'text/html; charset=utf-8',
-  '.css': 'text/css; charset=utf-8',
-  '.js': 'text/javascript; charset=utf-8',
-  '.mjs': 'text/javascript; charset=utf-8',
-  '.json': 'application/json; charset=utf-8',
-  '.png': 'image/png',
-  '.svg': 'image/svg+xml',
-  '.ico': 'image/x-icon',
-  '.webp': 'image/webp',
-  '.wasm': 'application/wasm',
-  '.wav': 'audio/wav',
-  '.mp3': 'audio/mpeg',
-  '.ogg': 'audio/ogg',
-  '.glb': 'model/gltf-binary',
-  '.woff2': 'font/woff2',
-  '.ttf': 'font/ttf'
-}
-
-protocol.registerSchemesAsPrivileged([
-  {
-    scheme: SCHEME,
-    privileges: {
-      standard: true,
-      secure: true,
-      supportFetchAPI: true,
-      corsEnabled: true,
-      stream: true
-    }
+  const entry = config.entry ?? findModuleEntryScript(normalizedHtml)
+  const readModule = (relPath: string) => {
+    const filePath = relPath.startsWith('framework/')
+      ? resolveContained(frameworkDir, relPath.slice('framework/'.length), 'framework module')
+      : resolveContained(layout.moduleDir, relPath, 'module')
+    return readFile(filePath, 'utf8')
   }
-])
-
-app.commandLine.appendSwitch('enable-unsafe-webgpu')
-app.commandLine.appendSwitch('disable-renderer-backgrounding')
-
-const isSteamDeck = process.env.SteamDeck === '1' || process.env.SteamGamepadUI === '1' || process.env.GAMESCOPE_WAYLAND_DISPLAY !== undefined
-const saveDir = process.env.RIDGETOP_SAVE_DIR || path.join(app.getPath('userData'), 'saves')
-const saveFile = path.join(saveDir, ${JSON.stringify(slug + '-save.json')})
-
-function loadSaves() {
-  const out = Object.create(null)
-  try {
-    const parsed = JSON.parse(fs.readFileSync(saveFile, 'utf8'))
-    if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
-      for (const [k, v] of Object.entries(parsed)) {
-        if (k !== '__proto__' && k !== 'constructor' && k !== 'prototype' && typeof v === 'string') {
-          out[k] = v
-        }
+  const rewriteSource = (relPath: string, code: string) => {
+    let out = layout.isCreateGameLayout ? rewriteFrameworkImports(relPath, code) : code
+    const rewrites = config.assetPathRewrites?.[relPath]
+    if (rewrites) {
+      for (const [from, to] of Object.entries(rewrites)) {
+        out = out.replaceAll(from, to)
       }
     }
-  } catch {}
-  return out
-}
-
-let saveCache = null
-let saveSeq = 0
-function persistSaves(data) {
-  let temp = ''
-  try {
-    fs.mkdirSync(saveDir, { recursive: true })
-    temp = saveFile + '.tmp.' + process.pid + '.' + (++saveSeq)
-    fs.writeFileSync(temp, JSON.stringify(data, null, 2) + '\\n', 'utf8')
-    fs.renameSync(temp, saveFile)
-  } catch {
-    if (temp) { try { fs.unlinkSync(temp) } catch {} }
+    return out
   }
+
+  return { layout, html, entry, staticFiles, detectedName, readModule, rewriteSource }
 }
 
-function getSaves() {
-  if (!saveCache) saveCache = loadSaves()
-  return saveCache
-}
+async function assembleWebBundle(
+  projectDir: string,
+  config: RidgetopProjectConfig,
+  wwwDir: string,
+  { themeColor, extraHead = '' }: { themeColor: string; extraHead?: string }
+): Promise<{ detectedName?: string }> {
+  const prepared = await prepareWebProject(projectDir, config, { themeColor, extraHead })
 
-function createWindow() {
-  const win = new BrowserWindow({
-    title: APP_NAME,
-    width: 1280,
-    height: 800,
-    minWidth: 640,
-    minHeight: 400,
-    fullscreen: isSteamDeck,
-    autoHideMenuBar: true,
-    backgroundColor: '#101b20',
-    icon: path.join(__dirname, '..', 'build', 'icon.png'),
-    webPreferences: {
-      preload: path.join(__dirname, 'preload.cjs'),
-      contextIsolation: true,
-      nodeIntegration: false,
-      sandbox: true,
-      backgroundThrottling: false
+  await rm(wwwDir, { recursive: true, force: true })
+  await mkdir(wwwDir, { recursive: true })
+  await writeFile(join(wwwDir, 'index.html'), prepared.html)
+
+  for (const [relPath, source] of prepared.staticFiles) {
+    const dst = resolveContained(wwwDir, relPath, 'static asset')
+    await mkdir(dirname(dst), { recursive: true })
+    if (source.kind === 'buffer') {
+      await writeFile(dst, source.data)
+    } else {
+      await cp(source.srcPath, dst)
     }
+  }
+
+  const modules = await shakeModuleGraph({
+    entry: prepared.entry,
+    readModule: prepared.readModule,
+    rewriteSource: prepared.rewriteSource,
+    stripStudio: true
   })
 
-  win.setMenuBarVisibility(false)
-  win.webContents.setWindowOpenHandler(() => ({ action: 'deny' }))
-  win.webContents.on('will-navigate', (event, url) => {
-    if (!url.startsWith(SCHEME + '://app/')) event.preventDefault()
-  })
-  win.webContents.on('before-input-event', (_event, input) => {
-    if (input.type === 'keyDown' && (input.key === 'F11' || (input.alt && input.key === 'Enter'))) {
-      win.setFullScreen(!win.isFullScreen())
-    }
-  })
-  const sendLife = state => {
-    if (!win.isDestroyed() && !win.webContents.isDestroyed()) {
-      win.webContents.send('ridgetop:lifecycle', state)
-    }
-  }
-  win.on('minimize', () => sendLife('pause'))
-  win.on('restore', () => sendLife('resume'))
-  win.on('blur', () => sendLife('pause'))
-  win.on('focus', () => sendLife('resume'))
-
-  void win.loadURL(SCHEME + '://app/index.html')
-  return win
-}
-
-const singleLock = app.requestSingleInstanceLock()
-if (!singleLock) {
-  app.quit()
-} else {
-  app.whenReady().then(() => {
-    steam.init(path.resolve(__dirname, '..'))
-
-    protocol.handle(SCHEME, request => {
-      let pathname
-      try {
-        pathname = decodeURIComponent(new URL(request.url).pathname)
-      } catch {
-        return new Response('Bad Request', { status: 400 })
-      }
-      if (pathname.includes('\\0')) {
-        return new Response('Bad Request', { status: 400 })
-      }
-      if (!pathname || pathname === '/') pathname = '/index.html'
-      const target = path.resolve(WWW_ROOT, '.' + pathname)
-      if (target !== WWW_ROOT && !target.startsWith(WWW_ROOT + path.sep)) {
-        return new Response('Forbidden', { status: 403 })
-      }
-      if (!fs.existsSync(target) || fs.statSync(target).isDirectory()) {
-        return new Response('Not found', { status: 404 })
-      }
-      const ext = path.extname(target).toLowerCase()
-      return new Response(fs.readFileSync(target), {
-        status: 200,
-        headers: { 'Content-Type': MIME[ext] || 'application/octet-stream' }
-      })
-    })
-
-    ipcMain.on('ridgetop:storage-load', event => { event.returnValue = { ...getSaves() } })
-    ipcMain.on('ridgetop:storage-set', (_event, key, value) => {
-      const k = String(key)
-      if (k === '__proto__' || k === 'constructor' || k === 'prototype') return
-      const data = getSaves()
-      data[k] = String(value)
-      persistSaves(data)
-    })
-    ipcMain.on('ridgetop:storage-remove', (_event, key) => {
-      const k = String(key)
-      if (k === '__proto__' || k === 'constructor' || k === 'prototype') return
-      const data = getSaves()
-      delete data[k]
-      persistSaves(data)
-    })
-    ipcMain.on('ridgetop:storage-clear', () => {
-      saveCache = Object.create(null)
-      persistSaves(saveCache)
-    })
-
-    ipcMain.on('ridgetop:fullscreen-get', event => {
-      const win = BrowserWindow.fromWebContents(event.sender)
-      event.returnValue = Boolean(win && win.isFullScreen())
-    })
-    ipcMain.handle('ridgetop:fullscreen-set', (event, enabled) => {
-      const win = BrowserWindow.fromWebContents(event.sender)
-      if (win) win.setFullScreen(Boolean(enabled))
-    })
-    ipcMain.handle('ridgetop:fullscreen-toggle', event => {
-      const win = BrowserWindow.fromWebContents(event.sender)
-      if (win) win.setFullScreen(!win.isFullScreen())
-    })
-    ipcMain.handle('ridgetop:quit', () => { app.quit() })
-
-    ipcMain.on('ridgetop:steam-available', event => { event.returnValue = steam.available() })
-    ipcMain.handle('ridgetop:steam-achievement', (_event, id) => steam.unlockAchievement(String(id)))
-    ipcMain.on('ridgetop:steam-presence', (_event, key, value) => steam.setRichPresence(String(key), String(value)))
-    ipcMain.on('ridgetop:steam-overlay', (_event, dialog) => steam.activateOverlay(String(dialog || 'Achievements')))
-
-    createWindow()
-    app.on('second-instance', () => {
-      const active = BrowserWindow.getAllWindows()[0]
-      if (active && !active.isDestroyed()) {
-        if (active.isMinimized()) active.restore()
-        active.focus()
-      }
-    })
-    app.on('activate', () => {
-      if (BrowserWindow.getAllWindows().length === 0) createWindow()
-    })
-  })
-
-  app.on('window-all-closed', () => { app.quit() })
-}
-`
-}
-
-function renderElectronPreload() {
-  return `'use strict'
-const { contextBridge, ipcRenderer } = require('electron')
-
-const lifecycleListeners = new Set()
-ipcRenderer.on('ridgetop:lifecycle', (_event, state) => {
-  for (const handlers of lifecycleListeners) {
-    if (state === 'pause') handlers.pause && handlers.pause()
-    else if (state === 'resume') handlers.resume && handlers.resume()
-  }
-})
-
-contextBridge.exposeInMainWorld('__ridgetopPlatform', {
-  platform: 'desktop',
-  storage: {
-    loadAll: () => ipcRenderer.sendSync('ridgetop:storage-load'),
-    set: (key, value) => ipcRenderer.send('ridgetop:storage-set', key, value),
-    remove: key => ipcRenderer.send('ridgetop:storage-remove', key),
-    clear: () => ipcRenderer.send('ridgetop:storage-clear')
-  },
-  fullscreen: {
-    isFullscreen: () => ipcRenderer.sendSync('ridgetop:fullscreen-get'),
-    set: enabled => ipcRenderer.invoke('ridgetop:fullscreen-set', enabled),
-    toggle: () => ipcRenderer.invoke('ridgetop:fullscreen-toggle')
-  },
-  quit: () => ipcRenderer.invoke('ridgetop:quit'),
-  lifecycle: {
-    subscribe: handlers => {
-      lifecycleListeners.add(handlers)
-      return () => lifecycleListeners.delete(handlers)
-    }
-  },
-  steam: {
-    available: () => ipcRenderer.sendSync('ridgetop:steam-available'),
-    unlockAchievement: id => ipcRenderer.invoke('ridgetop:steam-achievement', id),
-    setRichPresence: (key, value) => ipcRenderer.send('ridgetop:steam-presence', key, value),
-    activateOverlay: dialog => ipcRenderer.send('ridgetop:steam-overlay', dialog)
-  }
-})
-`
-}
-
-function renderElectronSteam(defaultSteamAppId: string) {
-  return `'use strict'
-const fs = require('node:fs')
-const path = require('node:path')
-
-let client = null
-
-function readAppId(rootDir) {
-  try {
-    const raw = fs.readFileSync(path.join(rootDir, 'steam_appid.txt'), 'utf8').trim()
-    const parsed = Number.parseInt(raw, 10)
-    if (Number.isInteger(parsed) && parsed > 0) return parsed
-  } catch {}
-  return Number.parseInt(${JSON.stringify(defaultSteamAppId)}, 10) || 480
-}
-
-function init(rootDir) {
-  try {
-    const steamworks = require('steamworks.js')
-    const appId = readAppId(rootDir)
-    client = steamworks.init(appId)
-    if (typeof steamworks.electronEnableSteamOverlay === 'function') {
-      steamworks.electronEnableSteamOverlay()
-    }
-  } catch {
-    client = null
-  }
-}
-
-module.exports = {
-  init,
-  available: () => Boolean(client),
-  unlockAchievement(id) {
-    if (!client) return false
-    try { return Boolean(client.achievement.activate(id)) } catch { return false }
-  },
-  setRichPresence(key, value) {
-    if (!client) return
-    try { client.localplayer.setRichPresence(key, value) } catch {}
-  },
-  activateOverlay(dialog) {
-    if (!client) return
-    try { client.overlay.activateDialog(dialog || 'Achievements') } catch {}
-  }
-}
-`
-}
-
-function renderElectronBuilderConfig(name: string, slug: string, appId: string) {
-  return `appId: ${JSON.stringify(appId)}
-productName: ${JSON.stringify(name)}
-directories:
-  buildResources: build
-  output: release
-files:
-  - electron/**/*
-  - www/**/*
-  - steam_appid.txt
-  - package.json
-asar: true
-asarUnpack:
-  - "**/node_modules/steamworks.js/**"
-  - "steam_appid.txt"
-extraFiles:
-  - from: steam_appid.txt
-    to: steam_appid.txt
-win:
-  icon: build/icon.png
-  target:
-    - nsis
-    - zip
-mac:
-  icon: build/icon.png
-  category: public.app-category.games
-  target:
-    - dmg
-    - zip
-linux:
-  icon: build/icon.png
-  category: Game
-  executableName: ${JSON.stringify(slug)}
-  target:
-    - AppImage
-    - tar.gz
-`
-}
-
-function renderSteamReadme(name: string, slug: string, appId: string, steamAppId: string) {
-  return `# ${name} — Steam & Desktop Build
-
-Generated by Ridgetop's multi-platform packager (studio/testing tools stripped).
-
-## Run locally
-
-\`\`\`sh
-npm install
-npm start
-\`\`\`
-
-## Build distributables
-
-\`\`\`sh
-npm run dist:linux   # AppImage + tar.gz (Steam Deck ready)
-npm run dist:win     # Windows installer + portable zip
-npm run dist:mac     # macOS DMG + zip
-\`\`\`
-
-## Steamworks & Steam Cloud setup
-
-1. Replace \`steam_appid.txt\` (currently \`${steamAppId}\`) with your assigned Steam App ID.
-2. Install optional Steamworks native bindings: \`npm install steamworks.js\`.
-3. Map Steam Cloud Auto-Cloud to \`${slug}/saves/${slug}-save.json\` under the platform user-data root.
-4. Package ID: \`${appId}\`
-`
-}
-
-function renderMobileBridgeJs(orientation: PackageOrientation) {
-  return `(function () {
-  const cap = globalThis.Capacitor
-  const plugins = cap && cap.Plugins ? cap.Plugins : {}
-  const platform = typeof cap?.getPlatform === 'function' ? cap.getPlatform() : 'web'
-  if (platform !== 'ios' && platform !== 'android') return
-
-  const PREFIX = 'ridgetop.native.'
-  const lifecycleListeners = new Set()
-  const hydrateListeners = new Set()
-  const mutatedKeys = new Set()
-  let clearedAll = false
-
-  if (plugins.App && typeof plugins.App.addListener === 'function') {
-    plugins.App.addListener('appStateChange', function (state) {
-      for (const handlers of lifecycleListeners) {
-        if (state && state.isActive) handlers.resume && handlers.resume()
-        else handlers.pause && handlers.pause()
-      }
-    })
+  for (const [relPath, code] of modules) {
+    const dst = resolveContained(wwwDir, relPath, 'module')
+    await mkdir(dirname(dst), { recursive: true })
+    await writeFile(dst, code)
   }
 
-  function mirrorToPreferences(action, key, value) {
-    const prefs = plugins.Preferences
-    if (!prefs) return
-    try {
-      if (action === 'set') void prefs.set({ key: PREFIX + key, value: String(value) })
-      else if (action === 'remove') void prefs.remove({ key: PREFIX + key })
-      else if (action === 'clear') {
-        if (typeof prefs.keys === 'function' && typeof prefs.remove === 'function') {
-          prefs.keys().then(function (result) {
-            const keys = result && Array.isArray(result.keys) ? result.keys : []
-            return Promise.all(keys.filter(function (k) { return k.startsWith(PREFIX) }).map(function (k) {
-              return prefs.remove({ key: k })
-            }))
-          }).catch(function () {})
-        }
-      }
-    } catch {}
-  }
-
-  if (plugins.Preferences && typeof plugins.Preferences.keys === 'function') {
-    plugins.Preferences.keys().then(function (result) {
-      if (clearedAll) return
-      const keys = result && Array.isArray(result.keys) ? result.keys : []
-      return Promise.all(keys.filter(function (k) { return k.startsWith(PREFIX) }).map(function (fullKey) {
-        const bare = fullKey.slice(PREFIX.length)
-        if (mutatedKeys.has(bare)) return
-        return plugins.Preferences.get({ key: fullKey }).then(function (item) {
-          if (clearedAll || mutatedKeys.has(bare)) return
-          if (item && typeof item.value === 'string' && globalThis.localStorage?.getItem(bare) === null) {
-            try { globalThis.localStorage.setItem(bare, item.value) } catch {}
-            for (const fn of hydrateListeners) {
-              try { fn(bare, item.value) } catch {}
-            }
-          }
-        })
-      }))
-    }).catch(function () {})
-  }
-
-  const impactStyle = { light: 'LIGHT', medium: 'MEDIUM', heavy: 'HEAVY' }
-  globalThis.__ridgetopPlatform = {
-    platform: platform,
-    storage: {
-      loadAll: function () {
-        const out = {}
-        try {
-          for (let i = 0; i < globalThis.localStorage.length; i++) {
-            const k = globalThis.localStorage.key(i)
-            if (k !== null) {
-              const v = globalThis.localStorage.getItem(k)
-              if (v !== null) out[k] = v
-            }
-          }
-        } catch {}
-        return out
-      },
-      set: function (key, value) {
-        mutatedKeys.add(String(key))
-        try { globalThis.localStorage.setItem(key, String(value)) } catch {}
-        mirrorToPreferences('set', key, value)
-      },
-      remove: function (key) {
-        mutatedKeys.add(String(key))
-        try { globalThis.localStorage.removeItem(key) } catch {}
-        mirrorToPreferences('remove', key)
-      },
-      clear: function () {
-        clearedAll = true
-        mutatedKeys.clear()
-        try { globalThis.localStorage.clear() } catch {}
-        mirrorToPreferences('clear')
-      },
-      onHydrate: function (listener) {
-        if (typeof listener !== 'function') return function () {}
-        hydrateListeners.add(listener)
-        return function () { hydrateListeners.delete(listener) }
-      }
-    },
-    haptics: {
-      impact: function (style) {
-        if (plugins.Haptics && typeof plugins.Haptics.impact === 'function') {
-          plugins.Haptics.impact({ style: impactStyle[style] || 'LIGHT' }).catch(function () {})
-        }
-      }
-    },
-    lifecycle: {
-      subscribe: function (handlers) {
-        lifecycleListeners.add(handlers)
-        return function () { lifecycleListeners.delete(handlers) }
-      }
-    }
-  }
-
-  if (plugins.StatusBar && typeof plugins.StatusBar.hide === 'function') {
-    plugins.StatusBar.hide().catch(function () {})
-  }
-  const orientation = ${JSON.stringify(orientation)}
-  if (orientation !== 'any' && plugins.ScreenOrientation && typeof plugins.ScreenOrientation.lock === 'function') {
-    plugins.ScreenOrientation.lock({ orientation: orientation }).catch(function () {})
-  }
-  globalThis.addEventListener('load', function () {
-    if (plugins.SplashScreen && typeof plugins.SplashScreen.hide === 'function') {
-      plugins.SplashScreen.hide().catch(function () {})
-    }
-  }, { once: true })
-})()
-`
-}
-
-function renderMobileReadme(name: string, appId: string, orientation: PackageOrientation) {
-  return `# ${name} — iOS & Android Build (Capacitor)
-
-Generated by Ridgetop's multi-platform packager (studio/testing tools stripped).
-
-## First-time setup
-
-\`\`\`sh
-npm install
-npm run add:ios
-npm run add:android
-npm run icons
-npm run sync
-\`\`\`
-
-## Open & build
-
-\`\`\`sh
-npm run open:ios
-npm run open:android
-\`\`\`
-
-- **App ID:** \`${appId}\`
-- **Orientation:** \`${orientation}\`
-`
+  return { detectedName: prepared.detectedName }
 }
 
 async function tryCompileGodotScripts(projectDir: string, config: RidgetopProjectConfig, godotDir: string): Promise<number> {
@@ -1653,7 +682,7 @@ async function tryCompileGodotScripts(projectDir: string, config: RidgetopProjec
     })
     return Array.isArray(compiled?.files) ? compiled.files.length : 0
   } catch (error) {
-    await rm(compiledDir, { recursive: true, force: true }).catch(() => {})
+    await rm(compiledDir, { recursive: true, force: true }).catch(() => { /* Ignore cleanup error. */ })
     const message = error instanceof Error ? error.message : String(error)
     if (hasExplicitEntries) {
       throw new Error(`Failed to compile configured godotEntries: ${message}`, { cause: error })
@@ -1661,308 +690,6 @@ async function tryCompileGodotScripts(projectDir: string, config: RidgetopProjec
     console.warn(`[ridgetop/packager] Skipping optional auto-detected Godot script compilation: ${message}`)
     return 0
   }
-}
-
-const EMBEDDED_ASSET_MIME: Record<string, string> = {
-  '.json': 'application/json; charset=utf-8',
-  '.png': 'image/png',
-  '.glb': 'model/gltf-binary',
-  '.obj': 'text/plain; charset=utf-8',
-  '.wav': 'audio/wav',
-  '.ogg': 'audio/ogg',
-  '.mp3': 'audio/mpeg',
-  '.svg': 'image/svg+xml',
-  '.webp': 'image/webp',
-  '.jpg': 'image/jpeg',
-  '.jpeg': 'image/jpeg',
-  '.ico': 'image/x-icon',
-  '.woff2': 'font/woff2',
-  '.ttf': 'font/ttf',
-  '.txt': 'text/plain; charset=utf-8',
-  '.wasm': 'application/wasm'
-}
-
-export interface EmbeddedAssetEntry {
-  mime: string
-  base64: string
-}
-
-function getHtmlAttr(attrs: string, name: string): string | undefined {
-  const re = new RegExp(`\\b${name}\\s*=\\s*(?:"([^"]*)"|'([^']*)'|([^\\s"'=<>` + '`' + `]+))`, 'i')
-  const match = re.exec(attrs)
-  return match ? (match[1] ?? match[2] ?? match[3]) : undefined
-}
-
-function isExternalUrl(value: string): boolean {
-  return /^(?:[a-z][a-z0-9+.-]*:|\/\/|#)/i.test(value.trim())
-}
-
-function normalizeAssetPath(raw: string): string {
-  const clean = raw.split(/[?#]/, 1)[0].replace(/\\/g, '/').replace(/^\/+/, '')
-  return posixNormalize(clean).replace(/^\.\//, '')
-}
-
-function rewriteCssAssetUrls(css: string, cssRelPath: string, embeddedAssets: Readonly<Record<string, EmbeddedAssetEntry>>): string {
-  const cssDir = posixDirname(cssRelPath)
-  return css.replace(/url\(\s*(?:"([^"]+)"|'([^']+)'|([^)"'\s]+))\s*\)/gi, (full, dq, sq, bare) => {
-    const raw = dq ?? sq ?? bare ?? ''
-    if (!raw || isExternalUrl(raw)) return full
-    const target = normalizeAssetPath(raw.startsWith('/') ? raw : posixJoin(cssDir, raw))
-    const entry = Object.hasOwn(embeddedAssets, target) ? embeddedAssets[target] : undefined
-    if (!entry) return full
-    return `url("data:${entry.mime};base64,${entry.base64}")`
-  })
-}
-
-function renderOfflineAssetShim(embeddedAssets: Readonly<Record<string, EmbeddedAssetEntry>>): string {
-  const compact: Record<string, readonly [string, string]> = {}
-  for (const [key, entry] of Object.entries(embeddedAssets)) {
-    compact[key] = [entry.mime, entry.base64]
-  }
-  const serialized = JSON.stringify(compact).replaceAll('<', '\\u003c')
-  return `(function () {
-  var ASSETS = ${serialized};
-  globalThis.__ridgetopOfflineAssets = ASSETS;
-  var baseHref = 'https://ridgetop.local/';
-  try {
-    if (typeof location !== 'undefined' && location && location.href) {
-      baseHref = new URL('./', location.href).href;
-    }
-  } catch {}
-  function hasAsset(key) {
-    return Object.prototype.hasOwnProperty.call(ASSETS, key);
-  }
-  function resolveAssetKey(raw) {
-    if (typeof raw !== 'string' || !raw || raw.startsWith('data:') || raw.startsWith('blob:')) return null;
-    var cleanRaw = raw.split(/[?#]/, 1)[0];
-    var direct = cleanRaw.replace(/^\\.?\\//, '').replace(/\\\\/g, '/');
-    if (hasAsset(direct)) return direct;
-    try {
-      var decodedDirect = decodeURIComponent(direct);
-      if (hasAsset(decodedDirect)) return decodedDirect;
-    } catch {}
-    try {
-      var resolved = new URL(raw, baseHref).href.split(/[?#]/, 1)[0];
-      if (resolved.startsWith(baseHref)) {
-        var rel = resolved.slice(baseHref.length);
-        if (hasAsset(rel)) return rel;
-        try {
-          var decodedRel = decodeURIComponent(rel);
-          if (hasAsset(decodedRel)) return decodedRel;
-        } catch {}
-      }
-    } catch {}
-    return null;
-  }
-  function decodeBase64(b64) {
-    var bin = atob(b64);
-    var out = new Uint8Array(bin.length);
-    for (var i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
-    return out;
-  }
-  function dataUriFor(key) {
-    var entry = ASSETS[key];
-    return 'data:' + entry[0] + ';base64,' + entry[1];
-  }
-  var origFetch = typeof globalThis.fetch === 'function' ? globalThis.fetch.bind(globalThis) : null;
-  globalThis.fetch = function (input, init) {
-    var rawUrl = typeof input === 'string'
-      ? input
-      : input instanceof URL
-        ? input.href
-        : input && typeof input === 'object' && 'url' in input
-          ? String(input.url)
-          : '';
-    var key = resolveAssetKey(rawUrl);
-    if (key) {
-      var entry = ASSETS[key];
-      var bytes = decodeBase64(entry[1]);
-      var method = ((init && init.method) || (input && typeof input === 'object' && input.method) || 'GET').toUpperCase();
-      var res = new Response(method === 'HEAD' ? null : bytes, {
-        status: 200,
-        statusText: 'OK',
-        headers: {
-          'Content-Type': entry[0],
-          'Content-Length': String(bytes.byteLength)
-        }
-      });
-      try {
-        Object.defineProperty(res, 'url', { value: new URL(key, baseHref).href, configurable: true });
-      } catch {}
-      return Promise.resolve(res);
-    }
-    if (!origFetch) return Promise.reject(new TypeError('Offline asset not found: ' + rawUrl));
-    return origFetch(input, init);
-  };
-  function patchSrcSetter(ctor) {
-    if (typeof ctor === 'undefined' || !ctor.prototype) return;
-    var desc = Object.getOwnPropertyDescriptor(ctor.prototype, 'src');
-    if (!desc || !desc.set) return;
-    Object.defineProperty(ctor.prototype, 'src', {
-      configurable: true,
-      enumerable: desc.enumerable,
-      get: desc.get,
-      set: function (value) {
-        var key = resolveAssetKey(String(value));
-        desc.set.call(this, key ? dataUriFor(key) : value);
-      }
-    });
-  }
-  patchSrcSetter(globalThis.HTMLImageElement);
-  patchSrcSetter(globalThis.HTMLMediaElement);
-  if (typeof Element !== 'undefined' && Element.prototype && typeof Element.prototype.setAttribute === 'function') {
-    var origSetAttribute = Element.prototype.setAttribute;
-    Element.prototype.setAttribute = function (name, value) {
-      if (String(name).toLowerCase() === 'src' && (this.tagName === 'IMG' || this.tagName === 'AUDIO' || this.tagName === 'VIDEO')) {
-        var key = resolveAssetKey(String(value));
-        if (key) return origSetAttribute.call(this, name, dataUriFor(key));
-      }
-      return origSetAttribute.call(this, name, value);
-    };
-  }
-})();`
-}
-
-/**
- * Bundle an HTML page's local stylesheets, static ES module graph, and optional local assets into a
- * single self-contained offline HTML document that runs directly from `file://` without external dependencies.
- */
-export async function bundleStandaloneHtml({
-  html,
-  readAsset,
-  readModule,
-  embeddedAssets = {}
-}: {
-  html: string
-  readAsset(relPath: string): Promise<string>
-  readModule(relPath: string): Promise<string>
-  embeddedAssets?: Readonly<Record<string, EmbeddedAssetEntry>>
-}): Promise<string> {
-  const imports: Record<string, string> = {}
-  const moduleName = (rel: string) => 'ridgetop-offline/' + rel
-  const visited = new Set<string>()
-
-  async function includeModule(relPath: string) {
-    const norm = normalizeAssetPath(relPath)
-    if (norm.startsWith('../') || norm === '..') {
-      throw new Error('Module path escapes bundle root: ' + relPath)
-    }
-    if (visited.has(norm)) return
-    visited.add(norm)
-    let source = stripSourceMap(await readModule(norm))
-    const stmts = scanStaticModuleStatements(source)
-    const children: string[] = []
-    for (const stmt of [...stmts].sort((a, b) => b.specifierStart - a.specifierStart)) {
-      let child: string
-      if (stmt.specifier.startsWith('.')) {
-        child = normalizeAssetPath(posixJoin(posixDirname(norm), stmt.specifier))
-      } else if (Object.hasOwn(RIDGETOP_SPECIFIER_FILES, stmt.specifier)) {
-        child = 'framework/' + RIDGETOP_SPECIFIER_FILES[stmt.specifier]
-      } else {
-        throw new Error('Expected a local module in ' + norm + ', got ' + stmt.specifier)
-      }
-      if (child.startsWith('../') || child === '..') {
-        throw new Error('Module path escapes bundle root: ' + stmt.specifier)
-      }
-      children.push(child)
-      source = source.slice(0, stmt.specifierStart) + JSON.stringify(moduleName(child)) + source.slice(stmt.specifierEnd)
-    }
-    imports[moduleName(norm)] = 'data:text/javascript;base64,' + Buffer.from(source, 'utf8').toString('base64')
-    for (const child of children) await includeModule(child)
-  }
-
-  let page = html
-
-  // Inline local stylesheets and inline icon links matching embedded assets
-  const linkMatches = [...page.matchAll(/<link\b([^>]*)>/gi)]
-  for (const match of linkMatches) {
-    const tag = match[0]
-    const attrs = match[1]
-    const rel = (getHtmlAttr(attrs, 'rel') ?? '').toLowerCase()
-    const href = getHtmlAttr(attrs, 'href')
-    if (!href || isExternalUrl(href)) continue
-    const relTokens = rel.split(/\s+/).filter(Boolean)
-    const normHref = normalizeAssetPath(href)
-    if (!normHref || normHref === '..' || normHref.startsWith('../')) {
-      throw new Error(`Linked asset escapes bundle root: ${href}`)
-    }
-    if (relTokens.includes('stylesheet')) {
-      const rawCss = await readAsset(normHref)
-      const rewrittenCss = rewriteCssAssetUrls(rawCss, normHref, embeddedAssets)
-      const safeCss = rewrittenCss.replace(/<\/style/gi, '<\\/style')
-      page = page.replace(tag, () => '<style>\n' + safeCss + '\n</style>')
-    } else if (relTokens.includes('icon') || relTokens.includes('apple-touch-icon')) {
-      const asset = Object.hasOwn(embeddedAssets, normHref) ? embeddedAssets[normHref] : undefined
-      if (asset) {
-        const dataUri = `data:${asset.mime};base64,${asset.base64}`
-        const updatedTag = tag.replace(/\bhref\s*=\s*(?:"[^"]*"|'[^']*'|[^\s"'=<>`]+)/i, () => `href="${dataUri}"`)
-        page = page.replace(tag, () => updatedTag)
-      }
-    }
-  }
-
-  // Inline the single local ES module entry point using an importmap + base64 data URIs
-  const moduleEntries: { tag: string; entry: string }[] = []
-  for (const match of page.matchAll(/<script\b([^>]*)>([\s\S]*?)<\/script>/gi)) {
-    const attrs = match[1]
-    const typeAttr = (getHtmlAttr(attrs, 'type') ?? '').toLowerCase()
-    const srcAttr = getHtmlAttr(attrs, 'src')
-    if (typeAttr !== 'module' || !srcAttr || isExternalUrl(srcAttr)) continue
-    moduleEntries.push({ tag: match[0], entry: normalizeAssetPath(srcAttr) })
-  }
-  if (moduleEntries.length !== 1) {
-    throw new Error('Expected one local ES module entry point in the player page')
-  }
-  const [{ tag, entry }] = moduleEntries
-  await includeModule(entry)
-
-  const scriptParts: string[] = []
-  if (Object.keys(embeddedAssets).length > 0) {
-    scriptParts.push('<script>\n' + renderOfflineAssetShim(embeddedAssets) + '\n</script>')
-  }
-  scriptParts.push('<script type="importmap">' + JSON.stringify({ imports }).replaceAll('<', '\\u003c') + '</script>')
-  const entryLiteral = JSON.stringify(moduleName(entry)).replaceAll('<', '\\u003c')
-  scriptParts.push(`<script type="module">import ${entryLiteral}</script>`)
-  return page.replace(tag, () => scriptParts.join('\n'))
-}
-
-async function collectEmbeddedAssets(wwwDir: string, inlinedStylesheets: ReadonlySet<string>): Promise<Record<string, EmbeddedAssetEntry>> {
-  const assets: Record<string, EmbeddedAssetEntry> = {}
-  async function walk(dir: string) {
-    for (const entry of await readdir(dir, { withFileTypes: true })) {
-      const full = join(dir, entry.name)
-      const rel = relative(wwwDir, full).replace(/\\/g, '/')
-      if (entry.isDirectory()) {
-        if (blockedStudioDirs.has(entry.name)) continue
-        await walk(full)
-      } else if (entry.isFile()) {
-        if (blockedStudioFiles.has(entry.name)) continue
-        if (rel === 'index.html' || inlinedStylesheets.has(rel)) continue
-        const ext = extname(entry.name).toLowerCase()
-        if (ext === '.js' || ext === '.mjs' || ext === '.map') continue
-        const bytes = await readFile(full)
-        assets[rel] = {
-          mime: EMBEDDED_ASSET_MIME[ext] ?? 'application/octet-stream',
-          base64: bytes.toString('base64')
-        }
-      }
-    }
-  }
-  await walk(wwwDir)
-  return assets
-}
-
-function findLocalStylesheetPaths(html: string): Set<string> {
-  const paths = new Set<string>()
-  for (const match of html.matchAll(/<link\b([^>]*)>/gi)) {
-    const attrs = match[1]
-    const rel = (getHtmlAttr(attrs, 'rel') ?? '').toLowerCase().split(/\s+/).filter(Boolean)
-    const href = getHtmlAttr(attrs, 'href')
-    if (rel.includes('stylesheet') && href && !isExternalUrl(href)) {
-      paths.add(normalizeAssetPath(href))
-    }
-  }
-  return paths
 }
 
 export async function packageGame(options: PackageGameOptions): Promise<PackageResult> {
@@ -2028,158 +755,100 @@ export async function packageGame(options: PackageGameOptions): Promise<PackageR
     return { detectedName: baseDetectedName }
   }
 
+  function applyResolvedIdentity(detectedName: string | undefined) {
+    resolvedName = options.name ?? config.name ?? detectedName ?? assets.title ?? fallbackName
+    resolvedSlug = slugify(resolvedName)
+    resolvedAppId = options.appId ?? config.appId ?? defaultAppId(resolvedSlug)
+  }
+
   for (const target of targets) {
     const dir = options.target === 'all' ? join(outRoot, target) : outRoot
     await mkdir(dir, { recursive: true })
 
     if (target === 'web') {
       const { detectedName } = await populateWebBundle(dir)
-      resolvedName = options.name ?? config.name ?? detectedName ?? assets.title ?? fallbackName
-      resolvedSlug = slugify(resolvedName)
-      resolvedAppId = options.appId ?? config.appId ?? defaultAppId(resolvedSlug)
+      applyResolvedIdentity(detectedName)
       const stats = await measureDirectory(dir)
       outputs.push({ target, dir, wwwDir: dir, ...stats })
     } else if (target === 'steam') {
       const wwwDir = join(dir, 'www')
       const { detectedName } = await populateWebBundle(wwwDir)
-      resolvedName = options.name ?? config.name ?? detectedName ?? assets.title ?? fallbackName
-      resolvedSlug = slugify(resolvedName)
-      resolvedAppId = options.appId ?? config.appId ?? defaultAppId(resolvedSlug)
-
-      await mkdir(join(dir, 'electron'), { recursive: true })
-      await mkdir(join(dir, 'build'), { recursive: true })
-      await writeFile(join(dir, 'electron', 'main.cjs'), renderElectronMain(resolvedName, resolvedSlug))
-      await writeFile(join(dir, 'electron', 'preload.cjs'), renderElectronPreload())
-      await writeFile(join(dir, 'electron', 'steam.cjs'), renderElectronSteam(steamAppId))
-      await writeFile(join(dir, 'steam_appid.txt'), steamAppId + '\n')
-      await writeFile(join(dir, 'electron-builder.yml'), renderElectronBuilderConfig(resolvedName, resolvedSlug, resolvedAppId))
-      await writeFile(join(dir, 'README.md'), renderSteamReadme(resolvedName, resolvedSlug, resolvedAppId, steamAppId))
-      await writeFile(join(dir, 'package.json'), JSON.stringify({
-        name: resolvedSlug,
-        productName: resolvedName,
+      applyResolvedIdentity(detectedName)
+      const { iconPath } = await emitSteamShell({
+        dir,
+        name: resolvedName,
+        slug: resolvedSlug,
+        appId: resolvedAppId,
         version: projectVersion,
-        private: true,
-        main: 'electron/main.cjs',
-        scripts: {
-          start: 'electron .',
-          dist: 'electron-builder',
-          'dist:win': 'electron-builder --win',
-          'dist:mac': 'electron-builder --mac',
-          'dist:linux': 'electron-builder --linux'
-        },
-        devDependencies: {
-          electron: '^35.0.0',
-          'electron-builder': '^26.0.0'
-        },
-        optionalDependencies: {
-          'steamworks.js': '^0.3.1'
-        }
-      }, null, 2) + '\n')
-
-      const iconPath = join(dir, 'build', 'icon.png')
-      await writeFile(iconPath, getIconPng(512))
+        steamAppId,
+        iconPng: getIconPng(512)
+      })
       const stats = await measureDirectory(wwwDir)
       outputs.push({ target, dir, wwwDir, iconPath, ...stats })
     } else if (target === 'mobile') {
       const wwwDir = join(dir, 'www')
-      const mobileMeta = [
-        '  <meta name="apple-mobile-web-app-capable" content="yes">',
-        '  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">',
-        '  <meta name="mobile-web-app-capable" content="yes">',
-        '  <script src="./ridgetop-mobile-bridge.js"></script>'
-      ].join('\n')
-      const { detectedName } = await populateWebBundle(wwwDir, mobileMeta)
-      resolvedName = options.name ?? config.name ?? detectedName ?? assets.title ?? fallbackName
-      resolvedSlug = slugify(resolvedName)
-      resolvedAppId = options.appId ?? config.appId ?? defaultAppId(resolvedSlug)
-
-      await writeFile(join(wwwDir, 'ridgetop-mobile-bridge.js'), renderMobileBridgeJs(orientation))
-      await writeFile(join(dir, 'capacitor.config.json'), JSON.stringify({
+      const { detectedName } = await populateWebBundle(wwwDir, MOBILE_EXTRA_HEAD)
+      applyResolvedIdentity(detectedName)
+      const { iconPath } = await emitMobileShell({
+        dir,
+        wwwDir,
+        name: resolvedName,
+        slug: resolvedSlug,
         appId: resolvedAppId,
-        appName: resolvedName,
-        webDir: 'www',
-        backgroundColor: themeColor,
-        ios: { contentInset: 'never', limitsNavigationsToAppBoundDomains: true },
-        android: { backgroundColor: themeColor },
-        plugins: {
-          SplashScreen: { launchAutoHide: false, backgroundColor: themeColor, showSpinner: false },
-          StatusBar: { overlaysWebView: true, style: 'DARK' }
-        }
-      }, null, 2) + '\n')
-      await writeFile(join(dir, 'package.json'), JSON.stringify({
-        name: resolvedSlug + '-mobile',
         version: projectVersion,
-        private: true,
-        scripts: {
-          'add:ios': 'cap add ios',
-          'add:android': 'cap add android',
-          sync: 'cap sync',
-          icons: 'capacitor-assets generate',
-          'open:ios': 'cap open ios',
-          'open:android': 'cap open android'
-        },
-        dependencies: {
-          '@capacitor/app': '^8.1.0',
-          '@capacitor/core': '^8.6.0',
-          '@capacitor/haptics': '^8.0.0',
-          '@capacitor/preferences': '^8.0.0',
-          '@capacitor/screen-orientation': '^8.0.0',
-          '@capacitor/splash-screen': '^8.0.0',
-          '@capacitor/status-bar': '^8.0.0'
-        },
-        devDependencies: {
-          '@capacitor/android': '^8.6.0',
-          '@capacitor/assets': '^4.0.0',
-          '@capacitor/cli': '^8.6.0',
-          '@capacitor/ios': '^8.6.0'
-        }
-      }, null, 2) + '\n')
-      await writeFile(join(dir, 'README.md'), renderMobileReadme(resolvedName, resolvedAppId, orientation))
-
-      const resourcesDir = join(dir, 'resources')
-      await mkdir(resourcesDir, { recursive: true })
-      const iconPng = getIconPng(1024)
-      const splashPng = getIconPng(1024, 0.44)
-      const iconPath = join(resourcesDir, 'icon.png')
-      await writeFile(iconPath, iconPng)
-      await writeFile(join(resourcesDir, 'icon-only.png'), iconPng)
-      await writeFile(join(resourcesDir, 'splash.png'), splashPng)
-      await writeFile(join(resourcesDir, 'splash-dark.png'), splashPng)
+        themeColor,
+        orientation,
+        iconPng: getIconPng(1024),
+        splashPng: getIconPng(1024, 0.44)
+      })
       const stats = await measureDirectory(wwwDir)
       outputs.push({ target, dir, wwwDir, iconPath, ...stats })
     } else if (target === 'player') {
-      const stageDir = await mkdtemp(join(tmpdir(), 'ridgetop-player-stage-'))
-      try {
-        const { detectedName } = await assembleWebBundle(projectDir, config, stageDir, { themeColor })
-        resolvedName = options.name ?? config.name ?? detectedName ?? assets.title ?? fallbackName
-        resolvedSlug = slugify(resolvedName)
-        resolvedAppId = options.appId ?? config.appId ?? defaultAppId(resolvedSlug)
+      // Pure in-memory standalone bundling — zero temp-directory staging round-trip!
+      const prepared = await prepareWebProject(projectDir, config, { themeColor })
+      applyResolvedIdentity(prepared.detectedName)
 
-        const stageHtml = await readFile(join(stageDir, 'index.html'), 'utf8')
-        const linkedStyles = findLocalStylesheetPaths(stageHtml)
-        const embeddedAssets = await collectEmbeddedAssets(stageDir, linkedStyles)
-        const playerHtml = await bundleStandaloneHtml({
-          html: stageHtml,
-          readAsset: relPath => readFile(resolveContained(stageDir, relPath, 'asset'), 'utf8'),
-          readModule: relPath => readFile(resolveContained(stageDir, relPath, 'module'), 'utf8'),
-          embeddedAssets
-        })
-
-        const playerDir = basename(outRoot) === 'player' ? outRoot : join(outRoot, 'player')
-        await rm(playerDir, { recursive: true, force: true })
-        await mkdir(playerDir, { recursive: true })
-        const playerPath = join(playerDir, `${resolvedSlug}-player.html`)
-        await writeFile(playerPath, playerHtml, 'utf8')
-        outputs.push({
-          target,
-          dir: playerDir,
-          playerPath,
-          files: 1,
-          totalBytes: Buffer.byteLength(playerHtml, 'utf8')
-        })
-      } finally {
-        await rm(stageDir, { recursive: true, force: true })
+      const linkedStyles = findLocalStylesheetPaths(prepared.html)
+      const embeddedAssets: Record<string, EmbeddedAssetEntry> = {}
+      for (const [rel, source] of prepared.staticFiles) {
+        if (rel === 'index.html' || linkedStyles.has(rel)) continue
+        const ext = extname(rel).toLowerCase()
+        if (ext === '.js' || ext === '.mjs' || ext === '.map') continue
+        const bytes = source.kind === 'buffer' ? source.data : await readFile(source.srcPath)
+        embeddedAssets[rel] = {
+          mime: lookupAssetMime(ext),
+          base64: bytes.toString('base64')
+        }
       }
+
+      const playerHtml = await bundleStandaloneHtml({
+        html: prepared.html,
+        stripStudio: true,
+        readAsset: async relPath => {
+          const norm = normalizeAssetPath(relPath)
+          const staged = prepared.staticFiles.get(norm)
+          if (staged) {
+            return staged.kind === 'buffer' ? staged.data.toString('utf8') : await readFile(staged.srcPath, 'utf8')
+          }
+          return readFile(resolveContained(prepared.layout.htmlDir, norm, 'asset'), 'utf8')
+        },
+        readModule: prepared.readModule,
+        rewriteSource: prepared.rewriteSource,
+        embeddedAssets
+      })
+
+      const playerDir = basename(outRoot) === 'player' ? outRoot : join(outRoot, 'player')
+      await rm(playerDir, { recursive: true, force: true })
+      await mkdir(playerDir, { recursive: true })
+      const playerPath = join(playerDir, `${resolvedSlug}-player.html`)
+      await writeFile(playerPath, playerHtml, 'utf8')
+      outputs.push({
+        target,
+        dir: playerDir,
+        playerPath,
+        files: 1,
+        totalBytes: Buffer.byteLength(playerHtml, 'utf8')
+      })
     } else {
       await rm(dir, { recursive: true, force: true })
       await mkdir(dir, { recursive: true })

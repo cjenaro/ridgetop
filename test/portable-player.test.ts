@@ -8,8 +8,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url'
 import vm from 'node:vm'
 import { BACKUP_FORMAT, BACKUP_SCHEMA_VERSION, createSaveBackup } from '../packages/ridgetop/framework/index.ts'
 import type { SaveBackupEnvelope, SaveBackupStorage } from '../packages/ridgetop/framework/index.ts'
-import { bakeMotifWav, packageGame, parsePackageArgs } from '../packages/ridgetop/framework/server.ts'
-import { bundleStandaloneHtml } from '../packages/ridgetop/framework/packager.ts'
+import { bakeMotifWav, bundleStandaloneHtml, packageGame, parsePackageArgs } from '../packages/ridgetop/framework/server.ts'
 import { createGame } from '../packages/ridgetop/tools/create-game.ts'
 
 const repoRoot = fileURLToPath(new URL('../', import.meta.url))
@@ -470,9 +469,18 @@ test('packageGame(--target player) works for built-in games (beacon-run, signal-
     outDir: join(work, 'drift')
   })
   const driftHtml = await readFile(driftResult.outputs[0].playerPath!, 'utf8')
-  assertValidEscapedHtml(driftHtml)
+  const { scriptBlocks: driftScripts } = assertValidEscapedHtml(driftHtml)
   assert.ok(!driftHtml.includes('data-hosted="1"'))
   assert.ok(!driftHtml.includes('testing-studio'))
+  const driftImportMapBlock = driftScripts.find(b => /type=["']importmap["']/i.test(b[1]))
+  assert.ok(driftImportMapBlock, 'Expected Signal Drift player importmap')
+  const driftModules = Object.keys((JSON.parse(driftImportMapBlock[2]) as { imports: Record<string, string> }).imports)
+  for (const forbidden of ['testing-runtime.js', 'art-review.js', 'verification.js', 'testing-protocol.js', 'testing-session.js', 'testing-recognition.js']) {
+    assert.ok(
+      !driftModules.some(m => m.endsWith('/' + forbidden)),
+      `packageGame({ target: 'player' }) for signal-drift must not leak ${forbidden}`
+    )
+  }
 
   // 3. Tidewatch (lighthouse): clean offline player
   const lhResult = await packageGame({
@@ -550,4 +558,58 @@ test('packager rejects path traversal, scans ++/division cleanly, and handles na
   assert.ok(!mainBuilt.includes('testing-runtime.js'))
   const idxBuilt = await readFile(join(outWeb, 'framework', 'index.js'), 'utf8')
   assert.ok(idxBuilt.includes('createRng'), 'Namespace import of ridgetop must preserve createRng in pruned barrel')
+})
+
+test('built dist/signal-drift.html and dist/low-poly-models.html strip all studio modules while dist/sprite-workshop-offline.html keeps art-review.js', async () => {
+  function extractImportMapKeys(html: string): string[] {
+    const match = html.match(/<script\b[^>]*type=["']importmap["'][^>]*>([\s\S]*?)<\/script>/i)
+    assert.ok(match, 'Expected <script type="importmap"> block')
+    const parsed = JSON.parse(match[1]) as { imports: Record<string, string> }
+    return Object.keys(parsed.imports)
+  }
+
+  const forbiddenStudio = [
+    'testing-runtime.js',
+    'art-review.js',
+    'verification.js',
+    'testing-protocol.js',
+    'testing-session.js',
+    'testing-recognition.js',
+    'testing-studio.js'
+  ]
+
+  // 1. dist/signal-drift.html leaks ZERO studio/testing/verification modules
+  const signalDriftHtml = await readFile(join(repoRoot, 'dist', 'signal-drift.html'), 'utf8')
+  assertValidEscapedHtml(signalDriftHtml)
+  const signalDriftModules = extractImportMapKeys(signalDriftHtml)
+  assert.ok(signalDriftModules.includes('ridgetop-offline/racing/main.js'))
+  assert.ok(signalDriftModules.includes('ridgetop-offline/framework/vehicle.js'))
+  for (const forbidden of forbiddenStudio) {
+    assert.ok(
+      !signalDriftModules.some(m => m.endsWith('/' + forbidden)),
+      `dist/signal-drift.html must not contain studio module ${forbidden}`
+    )
+  }
+  assert.ok(!signalDriftModules.some(m => m.endsWith('/platformer.js')), 'unused platformer.js must be barrel-pruned')
+  assert.ok(!signalDriftModules.some(m => m.endsWith('/room-client.js')), 'unused room-client.js must be barrel-pruned')
+
+  // 2. dist/low-poly-models.html leaks ZERO studio/testing/verification modules
+  const modelsHtml = await readFile(join(repoRoot, 'dist', 'low-poly-models.html'), 'utf8')
+  assertValidEscapedHtml(modelsHtml)
+  const modelsModules = extractImportMapKeys(modelsHtml)
+  assert.ok(modelsModules.includes('ridgetop-offline/models/main.js'))
+  for (const forbidden of forbiddenStudio) {
+    assert.ok(
+      !modelsModules.some(m => m.endsWith('/' + forbidden)),
+      `dist/low-poly-models.html must not contain studio module ${forbidden}`
+    )
+  }
+
+  // 3. dist/sprite-workshop-offline.html uses stripStudio: false and keeps art-review.js intact
+  const workshopHtml = await readFile(join(repoRoot, 'dist', 'sprite-workshop-offline.html'), 'utf8')
+  assertValidEscapedHtml(workshopHtml)
+  const workshopModules = extractImportMapKeys(workshopHtml)
+  assert.ok(workshopModules.includes('ridgetop-offline/sprite-workshop.js'))
+  assert.ok(workshopModules.includes('ridgetop-offline/framework/art-review.js'), 'Sprite Workshop must retain art-review.js')
+  assert.ok(!workshopModules.some(m => m.endsWith('/vehicle.js')), 'Sprite Workshop should still prune unused runtime modules')
 })
