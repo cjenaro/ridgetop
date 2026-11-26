@@ -396,3 +396,105 @@ test('createGameHost upgrade seam upgrades WebSockets into createRoomService and
   assert.ok(beaconWelcome.id && beaconWelcome.token)
   beaconWs.close(1000)
 })
+
+test('RoomService.createHostHandlers and createGameHost upgrade rejection own route, method, and auth semantics', { timeout: 10_000 }, async t => {
+  const folder = await mkdtemp(join(tmpdir(), 'ridgetop-host-handlers-'))
+  t.after(() => rm(folder, { recursive: true, force: true }))
+
+  // 1. Direct createGameHost upgrade hook returning { reject, reason }
+  const rejectHost = createGameHost({
+    root: pathToFileURL(folder + '/'),
+    upgrade(_req, _socket, _head, pathname) {
+      if (pathname === '/locked/ws') return { reject: 403, reason: 'Forbidden' }
+      return false
+    }
+  })
+  t.after(() => rejectHost.close())
+  rejectHost.server.listen(0, '127.0.0.1')
+  await once(rejectHost.server, 'listening')
+  const rejectPort = (rejectHost.server.address() as AddressInfo).port
+  assert.match(await rawUpgradeStatus(rejectPort, '/locked/ws'), /^HTTP\/1\.1 403 Forbidden/)
+  assert.match(await rawUpgradeStatus(rejectPort, '/other/ws'), /^HTTP\/1\.1 404 Not Found/)
+
+  // 2. RoomService.createHostHandlers mounted directly on createGameHost with match rejections + async authorize
+  const rooms = createRoomService<{ arena: string }, { x: number; revision: number }, { x: number; revision: number }>({
+    createPlayer: () => ({ x: 0, revision: 0 }),
+    stepPlayer(player, input, dt) {
+      if (input.right) player.x += 100 * dt
+    },
+    snapshot: player => ({ x: player.x, revision: player.revision })
+  })
+
+  const handlers = rooms.createHostHandlers({
+    match(basePath) {
+      const m = /^\/arenas\/([a-z0-9-]+)$/.exec(basePath)
+      if (!m) return null
+      if (m[1] === 'missing') return { reject: 404, reason: 'Not Found', message: 'Arena not found' }
+      return { key: m[1], world: { arena: m[1] } }
+    },
+    async authorize(req, matched) {
+      await Promise.resolve()
+      if (matched.world.arena === 'private' && req.headers['x-pass'] !== 'ok') {
+        return { ok: false, status: 401, reason: 'Unauthorized', message: 'Pass required' }
+      }
+      return { ok: true, world: { arena: matched.world.arena } }
+    }
+  })
+
+  const app = createGameHost({
+    root: pathToFileURL(folder + '/'),
+    stop: rooms.close,
+    ...handlers
+  })
+  t.after(() => app.close())
+  app.server.listen(0, '127.0.0.1')
+  await once(app.server, 'listening')
+  const port = (app.server.address() as AddressInfo).port
+  const base = `http://127.0.0.1:${port}`
+
+  // Match rejection -> 404 on HTTP and WS
+  const missingRes = await fetch(base + '/arenas/missing/events')
+  assert.equal(missingRes.status, 404)
+  assert.equal(await missingRes.text(), 'Arena not found')
+  assert.match(await rawUpgradeStatus(port, '/arenas/missing/ws'), /^HTTP\/1\.1 404 Not Found/)
+
+  // Method & upgrade enforcement -> 426 on HTTP /ws, 405 on wrong methods
+  assert.equal((await fetch(base + '/arenas/alpha/ws')).status, 426)
+  assert.equal((await fetch(base + '/arenas/alpha/events', { method: 'POST' })).status, 405)
+  assert.equal((await fetch(base + '/arenas/alpha/input', { method: 'GET' })).status, 405)
+  assert.equal((await fetch(base + '/arenas/alpha/leave', { method: 'GET' })).status, 405)
+
+  // Async authorize rejection -> 401 on HTTP SSE and WS upgrade
+  const deniedSse = await fetch(base + '/arenas/private/events')
+  assert.equal(deniedSse.status, 401)
+  assert.equal(await deniedSse.text(), 'Pass required')
+  assert.match(await rawUpgradeStatus(port, '/arenas/private/ws'), /^HTTP\/1\.1 401 Unauthorized/)
+
+  // Authorized SSE + POST input + leave flow
+  const sse = await events(base + '/arenas/private/events', { headers: { 'x-pass': 'ok' } })
+  t.after(() => sse.abort())
+  const welcome = await sse.next()
+  assert.ok(welcome.id && welcome.token)
+  const postInput = await fetch(base + '/arenas/private/input', {
+    method: 'POST',
+    headers: { Authorization: 'Bearer ' + welcome.token, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ left: false, right: true, jump: 0, restart: 0 })
+  })
+  assert.equal(postInput.status, 204)
+  await sse.until(snap => snap.players.some(p => p.id === welcome.id && p.x > 1))
+  const leaveRes = await fetch(base + '/arenas/private/leave', {
+    method: 'POST',
+    headers: { Authorization: 'Bearer ' + welcome.token }
+  })
+  assert.equal(leaveRes.status, 204)
+
+  // Authorized WS flow
+  const ws = new WebSocket(`ws://127.0.0.1:${port}/arenas/alpha/ws`)
+  t.after(() => { try { ws.close() } catch { /* ignore */ } })
+  const wsWelcome = await new Promise<{ type: string; id: string; token: string }>(resolve => {
+    ws.onmessage = event => resolve(JSON.parse(String(event.data)))
+  })
+  assert.equal(wsWelcome.type, 'welcome')
+  assert.ok(wsWelcome.id && wsWelcome.token)
+  ws.close(1000)
+})

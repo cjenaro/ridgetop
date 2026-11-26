@@ -10,6 +10,9 @@ import { dirname, resolve, sep } from 'node:path'
 import process from 'node:process'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import { HOSTED_BROWSER_MODULES, RIDGETOP_BROWSER_IMPORT_MAP } from './manifest.ts'
+import { defaultHttpReason, rejectUpgrade } from './ws.ts'
+
+export type UpgradeResult = boolean | void | { readonly reject: number; readonly reason?: string }
 
 export interface GameHostMount {
   dir: URL
@@ -143,16 +146,6 @@ async function mountFile(pathname: string, mountedDirs: readonly ResolvedMount[]
   }
 }
 
-function rejectUpgrade(socket: Duplex, status: number, reason: string) {
-  if (socket.listenerCount('error') === 0) socket.on('error', () => { /* ignore pre-close socket error */ })
-  if (!socket.destroyed && socket.writable) {
-    try {
-      socket.write(`HTTP/1.1 ${status} ${reason}\r\nContent-Length: 0\r\nConnection: close\r\n\r\n`)
-    } catch { /* ignore write errors on closing socket */ }
-  }
-  socket.destroy()
-}
-
 function socketTouched(socket: Duplex): boolean {
   if (socket.destroyed || socket.writableLength > 0) return true
   return 'bytesWritten' in socket && typeof socket.bytesWritten === 'number' && socket.bytesWritten > 0
@@ -180,7 +173,7 @@ export function createGameHost({
   testingOptions?: { artDir?: string; reviewsDir?: string }
   hosted?: boolean
   handle?(request: IncomingMessage, response: ServerResponse, pathname: string): boolean | Promise<boolean>
-  upgrade?(request: IncomingMessage, socket: Duplex, head: Buffer, pathname: string): boolean | void | Promise<boolean | void>
+  upgrade?(request: IncomingMessage, socket: Duplex, head: Buffer, pathname: string): UpgradeResult | Promise<UpgradeResult>
   stop?(): void; save?(): void | Promise<void>
 }): GameHost {
   const testingEnabled = testing ?? process.argv.includes('--testing')
@@ -401,7 +394,11 @@ export function createGameHost({
     }
     try {
       const handled = await upgrade(req, socket, head, pathname)
-      if (handled === false || (handled === undefined && !socketTouched(socket))) {
+      if (typeof handled === 'object' && handled !== null && 'reject' in handled) {
+        if (!socketTouched(socket)) {
+          rejectUpgrade(socket, handled.reject, handled.reason ?? defaultHttpReason(handled.reject))
+        }
+      } else if (handled === false || (handled === undefined && !socketTouched(socket))) {
         rejectUpgrade(socket, 404, 'Not Found')
       }
     } catch (error) {

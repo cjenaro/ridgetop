@@ -16,20 +16,16 @@ export interface ConnectRoomOptions<T extends RoomEntity = RoomPlayer, Input = R
   predict?: RoomPrediction<T, Input>
 }
 
+interface RoomInputAdapter<Input> {
+  onSessionReset(rawInput: Input): void
+  normalize(rawInput: Input): Input
+  serialize(input: Input, meta: { restart: number; inputSeq: number }): Record<string, unknown>
+}
+
 const maxPendingInputs = 256
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === 'object'
-}
-
-function isDefaultRoomInput(value: unknown): value is RoomInput {
-  if (!isRecord(value)) return false
-  return (
-    typeof value.left === 'boolean' &&
-    typeof value.right === 'boolean' &&
-    typeof value.jump === 'number' &&
-    Object.keys(value).length === 3
-  )
 }
 
 function isRoomWelcome(value: unknown): value is RoomWelcome {
@@ -72,10 +68,13 @@ function defaultEqualInput<Input>(a: Input, b: Input): boolean {
   return true
 }
 
-function defaultInterpolate<T extends RoomEntity>(old: T, next: T, alpha: number): T {
-  const prevFalls: unknown = Reflect.get(old, 'falls')
-  const nextFalls: unknown = Reflect.get(next, 'falls')
-  if (old.revision !== next.revision || prevFalls !== nextFalls) return next
+export function interpolateSpatialEntity<T extends RoomEntity>(
+  old: T,
+  next: T,
+  alpha: number,
+  snapDistance = 100
+): T {
+  if (old.revision !== next.revision) return next
   const ox = readNumberField(old, 'x')
   const nx = readNumberField(next, 'x')
   const oy = readNumberField(old, 'y')
@@ -86,9 +85,9 @@ function defaultInterpolate<T extends RoomEntity>(old: T, next: T, alpha: number
   const hasY = oy !== undefined && ny !== undefined
   const hasZ = oz !== undefined && nz !== undefined
   if (
-    (hasX && Math.abs(ox - nx) > 100) ||
-    (hasY && Math.abs(oy - ny) > 100) ||
-    (hasZ && Math.abs(oz - nz) > 100)
+    (hasX && Math.abs(ox - nx) > snapDistance) ||
+    (hasY && Math.abs(oy - ny) > snapDistance) ||
+    (hasZ && Math.abs(oz - nz) > snapDistance)
   ) {
     return next
   }
@@ -99,6 +98,83 @@ function defaultInterpolate<T extends RoomEntity>(old: T, next: T, alpha: number
   if (hasZ) Reflect.set(blended, 'z', oz + (nz - oz) * alpha)
   return blended
 }
+
+function serializeGenericInput<Input>(
+  input: Input,
+  meta: { restart: number; inputSeq: number }
+): Record<string, unknown> {
+  if (isRecord(input)) {
+    return { ...input, restart: meta.restart, inputSeq: meta.inputSeq }
+  }
+  return { input, restart: meta.restart, inputSeq: meta.inputSeq }
+}
+
+function createCustomInputAdapter<Input>(
+  serializeInput: (input: Input, meta: { restart: number; inputSeq: number }) => Record<string, unknown>
+): RoomInputAdapter<Input> {
+  return {
+    onSessionReset() { /* custom serializer owns input state */ },
+    normalize(raw) { return raw },
+    serialize(input, meta) {
+      const custom = serializeInput(input, meta)
+      return custom.inputSeq === undefined ? { ...custom, inputSeq: meta.inputSeq } : custom
+    }
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Platformer room preset (backwards-compatible defaults for RoomInput / RoomPlayer)
+// ---------------------------------------------------------------------------
+
+function isPlatformerRoomInput(value: unknown): value is RoomInput {
+  if (!isRecord(value)) return false
+  return (
+    typeof value.left === 'boolean' &&
+    typeof value.right === 'boolean' &&
+    typeof value.jump === 'number' &&
+    Object.keys(value).length === 3
+  )
+}
+
+function hasFallsCounter(value: unknown): value is { readonly falls: number } {
+  return isRecord(value) && typeof value.falls === 'number'
+}
+
+export function interpolatePlatformerPlayer<T extends RoomEntity>(old: T, next: T, alpha: number): T {
+  if (hasFallsCounter(old) && hasFallsCounter(next) && old.falls !== next.falls) return next
+  return interpolateSpatialEntity(old, next, alpha)
+}
+
+function createDefaultRoomInputAdapter<Input>(): RoomInputAdapter<Input> {
+  let jumpOffset = 0
+  return {
+    onSessionReset(raw) {
+      jumpOffset = isPlatformerRoomInput(raw) ? raw.jump : 0
+    },
+    normalize(raw) {
+      if (isPlatformerRoomInput(raw)) {
+        return Object.assign({}, raw, { jump: Math.max(0, raw.jump - jumpOffset) })
+      }
+      return raw
+    },
+    serialize(input, meta) {
+      if (isPlatformerRoomInput(input)) {
+        return {
+          left: input.left,
+          right: input.right,
+          jump: input.jump,
+          restart: meta.restart,
+          inputSeq: meta.inputSeq
+        }
+      }
+      return serializeGenericInput(input, meta)
+    }
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Generic RoomClient transport & prediction core
+// ---------------------------------------------------------------------------
 
 function resolveWsUrl(endpoint: string, wsEndpoint?: string, resumeToken?: string): string {
   let url: string
@@ -137,7 +213,10 @@ export function connectRoom<T extends RoomEntity = RoomPlayer, Input = RoomInput
   type PendingEntry = { seq: number; input: Input; dt: number }
 
   const isEqualInput = equalInput ?? defaultEqualInput
-  const blendPlayer = interpolate ?? defaultInterpolate
+  const blendPlayer = interpolate ?? (serializeInput ? interpolateSpatialEntity : interpolatePlatformerPlayer)
+  const inputAdapter: RoomInputAdapter<Input> = serializeInput
+    ? createCustomInputAdapter(serializeInput)
+    : createDefaultRoomInputAdapter()
 
   let id: string | undefined
   let token: string | undefined
@@ -150,7 +229,6 @@ export function connectRoom<T extends RoomEntity = RoomPlayer, Input = RoomInput
   let sentAt = -Infinity
   let inFlight = false
   let restart = 0
-  let jumpOffset = 0
   let closed = false
 
   // Client-side prediction & reconciliation state
@@ -167,26 +245,8 @@ export function connectRoom<T extends RoomEntity = RoomPlayer, Input = RoomInput
   let reconnectTimer: ReturnType<typeof setTimeout> | undefined
   let wsEverWelcomed = false
 
-  function normalizeInput(raw: Input): Input {
-    if (!serializeInput && isDefaultRoomInput(raw)) {
-      return Object.assign({}, raw, { jump: Math.max(0, raw.jump - jumpOffset) })
-    }
-    return raw
-  }
-
   function buildPayload(input: Input, seq: number): Record<string, unknown> {
-    if (serializeInput) {
-      const custom = serializeInput(input, { restart, inputSeq: seq })
-      return custom.inputSeq === undefined ? { ...custom, inputSeq: seq } : custom
-    }
-    if (isDefaultRoomInput(input)) {
-      return { left: input.left, right: input.right, jump: input.jump, restart, inputSeq: seq }
-    }
-    if (isRecord(input)) {
-      const rec: Record<string, unknown> = input
-      return { ...rec, restart, inputSeq: seq }
-    }
-    return { input, restart, inputSeq: seq }
+    return inputAdapter.serialize(input, { restart, inputSeq: seq })
   }
 
   function handleWelcome(welcome: RoomWelcome) {
@@ -195,8 +255,7 @@ export function connectRoom<T extends RoomEntity = RoomPlayer, Input = RoomInput
       restart = 0
       inputSeq = 0
       lastSentSeq = 0
-      const raw = readInput()
-      jumpOffset = !serializeInput && isDefaultRoomInput(raw) ? raw.jump : 0
+      inputAdapter.onSessionReset(readInput())
     }
     id = welcome.id
     token = welcome.token
@@ -335,7 +394,7 @@ export function connectRoom<T extends RoomEntity = RoomPlayer, Input = RoomInput
 
   function recordPredictedStep(dt: number): T | undefined {
     if (!predict || !token || closed) return undefined
-    const input = normalizeInput(readInput())
+    const input = inputAdapter.normalize(readInput())
     const seq = ++inputSeq
     pendingInputs.push({ seq, input, dt })
     if (pendingInputs.length > maxPendingInputs) pendingInputs.shift()
@@ -391,7 +450,7 @@ export function connectRoom<T extends RoomEntity = RoomPlayer, Input = RoomInput
           transmitted = true
         }
         if (!transmitted && (now - sentAt >= 180 || restart !== lastSentRestart)) {
-          const input = normalizeInput(readInput())
+          const input = inputAdapter.normalize(readInput())
           const seq = lastSentSeq || ++inputSeq
           const payload = buildPayload(input, seq)
           try {
@@ -407,7 +466,7 @@ export function connectRoom<T extends RoomEntity = RoomPlayer, Input = RoomInput
         return
       }
 
-      const input = normalizeInput(readInput())
+      const input = inputAdapter.normalize(readInput())
       const changed = lastSentInput === undefined || restart !== lastSentRestart || !isEqualInput(input, lastSentInput)
       if (!changed && now - sentAt < 180) return
       const seq = changed ? ++inputSeq : (lastSentSeq || ++inputSeq)
@@ -435,7 +494,7 @@ export function connectRoom<T extends RoomEntity = RoomPlayer, Input = RoomInput
       seq = newest.seq
       if (seq === lastSentSeq && restart === lastSentRestart && now - sentAt < 180) return
     } else {
-      input = normalizeInput(readInput())
+      input = inputAdapter.normalize(readInput())
       const changed = lastSentInput === undefined || restart !== lastSentRestart || !isEqualInput(input, lastSentInput)
       if (!changed && now - sentAt < 180) return
       seq = changed ? ++inputSeq : (lastSentSeq || ++inputSeq)
@@ -506,7 +565,7 @@ export function connectRoom<T extends RoomEntity = RoomPlayer, Input = RoomInput
       if (token && activeTransport === 'sse') {
         fetch(endpoint + '/leave', {
           method: 'POST', headers: { Authorization: 'Bearer ' + token }, keepalive: true
-        }).catch(() => {})
+        }).catch(() => { /* ignore keepalive leave errors on close */ })
       }
     }
   }
