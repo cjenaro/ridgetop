@@ -11,16 +11,22 @@ import { pathToFileURL } from 'node:url'
 import { createGameServer } from '../server.ts'
 import { createGame } from '../packages/ridgetop/tools/create-game.ts'
 import {
-  bindActionControls, box, createArtKit, createMeshPool, createRig, createSpriteAtlas,
-  fixedLoop, instances, isTestingPaused, multiply, octahedron, orthographic, perspective,
-  projectPoint, renderRig, setTestingActive, setTestingPaused, STEP, view
+  bindActionControls, box, createArtKit, createArtRecipe, createMeshPool, createRig, createSpriteAtlas,
+  fixedLoop, instances, isTestingPaused, modelFromArtRecipe, multiply, octahedron, orthographic,
+  perspective, projectPoint, renderRig, setTestingActive, setTestingPaused, STEP, view
 } from '../packages/ridgetop/framework/index.ts'
-import { pickRenderedScene, pickSpriteDraws } from '../packages/ridgetop/framework/art-review.ts'
+import {
+  checkPin, checkReview, checkSpriteManifest, createArtRecipeEditor, createMemoryReviewStore,
+  createTestingStudioSession, pickRenderedScene, pickSpriteDraws, resolveTestingUrlActivation
+} from '../packages/ridgetop/framework/art-review.ts'
 import { createGameHost } from '../packages/ridgetop/framework/server.ts'
+import { shouldAutoMountTestingStudio } from '../packages/ridgetop/framework/testing-studio.ts'
 import { boxNode, createCanvasUi } from '../packages/ridgetop/framework/ui.ts'
 import {
-  captureSourceSite, getLastSpriteDraws, recognizeAssetFromPick, resetTestingRuntime
+  captureSourceSite, getLastSpriteDraws, recognizeAssetFromPick, recordFrame, recordSpriteDraw,
+  registerHudRegion, registerTestingHooks, resetTestingRuntime
 } from '../packages/ridgetop/framework/testing-runtime.ts'
+import type { ArtRecipe } from '../packages/ridgetop/framework/index.ts'
 import type { SpriteDrawRecord } from '../packages/ridgetop/framework/testing-runtime.ts'
 
 const PNG_1X1 = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aDLsAAAAASUVORK5CYII='
@@ -565,14 +571,16 @@ test('createGameHost({ testing: true }) injects boot script, serves studio asset
   const pageRes = await fetch(origin + '/')
   assert.equal(pageRes.status, 200)
   const pageText = await pageRes.text()
-  assert.ok(pageText.includes('<script type="module" src="/framework/testing-boot.js"></script>'))
-  assert.ok(pageText.indexOf('/framework/testing-boot.js') < pageText.indexOf('</body>'))
+  assert.ok(pageText.includes('<script type="module" src="/framework/testing-studio.js"></script>'))
+  assert.ok(pageText.indexOf('/framework/testing-studio.js') < pageText.indexOf('</body>'))
   const headRes = await fetch(origin + '/', { method: 'HEAD' })
   assert.equal(headRes.status, 200)
   assert.equal(Number(headRes.headers.get('content-length')), Buffer.byteLength(pageText, 'utf8'))
 
   for (const [assetPath, expectedType] of [
-    ['/framework/testing-boot.js', 'text/javascript'],
+    ['/framework/testing-protocol.js', 'text/javascript'],
+    ['/framework/testing-recognition.js', 'text/javascript'],
+    ['/framework/testing-session.js', 'text/javascript'],
     ['/framework/testing-studio.js', 'text/javascript'],
     ['/framework/testing-runtime.js', 'text/javascript'],
     ['/framework/testing-overlay.css', 'text/css']
@@ -621,6 +629,19 @@ test('createGameHost({ testing: true }) injects boot script, serves studio asset
   const created = await postRes.json() as { note: { id: string; target: { view: { surface: string } } } }
   assert.equal(created.note.id, rigReviewId)
   assert.equal(created.note.target.view.surface, 'rig')
+
+  // DELETE /__testing/reviews/:id deletes the review and returns 404 on second delete
+  const delRes = await fetch(origin + '/__testing/reviews/' + rigReviewId, {
+    method: 'DELETE',
+    headers: { Origin: origin }
+  })
+  assert.equal(delRes.status, 200)
+  assert.deepEqual(await delRes.json(), { deleted: true, id: rigReviewId })
+  assert.equal((await fetch(origin + '/__testing/reviews/' + rigReviewId, {
+    method: 'DELETE',
+    headers: { Origin: origin }
+  })).status, 404)
+  assert.deepEqual(await (await fetch(origin + '/__testing/reviews')).json(), { entries: [], errors: [] })
 
   // Rejects mismatched scope/surface (3D mesh with sprite scope)
   const badScopeRes = await fetch(origin + '/__testing/reviews', {
@@ -691,8 +712,8 @@ test('createGameServer({ testing: true }) enables Testing Mode on all 4 games an
     const res = await fetch(origin + route)
     assert.equal(res.status, 200, `${route} should return 200`)
     const html = await res.text()
-    assert.ok(html.includes('<script type="module" src="/framework/testing-boot.js"></script>'),
-      `${route} should inject testing-boot.js when testing is enabled`)
+    assert.ok(html.includes('<script type="module" src="/framework/testing-studio.js"></script>'),
+      `${route} should inject testing-studio.js when testing is enabled`)
   }
   const overlayRes = await fetch(origin + '/framework/testing-overlay.css')
   assert.equal(overlayRes.status, 200)
@@ -708,7 +729,7 @@ test('createGameServer({ testing: true }) enables Testing Mode on all 4 games an
 
   for (const route of ['/', '/racing', '/lighthouse', '/crownshard', '/starter/']) {
     const html = await (await fetch(normalOrigin + route)).text()
-    assert.ok(!html.includes('/framework/testing-boot.js'), `${route} must not inject testing-boot.js in normal mode`)
+    assert.ok(!html.includes('/framework/testing-studio.js'), `${route} must not inject testing-studio.js in normal mode`)
   }
   assert.equal((await fetch(normalOrigin + '/__testing/reviews')).status, 404)
 
@@ -735,10 +756,372 @@ test('createGameServer({ testing: true }) enables Testing Mode on all 4 games an
   }
   assert.ok(childOrigin, 'generated game playtest server should start')
   const starterHtml = await (await fetch(childOrigin + '/')).text()
-  assert.ok(starterHtml.includes('<script type="module" src="/framework/testing-boot.js"></script>'))
+  assert.ok(starterHtml.includes('<script type="module" src="/framework/testing-studio.js"></script>'))
   const cssRes = await fetch(childOrigin + '/framework/testing-overlay.css')
   assert.equal(cssRes.status, 200)
   assert.ok(cssRes.headers.get('content-type')?.startsWith('text/css'))
   assert.equal((await fetch(childOrigin + '/framework/testing-studio.js')).status, 200)
   assert.equal((await fetch(childOrigin + '/__testing/reviews')).status, 200)
+})
+
+test('headless Testing Studio session picks HUD, 2D sprites, and 3D models with dirty guards and ReviewStorePort CRUD', async t => {
+  t.after(() => {
+    setTestingPaused(false)
+    setTestingActive(false)
+    resetTestingRuntime()
+  })
+  setTestingActive(true)
+
+  const store = createMemoryReviewStore()
+  const hudCanvas = { width: 400, height: 300, getBoundingClientRect: () => ({ left: 0, top: 0, width: 400, height: 300 }) } as unknown as HTMLCanvasElement
+  const spriteCanvas = { width: 400, height: 300, getBoundingClientRect: () => ({ left: 0, top: 0, width: 400, height: 300 }) } as unknown as HTMLCanvasElement
+  const worldCanvas = { width: 400, height: 300, getBoundingClientRect: () => ({ left: 0, top: 0, width: 400, height: 300 }) } as unknown as HTMLCanvasElement
+
+  // Register a giant background HUD container (must be skipped) and a real leaf HUD badge
+  registerHudRegion({
+    id: 'fullscreen-panel',
+    label: 'Root Overlay',
+    canvas: hudCanvas,
+    rect: { x: 0, y: 0, width: 400, height: 300 },
+    viewportWidth: 400,
+    viewportHeight: 300
+  })
+  registerHudRegion({
+    id: 'health-badge',
+    label: 'Health Badge',
+    asset: 'hud-health',
+    source: 'game/hud.ts:18',
+    canvas: hudCanvas,
+    rect: { x: 10, y: 10, width: 80, height: 30 },
+    viewportWidth: 400,
+    viewportHeight: 300
+  })
+
+  // Record a 2D sprite on the right side (2-column 8x4 RGBA sheet)
+  const opaque8x4 = new Uint8ClampedArray(8 * 4 * 4).fill(255)
+  recordSpriteDraw({
+    canvas: spriteCanvas,
+    atlas: {
+      id: 'scout-atlas',
+      src: 'art/scout.png',
+      manifestUrl: 'art/scout.json',
+      frameWidth: 4,
+      frameHeight: 4,
+      rows: 1,
+      columns: 2,
+      clips: {
+        idle: { column: 0, frames: 1, frameMs: 120 },
+        run: { column: 0, frames: 2, frameMs: 90 }
+      },
+      pixels: opaque8x4,
+      imageWidth: 8,
+      imageHeight: 4
+    },
+    clip: 'run',
+    frame: 1,
+    column: 1,
+    row: 0,
+    flip: false,
+    rect: { x: 300, y: 100, width: 60, height: 60 },
+    canvasWidth: 400,
+    canvasHeight: 300
+  })
+
+  // Record a 3D frame with an ArtKit ranger centered in the viewport
+  const kit = createArtKit()
+  const grp = kit.group()
+  grp.add('ranger', [0, 0, 0])
+  const cam = multiply(orthographic(4, 3, 0.1, 30), view([0, 0.7, 8], [0, 0.7, 0]))
+  recordFrame({
+    canvas: worldCanvas,
+    viewProjection: cam,
+    batches: grp.batches,
+    clear: [0, 0, 0, 1],
+    width: 400,
+    height: 300,
+    clientWidth: 400,
+    clientHeight: 300,
+    timestamp: 1
+  })
+
+  const restoredScenes: unknown[] = []
+  const savedRecipes: Array<{ asset: string; parts: number }> = []
+  registerTestingHooks({
+    snapshot: () => ({ mode: '3d', turn: 5 }),
+    restore: scene => { restoredScenes.push(scene) },
+    onRecipeSaved: (asset, recipe) => { savedRecipes.push({ asset, parts: recipe.parts.length }) }
+  })
+
+  const session = createTestingStudioSession({
+    store,
+    env: { getViewportSize: () => ({ width: 400, height: 300 }), getLocationUrl: () => '/?testing=1' }
+  })
+  t.after(() => session.dispose())
+
+  // Picking while live is blocked
+  assert.equal(session.pickAt(200, 150).picked, false)
+
+  // Pause & pick HUD leaf badge
+  assert.equal(session.setPaused(true).ok, true)
+  const hudPick = session.pickAt(30, 20)
+  assert.equal(hudPick.picked, true)
+  assert.equal(hudPick.selection.surface, 'hud')
+  assert.equal(hudPick.selection.asset, 'hud-health')
+  assert.equal(hudPick.selection.scope, 'hud')
+
+  // Pick 2D sprite, scrub frames, adjust timing, and save sprite through ReviewStorePort
+  const spritePick = session.pickAt(330, 130)
+  assert.equal(spritePick.picked, true)
+  assert.equal(spritePick.selection.surface, 'sprite')
+  assert.equal(spritePick.selection.asset, 'scout')
+  session.setSpriteFrameMs(75)
+  const savedSprite = await session.saveSprite(PNG_1X1)
+  assert.deepEqual(savedSprite.files, ['art/scout.png', 'art/scout.json'])
+  assert.equal(store.getSavedSprite('art/scout')?.manifest?.clips?.run.frameMs, 75)
+
+  // Pick 3D ArtKit ranger through the full-screen HUD container
+  const rangerNdc = projectPoint(cam, 0, 0.7, 0)
+  const rx = ((rangerNdc[0] + 1) / 2) * 400
+  const ry = ((1 - rangerNdc[1]) / 2) * 300
+  const modelPick = session.pickAt(rx, ry)
+  assert.equal(modelPick.picked, true)
+  assert.equal(modelPick.selection.surface, 'model')
+  assert.equal(modelPick.selection.asset, 'ranger')
+  const editor = session.getRecipeEditor()
+  assert.ok(editor)
+
+  // Dirty guard blocks picking, resuming, and opening reviews while unsaved recipe edits exist
+  editor.addPart({ name: 'cape', shape: 'wedge', position: [0, 0.5, -0.35], scale: [0.4, 0.5, 0.1], tone: 'accent' })
+  assert.equal(session.isDirty(), true)
+  const blockedPick = session.pickAt(30, 20)
+  assert.equal(blockedPick.picked, false)
+  assert.equal(blockedPick.blocked, 'dirty')
+  assert.equal(session.setPaused(false).ok, false)
+
+  // Save recipe clears dirty, persists to store, and notifies testing hooks
+  const saveRes = await session.saveRecipe()
+  assert.equal(saveRes.file, 'art/overrides.json')
+  assert.equal(session.isDirty(), false)
+  assert.equal(savedRecipes.length, 1)
+  assert.equal(savedRecipes[0].asset, 'ranger')
+  assert.ok(store.getSavedRecipe('art/overrides.json#ranger')?.parts.some(p => p.name === 'cape'))
+
+  // Review lifecycle: create, list, external conflict, refresh, reply, resolve/reopen, reload-compare, delete
+  const created = await session.createReview('Widen the helmet visor.', PNG_1X1)
+  assert.equal(created.note.status, 'open')
+  assert.equal(created.note.target.view.surface, 'model')
+  assert.equal(store.getBeforePng(created.note.id), PNG_1X1)
+  assert.equal(session.listReviews().length, 1)
+
+  // Simulate an agent replying out-of-band on disk -> stale revision rejected with 409
+  store.mutateReviewExternally(created.note.id, note => {
+    note.status = 'ready'
+    note.replies.push({ text: 'Adjusted visor width.', date: '2026-11-26T00:00:00.000Z' })
+  })
+  await assert.rejects(() => session.replyToReview('Stale reply'), /changed on disk/i)
+
+  // Refresh picks up new revision -> reply & resolve succeed
+  await session.refreshReviews()
+  assert.equal(session.getActiveReview()?.note.status, 'ready')
+  const replied = await session.replyToReview('Looks sharper now.')
+  assert.equal(replied.note.replies.length, 2)
+  const resolved = await session.toggleResolveReview('Approved!')
+  assert.equal(resolved.note.status, 'resolved')
+  assert.equal(resolved.note.replies.length, 3)
+
+  // Reload & compare state restores review & scene snapshot in a fresh session
+  const reloadState = session.prepareReloadCompareState()
+  assert.equal(reloadState.ridgetopStudio.reviewId, created.note.id)
+  const reloadedSession = createTestingStudioSession({ store })
+  t.after(() => reloadedSession.dispose())
+  await reloadedSession.refreshReviews()
+  const resumed = await reloadedSession.resumeFromNavigation({ historyState: reloadState, search: '' })
+  assert.equal(resumed.openedReview?.note.id, created.note.id)
+  assert.equal(resumed.clearHistoryState, true)
+  assert.deepEqual(restoredScenes.at(-1), { mode: '3d', turn: 5 })
+
+  // Deep-link ?review=<id> opens saved review and runs deferred restore once hooks register
+  const lateRestored: unknown[] = []
+  resetTestingRuntime()
+  const deepLinkSession = createTestingStudioSession({ store })
+  t.after(() => deepLinkSession.dispose())
+  await deepLinkSession.refreshReviews()
+  const deepResumed = await deepLinkSession.resumeFromNavigation({ search: '?review=' + created.note.id })
+  assert.equal(deepResumed.openedReview?.note.id, created.note.id)
+  assert.equal(deepResumed.clearHistoryState, false)
+  assert.equal(lateRestored.length, 0)
+  registerTestingHooks({ restore: scene => { lateRestored.push(scene) } })
+  await Promise.resolve()
+  assert.deepEqual(lateRestored, [{ mode: '3d', turn: 5 }])
+
+  // Delete review removes it from store and session list
+  await deepLinkSession.deleteReview()
+  assert.equal(deepLinkSession.listReviews().length, 0)
+  assert.equal(deepLinkSession.getActiveReview(), undefined)
+})
+
+test('shared ArtRecipeEditor supports v1/v2 edits, tube preservation, palette edits, fitArtRecipe grounding, undo, and discard', () => {
+  const baseRecipe: ArtRecipe = {
+    format: 'ridgetop-art',
+    version: 2,
+    name: 'staff',
+    span: 2.2,
+    centerY: 0.8,
+    frameSize: 64,
+    palette: { wood: '#96694e', crystal: '#5ad6ff', accent: '#eaa555' },
+    parts: [
+      {
+        name: 'shaft',
+        shape: 'tube',
+        points: [[0, 0.2, 0], [0, 1.0, 0], [0.15, 1.5, 0]],
+        radii: [0.06, 0.05, 0.04],
+        sides: 6,
+        position: [0, 0, 0],
+        scale: [1, 1, 1],
+        tone: 'wood'
+      },
+      {
+        name: 'orb',
+        shape: 'octahedron',
+        position: [0.15, 1.65, 0],
+        scale: [0.22, 0.28, 0.22],
+        tone: 'crystal',
+        unlit: 0.6,
+        alpha: 0.75,
+        blend: 'alpha',
+        shade: 0.15
+      }
+    ]
+  }
+
+  const editor = createArtRecipeEditor(baseRecipe, 'shaft')
+  assert.equal(editor.isDirty(), false)
+  assert.equal(editor.getSelectedPart().name, 'shaft')
+  assert.ok(editor.getAvailableShapes().includes('tube'))
+  assert.ok(editor.getAvailableTones().includes('crystal'))
+
+  // Tube part rejects changing shape away from 'tube' but allows editing tube points/radii/sides & transforms
+  assert.throws(() => editor.updatePart({ shape: 'box' }), /Cannot change shape of a tube/i)
+  const updatedTube = editor.updatePart({
+    position: [0, 0.1, 0],
+    radii: [0.08, 0.06, 0.05],
+    sides: 8
+  })
+  assert.equal(updatedTube.shape, 'tube')
+  assert.equal(updatedTube.sides, 8)
+  assert.deepEqual(updatedTube.radii, [0.08, 0.06, 0.05])
+  assert.equal(editor.isDirty(), true)
+
+  // Duplicating a tube preserves all tube fields with unique name & offset
+  const dup = editor.duplicatePart(0)
+  assert.equal(dup.part.name, 'shaft-copy')
+  assert.equal(dup.part.shape, 'tube')
+  assert.equal(dup.part.sides, 8)
+  assert.equal(editor.getRecipe().parts.length, 3)
+
+  // Edit v2 style fields (alpha, blend, shade, rotationDeg) on orb
+  editor.selectPart('orb')
+  const updatedOrb = editor.updatePart({
+    rotationDeg: [15, 45, 0],
+    alpha: 0.5,
+    blend: 'additive',
+    shade: -0.2
+  })
+  assert.equal(updatedOrb.blend, 'additive')
+  assert.equal(updatedOrb.alpha, 0.5)
+  assert.equal(updatedOrb.shade, -0.2)
+  assert.ok(Math.abs((updatedOrb.yaw ?? 0) - Math.PI / 4) < 1e-6)
+
+  // Palette color edit & frameSize edit
+  editor.setPaletteColor('crystal', '#88ffee')
+  assert.equal(editor.getPaletteColor('crystal'), '#88ffee')
+  editor.setFrameSize(96)
+  assert.equal(editor.getRecipe().frameSize, 96)
+
+  // Fit & ground grounds model cleanly and validates through modelFromArtRecipe
+  const fitted = editor.fitAndGround()
+  assert.ok(fitted.span > 0)
+  assert.doesNotThrow(() => modelFromArtRecipe(fitted))
+
+  // Delete parts down to minimum 1, then refusing to delete the last part
+  editor.deletePart(1)
+  assert.equal(editor.getRecipe().parts.length, 2)
+  editor.deletePart(0)
+  assert.equal(editor.getRecipe().parts.length, 1)
+  assert.throws(() => editor.deletePart(0), /at least one part/i)
+
+  // Undo restores deleted part; discard restores original cleanly
+  assert.equal(editor.undo(), true)
+  assert.equal(editor.getRecipe().parts.length, 2)
+  editor.discard()
+  assert.equal(editor.isDirty(), false)
+  assert.equal(editor.canUndo(), false)
+  assert.deepEqual(editor.getRecipe(), baseRecipe)
+})
+
+test('shared testing-protocol rejects invalid pins/reviews/manifests and unifies ?testing= URL activation & stack roots', () => {
+  const valid3dPin = {
+    scope: 'asset' as const,
+    region: [0.1, 0.2, 0.8, 0.9] as [number, number, number, number],
+    view: {
+      surface: 'model' as const,
+      asset: 'ranger',
+      instance: 'r1',
+      source: 'art/overrides.json#ranger',
+      position: [0, 0, 0],
+      yaw: 0.4,
+      elevation: 0.3,
+      span: 1.8,
+      centerY: 0.7,
+      width: 128,
+      height: 128
+    }
+  }
+  assert.doesNotThrow(() => checkPin(valid3dPin))
+
+  // Mismatched scope/surface
+  assert.throws(() => checkPin({ ...valid3dPin, scope: 'hud' }), /Invalid art review target/)
+  assert.throws(() => checkPin({ ...valid3dPin, scope: 'sprite' }), /Invalid art review target/)
+  // Elevation out of (-pi/2, pi/2)
+  assert.throws(() => checkPin({ ...valid3dPin, view: { ...valid3dPin.view, elevation: Math.PI / 2 } }), /Invalid art review target/)
+  // Inverted or out-of-unit region
+  assert.throws(() => checkPin({ ...valid3dPin, region: [0.8, 0.2, 0.1, 0.9] }), /Invalid art review target/)
+  assert.throws(() => checkPin({ ...valid3dPin, region: [-0.1, 0.2, 0.5, 0.5] }), /Invalid art review target/)
+  // Missing clip on 2D sprite surface
+  assert.throws(() => checkPin({
+    scope: 'sprite',
+    region: [0.5, 0.5, 0.5, 0.5],
+    view: { ...valid3dPin.view, surface: 'sprite' }
+  }), /Invalid art review target/)
+  // Review validation checks id, version, status, replies
+  const id = randomUUID()
+  assert.throws(() => checkReview({ version: 2, id, status: 'open', created: '', comment: 'x', replies: [], target: valid3dPin }, id), /Invalid review file/)
+  assert.throws(() => checkReview({ version: 1, id, status: 'invalid', created: '', comment: 'x', replies: [], target: valid3dPin }, id), /Invalid review file/)
+  // Sprite manifest validation rejects traversal & bad sizes
+  assert.throws(() => checkSpriteManifest({ src: '../bad.png', frameWidth: 16, frameHeight: 16 }), /Invalid sprite manifest/)
+  assert.throws(() => checkSpriteManifest({ src: 'ok.png', frameWidth: 0, frameHeight: 16 }), /Invalid sprite manifest/)
+
+  // Unified ?testing= URL activation semantics
+  assert.equal(resolveTestingUrlActivation('', false), false)
+  assert.equal(resolveTestingUrlActivation('', true), true)
+  assert.equal(resolveTestingUrlActivation('?testing=1', false), true)
+  assert.equal(resolveTestingUrlActivation('?testing=true', false), true)
+  assert.equal(resolveTestingUrlActivation('?testing=0', true), false)
+  assert.equal(resolveTestingUrlActivation('?testing=false', true), false)
+  assert.equal(resolveTestingUrlActivation('?review=' + id, false), true)
+  assert.equal(resolveTestingUrlActivation('?testing=0&review=' + id, true), false)
+  assert.equal(shouldAutoMountTestingStudio(''), true)
+  assert.equal(shouldAutoMountTestingStudio('?testing=0'), false)
+  assert.equal(shouldAutoMountTestingStudio('?testing=false'), false)
+  assert.equal(shouldAutoMountTestingStudio('?testing=1'), true)
+
+  // normalizeStackLocation preserves /examples/ and /crownshard/ paths cleanly
+  assert.equal(
+    captureSourceSite('Error\n    at buildHero (file:///repo/examples/crownshard/scene.ts:42:10)'),
+    'examples/crownshard/scene.ts:42'
+  )
+  assert.equal(
+    captureSourceSite('Error\n    at buildUnit (http://127.0.0.1:3000/crownshard/characters.js:88:4)'),
+    'crownshard/characters.js:88'
+  )
 })

@@ -1,53 +1,16 @@
-import { artModels, createArtKit, createArtRecipe } from './art.ts'
-import { fitArtRecipe } from './art-builder.ts'
-import { artPalette, artShapes, modelFromArtRecipe } from './art-recipe.ts'
-import type { ArtRecipe, ArtShape, ArtTone } from './art-recipe.ts'
-import { modelReviewFrame, pickRenderedScene, pickSpriteDraws } from './art-review.ts'
-import type { ArtPin, ArtReview, ArtView, PickedSpriteDraw, ReviewScope, ReviewSurface } from './art-review.ts'
+import { createArtKit } from './art.ts'
+import { modelFromArtRecipe } from './art-recipe.ts'
+import type { ArtShape } from './art-recipe.ts'
+import { modelReviewFrame } from './art-review.ts'
 import { multiply, orthographic, view } from './geometry.ts'
 import { bakeSpriteDirections, renderMeshFrame } from './low-poly.ts'
-import {
-  findRegisteredArtModel, getHudRegions, getLastFrame, getLastSpriteDraws, getTestingHooks,
-  isTestingPaused, onTestingHooksRegistered, onTestingPause, recognizeAssetFromPick, setTestingActive, setTestingPaused
-} from './testing-runtime.ts'
-import type { ArtSourceInfo, HudRegion, RecognizedAsset, SpriteDrawRecord } from './testing-runtime.ts'
-import type { InstanceBatch, Vec3 } from './types.ts'
-
-interface ReviewEntry {
-  note: ArtReview
-  revision: string
-}
-
-interface Selection {
-  surface: ReviewSurface
-  asset: string
-  instanceId: string
-  source: string
-  part?: string
-  scope: ReviewScope
-  region: [number, number, number, number]
-  recognized?: RecognizedAsset
-  spriteHit?: PickedSpriteDraw
-  hudRegion?: HudRegion
-  screenRect?: { left: number; top: number; width: number; height: number }
-  artSource?: ArtSourceInfo
-  originalRecipe?: ArtRecipe
-  draftRecipe?: ArtRecipe
-  previewYaw: number
-  previewElevation: number
-  spriteClip?: string
-  spriteFrame: number
-  spriteFrameMs: number
-  spriteImport?: HTMLCanvasElement
-  savedView?: ArtView
-}
-
-const REVIEWS_API = '/__testing/reviews'
-const RECIPE_API = '/__testing/recipe'
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return value !== null && typeof value === 'object' && !Array.isArray(value)
-}
+import { allowedScopesForSurface, isReviewScope, resolveTestingUrlActivation } from './testing-protocol.ts'
+import type { ReviewStorePort } from './testing-protocol.ts'
+import { createTestingStudioSession, surfaceLabel } from './testing-session.ts'
+import type { ArtRecipeEditor, StudioSelection, TestingStudioSession } from './testing-session.ts'
+import { getLastFrame, isTestingPaused, setTestingActive } from './testing-runtime.ts'
+import type { HudRegion, RecognizedAsset, SpriteDrawRecord } from './testing-runtime.ts'
+import type { BlendMode, InstanceBatch, Vec3 } from './types.ts'
 
 function errorMessage(error: unknown): string {
   if (error instanceof Error) return error.message
@@ -57,62 +20,8 @@ function errorMessage(error: unknown): string {
   return String(error)
 }
 
-function isBuiltInArtModel(name: string): name is keyof typeof artModels {
-  return Object.hasOwn(artModels, name)
-}
-
-function isArtShape(value: string): value is ArtShape {
-  return Object.hasOwn(artShapes, value)
-}
-
-function isArtTone(value: string): value is ArtTone {
-  return Object.hasOwn(artPalette, value)
-}
-
-function isReviewScope(value: string): value is ReviewScope {
-  return value === 'asset' || value === 'instance' || value === 'sprite' || value === 'hud'
-}
-
-function isReviewEntry(value: unknown): value is ReviewEntry {
-  return (
-    isRecord(value) &&
-    typeof value.revision === 'string' &&
-    isRecord(value.note) &&
-    typeof value.note.id === 'string' &&
-    typeof value.note.comment === 'string' &&
-    isRecord(value.note.target) &&
-    isRecord(value.note.target.view) &&
-    Array.isArray(value.note.replies)
-  )
-}
-
-function parseReviewEntry(value: unknown): ReviewEntry {
-  if (!isReviewEntry(value)) throw new Error('Unexpected review response from server.')
-  return value
-}
-
-function parseReviewList(value: unknown): { entries: ReviewEntry[]; errors: string[] } {
-  if (!isRecord(value) || !Array.isArray(value.entries) || !Array.isArray(value.errors)) {
-    throw new Error('Unexpected reviews list response from server.')
-  }
-  const entries = value.entries.filter(isReviewEntry)
-  const errors = value.errors.filter((item): item is string => typeof item === 'string')
-  return { entries, errors }
-}
-
-async function apiJson(url: string, method = 'GET', body?: unknown): Promise<unknown> {
-  const res = await fetch(url, {
-    method,
-    cache: 'no-store',
-    headers: body !== undefined ? { 'Content-Type': 'application/json' } : {},
-    body: body !== undefined ? JSON.stringify(body) : undefined
-  })
-  const data: unknown = await res.json().catch(() => ({}))
-  if (!res.ok) {
-    const msg = isRecord(data) && typeof data.error === 'string' ? data.error : `Request failed (${res.status})`
-    throw new Error(msg)
-  }
-  return data
+function round3(n: number): number {
+  return Math.round(n * 1000) / 1000
 }
 
 function el<K extends keyof HTMLElementTagNameMap>(
@@ -135,10 +44,6 @@ function el<K extends keyof HTMLElementTagNameMap>(
   }
   if (children.length) node.append(...children)
   return node
-}
-
-function round3(n: number): number {
-  return Math.round(n * 1000) / 1000
 }
 
 function measureNormalized(target: HTMLElement, event: PointerEvent): [number, number] {
@@ -168,56 +73,12 @@ function drawPinOverlay(canvas: HTMLCanvasElement, region: readonly [number, num
   ctx.restore()
 }
 
-function lookupArtSource(asset: string): ArtSourceInfo | undefined {
-  for (const hook of getTestingHooks()) {
-    const info = hook.getArtSource?.(asset)
-    if (info) return info
-  }
-  const found = findRegisteredArtModel(asset)
-  if (found) {
-    const recipe = found.kit.recipeFor?.(asset)
-    return {
-      path: found.kit.sourceSite ?? `art/overrides.json#${asset}`,
-      file: null,
-      base: null,
-      recipe
-    }
-  }
-  if (isBuiltInArtModel(asset)) {
-    return {
-      path: `art/overrides.json#${asset}`,
-      file: null,
-      base: null,
-      recipe: createArtRecipe(asset)
-    }
-  }
-  return undefined
-}
-
-function resolveSnapshot(): unknown {
-  for (const hook of getTestingHooks()) {
-    if (hook.snapshot) {
-      try { return hook.snapshot() } catch { /* Fall back to default scene metadata. */ }
-    }
-  }
-  return { url: location.pathname + location.search, capturedAt: new Date().toISOString() }
-}
-
-async function restoreSnapshot(scene: unknown): Promise<void> {
-  for (const hook of getTestingHooks()) {
-    if (hook.restore) await hook.restore(scene)
-  }
-}
-
 function renderRecognizedPreview(recognized: RecognizedAsset, size = 256, yaw = 0.55, elevation = 0.42): HTMLCanvasElement {
   const canvas = document.createElement('canvas')
   canvas.width = size
   canvas.height = size
   const frame = getLastFrame()
   if (!frame) return canvas
-
-  // Render the isolated recognized assembly with an auto-fitted orthographic camera so it is always crisp
-  // and completely independent of WebGL/WebGPU preserveDrawingBuffer.
   const { center, size: dim } = recognized.bounds
   const span = Math.max(0.5, Math.hypot(dim[0], dim[1], dim[2]) * 1.25)
   const r = span * 4
@@ -304,16 +165,71 @@ function downloadBlob(blob: Blob, filename: string) {
   setTimeout(() => URL.revokeObjectURL(url), 1000)
 }
 
-function surfaceLabel(surface: ReviewSurface): string {
-  if (surface === 'model') return '3D Model'
-  if (surface === 'rig') return '3D Rig'
-  if (surface === 'mesh') return '3D Mesh'
-  if (surface === 'sprite') return '2D Sprite'
-  return 'HUD'
+function isBlendModeOption(value: string): value is BlendMode {
+  return value === 'opaque' || value === 'alpha' || value === 'additive'
+}
+
+function bindOrbitDrag(
+  canvas: HTMLCanvasElement,
+  sel: StudioSelection,
+  session: TestingStudioSession,
+  paint: () => void
+) {
+  let orbitDrag: { id: number; x: number; y: number; yaw: number; elev: number } | undefined
+  canvas.onpointerdown = event => {
+    if (event.button !== 0) return
+    orbitDrag = { id: event.pointerId, x: event.clientX, y: event.clientY, yaw: sel.previewYaw, elev: sel.previewElevation }
+    try { canvas.setPointerCapture(event.pointerId) } catch { /* Ignore synthetic capture failure. */ }
+  }
+  canvas.onpointermove = event => {
+    if (!orbitDrag || orbitDrag.id !== event.pointerId) return
+    session.setPreviewOrbit(
+      orbitDrag.yaw + (event.clientX - orbitDrag.x) * 0.015,
+      orbitDrag.elev + (event.clientY - orbitDrag.y) * 0.012
+    )
+    paint()
+  }
+  canvas.onpointerup = event => {
+    if (orbitDrag?.id === event.pointerId) orbitDrag = undefined
+  }
+}
+
+function bindRegionDrag(
+  canvas: HTMLCanvasElement,
+  session: TestingStudioSession,
+  paint: () => void
+) {
+  let drag: { id: number; x: number; y: number } | undefined
+  canvas.onpointerdown = event => {
+    if (event.button !== 0) return
+    const [u, v] = measureNormalized(canvas, event)
+    drag = { id: event.pointerId, x: u, y: v }
+    session.setRegion([u, v, u, v])
+    try { canvas.setPointerCapture(event.pointerId) } catch { /* Ignore capture error. */ }
+    paint()
+  }
+  canvas.onpointermove = event => {
+    if (!drag || drag.id !== event.pointerId) return
+    const [u, v] = measureNormalized(canvas, event)
+    session.setRegion([Math.min(drag.x, u), Math.min(drag.y, v), Math.max(drag.x, u), Math.max(drag.y, v)])
+    paint()
+  }
+  canvas.onpointerup = event => {
+    if (drag?.id === event.pointerId) drag = undefined
+  }
+}
+
+/**
+ * Determine whether the injected Testing Studio script should auto-mount for the current URL search string.
+ * Unifies `?testing=0|false` opt-out and `?testing=1|true` / `?review=` activation with `testing-runtime.ts`.
+ */
+export function shouldAutoMountTestingStudio(search?: string): boolean {
+  return resolveTestingUrlActivation(search, true)
 }
 
 export interface TestingStudioHandle {
   readonly root: HTMLDivElement
+  readonly session: TestingStudioSession
   pause(paused: boolean): void
   refreshReviews(): Promise<void>
   dispose(): void
@@ -323,9 +239,9 @@ let activeStudioHandle: TestingStudioHandle | undefined
 
 /**
  * Mount the game-agnostic Ridgetop Testing Mode bar and unified In-Game Asset Studio drawer.
- * Isolated inside `#ridgetop-testing-root` appended to `document.body` — works with any game page.
+ * Thin DOM presentation adapter over the headless `createTestingStudioSession` controller.
  */
-export function mountTestingStudio(): TestingStudioHandle {
+export function mountTestingStudio(options: { store?: ReviewStorePort; session?: TestingStudioSession } = {}): TestingStudioHandle {
   if (activeStudioHandle) {
     activeStudioHandle.dispose()
     activeStudioHandle = undefined
@@ -343,6 +259,7 @@ export function mountTestingStudio(): TestingStudioHandle {
     document.head.append(link)
   }
 
+  const session = options.session ?? createTestingStudioSession({ store: options.store })
   const controller = new AbortController()
   const signal = { signal: controller.signal }
 
@@ -353,7 +270,6 @@ export function mountTestingStudio(): TestingStudioHandle {
   const highlightLabel = el('span', { className: 'rt-highlight-label' })
   highlight.append(highlightLabel)
 
-  // Floating bar
   const bar = el('div', { className: 'rt-bar', id: 'ridgetop-testing-bar' })
   const brand = el('span', { className: 'rt-brand', text: 'TESTING' })
   const pauseBtn = el('button', { className: 'rt-btn rt-btn-primary', type: 'button', id: 'rt-pause-btn', text: 'Pause & Inspect (F9)' })
@@ -364,7 +280,6 @@ export function mountTestingStudio(): TestingStudioHandle {
   const statusPill = el('span', { className: 'rt-status-pill', id: 'rt-status-pill', text: 'Live' })
   bar.append(brand, pauseBtn, reviewSelect, refreshBtn, statusPill)
 
-  // Drawer shell
   const drawer = el('aside', { className: 'rt-drawer', id: 'ridgetop-testing-drawer' })
   drawer.hidden = true
 
@@ -394,24 +309,19 @@ export function mountTestingStudio(): TestingStudioHandle {
   root.append(pickLayer, highlight, bar, drawer)
   document.body.append(root)
 
-  const entries = new Map<string, ReviewEntry>()
-  let selection: Selection | undefined
-  let activeReview: ReviewEntry | undefined
-  let dirty = false
-  let busy = false
-  let draftReviewId = crypto.randomUUID()
   let lastPreviewCanvas: HTMLCanvasElement | undefined
+  let spriteImportCanvas: HTMLCanvasElement | undefined
   let spriteAnimTimer: number | undefined
-
-  function setStatus(message: string) {
-    footerMsg.textContent = message
-  }
 
   function stopSpriteAnim() {
     if (spriteAnimTimer !== undefined) {
       clearInterval(spriteAnimTimer)
       spriteAnimTimer = undefined
     }
+  }
+
+  function syncFooter() {
+    footerMsg.textContent = session.getStatus()
   }
 
   function setTab(next: 'editor' | 'reviews') {
@@ -430,63 +340,44 @@ export function mountTestingStudio(): TestingStudioHandle {
   }
 
   function updateHighlight() {
-    if (!isTestingPaused() || !selection?.screenRect) {
+    const sel = session.getSelection()
+    if (!session.isPaused() || !sel?.screenRect) {
       highlight.hidden = true
       return
     }
-    const r = selection.screenRect
+    const r = sel.screenRect
     highlight.hidden = false
     highlight.style.left = `${Math.round(r.left)}px`
     highlight.style.top = `${Math.round(r.top)}px`
     highlight.style.width = `${Math.max(12, Math.round(r.width))}px`
     highlight.style.height = `${Math.max(12, Math.round(r.height))}px`
-    highlightLabel.textContent = selection.part ? `${selection.asset} · ${selection.part}` : selection.asset
+    highlightLabel.textContent = sel.part ? `${sel.asset} · ${sel.part}` : sel.asset
   }
 
-  function syncPauseUi(paused: boolean) {
+  function syncReviewSelect() {
+    const saved = session.listReviews()
+    const activeId = session.getActiveReview()?.note.id ?? ''
+    reviewSelect.replaceChildren(new Option(`Reviews (${saved.length})`, ''))
+    for (const e of saved) {
+      reviewSelect.append(new Option(`${e.note.status} · ${e.note.target.view.asset} · ${e.note.comment.slice(0, 32)}`, e.note.id))
+    }
+    reviewSelect.value = activeId
+  }
+
+  function syncPauseUi() {
+    const paused = session.isPaused()
     pauseBtn.textContent = paused ? 'Resume (F9)' : 'Pause & Inspect (F9)'
     pickLayer.classList.toggle('rt-picking', paused)
     statusPill.textContent = paused ? 'Paused — click to inspect' : 'Live'
     statusPill.classList.toggle('rt-paused', paused)
     if (!paused) {
       stopSpriteAnim()
+      spriteImportCanvas = undefined
       drawer.hidden = true
       highlight.hidden = true
-      selection = undefined
-      activeReview = undefined
-      dirty = false
       reviewSelect.value = ''
     }
   }
-
-  const unsubPause = onTestingPause(syncPauseUi)
-
-  function setPaused(paused: boolean) {
-    if (busy) return
-    if (!paused && dirty) {
-      setStatus('Save or discard your pending recipe edits before resuming.')
-      return
-    }
-    setTestingPaused(paused)
-    if (paused && !selection) {
-      drawer.hidden = false
-      renderEmptyDrawer()
-    }
-  }
-
-  pauseBtn.onclick = () => setPaused(!isTestingPaused())
-
-  window.addEventListener('keydown', event => {
-    if (event.code === 'F9' && !event.repeat) {
-      event.preventDefault()
-      setPaused(!isTestingPaused())
-    } else if (event.code === 'Escape' && isTestingPaused()) {
-      const target = event.target
-      if (target instanceof HTMLElement && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.tagName === 'SELECT')) return
-      event.preventDefault()
-      setPaused(false)
-    }
-  }, signal)
 
   function renderEmptyDrawer() {
     titleEl.textContent = 'Paused — Click viewport to pick'
@@ -499,81 +390,12 @@ export function mountTestingStudio(): TestingStudioHandle {
     ))
   }
 
-  function buildArtView(sel: Selection): ArtView {
-    if (sel.savedView) return structuredClone(sel.savedView)
-    if (sel.surface === 'sprite' && sel.spriteHit) {
-      const d = sel.spriteHit.draw
-      const clipName = sel.spriteClip ?? d.clip ?? Object.keys(d.atlas.clips)[0] ?? 'frame'
-      const clipSpec = d.atlas.clips[clipName]
-      const col = clipSpec ? clipSpec.column + (sel.spriteFrame % Math.max(1, clipSpec.frames)) : d.column
-      const row = clipSpec?.row ?? d.row
-      return {
-        surface: 'sprite',
-        asset: sel.asset,
-        instance: sel.instanceId,
-        source: d.atlas.manifestUrl ?? d.atlas.sourceSite ?? d.atlas.src,
-        sheet: d.atlas.src,
-        position: [0, 0, 0],
-        yaw: 0,
-        elevation: 0,
-        span: 1,
-        centerY: 0,
-        width: Math.max(1, Math.round(d.rect.width)),
-        height: Math.max(1, Math.round(d.rect.height)),
-        clip: clipName,
-        frame: sel.spriteFrame,
-        column: col,
-        row,
-        handDrawn: true
-      }
-    }
-    if (sel.surface === 'hud' && sel.hudRegion) {
-      return {
-        surface: 'hud',
-        asset: sel.asset,
-        instance: sel.instanceId,
-        source: sel.source,
-        position: [0, 0, 0],
-        yaw: 0,
-        elevation: 0,
-        span: 1,
-        centerY: 0,
-        width: Math.max(1, Math.round(sel.hudRegion.rect.width)),
-        height: Math.max(1, Math.round(sel.hudRegion.rect.height)),
-        clip: 'hud',
-        frame: 0,
-        column: 0,
-        row: 0
-      }
-    }
-    const recipe = sel.draftRecipe ?? sel.originalRecipe
-    const center = sel.recognized?.bounds.center ?? [0, 0, 0]
-    const size = sel.recognized?.bounds.size ?? [1, 1, 1]
-    const span = recipe?.span ?? Math.max(0.5, Math.hypot(size[0], size[1], size[2]) * 1.25)
-    const centerY = recipe?.centerY ?? center[1]
-    const w = Math.max(1, Math.round(sel.screenRect?.width ?? 128))
-    const h = Math.max(1, Math.round(sel.screenRect?.height ?? 128))
-    return {
-      surface: sel.surface,
-      asset: sel.asset,
-      instance: sel.instanceId,
-      source: sel.source,
-      position: [...center],
-      yaw: sel.previewYaw,
-      elevation: Math.max(-1.45, Math.min(1.45, sel.previewElevation)),
-      span,
-      centerY,
-      width: w,
-      height: h
-    }
-  }
-
-  function renderCurrentAssetImage(sel: Selection): HTMLCanvasElement {
-    const recipe = sel.draftRecipe ?? sel.originalRecipe
+  function renderCurrentAssetImage(sel: StudioSelection): HTMLCanvasElement {
+    const recipe = sel.recipeEditor?.getRecipe()
     if (sel.surface === 'model' && recipe) {
       const model = modelFromArtRecipe(recipe)
       const kit = createArtKit<string>({ palette: recipe.palette, models: { [sel.asset]: model } })
-      const pose = buildArtView(sel)
+      const pose = session.buildArtView(sel)
       return modelReviewFrame(kit, { ...pose, surface: 'model', yaw: sel.previewYaw, elevation: sel.previewElevation }, 256, false)
     }
     if ((sel.surface === 'rig' || sel.surface === 'mesh' || sel.surface === 'model') && sel.recognized) {
@@ -585,7 +407,7 @@ export function mountTestingStudio(): TestingStudioHandle {
       const spec = clipName ? d.atlas.clips[clipName] : undefined
       const col = spec ? spec.column + (sel.spriteFrame % Math.max(1, spec.frames)) : d.column
       const row = spec?.row ?? d.row
-      return renderSpriteFrameCanvas(d, col, row, d.flip, sel.spriteImport)
+      return renderSpriteFrameCanvas(d, col, row, d.flip, spriteImportCanvas)
     }
     if (sel.surface === 'hud' && sel.hudRegion) {
       return renderHudPreviewCanvas(sel.hudRegion)
@@ -598,11 +420,12 @@ export function mountTestingStudio(): TestingStudioHandle {
 
   function renderSelection() {
     stopSpriteAnim()
-    if (!selection) {
+    syncFooter()
+    const sel = session.getSelection()
+    if (!sel) {
       renderEmptyDrawer()
       return
     }
-    const sel = selection
     drawer.hidden = false
     badge.textContent = surfaceLabel(sel.surface)
     titleEl.replaceChildren(badge, document.createTextNode(sel.asset))
@@ -612,33 +435,29 @@ export function mountTestingStudio(): TestingStudioHandle {
     renderReviewsPane(sel)
   }
 
-  function renderEditorPane(sel: Selection) {
+  function renderEditorPane(sel: StudioSelection) {
     editorPane.replaceChildren()
-    if (sel.surface === 'model' && sel.draftRecipe) {
-      renderArtRecipeEditor(sel, sel.draftRecipe)
+    if (sel.surface === 'model' && sel.recipeEditor) {
+      renderArtRecipeEditor(sel, sel.recipeEditor)
     } else if (sel.surface === 'sprite' && sel.spriteHit) {
-      renderSpriteEditor(sel, sel.spriteHit)
+      renderSpriteEditor(sel)
     } else {
       renderReadOnlyInspector(sel)
     }
   }
 
-  function renderArtRecipeEditor(sel: Selection, recipe: ArtRecipe) {
-    let selectedPartIndex = Math.max(0, recipe.parts.findIndex(p => p.name === sel.part))
-
-    // Live interactive preview section
+  function renderArtRecipeEditor(sel: StudioSelection, editor: ArtRecipeEditor) {
     const previewSection = el('div', { className: 'rt-section' })
     const previewWrap = el('div', { className: 'rt-preview-wrap' })
     const previewCanvas = el('canvas', { className: 'rt-preview-canvas' })
     previewWrap.append(previewCanvas)
 
     const orbitRow = el('div', { className: 'rt-row' })
-    const yawLabel = el('span', { className: 'rt-muted rt-grow', text: 'Drag preview to orbit' })
     const fitBtn = el('button', { className: 'rt-btn', type: 'button', text: 'Fit & Ground' })
-    orbitRow.append(yawLabel, fitBtn)
+    const undoBtn = el('button', { className: 'rt-btn', type: 'button', text: 'Undo' })
+    orbitRow.append(el('span', { className: 'rt-muted rt-grow', text: 'Drag preview to orbit' }), undoBtn, fitBtn)
     previewSection.append(previewWrap, orbitRow)
 
-    // 3-angle & silhouette compare
     const compareDetails = document.createElement('details')
     compareDetails.className = 'rt-section'
     const compareSummary = el('summary', { className: 'rt-section-title', text: '3-Angle & Silhouette Compare' })
@@ -646,8 +465,7 @@ export function mountTestingStudio(): TestingStudioHandle {
     const silCheck = el('input', { type: 'checkbox' })
     silLabel.append(silCheck, el('span', { text: 'Silhouette mode' }))
     const compareGrid = el('div', { className: 'rt-compare-grid' })
-    const angles = ['front', 'right', 'back'] as const
-    const angleCanvases = angles.map(angle => {
+    const angleCanvases = (['front', 'right', 'back'] as const).map(angle => {
       const fig = el('figure', { className: 'rt-compare-cell' })
       const c = document.createElement('canvas')
       fig.append(el('figcaption', { text: angle[0].toUpperCase() + angle.slice(1) }), c)
@@ -657,7 +475,6 @@ export function mountTestingStudio(): TestingStudioHandle {
     silCheck.onchange = () => compareGrid.classList.toggle('rt-silhouettes', silCheck.checked)
     compareDetails.append(compareSummary, silLabel, compareGrid)
 
-    // Part list + add/duplicate/delete
     const partsSection = el('div', { className: 'rt-section' })
     partsSection.append(el('h3', { className: 'rt-section-title', text: 'Model Parts' }))
     const partRow = el('div', { className: 'rt-row' })
@@ -670,11 +487,8 @@ export function mountTestingStudio(): TestingStudioHandle {
     const nameShapeRow = el('div', { className: 'rt-grid-3' })
     const nameInput = el('input', { className: 'rt-input', type: 'text' })
     const shapeSelect = el('select', { className: 'rt-select' })
-    for (const shape of Object.keys(artShapes)) shapeSelect.append(new Option(shape, shape))
-    const toneKeys = Object.keys(artPalette)
-    for (const tone of Object.keys(recipe.palette)) if (!toneKeys.includes(tone)) toneKeys.push(tone)
     const toneSelect = el('select', { className: 'rt-select' })
-    for (const tone of toneKeys) toneSelect.append(new Option(tone, tone))
+    for (const tone of editor.getAvailableTones()) toneSelect.append(new Option(tone, tone))
     nameShapeRow.append(
       el('label', { className: 'rt-field', text: 'Name' }, nameInput),
       el('label', { className: 'rt-field', text: 'Shape' }, shapeSelect),
@@ -695,35 +509,45 @@ export function mountTestingStudio(): TestingStudioHandle {
     const posCtrl = makeVec3Row('Pos')
     const sclCtrl = makeVec3Row('Scale')
     const rotCtrl = makeVec3Row('Rot°')
+
+    const styleRow = el('div', { className: 'rt-grid-3' })
     const unlitInput = el('input', { className: 'rt-input', type: 'number' })
-    unlitInput.min = '0'
-    unlitInput.max = '1'
-    unlitInput.step = '0.05'
-    const unlitWrap = el('label', { className: 'rt-field', text: 'Unlit (0–1)' }, unlitInput)
+    unlitInput.min = '0'; unlitInput.max = '1'; unlitInput.step = '0.05'
+    const alphaInput = el('input', { className: 'rt-input', type: 'number' })
+    alphaInput.min = '0'; alphaInput.max = '1'; alphaInput.step = '0.05'
+    const shadeInput = el('input', { className: 'rt-input', type: 'number' })
+    shadeInput.min = '-0.5'; shadeInput.max = '0.5'; shadeInput.step = '0.05'
+    styleRow.append(
+      el('label', { className: 'rt-field', text: 'Unlit (0–1)' }, unlitInput),
+      el('label', { className: 'rt-field', text: 'Alpha (0–1)' }, alphaInput),
+      el('label', { className: 'rt-field', text: 'Shade (-0.5–0.5)' }, shadeInput)
+    )
 
-    partsSection.append(partRow, nameShapeRow, posCtrl.grid, sclCtrl.grid, rotCtrl.grid, unlitWrap)
+    const blendSelect = el('select', { className: 'rt-select' })
+    for (const mode of ['', 'opaque', 'alpha', 'additive']) blendSelect.append(new Option(mode || 'auto', mode))
+    const blendWrap = el('label', { className: 'rt-field', text: 'Blend' }, blendSelect)
 
-    // Palette swatches
+    partsSection.append(partRow, nameShapeRow, posCtrl.grid, sclCtrl.grid, rotCtrl.grid, styleRow, blendWrap)
+
     const paletteSection = el('div', { className: 'rt-section' })
     paletteSection.append(el('h3', { className: 'rt-section-title', text: 'Palette Swatches' }))
     const swatches = el('div', { className: 'rt-swatches' })
-    for (const tone of toneKeys) {
-      if (!isArtTone(tone) && !Object.hasOwn(recipe.palette, tone)) continue
+    for (const tone of editor.getAvailableTones()) {
       const picker = el('input', { type: 'color' })
-      const basePalette: Record<string, string | undefined> = artPalette
-      const rawHex = recipe.palette[tone] ?? basePalette[tone] ?? '#ffffff'
-      picker.value = rawHex.startsWith('#') ? rawHex : '#' + rawHex
+      picker.value = editor.getPaletteColor(tone)
       picker.oninput = () => {
-        recipe.palette[tone] = picker.value
-        dirty = true
-        paintPreviews()
-        syncSaveButtons()
+        try {
+          editor.setPaletteColor(tone, picker.value)
+          paintPreviews()
+          syncSaveButtons()
+        } catch (error) {
+          session.setStatus(errorMessage(error))
+        }
       }
       swatches.append(el('label', { className: 'rt-swatch' }, picker, document.createTextNode(tone)))
     }
     paletteSection.append(swatches)
 
-    // Save / Download actions
     const actionRow = el('div', { className: 'rt-row' })
     const saveBtn = el('button', { className: 'rt-btn rt-btn-primary', type: 'button', text: 'Save Recipe' })
     const discardBtn = el('button', { className: 'rt-btn', type: 'button', text: 'Discard' })
@@ -731,13 +555,17 @@ export function mountTestingStudio(): TestingStudioHandle {
     actionRow.append(saveBtn, discardBtn, downloadBtn)
 
     function syncSaveButtons() {
+      const busy = session.isBusy()
+      const dirty = editor.isDirty()
       saveBtn.disabled = !dirty || busy
       discardBtn.disabled = !dirty || busy
-      delPartBtn.disabled = recipe.parts.length <= 1 || busy
+      undoBtn.disabled = !editor.canUndo() || busy
+      delPartBtn.disabled = editor.getRecipe().parts.length <= 1 || busy
     }
 
     function paintPreviews() {
       try {
+        const recipe = editor.getRecipe()
         const rendered = renderCurrentAssetImage(sel)
         lastPreviewCanvas = rendered
         previewCanvas.width = rendered.width
@@ -757,23 +585,21 @@ export function mountTestingStudio(): TestingStudioHandle {
           cell.canvas.getContext('2d')?.drawImage(sheet.image, clip.column * fw, (clip.row ?? 0) * fh, fw, fh, 0, 0, fw, fh)
         }
       } catch (error) {
-        setStatus(errorMessage(error))
+        session.setStatus(errorMessage(error))
       }
     }
 
     function populatePartFields() {
+      const recipe = editor.getRecipe()
       partSelect.replaceChildren(...recipe.parts.map((p, idx) => new Option(p.name, String(idx))))
-      selectedPartIndex = Math.max(0, Math.min(recipe.parts.length - 1, selectedPartIndex))
-      partSelect.value = String(selectedPartIndex)
-      const part = recipe.parts[selectedPartIndex]
+      partSelect.value = String(editor.getSelectedPartIndex())
+      const part = editor.getSelectedPart()
       sel.part = part.name
       nameInput.value = part.name
-      const isTube = part.shape === 'tube'
-      const shapeKeys = Object.keys(artShapes)
-      if (isTube) shapeKeys.push('tube')
-      shapeSelect.replaceChildren(...shapeKeys.map(s => new Option(s, s)))
+      const shapes = editor.getAvailableShapes()
+      shapeSelect.replaceChildren(...shapes.map(s => new Option(s, s)))
       shapeSelect.value = part.shape
-      shapeSelect.disabled = isTube
+      shapeSelect.disabled = part.shape === 'tube'
       toneSelect.value = part.tone
       for (let i = 0; i < 3; i++) {
         posCtrl.inputs[i].value = String(round3(part.position[i]))
@@ -783,165 +609,120 @@ export function mountTestingStudio(): TestingStudioHandle {
       rotCtrl.inputs[1].value = String(round3((part.yaw ?? 0) * 180 / Math.PI))
       rotCtrl.inputs[2].value = String(round3((part.roll ?? 0) * 180 / Math.PI))
       unlitInput.value = String(round3(part.unlit ?? 0))
+      alphaInput.value = String(round3(part.alpha ?? 1))
+      shadeInput.value = String(round3(part.shade ?? 0))
+      blendSelect.value = part.blend ?? ''
       syncSaveButtons()
     }
 
     function applyFieldChanges() {
-      const part = recipe.parts[selectedPartIndex]
-      const nextName = nameInput.value.trim()
-      if (nextName && nextName !== part.name && !recipe.parts.some((p, i) => i !== selectedPartIndex && p.name === nextName)) {
-        part.name = nextName
-        sel.part = nextName
-        partSelect.options[selectedPartIndex].text = nextName
+      try {
+        const part = editor.getSelectedPart()
+        const shapeVal = shapeSelect.value
+        const nextShape: ArtShape | 'tube' | undefined = part.shape === 'tube'
+          ? undefined
+          : editor.getAvailableShapes().find(s => s === shapeVal)
+        const alphaVal = alphaInput.valueAsNumber
+        const shadeVal = shadeInput.valueAsNumber
+        const blendVal = blendSelect.value
+        const updated = editor.updatePart({
+          name: nameInput.value,
+          ...(nextShape !== undefined ? { shape: nextShape } : {}),
+          tone: toneSelect.value,
+          position: [posCtrl.inputs[0].valueAsNumber, posCtrl.inputs[1].valueAsNumber, posCtrl.inputs[2].valueAsNumber],
+          scale: [sclCtrl.inputs[0].valueAsNumber, sclCtrl.inputs[1].valueAsNumber, sclCtrl.inputs[2].valueAsNumber],
+          rotationDeg: [rotCtrl.inputs[0].valueAsNumber, rotCtrl.inputs[1].valueAsNumber, rotCtrl.inputs[2].valueAsNumber],
+          unlit: unlitInput.valueAsNumber,
+          alpha: Number.isFinite(alphaVal) && alphaVal < 1 ? alphaVal : null,
+          shade: Number.isFinite(shadeVal) && shadeVal !== 0 ? shadeVal : null,
+          blend: isBlendModeOption(blendVal) ? blendVal : null
+        })
+        sel.part = updated.name
+        partSelect.options[editor.getSelectedPartIndex()].text = updated.name
+        session.setStatus('')
+        paintPreviews()
+        syncSaveButtons()
+      } catch (error) {
+        session.setStatus(errorMessage(error))
       }
-      if (part.shape !== 'tube' && isArtShape(shapeSelect.value)) part.shape = shapeSelect.value
-      if (isArtTone(toneSelect.value) || Object.hasOwn(recipe.palette, toneSelect.value)) part.tone = toneSelect.value
-      const pos: Vec3 = [posCtrl.inputs[0].valueAsNumber, posCtrl.inputs[1].valueAsNumber, posCtrl.inputs[2].valueAsNumber]
-      const scl: Vec3 = [sclCtrl.inputs[0].valueAsNumber, sclCtrl.inputs[1].valueAsNumber, sclCtrl.inputs[2].valueAsNumber]
-      if (!pos.every(Number.isFinite) || !scl.every(n => Number.isFinite(n) && n > 0)) {
-        setStatus('Positions must be finite and scales must be positive.')
-        return
-      }
-      part.position = pos
-      part.scale = scl
-      const pitch = rotCtrl.inputs[0].valueAsNumber * Math.PI / 180
-      const yaw = rotCtrl.inputs[1].valueAsNumber * Math.PI / 180
-      const roll = rotCtrl.inputs[2].valueAsNumber * Math.PI / 180
-      if (Number.isFinite(pitch)) part.pitch = pitch || undefined
-      if (Number.isFinite(yaw)) part.yaw = yaw || undefined
-      if (Number.isFinite(roll)) part.roll = roll || undefined
-      const unlit = unlitInput.valueAsNumber
-      if (Number.isFinite(unlit) && unlit >= 0 && unlit <= 1) part.unlit = unlit || undefined
-      dirty = true
-      setStatus('')
-      paintPreviews()
-      syncSaveButtons()
     }
 
     partSelect.onchange = () => {
-      selectedPartIndex = Number(partSelect.value) || 0
+      editor.selectPart(Number(partSelect.value) || 0)
       populatePartFields()
     }
     nameInput.onchange = applyFieldChanges
     shapeSelect.onchange = applyFieldChanges
     toneSelect.onchange = applyFieldChanges
     unlitInput.onchange = applyFieldChanges
+    alphaInput.onchange = applyFieldChanges
+    shadeInput.onchange = applyFieldChanges
+    blendSelect.onchange = applyFieldChanges
     for (const inp of [...posCtrl.inputs, ...sclCtrl.inputs, ...rotCtrl.inputs]) inp.onchange = applyFieldChanges
 
-    function uniquePartName(base: string): string {
-      let idx = 2
-      let candidate = base
-      while (recipe.parts.some(p => p.name === candidate)) candidate = `${base}-${idx++}`
-      return candidate
-    }
-
     addPartBtn.onclick = () => {
-      const name = uniquePartName('part')
-      recipe.parts.push({ name, shape: 'prism', position: [0, 0.5, 0], scale: [0.35, 0.35, 0.35], tone: 'accent' })
-      selectedPartIndex = recipe.parts.length - 1
-      dirty = true
+      editor.addPart()
       populatePartFields()
       paintPreviews()
     }
-
     dupPartBtn.onclick = () => {
-      const cur = recipe.parts[selectedPartIndex]
-      const copy = structuredClone(cur)
-      copy.name = uniquePartName(cur.name + '-copy')
-      copy.position = [round3(cur.position[0] + 0.15), cur.position[1], cur.position[2]]
-      recipe.parts.splice(selectedPartIndex + 1, 0, copy)
-      selectedPartIndex += 1
-      dirty = true
+      editor.duplicatePart()
       populatePartFields()
       paintPreviews()
     }
-
     delPartBtn.onclick = () => {
-      if (recipe.parts.length <= 1) return
-      recipe.parts.splice(selectedPartIndex, 1)
-      selectedPartIndex = Math.max(0, selectedPartIndex - 1)
-      dirty = true
-      populatePartFields()
-      paintPreviews()
-    }
-
-    fitBtn.onclick = () => {
       try {
-        const fitted = fitArtRecipe(structuredClone(recipe))
-        sel.draftRecipe = fitted
-        dirty = true
-        setStatus('Grounded and fitted model bounds.')
-        renderSelection()
+        editor.deletePart()
+        populatePartFields()
+        paintPreviews()
       } catch (error) {
-        setStatus(errorMessage(error))
+        session.setStatus(errorMessage(error))
       }
     }
-
+    undoBtn.onclick = () => {
+      if (session.undoRecipeEdit()) renderSelection()
+    }
+    fitBtn.onclick = () => {
+      try {
+        session.fitRecipe()
+        renderSelection()
+      } catch (error) {
+        session.setStatus(errorMessage(error))
+      }
+    }
     discardBtn.onclick = () => {
-      if (!sel.originalRecipe) return
-      sel.draftRecipe = structuredClone(sel.originalRecipe)
-      dirty = false
-      setStatus('Discarded unsaved edits.')
+      session.discardRecipeEdits()
       renderSelection()
     }
-
     downloadBtn.onclick = () => {
-      const blob = new Blob([JSON.stringify(recipe, null, 2) + '\n'], { type: 'application/json' })
+      const recipe = editor.getRecipe()
+      const blob = new Blob([editor.toJson()], { type: 'application/json' })
       downloadBlob(blob, `${recipe.name}.art.json`)
     }
-
     saveBtn.onclick = async () => {
-      if (busy) return
-      busy = true
       syncSaveButtons()
       try {
-        const src = sel.artSource
-        await apiJson(RECIPE_API, 'POST', {
-          asset: sel.asset,
-          file: src?.file ?? null,
-          base: src?.base ?? null,
-          recipe
-        })
-        sel.originalRecipe = structuredClone(recipe)
-        if (sel.artSource) sel.artSource = { ...sel.artSource, base: structuredClone(recipe), recipe: structuredClone(recipe) }
-        dirty = false
-        for (const hook of getTestingHooks()) hook.onRecipeSaved?.(sel.asset, structuredClone(recipe))
-        setStatus(`Saved ${src?.file ?? 'art/overrides.json'}! Reload to apply in-game.`)
+        await session.saveRecipe()
       } catch (error) {
-        setStatus(errorMessage(error))
+        session.setStatus(errorMessage(error))
       } finally {
-        busy = false
         syncSaveButtons()
       }
     }
 
-    // Drag to orbit preview
-    let orbitDrag: { id: number; x: number; y: number; yaw: number; elev: number } | undefined
-    previewCanvas.onpointerdown = event => {
-      if (event.button !== 0) return
-      orbitDrag = { id: event.pointerId, x: event.clientX, y: event.clientY, yaw: sel.previewYaw, elev: sel.previewElevation }
-      try { previewCanvas.setPointerCapture(event.pointerId) } catch { /* Ignore synthetic capture failure. */ }
-    }
-    previewCanvas.onpointermove = event => {
-      if (!orbitDrag || orbitDrag.id !== event.pointerId) return
-      sel.previewYaw = orbitDrag.yaw + (event.clientX - orbitDrag.x) * 0.015
-      sel.previewElevation = Math.max(-1.35, Math.min(1.35, orbitDrag.elev + (event.clientY - orbitDrag.y) * 0.012))
-      paintPreviews()
-    }
-    previewCanvas.onpointerup = event => {
-      if (orbitDrag?.id === event.pointerId) orbitDrag = undefined
-    }
-
+    bindOrbitDrag(previewCanvas, sel, session, paintPreviews)
     editorPane.append(previewSection, compareDetails, partsSection, paletteSection, actionRow)
     populatePartFields()
     paintPreviews()
   }
 
-  function renderSpriteEditor(sel: Selection, spriteHit: PickedSpriteDraw) {
+  function renderSpriteEditor(sel: StudioSelection) {
+    const spriteHit = sel.spriteHit
+    if (!spriteHit) return
     const draw = spriteHit.draw
     const atlas = draw.atlas
     const clipNames = Object.keys(atlas.clips)
-    if (!sel.spriteClip && clipNames.length) sel.spriteClip = draw.clip ?? clipNames[0]
+    if (!sel.spriteClip && clipNames.length) session.selectSpriteClip(draw.clip ?? clipNames[0])
 
     const section = el('div', { className: 'rt-section' })
     const previewWrap = el('div', { className: 'rt-preview-wrap' })
@@ -962,7 +743,6 @@ export function mountTestingStudio(): TestingStudioHandle {
     frameMsInput.min = '16'
     frameMsInput.step = '10'
     const activeClip = sel.spriteClip ? atlas.clips[sel.spriteClip] : undefined
-    sel.spriteFrameMs = activeClip?.frameMs ?? sel.spriteFrameMs ?? 120
     frameMsInput.value = String(sel.spriteFrameMs)
 
     controlsRow.append(
@@ -982,10 +762,11 @@ export function mountTestingStudio(): TestingStudioHandle {
     const ioRow = el('div', { className: 'rt-row' })
     const exportPngBtn = el('button', { className: 'rt-btn', type: 'button', text: 'Export Frame PNG' })
     const importBtn = el('button', { className: 'rt-btn', type: 'button', text: 'Import Preview PNG' })
+    const saveSpriteBtn = el('button', { className: 'rt-btn rt-btn-primary', type: 'button', text: 'Save Sprite' })
     const importInput = el('input', { type: 'file' })
     importInput.accept = 'image/png,image/jpeg,image/webp'
     importInput.hidden = true
-    ioRow.append(exportPngBtn, importBtn, importInput)
+    ioRow.append(exportPngBtn, importBtn, saveSpriteBtn, importInput)
 
     const metaList = el('div', { className: 'rt-muted', text: [
       `${atlas.frameWidth}×${atlas.frameHeight} px`,
@@ -1017,24 +798,19 @@ export function mountTestingStudio(): TestingStudioHandle {
     clipSelect.onchange = () => {
       stopSpriteAnim()
       playBtn.textContent = 'Play'
-      sel.spriteClip = clipSelect.value || undefined
+      session.selectSpriteClip(clipSelect.value || undefined)
       const clip = sel.spriteClip ? atlas.clips[sel.spriteClip] : undefined
-      sel.spriteFrame = 0
-      sel.spriteFrameMs = clip?.frameMs ?? 120
       frameMsInput.value = String(sel.spriteFrameMs)
       frameSlider.max = String(Math.max(0, (clip?.frames ?? 1) - 1))
       frameSlider.value = '0'
       paintSprite()
     }
-
     frameSlider.oninput = () => {
-      sel.spriteFrame = Number(frameSlider.value) || 0
+      session.setSpriteFrame(Number(frameSlider.value) || 0)
       paintSprite()
     }
-
     frameMsInput.onchange = () => {
-      const ms = frameMsInput.valueAsNumber
-      if (Number.isFinite(ms) && ms >= 16) sel.spriteFrameMs = Math.round(ms)
+      session.setSpriteFrameMs(frameMsInput.valueAsNumber)
       if (spriteAnimTimer !== undefined) {
         stopSpriteAnim()
         startAnim()
@@ -1046,7 +822,7 @@ export function mountTestingStudio(): TestingStudioHandle {
       const frames = clip?.frames ?? 1
       if (frames <= 1) return
       spriteAnimTimer = window.setInterval(() => {
-        sel.spriteFrame = (sel.spriteFrame + 1) % frames
+        session.setSpriteFrame((sel.spriteFrame + 1) % frames)
         frameSlider.value = String(sel.spriteFrame)
         paintSprite()
       }, Math.max(16, sel.spriteFrameMs))
@@ -1061,14 +837,12 @@ export function mountTestingStudio(): TestingStudioHandle {
         startAnim()
       }
     }
-
     exportPngBtn.onclick = () => {
       const frameCanvas = renderCurrentAssetImage(sel)
       frameCanvas.toBlob(blob => {
         if (blob) downloadBlob(blob, `${sel.asset}-${sel.spriteClip ?? 'frame'}-${sel.spriteFrame}.png`)
       }, 'image/png')
     }
-
     importBtn.onclick = () => importInput.click()
     importInput.onchange = async () => {
       const file = importInput.files?.[0]
@@ -1085,39 +859,32 @@ export function mountTestingStudio(): TestingStudioHandle {
           ctx.drawImage(bitmap, 0, 0, copy.width, copy.height)
         }
         bitmap.close()
-        sel.spriteImport = copy
+        spriteImportCanvas = copy
         paintSprite()
-        setStatus(`Loaded preview image ${file.name}.`)
+        session.setStatus(`Loaded preview image ${file.name}.`)
       } catch {
-        setStatus('Could not decode imported image.')
+        session.setStatus('Could not decode imported image.')
+      }
+    }
+    saveSpriteBtn.onclick = async () => {
+      saveSpriteBtn.disabled = true
+      try {
+        const pngBase64 = spriteImportCanvas ? spriteImportCanvas.toDataURL('image/png').split(',')[1] : undefined
+        await session.saveSprite(pngBase64)
+      } catch (error) {
+        session.setStatus(errorMessage(error))
+      } finally {
+        saveSpriteBtn.disabled = false
       }
     }
 
-    let boxDrag: { id: number; x: number; y: number } | undefined
-    previewCanvas.onpointerdown = event => {
-      if (event.button !== 0) return
-      const [u, v] = measureNormalized(previewCanvas, event)
-      boxDrag = { id: event.pointerId, x: u, y: v }
-      sel.region = [u, v, u, v]
-      try { previewCanvas.setPointerCapture(event.pointerId) } catch { /* Ignore capture error. */ }
-      paintSprite()
-    }
-    previewCanvas.onpointermove = event => {
-      if (!boxDrag || boxDrag.id !== event.pointerId) return
-      const [u, v] = measureNormalized(previewCanvas, event)
-      sel.region = [Math.min(boxDrag.x, u), Math.min(boxDrag.y, v), Math.max(boxDrag.x, u), Math.max(boxDrag.y, v)]
-      paintSprite()
-    }
-    previewCanvas.onpointerup = event => {
-      if (boxDrag?.id === event.pointerId) boxDrag = undefined
-    }
-
+    bindRegionDrag(previewCanvas, session, paintSprite)
     section.append(previewWrap, regionInfo, controlsRow, scrubRow, ioRow, metaList)
     editorPane.append(section)
     paintSprite()
   }
 
-  function renderReadOnlyInspector(sel: Selection) {
+  function renderReadOnlyInspector(sel: StudioSelection) {
     const previewSection = el('div', { className: 'rt-section' })
     const previewWrap = el('div', { className: 'rt-preview-wrap' })
     const previewCanvas = el('canvas', { className: 'rt-preview-canvas' })
@@ -1134,25 +901,11 @@ export function mountTestingStudio(): TestingStudioHandle {
 
     if (sel.recognized) {
       const rec = sel.recognized
-      let orbitDrag: { id: number; x: number; y: number; yaw: number; elev: number } | undefined
-      previewCanvas.onpointerdown = event => {
-        if (event.button !== 0) return
-        orbitDrag = { id: event.pointerId, x: event.clientX, y: event.clientY, yaw: sel.previewYaw, elev: sel.previewElevation }
-        try { previewCanvas.setPointerCapture(event.pointerId) } catch { /* Ignore capture error. */ }
-      }
-      previewCanvas.onpointermove = event => {
-        if (!orbitDrag || orbitDrag.id !== event.pointerId) return
-        sel.previewYaw = orbitDrag.yaw + (event.clientX - orbitDrag.x) * 0.015
-        sel.previewElevation = Math.max(-1.35, Math.min(1.35, orbitDrag.elev + (event.clientY - orbitDrag.y) * 0.012))
-        paint()
-      }
-      previewCanvas.onpointerup = event => {
-        if (orbitDrag?.id === event.pointerId) orbitDrag = undefined
-      }
+      bindOrbitDrag(previewCanvas, sel, session, paint)
 
       const infoSection = el('div', { className: 'rt-section' })
-      infoSection.append(el('h3', { className: 'rt-section-title', text: 'Recognized Asset Metadata' }))
       infoSection.append(
+        el('h3', { className: 'rt-section-title', text: 'Recognized Asset Metadata' }),
         el('div', { className: 'rt-muted', text: `Source: ${rec.sourceSite}` }),
         el('div', { className: 'rt-muted', text: `Stats: ${rec.stats.instanceCount} parts · ${rec.stats.triangleCount} triangles · ${rec.stats.batchCount} batch(es)` }),
         el('div', { className: 'rt-muted', text: `Bounds: ${rec.bounds.size.map(round3).join(' × ')} @ (${rec.bounds.center.map(round3).join(', ')})` })
@@ -1177,16 +930,14 @@ export function mountTestingStudio(): TestingStudioHandle {
         chip.style.backgroundColor = m.colorHex
         const label = m.joint && m.joint !== m.part ? `${m.joint} / ${m.part}` : m.part
         left.append(chip, document.createTextNode(' ' + label))
-        const right = el('span', { className: 'rt-muted', text: `${m.shape ?? 'mesh'} · ${m.triangles}△` })
-        item.append(left, right)
+        item.append(left, el('span', { className: 'rt-muted', text: `${m.shape ?? 'mesh'} · ${m.triangles}△` }))
         item.onclick = () => {
-          sel.part = m.part
+          session.selectPart(m.part)
           renderSelection()
         }
         list.append(item)
       }
-      membersSection.append(list)
-      membersSection.append(el('div', { className: 'rt-muted', text: 'Switch to Comments / Reviews to pin visual feedback with source attribution.' }))
+      membersSection.append(list, el('div', { className: 'rt-muted', text: 'Switch to Comments / Reviews to pin visual feedback with source attribution.' }))
       editorPane.append(previewSection, infoSection, membersSection)
     } else if (sel.hudRegion) {
       const infoSection = el('div', { className: 'rt-section' })
@@ -1201,8 +952,9 @@ export function mountTestingStudio(): TestingStudioHandle {
     paint()
   }
 
-  function renderReviewsPane(sel: Selection) {
+  function renderReviewsPane(sel: StudioSelection) {
     reviewsPane.replaceChildren()
+    const activeReview = session.getActiveReview()
 
     const previewSection = el('div', { className: 'rt-section' })
     const pinCanvas = el('canvas', { className: 'rt-preview-canvas' + (sel.surface === 'sprite' ? ' rt-pixelated' : '') })
@@ -1211,14 +963,17 @@ export function mountTestingStudio(): TestingStudioHandle {
       const grid = el('div', { className: 'rt-before-grid' })
       const beforeImg = document.createElement('img')
       beforeImg.alt = 'Saved before snapshot'
-      beforeImg.src = `${REVIEWS_API}/${activeReview.note.id}/before.png`
-      const beforeFig = el('figure', undefined, el('figcaption', { text: 'Before' }), beforeImg)
-      const currentFig = el('figure', undefined, el('figcaption', { text: 'Current' }), pinCanvas)
-      grid.append(beforeFig, currentFig)
+      beforeImg.src = session.beforeImageUrl(activeReview.note.id)
+      grid.append(
+        el('figure', undefined, el('figcaption', { text: 'Before' }), beforeImg),
+        el('figure', undefined, el('figcaption', { text: 'Current' }), pinCanvas)
+      )
       previewSection.append(grid)
     } else {
-      const wrap = el('div', { className: 'rt-preview-wrap' }, pinCanvas)
-      previewSection.append(wrap, el('div', { className: 'rt-muted', text: 'Click to pin a point or drag a box on the preview.' }))
+      previewSection.append(
+        el('div', { className: 'rt-preview-wrap' }, pinCanvas),
+        el('div', { className: 'rt-muted', text: 'Click to pin a point or drag a box on the preview.' })
+      )
     }
 
     const paintPinPreview = () => {
@@ -1235,49 +990,25 @@ export function mountTestingStudio(): TestingStudioHandle {
       }
     }
 
-    if (!activeReview) {
-      let drag: { id: number; x: number; y: number } | undefined
-      pinCanvas.onpointerdown = event => {
-        if (event.button !== 0) return
-        const [u, v] = measureNormalized(pinCanvas, event)
-        drag = { id: event.pointerId, x: u, y: v }
-        sel.region = [u, v, u, v]
-        try { pinCanvas.setPointerCapture(event.pointerId) } catch { /* Ignore capture error. */ }
-        paintPinPreview()
-      }
-      pinCanvas.onpointermove = event => {
-        if (!drag || drag.id !== event.pointerId) return
-        const [u, v] = measureNormalized(pinCanvas, event)
-        sel.region = [Math.min(drag.x, u), Math.min(drag.y, v), Math.max(drag.x, u), Math.max(drag.y, v)]
-        paintPinPreview()
-      }
-      pinCanvas.onpointerup = event => {
-        if (drag?.id === event.pointerId) drag = undefined
-      }
-    }
+    if (!activeReview) bindRegionDrag(pinCanvas, session, paintPinPreview)
 
-    // Scope & Part controls
     const targetSection = el('div', { className: 'rt-section' })
     const row = el('div', { className: 'rt-grid-2' })
     const scopeSelect = el('select', { className: 'rt-select' })
-    const allowedScopes: ReviewScope[] = sel.surface === 'hud'
-      ? ['hud', 'asset', 'instance']
-      : sel.surface === 'sprite'
-        ? ['sprite', 'asset', 'instance']
-        : ['asset', 'instance']
+    const allowedScopes = allowedScopesForSurface(sel.surface)
     for (const sc of allowedScopes) scopeSelect.append(new Option(sc, sc))
     if (!allowedScopes.includes(sel.scope)) sel.scope = allowedScopes[0]
     scopeSelect.value = sel.scope
     scopeSelect.disabled = Boolean(activeReview)
     scopeSelect.onchange = () => {
-      if (isReviewScope(scopeSelect.value)) sel.scope = scopeSelect.value
+      if (isReviewScope(scopeSelect.value)) session.setScope(scopeSelect.value)
     }
 
     const partInput = el('input', { className: 'rt-input', type: 'text' })
     partInput.value = sel.part ?? ''
     partInput.placeholder = 'Whole asset'
     partInput.disabled = Boolean(activeReview)
-    partInput.onchange = () => { sel.part = partInput.value.trim() || undefined }
+    partInput.onchange = () => { session.selectPart(partInput.value) }
 
     row.append(
       el('label', { className: 'rt-field', text: 'Scope' }, scopeSelect),
@@ -1285,7 +1016,6 @@ export function mountTestingStudio(): TestingStudioHandle {
     )
     targetSection.append(row, el('div', { className: 'rt-muted', text: `Edit source: ${sel.source}` }))
 
-    // Thread display for existing review
     if (activeReview) {
       const threadSection = el('div', { className: 'rt-section' })
       threadSection.append(el('h3', { className: 'rt-section-title', text: `Review · ${activeReview.note.status}` }))
@@ -1298,7 +1028,6 @@ export function mountTestingStudio(): TestingStudioHandle {
       reviewsPane.append(previewSection, targetSection)
     }
 
-    // Comment / reply form
     const formSection = el('div', { className: 'rt-section' })
     const textarea = el('textarea', { className: 'rt-textarea', id: 'rt-review-comment' })
     textarea.placeholder = activeReview ? 'Write a reply…' : 'Describe the visual issue or change requested…'
@@ -1314,8 +1043,10 @@ export function mountTestingStudio(): TestingStudioHandle {
       text: activeReview?.note.status === 'resolved' ? 'Reopen' : 'Resolve'
     })
     resolveBtn.hidden = !activeReview
+    const deleteBtn = el('button', { className: 'rt-btn rt-btn-danger', type: 'button', text: 'Delete' })
+    deleteBtn.hidden = !activeReview
     const reloadCompareBtn = el('button', { className: 'rt-btn', type: 'button', text: 'Reload & Compare' })
-    btnRow.append(submitBtn, resolveBtn, reloadCompareBtn)
+    btnRow.append(submitBtn, resolveBtn, deleteBtn, reloadCompareBtn)
     formSection.append(
       el('label', { className: 'rt-field', text: activeReview ? 'Reply' : 'Comment' }, textarea),
       btnRow
@@ -1323,337 +1054,123 @@ export function mountTestingStudio(): TestingStudioHandle {
     reviewsPane.append(formSection)
 
     submitBtn.onclick = async () => {
-      if (busy) return
       const commentText = textarea.value.trim()
-      if (!commentText) { setStatus('Write a comment first.'); return }
-      busy = true
+      if (!commentText) { session.setStatus('Write a comment first.'); return }
       submitBtn.disabled = true
       try {
-        if (activeReview) {
-          const updated = parseReviewEntry(await apiJson(`${REVIEWS_API}/${activeReview.note.id}`, 'PATCH', {
-            revision: activeReview.revision,
-            status: activeReview.note.status,
-            reply: commentText
-          }))
-          activeReview = updated
-          await refreshReviews()
-          setStatus(`Saved reply on reviews/${updated.note.id}.json.`)
-          renderReviewsPane(sel)
+        if (session.getActiveReview()) {
+          await session.replyToReview(commentText)
         } else {
           const preview = lastPreviewCanvas ?? renderCurrentAssetImage(sel)
           const pngBase64 = preview.toDataURL('image/png').split(',')[1]
-          const target: ArtPin = {
-            view: buildArtView(sel),
-            scope: sel.scope,
-            part: sel.part,
-            editSource: sel.source,
-            region: [...sel.region]
-          }
-          const created = parseReviewEntry(await apiJson(REVIEWS_API, 'POST', {
-            id: draftReviewId,
-            target,
-            scene: resolveSnapshot(),
-            comment: commentText,
-            png: pngBase64
-          }))
-          activeReview = created
-          draftReviewId = crypto.randomUUID()
-          await refreshReviews()
-          reviewSelect.value = created.note.id
-          setStatus(`Saved reviews/${created.note.id}.json + before PNG.`)
-          renderReviewsPane(sel)
+          await session.createReview(commentText, pngBase64)
         }
+        syncReviewSelect()
+        renderReviewsPane(sel)
       } catch (error) {
-        setStatus(errorMessage(error))
+        session.setStatus(errorMessage(error))
       } finally {
-        busy = false
         submitBtn.disabled = false
       }
     }
 
     resolveBtn.onclick = async () => {
-      if (busy || !activeReview) return
-      busy = true
       resolveBtn.disabled = true
       try {
-        const nextStatus = activeReview.note.status === 'resolved' ? 'open' : 'resolved'
-        const updated = parseReviewEntry(await apiJson(`${REVIEWS_API}/${activeReview.note.id}`, 'PATCH', {
-          revision: activeReview.revision,
-          status: nextStatus,
-          reply: textarea.value.trim() || undefined
-        }))
-        activeReview = updated
-        await refreshReviews()
-        setStatus(`Marked review ${nextStatus}.`)
+        await session.toggleResolveReview(textarea.value)
+        syncReviewSelect()
         renderReviewsPane(sel)
       } catch (error) {
-        setStatus(errorMessage(error))
+        session.setStatus(errorMessage(error))
       } finally {
-        busy = false
         resolveBtn.disabled = false
       }
     }
 
+    deleteBtn.onclick = async () => {
+      deleteBtn.disabled = true
+      try {
+        await session.deleteReview()
+        syncReviewSelect()
+        renderReviewsPane(sel)
+      } catch (error) {
+        session.setStatus(errorMessage(error))
+      } finally {
+        deleteBtn.disabled = false
+      }
+    }
+
     reloadCompareBtn.onclick = () => {
-      history.replaceState({
-        ridgetopStudio: {
-          reviewId: activeReview?.note.id,
-          scene: resolveSnapshot()
-        }
-      }, '')
+      history.replaceState(session.prepareReloadCompareState(), '')
       location.reload()
     }
 
     paintPinPreview()
   }
 
-  // Viewport picking when paused
+  function setPaused(paused: boolean) {
+    const result = session.setPaused(paused)
+    if (!result.ok) return
+    if (paused && !session.getSelection()) {
+      drawer.hidden = false
+      renderEmptyDrawer()
+    }
+  }
+
+  const unsubSession = session.onChange(() => {
+    if (disposed) return
+    syncFooter()
+    syncPauseUi()
+    syncReviewSelect()
+  })
+
+  pauseBtn.onclick = () => setPaused(!isTestingPaused())
+
+  window.addEventListener('keydown', event => {
+    if (event.code === 'F9' && !event.repeat) {
+      event.preventDefault()
+      setPaused(!isTestingPaused())
+    } else if (event.code === 'Escape' && isTestingPaused()) {
+      const target = event.target
+      if (target instanceof HTMLElement && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.tagName === 'SELECT')) return
+      event.preventDefault()
+      setPaused(false)
+    }
+  }, signal)
+
   pickLayer.addEventListener('click', event => {
-    if (!isTestingPaused() || busy) return
-    if (dirty) {
-      setStatus('Save or discard your current recipe edit before picking another asset.')
-      return
+    const res = session.pickAt(event.clientX, event.clientY)
+    if (res.picked) {
+      spriteImportCanvas = undefined
+      renderSelection()
     }
-    const cx = event.clientX, cy = event.clientY
-
-    // 1. Check registered HUD regions (topmost leaf non-fullscreen regions first)
-    const hudRegions = getHudRegions()
-    for (let i = hudRegions.length - 1; i >= 0; i--) {
-      const reg = hudRegions[i]
-      const baseRect = reg.canvas ? reg.canvas.getBoundingClientRect() : { left: 0, top: 0, width: window.innerWidth, height: window.innerHeight }
-      const vw = reg.viewportWidth ?? baseRect.width
-      const vh = reg.viewportHeight ?? baseRect.height
-      if (vw <= 0 || vh <= 0) continue
-      // Skip giant full-screen container panels so 3D/sprite clicks still pass through
-      if (reg.rect.width >= vw * 0.88 && reg.rect.height >= vh * 0.88) continue
-      const sx = baseRect.width / vw
-      const sy = baseRect.height / vh
-      const left = baseRect.left + reg.rect.x * sx
-      const top = baseRect.top + reg.rect.y * sy
-      const width = reg.rect.width * sx
-      const height = reg.rect.height * sy
-      if (cx >= left && cx <= left + width && cy >= top && cy <= top + height) {
-        activeReview = undefined
-        draftReviewId = crypto.randomUUID()
-        selection = {
-          surface: 'hud',
-          asset: reg.asset ?? reg.id,
-          instanceId: reg.id,
-          source: reg.source ?? `hud#${reg.id}`,
-          scope: 'hud',
-          region: [0.5, 0.5, 0.5, 0.5],
-          hudRegion: reg,
-          screenRect: { left, top, width, height },
-          previewYaw: 0,
-          previewElevation: 0,
-          spriteFrame: 0,
-          spriteFrameMs: 120
-        }
-        setStatus(`Picked HUD region "${reg.label}".`)
-        renderSelection()
-        return
-      }
-    }
-
-    // 2. Check 2D sprite draws (group per visible canvas; reverse draw order with alpha hit-test)
-    const spriteDraws = getLastSpriteDraws()
-    if (spriteDraws.length) {
-      const byCanvas = new Map<HTMLCanvasElement, SpriteDrawRecord[]>()
-      for (let i = 0; i < spriteDraws.length; i++) {
-        const d = spriteDraws[i]
-        let list = byCanvas.get(d.canvas)
-        if (!list) {
-          list = []
-          byCanvas.set(d.canvas, list)
-        }
-        list.push(d)
-      }
-      const canvases = Array.from(byCanvas.keys())
-      for (let c = canvases.length - 1; c >= 0; c--) {
-        const spriteCanvas = canvases[c]
-        const rect = spriteCanvas.getBoundingClientRect()
-        if (!(rect.width > 0 && rect.height > 0 && cx >= rect.left && cx <= rect.right && cy >= rect.top && cy <= rect.bottom)) continue
-        const u = (cx - rect.left) / rect.width
-        const v = (cy - rect.top) / rect.height
-        const canvasDraws = byCanvas.get(spriteCanvas)
-        if (!canvasDraws) continue
-        const hit = pickSpriteDraws(canvasDraws, u, v)
-        if (hit) {
-          const d = hit.draw
-          const scaleX = rect.width / d.canvasWidth
-          const scaleY = rect.height / d.canvasHeight
-          const name = d.atlas.src.split('/').at(-1)?.replace(/\.png$/i, '') || d.atlas.id
-          activeReview = undefined
-          draftReviewId = crypto.randomUUID()
-          selection = {
-            surface: 'sprite',
-            asset: name,
-            instanceId: `${d.atlas.id}#${hit.index}`,
-            source: d.atlas.manifestUrl ?? d.atlas.sourceSite ?? d.atlas.src,
-            scope: 'sprite',
-            region: [hit.localU, hit.localV, hit.localU, hit.localV],
-            spriteHit: hit,
-            screenRect: {
-              left: rect.left + d.rect.x * scaleX,
-              top: rect.top + d.rect.y * scaleY,
-              width: d.rect.width * scaleX,
-              height: d.rect.height * scaleY
-            },
-            previewYaw: 0,
-            previewElevation: 0,
-            spriteClip: d.clip,
-            spriteFrame: d.frame,
-            spriteFrameMs: (d.clip ? d.atlas.clips[d.clip]?.frameMs : undefined) ?? 120
-          }
-          setStatus(`Picked 2D sprite "${name}".`)
-          renderSelection()
-          return
-        }
-      }
-    }
-
-    // 3. Check 3D rendered frame (perspective + orthographic exact batch ID picking)
-    const frame = getLastFrame()
-    if (frame) {
-      const rect = frame.canvas.getBoundingClientRect()
-      if (rect.width > 0 && rect.height > 0 && cx >= rect.left && cx <= rect.right && cy >= rect.top && cy <= rect.bottom) {
-        const u = (cx - rect.left) / rect.width
-        const v = (cy - rect.top) / rect.height
-        const hit = pickRenderedScene(frame.batches, frame.viewProjection, frame.width, frame.height, u, v)
-        if (hit) {
-          const recognized = recognizeAssetFromPick(frame.batches, frame.viewProjection, hit)
-          const artSource = recognized.kind === 'model' ? lookupArtSource(recognized.asset) : undefined
-          const originalRecipe = artSource?.recipe ? structuredClone(artSource.recipe) : undefined
-          const sb = recognized.screenBounds
-          activeReview = undefined
-          draftReviewId = crypto.randomUUID()
-          selection = {
-            surface: recognized.kind,
-            asset: recognized.asset,
-            instanceId: recognized.instanceId,
-            source: artSource?.path ?? recognized.sourceSite,
-            part: recognized.part,
-            scope: 'asset',
-            region: [0.5, 0.5, 0.5, 0.5],
-            recognized,
-            artSource,
-            originalRecipe,
-            draftRecipe: originalRecipe ? structuredClone(originalRecipe) : undefined,
-            screenRect: sb ? {
-              left: rect.left + sb[0] * rect.width,
-              top: rect.top + sb[1] * rect.height,
-              width: (sb[2] - sb[0]) * rect.width,
-              height: (sb[3] - sb[1]) * rect.height
-            } : undefined,
-            previewYaw: 0.55,
-            previewElevation: 0.42,
-            spriteFrame: 0,
-            spriteFrameMs: 120
-          }
-          setStatus(`Picked ${surfaceLabel(recognized.kind)} "${recognized.asset}" (${recognized.stats.triangleCount} tris).`)
-          renderSelection()
-          return
-        }
-      }
-    }
-
-    setStatus('No visible asset under that click.')
   }, signal)
 
   async function refreshReviews() {
     try {
-      const { entries: saved, errors } = parseReviewList(await apiJson(REVIEWS_API))
-      entries.clear()
-      reviewSelect.replaceChildren(new Option(`Reviews (${saved.length})`, ''))
-      for (const e of saved) {
-        entries.set(e.note.id, e)
-        reviewSelect.append(new Option(`${e.note.status} · ${e.note.target.view.asset} · ${e.note.comment.slice(0, 32)}`, e.note.id))
-      }
-      if (activeReview) {
-        const refreshed = entries.get(activeReview.note.id)
-        if (refreshed) {
-          activeReview = refreshed
-          reviewSelect.value = refreshed.note.id
-        }
-      }
-      if (errors.length) setStatus('Could not load: ' + errors.join(', '))
+      await session.refreshReviews()
+      syncReviewSelect()
     } catch (error) {
-      setStatus(errorMessage(error))
+      session.setStatus(errorMessage(error))
     }
-  }
-
-  let pendingRestore: { scene: unknown; entryId: string } | undefined
-  const unsubHooks = onTestingHooksRegistered(hooks => {
-    if (!pendingRestore || !hooks.restore) return
-    const { scene, entryId } = pendingRestore
-    pendingRestore = undefined
-    Promise.resolve(hooks.restore(scene)).then(() => {
-      if (activeReview?.note.id === entryId && selection) {
-        const v = activeReview.note.target.view
-        if (v.surface === 'model' && !selection.artSource) {
-          const artSource = lookupArtSource(v.asset)
-          if (artSource) {
-            selection.artSource = artSource
-            selection.originalRecipe = artSource.recipe ? structuredClone(artSource.recipe) : undefined
-            selection.draftRecipe = selection.originalRecipe ? structuredClone(selection.originalRecipe) : undefined
-          }
-        }
-        renderSelection()
-      }
-    }).catch(err => setStatus(errorMessage(err)))
-  })
-
-  async function openReview(entry: ReviewEntry) {
-    if (!isTestingPaused()) setTestingPaused(true)
-    const hasRestore = getTestingHooks().some(h => typeof h.restore === 'function')
-    if (hasRestore) {
-      pendingRestore = undefined
-      await restoreSnapshot(entry.note.scene)
-    } else if (entry.note.scene !== undefined && entry.note.scene !== null) {
-      pendingRestore = { scene: entry.note.scene, entryId: entry.note.id }
-    }
-    const pin = entry.note.target
-    const v = pin.view
-    const artSource = v.surface === 'model' ? lookupArtSource(v.asset) : undefined
-    const originalRecipe = artSource?.recipe ? structuredClone(artSource.recipe) : undefined
-    activeReview = entry
-    selection = {
-      surface: v.surface,
-      asset: v.asset,
-      instanceId: v.instance,
-      source: pin.editSource ?? v.source,
-      part: pin.part,
-      scope: pin.scope,
-      region: [...pin.region],
-      artSource,
-      originalRecipe,
-      draftRecipe: originalRecipe ? structuredClone(originalRecipe) : undefined,
-      previewYaw: v.yaw,
-      previewElevation: v.elevation,
-      spriteClip: v.clip,
-      spriteFrame: v.frame ?? 0,
-      spriteFrameMs: 120,
-      savedView: structuredClone(v)
-    }
-    reviewSelect.value = entry.note.id
-    setTab('reviews')
-    renderSelection()
   }
 
   reviewSelect.onchange = () => {
-    const chosen = entries.get(reviewSelect.value)
-    if (!chosen) return
-    if (dirty) {
-      reviewSelect.value = activeReview?.note.id ?? ''
-      setStatus('Save or discard pending edits first.')
-      return
-    }
-    openReview(chosen).catch(err => setStatus(errorMessage(err)))
+    const id = reviewSelect.value
+    if (!id) return
+    session.openReview(id).then(() => {
+      setTab('reviews')
+      renderSelection()
+    }).catch(err => {
+      reviewSelect.value = session.getActiveReview()?.note.id ?? ''
+      session.setStatus(errorMessage(err))
+    })
   }
 
   refreshBtn.onclick = () => {
     refreshReviews().then(() => {
-      if (selection && activeReview) renderReviewsPane(selection)
+      const sel = session.getSelection()
+      if (sel && session.getActiveReview()) renderReviewsPane(sel)
     })
   }
 
@@ -1662,34 +1179,23 @@ export function mountTestingStudio(): TestingStudioHandle {
   // Initial load + resume review from URL or reload-compare state
   refreshReviews().then(async () => {
     if (disposed) return
-    const rawState: unknown = history.state
-    const studioState = isRecord(rawState) && isRecord(rawState.ridgetopStudio)
-      ? rawState.ridgetopStudio
-      : undefined
-    const stateReviewId = typeof studioState?.reviewId === 'string' ? studioState.reviewId : undefined
-    const stateScene = studioState?.scene
-    const urlReview = new URLSearchParams(location.search).get('review')
-    const wanted = stateReviewId ?? urlReview
-    const wantedEntry = wanted ? entries.get(wanted) : undefined
-    if (wantedEntry) {
-      await openReview(wantedEntry)
-    } else if (studioState && stateScene !== undefined && stateScene !== null) {
-      if (!isTestingPaused()) setTestingPaused(true)
-      const hasRestore = getTestingHooks().some(h => typeof h.restore === 'function')
-      if (hasRestore) {
-        await restoreSnapshot(stateScene)
-      } else {
-        pendingRestore = { scene: stateScene, entryId: '' }
-      }
-      setStatus('Restored pre-reload scene snapshot.')
+    const resumed = await session.resumeFromNavigation({
+      historyState: history.state,
+      search: location.search
+    })
+    if (disposed) return
+    if (resumed.openedReview) {
+      setTab('reviews')
+      renderSelection()
     }
-    if (!disposed && studioState) history.replaceState(null, '')
+    if (resumed.clearHistoryState) history.replaceState(null, '')
   }).catch(err => {
-    if (!disposed) setStatus(errorMessage(err))
+    if (!disposed) session.setStatus(errorMessage(err))
   })
 
   const handle: TestingStudioHandle = {
     root,
+    session,
     pause: setPaused,
     refreshReviews,
     dispose() {
@@ -1697,13 +1203,30 @@ export function mountTestingStudio(): TestingStudioHandle {
       disposed = true
       if (activeStudioHandle === handle) activeStudioHandle = undefined
       stopSpriteAnim()
-      unsubPause()
-      unsubHooks()
+      unsubSession()
+      session.dispose()
       controller.abort()
-      if (isTestingPaused()) setTestingPaused(false)
       root.remove()
     }
   }
   activeStudioHandle = handle
   return handle
+}
+
+// Auto-boot when injected into a game page by `createGameHost({ testing: true })`.
+if (typeof document !== 'undefined' && typeof location !== 'undefined') {
+  if (shouldAutoMountTestingStudio(location.search)) {
+    setTestingActive(true)
+    const start = () => {
+      if (document.getElementById('ridgetop-testing-root')) return
+      mountTestingStudio()
+    }
+    if (document.readyState === 'loading') {
+      document.addEventListener('DOMContentLoaded', start, { once: true })
+    } else {
+      start()
+    }
+  } else {
+    setTestingActive(false)
+  }
 }
