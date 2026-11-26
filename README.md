@@ -232,12 +232,10 @@ Generated projects created with `npm run create-game` include `npm run package:w
 
 ### Cross-platform Canvas UI & Layout SDK (`ridgetop/ui`)
 
-Instead of HTML/CSS menus, Ridgetop ships a zero-dependency, state-machine-driven UI and pure-math Layout SDK designed to match your game's low-poly art and run identically across Web, Steam Deck, Mobile, and Godot exports. Each primitive lives in its own module so unused widgets are dropped at package time:
+Instead of HTML/CSS menus, Ridgetop ships a zero-dependency Canvas UI and pure-math Layout SDK designed to match your game's low-poly art and run identically across Web, Steam Deck, Mobile, and Godot exports, exposed through a single `ridgetop/ui` entry point:
 
-- `framework/ui-machine.ts` — `createMachine`, `definePrimitive`, and `createUiAgent` (`snapshot`, `query`, `act` for headless tests and coding agents)
 - `framework/ui-layout.ts` — pure-math `resolveLayout` (`column`, `row`, `overlay`, `boxNode`, `spacerNode`, safe-area insets, zero DOM)
-- Opt-in element primitives: `framework/ui-button.ts`, `framework/ui-toggle.ts`, `framework/ui-select.ts`, `framework/ui-slider.ts`, `framework/ui-menu.ts` (`menuPrimitive`, `dialogPrimitive`)
-- `framework/ui-canvas.ts` — `createCanvasUi` and `createUiTheme(game.palette)` for faceted low-poly Canvas rendering with unified pointer, touch, keyboard, and gamepad input (starter games use this directly with zero HTML/CSS menus)
+- `framework/ui-canvas.ts` — `createCanvasUi` and `createUiTheme(game.palette)` for faceted low-poly Canvas rendering with unified pointer, touch, keyboard, and gamepad input, plus headless `snapshot()`, `query()`, and `act()` derived directly from interactive layout nodes (`button`, `toggle`, `select`, `slider`)
 
 ## Make a sprite
 

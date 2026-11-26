@@ -24,9 +24,7 @@
     "godotEntries": [
       "racing/race.ts",
       "racing/progression.ts",
-      "ridgetop/ui-layout",
-      "ridgetop/ui-button",
-      "ridgetop/ui-toggle"
+      "ridgetop/ui"
     ]
   }
 }

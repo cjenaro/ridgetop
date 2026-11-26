@@ -24,8 +24,7 @@
     "godotEntries": [
       "lighthouse/simulation.ts",
       "lighthouse/types.ts",
-      "ridgetop/ui-layout",
-      "ridgetop/ui-button"
+      "ridgetop/ui"
     ]
   }
 }

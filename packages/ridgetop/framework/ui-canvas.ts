@@ -1,7 +1,5 @@
 import type { LayoutNode, LayoutRect, SafeInsets } from './ui-layout.ts'
-import type { UiPrimitiveInstance } from './ui-machine.ts'
 import { resolveLayout } from './ui-layout.ts'
-import { createUiAgent } from './ui-machine.ts'
 import { isTestingActive, isTestingPaused, onTestingPause, recordCanvasUiRegions } from './testing-runtime.ts'
 import type { HudRegion } from './testing-runtime.ts'
 
@@ -46,6 +44,12 @@ export interface CanvasWidgetDrawState {
   readonly disabled: boolean
 }
 
+export interface CanvasSelectOption {
+  readonly value: string
+  readonly label: string
+  readonly disabled?: boolean
+}
+
 export type CanvasWidget =
   | {
       type: 'panel'
@@ -71,20 +75,126 @@ export type CanvasWidget =
       badge?: { text: string; fill?: string; color?: string }
       icon?: CanvasImageSource
       pips?: { filled: number; total: number }
-      primitive?: UiPrimitiveInstance
       draw?(ctx: CanvasRenderingContext2D, rect: LayoutRect, state: CanvasWidgetDrawState): void
       onPress?(): void
       onHold?(active: boolean): void
     }
-  | { type: 'toggle'; label: string; checked: boolean; disabled?: boolean; primitive?: UiPrimitiveInstance; onToggle?(next: boolean): void }
-  | { type: 'select'; label: string; valueLabel: string; disabled?: boolean; primitive?: UiPrimitiveInstance; onNext?(): void; onPrev?(): void }
-  | { type: 'slider'; label: string; ratio: number; valueText?: string; disabled?: boolean; primitive?: UiPrimitiveInstance; onChange?(ratio: number): void }
+  | { type: 'toggle'; label: string; checked: boolean; disabled?: boolean; onToggle?(next: boolean): void }
+  | {
+      type: 'select'
+      label: string
+      valueLabel: string
+      value?: string
+      options?: readonly CanvasSelectOption[]
+      disabled?: boolean
+      onNext?(): void
+      onPrev?(): void
+      onSelect?(value: string): void
+    }
+  | {
+      type: 'slider'
+      label: string
+      ratio: number
+      step?: number
+      valueText?: string
+      disabled?: boolean
+      onChange?(ratio: number): void
+      onDragEnd?(): void
+    }
   | { type: 'bar'; ratio: number; label?: string; valueText?: string; fill?: string; track?: string; stroke?: string }
+
+export type CanvasWidgetKind = 'button' | 'toggle' | 'select' | 'slider'
+
+export type CanvasWidgetState =
+  | 'disabled'
+  | 'pressed'
+  | 'hovered'
+  | 'focused'
+  | 'checked'
+  | 'unchecked'
+  | 'selected'
+  | 'idle'
+
+export interface CanvasUiWidgetSnapshot {
+  readonly id: string
+  readonly kind: CanvasWidgetKind
+  readonly role: CanvasWidgetKind
+  readonly label: string
+  readonly subtitle?: string
+  readonly state: CanvasWidgetState
+  readonly value?: string | number | boolean
+  readonly checked?: boolean
+  readonly disabled: boolean
+  readonly focused: boolean
+  readonly hovered: boolean
+  readonly pressed: boolean
+  readonly selected?: boolean
+  readonly bounds: LayoutRect
+  readonly actions: readonly string[]
+}
+
+export interface CanvasUiQuery {
+  id?: string
+  kind?: string
+  role?: string
+  state?: string
+  label?: string
+  disabled?: boolean
+}
+
+type InteractiveCanvasWidget = Extract<CanvasWidget, { type: CanvasWidgetKind }>
 
 export interface CanvasUiHit {
   readonly id: string
   readonly rect: LayoutRect
-  readonly widget: CanvasWidget
+  readonly widget: InteractiveCanvasWidget
+}
+
+function clamp01(value: number): number {
+  return Math.max(0, Math.min(1, Number.isFinite(value) ? value : 0))
+}
+
+function sliderStep(widget: Extract<CanvasWidget, { type: 'slider' }>): number {
+  return widget.step !== undefined && Number.isFinite(widget.step) && widget.step > 0 ? widget.step : 0.1
+}
+
+function stepSelectOption(widget: Extract<CanvasWidget, { type: 'select' }>, direction: 1 | -1): boolean {
+  if (direction > 0 && widget.onNext) {
+    widget.onNext()
+    return true
+  }
+  if (direction < 0 && widget.onPrev) {
+    widget.onPrev()
+    return true
+  }
+  const options = widget.options
+  if (!options?.length || !widget.onSelect) return false
+  const current = widget.value !== undefined
+    ? options.findIndex(opt => opt.value === widget.value)
+    : options.findIndex(opt => opt.label === widget.valueLabel)
+  const len = options.length
+  const start = current < 0 ? (direction > 0 ? -1 : len) : current
+  for (let step = 1; step <= len; step++) {
+    const idx = ((start + direction * step) % len + len) % len
+    const opt = options[idx]
+    if (!opt.disabled) {
+      if (opt.value !== widget.value) widget.onSelect(opt.value)
+      return true
+    }
+  }
+  return false
+}
+
+function selectOptionValue(widget: Extract<CanvasWidget, { type: 'select' }>, value: string): boolean {
+  if (!widget.onSelect) return false
+  if (widget.options) {
+    const opt = widget.options.find(item => item.value === value)
+    if (!opt || opt.disabled) return false
+    widget.onSelect(opt.value)
+    return true
+  }
+  widget.onSelect(value)
+  return true
 }
 
 function chamferPath(ctx: CanvasRenderingContext2D, x: number, y: number, w: number, h: number, bevel: number) {
@@ -184,13 +294,6 @@ function getCanvasWidget(node: LayoutNode): CanvasWidget | undefined {
   return isCanvasWidget(node.widget) ? node.widget : undefined
 }
 
-function isUiPrimitiveInstance(value: unknown): value is UiPrimitiveInstance {
-  return typeof value === 'object' && value !== null &&
-    'id' in value && typeof value.id === 'string' &&
-    'snapshot' in value && typeof value.snapshot === 'function' &&
-    'act' in value && typeof value.act === 'function'
-}
-
 function isEditableTarget(target: EventTarget | null): boolean {
   if (typeof target !== 'object' || target === null) return false
   if ('isContentEditable' in target && Boolean(target.isContentEditable)) return true
@@ -200,15 +303,12 @@ function isEditableTarget(target: EventTarget | null): boolean {
   return false
 }
 
-function isInteractive(widget?: CanvasWidget): widget is Extract<CanvasWidget, { type: 'button' | 'toggle' | 'select' | 'slider' }> {
+function isInteractive(widget?: CanvasWidget): widget is InteractiveCanvasWidget {
   return Boolean(widget && (widget.type === 'button' || widget.type === 'toggle' || widget.type === 'select' || widget.type === 'slider'))
 }
 
 function isDisabled(widget?: CanvasWidget): boolean {
-  if (!widget || !isInteractive(widget)) return false
-  if ('disabled' in widget && widget.disabled) return true
-  if ('primitive' in widget && widget.primitive?.slots.root?.disabled) return true
-  return false
+  return Boolean(widget && isInteractive(widget) && widget.disabled)
 }
 
 /** Cross-platform Canvas 2D UI runtime (multi-touch, pointer, keyboard, gamepad, and headless agent API — zero HTML/CSS menus). */
@@ -311,35 +411,24 @@ export function createCanvasUi(canvas: HTMLCanvasElement, options: {
     return false
   }
 
-  function driveSlider(widget: Extract<CanvasWidget, { type: 'slider' }>, ratio: number, phase: 'start' | 'move') {
-    const prim = widget.primitive
-    if (prim) {
-      const fn = phase === 'start' ? prim.api.dragStart : prim.api.dragMove
-      if (typeof fn === 'function') Reflect.apply(fn, prim.api, [ratio])
-      else if (typeof prim.api.setRatio === 'function') Reflect.apply(prim.api.setRatio, prim.api, [ratio])
-    } else {
-      widget.onChange?.(ratio)
-    }
-  }
-
-  function activateHit(hit: CanvasUiHit, direction: 1 | -1 = 1) {
+  function activateHit(hit: CanvasUiHit, direction: 1 | -1 = 1): boolean {
     const w = hit.widget
-    if (isDisabled(w)) return
+    if (isDisabled(w)) return false
     if (w.type === 'button') {
-      if (w.primitive) w.primitive.act('press')
-      else w.onPress?.()
+      if (w.onPress) w.onPress()
+      else if (w.onHold) {
+        w.onHold(true)
+        w.onHold(false)
+      }
     } else if (w.type === 'toggle') {
-      if (w.primitive) w.primitive.act('toggle')
-      else w.onToggle?.(!w.checked)
+      w.onToggle?.(!w.checked)
     } else if (w.type === 'select') {
-      if (w.primitive) w.primitive.act(direction > 0 ? 'next' : 'prev')
-      else if (direction > 0) w.onNext?.()
-      else w.onPrev?.()
+      if (!stepSelectOption(w, direction)) return false
     } else if (w.type === 'slider') {
-      if (w.primitive) w.primitive.act('step', direction)
-      else w.onChange?.(Math.max(0, Math.min(1, w.ratio + direction * 0.1)))
+      w.onChange?.(clamp01(w.ratio + direction * sliderStep(w)))
     }
     dirty = true
+    return true
   }
 
   function moveFocus(delta: 1 | -1) {
@@ -349,6 +438,11 @@ export function createCanvasUi(canvas: HTMLCanvasElement, options: {
     const next = idx < 0 ? (delta > 0 ? 0 : hits.length - 1) : (idx + delta + hits.length) % hits.length
     focusedId = hits[next].id
     dirty = true
+  }
+
+  function isPressed(id: string) {
+    for (const entry of activePointers.values()) if (entry.id === id) return true
+    return false
   }
 
   function releasePointer(pointerId: number, x?: number, y?: number) {
@@ -405,8 +499,8 @@ export function createCanvasUi(canvas: HTMLCanvasElement, options: {
     if (active?.isSlider) {
       const hit = interactiveHits(false, false).find(h => h.id === active.id)
       if (hit && hit.widget.type === 'slider') {
-        const ratio = Math.max(0, Math.min(1, (x - hit.rect.x) / Math.max(1, hit.rect.width)))
-        driveSlider(hit.widget, ratio, 'move')
+        const ratio = clamp01((x - hit.rect.x) / Math.max(1, hit.rect.width))
+        hit.widget.onChange?.(ratio)
         dirty = true
       }
       return
@@ -434,25 +528,20 @@ export function createCanvasUi(canvas: HTMLCanvasElement, options: {
     const holdCb = hit.widget.type === 'button' && typeof hit.widget.onHold === 'function' ? hit.widget.onHold : undefined
     const isHold = Boolean(holdCb)
     const isSlider = hit.widget.type === 'slider'
-    const sliderPrimitiveRef = isSlider ? hit.widget.primitive : undefined
+    const dragEndCb = hit.widget.type === 'slider' ? hit.widget.onDragEnd : undefined
     activePointers.set(event.pointerId, {
       id: hit.id,
       isHold,
       onHold: holdCb,
       isSlider,
-      onDragEnd: sliderPrimitiveRef
-        ? () => {
-            const end = sliderPrimitiveRef.api.dragEnd
-            if (typeof end === 'function') Reflect.apply(end, sliderPrimitiveRef.api, [])
-          }
-        : undefined
+      onDragEnd: dragEndCb
     })
     if (holdCb && hit.widget.type === 'button') {
       if (!wasPressed) holdCb(true)
       hit.widget.onPress?.()
     } else if (hit.widget.type === 'slider') {
-      const ratio = Math.max(0, Math.min(1, (x - hit.rect.x) / Math.max(1, hit.rect.width)))
-      driveSlider(hit.widget, ratio, 'start')
+      const ratio = clamp01((x - hit.rect.x) / Math.max(1, hit.rect.width))
+      hit.widget.onChange?.(ratio)
     }
     dirty = true
   }, signal)
@@ -564,11 +653,6 @@ export function createCanvasUi(canvas: HTMLCanvasElement, options: {
   globalThis.window?.addEventListener('gamepadconnected', () => ensurePadLoop(), signal)
   if (connectedPads().length) ensurePadLoop()
 
-  function isPressed(id: string) {
-    for (const entry of activePointers.values()) if (entry.id === id) return true
-    return false
-  }
-
   function paintNode(node: LayoutNode) {
     if (node.hidden) return
     const rect = node.id ? rects.get(node.id) : undefined
@@ -622,93 +706,93 @@ export function createCanvasUi(canvas: HTMLCanvasElement, options: {
           widget.draw(ctx, rect, { hovered: isHovered, pressed, focused: isFocused, selected, disabled })
           ctx.restore()
         } else {
-        const primary = widget.type === 'button' ? Boolean(widget.primary) : widget.type === 'toggle' && widget.checked
-        const customFill = widget.type === 'button' ? widget.fill : undefined
-        const customStroke = widget.type === 'button' ? widget.stroke : undefined
-        const customAccent = widget.type === 'button' ? widget.accent : undefined
-        const fill = disabled ? '#152024b0'
-          : customFill ?? (primary ? theme.accent
-          : pressed ? theme.surfaceTop
-          : selected || isHovered ? theme.surfaceAlt
-          : theme.surface)
-        const stroke = disabled ? '#3b4e5066'
-          : selected || isFocused || isHovered ? (customAccent ?? theme.accent)
-          : (customStroke ?? theme.border)
-        const offsetY = pressed ? 1 : 0
-        ctx.save()
-        if (disabled) ctx.globalAlpha = 0.62
-        const highlight = customAccent && /^#[0-9a-f]{6}$/i.test(customAccent)
-          ? customAccent + '44'
-          : primary ? '#ffffff30' : theme.surfaceTop
-        drawFacetedBox(ctx, { ...rect, y: rect.y + offsetY }, {
-          fill,
-          stroke,
-          topHighlight: highlight,
-          bevel: theme.bevel
-        })
+          const primary = widget.type === 'button' ? Boolean(widget.primary) : widget.type === 'toggle' && widget.checked
+          const customFill = widget.type === 'button' ? widget.fill : undefined
+          const customStroke = widget.type === 'button' ? widget.stroke : undefined
+          const customAccent = widget.type === 'button' ? widget.accent : undefined
+          const fill = disabled ? '#152024b0'
+            : customFill ?? (primary ? theme.accent
+            : pressed ? theme.surfaceTop
+            : selected || isHovered ? theme.surfaceAlt
+            : theme.surface)
+          const stroke = disabled ? '#3b4e5066'
+            : selected || isFocused || isHovered ? (customAccent ?? theme.accent)
+            : (customStroke ?? theme.border)
+          const offsetY = pressed ? 1 : 0
+          ctx.save()
+          if (disabled) ctx.globalAlpha = 0.62
+          const highlight = customAccent && /^#[0-9a-f]{6}$/i.test(customAccent)
+            ? customAccent + '44'
+            : primary ? '#ffffff30' : theme.surfaceTop
+          drawFacetedBox(ctx, { ...rect, y: rect.y + offsetY }, {
+            fill,
+            stroke,
+            topHighlight: highlight,
+            bevel: theme.bevel
+          })
 
-        let textLeft = rect.x + 10
-        let textRight = rect.x + rect.width - 10
-        if (widget.type === 'button' && widget.icon) {
-          const iconSize = Math.min(38, rect.height - 8)
-          if (iconSize > 0) {
-            ctx.imageSmoothingEnabled = false
-            ctx.drawImage(widget.icon, textLeft - 2, rect.y + offsetY + (rect.height - iconSize) / 2, iconSize, iconSize)
-            textLeft += iconSize + 8
-          }
-        }
-
-        const label = widget.type === 'button'
-          ? widget.label
-          : widget.type === 'toggle'
-            ? `${widget.label}: ${widget.checked ? 'ON' : 'OFF'}`
-            : `${widget.label}: ${widget.valueLabel}`
-
-        if (widget.type === 'button' && widget.badge && widget.badge.text) {
-          ctx.font = `800 10px ${theme.mono}`
-          const bw = Math.min(Math.max(24, Math.ceil(ctx.measureText(widget.badge.text).width) + 12), Math.max(24, rect.width * 0.45))
-          const bh = 16
-          const bx = textRight - bw
-          const by = rect.y + offsetY + 6
-          ctx.fillStyle = widget.badge.fill ?? customAccent ?? theme.accent
-          chamferPath(ctx, bx, by, bw, bh, 3)
-          ctx.fill()
-          ctx.fillStyle = widget.badge.color ?? theme.accentText
-          ctx.textAlign = 'center'
-          ctx.textBaseline = 'middle'
-          ctx.fillText(widget.badge.text, bx + bw / 2, by + bh / 2 + 0.5, bw - 4)
-          textRight = Math.max(textLeft + 16, bx - 6)
-        }
-
-        ctx.fillStyle = primary && !customFill ? theme.accentText : theme.text
-        if (widget.type === 'button' && (widget.subtitle || widget.pips)) {
-          ctx.textAlign = 'left'
-          ctx.textBaseline = 'middle'
-          ctx.font = `700 13px ${theme.font}`
-          ctx.fillText(label, textLeft, rect.y + offsetY + rect.height * 0.34, Math.max(1, textRight - textLeft))
-          const fullRight = rect.x + rect.width - 10
-          if (widget.pips) {
-            const pipW = 12, pipH = 5, gap = 4
-            const py = rect.y + offsetY + rect.height * 0.68 - pipH / 2
-            for (let i = 0; i < widget.pips.total; i++) {
-              ctx.fillStyle = i < widget.pips.filled ? (customAccent ?? theme.accent) : '#ffffff26'
-              ctx.fillRect(textLeft + i * (pipW + gap), py, pipW, pipH)
+          let textLeft = rect.x + 10
+          let textRight = rect.x + rect.width - 10
+          if (widget.type === 'button' && widget.icon) {
+            const iconSize = Math.min(38, rect.height - 8)
+            if (iconSize > 0) {
+              ctx.imageSmoothingEnabled = false
+              ctx.drawImage(widget.icon, textLeft - 2, rect.y + offsetY + (rect.height - iconSize) / 2, iconSize, iconSize)
+              textLeft += iconSize + 8
             }
           }
-          if (widget.subtitle) {
-            ctx.fillStyle = primary && !customFill ? theme.accentText : theme.muted
-            ctx.font = `600 11px ${theme.mono}`
-            ctx.textAlign = widget.pips ? 'right' : 'left'
-            const sx = widget.pips ? fullRight : textLeft
-            ctx.fillText(widget.subtitle, sx, rect.y + offsetY + rect.height * 0.68, Math.max(1, fullRight - textLeft))
+
+          const label = widget.type === 'button'
+            ? widget.label
+            : widget.type === 'toggle'
+              ? `${widget.label}: ${widget.checked ? 'ON' : 'OFF'}`
+              : `${widget.label}: ${widget.valueLabel}`
+
+          if (widget.type === 'button' && widget.badge && widget.badge.text) {
+            ctx.font = `800 10px ${theme.mono}`
+            const bw = Math.min(Math.max(24, Math.ceil(ctx.measureText(widget.badge.text).width) + 12), Math.max(24, rect.width * 0.45))
+            const bh = 16
+            const bx = textRight - bw
+            const by = rect.y + offsetY + 6
+            ctx.fillStyle = widget.badge.fill ?? customAccent ?? theme.accent
+            chamferPath(ctx, bx, by, bw, bh, 3)
+            ctx.fill()
+            ctx.fillStyle = widget.badge.color ?? theme.accentText
+            ctx.textAlign = 'center'
+            ctx.textBaseline = 'middle'
+            ctx.fillText(widget.badge.text, bx + bw / 2, by + bh / 2 + 0.5, bw - 4)
+            textRight = Math.max(textLeft + 16, bx - 6)
           }
-        } else {
-          ctx.font = `700 14px ${theme.font}`
-          ctx.textAlign = 'center'
-          ctx.textBaseline = 'middle'
-          ctx.fillText(label, (textLeft + textRight) / 2, rect.y + offsetY + rect.height / 2, Math.max(1, textRight - textLeft))
-        }
-        ctx.restore()
+
+          ctx.fillStyle = primary && !customFill ? theme.accentText : theme.text
+          if (widget.type === 'button' && (widget.subtitle || widget.pips)) {
+            ctx.textAlign = 'left'
+            ctx.textBaseline = 'middle'
+            ctx.font = `700 13px ${theme.font}`
+            ctx.fillText(label, textLeft, rect.y + offsetY + rect.height * 0.34, Math.max(1, textRight - textLeft))
+            const fullRight = rect.x + rect.width - 10
+            if (widget.pips) {
+              const pipW = 12, pipH = 5, gap = 4
+              const py = rect.y + offsetY + rect.height * 0.68 - pipH / 2
+              for (let i = 0; i < widget.pips.total; i++) {
+                ctx.fillStyle = i < widget.pips.filled ? (customAccent ?? theme.accent) : '#ffffff26'
+                ctx.fillRect(textLeft + i * (pipW + gap), py, pipW, pipH)
+              }
+            }
+            if (widget.subtitle) {
+              ctx.fillStyle = primary && !customFill ? theme.accentText : theme.muted
+              ctx.font = `600 11px ${theme.mono}`
+              ctx.textAlign = widget.pips ? 'right' : 'left'
+              const sx = widget.pips ? fullRight : textLeft
+              ctx.fillText(widget.subtitle, sx, rect.y + offsetY + rect.height * 0.68, Math.max(1, fullRight - textLeft))
+            }
+          } else {
+            ctx.font = `700 14px ${theme.font}`
+            ctx.textAlign = 'center'
+            ctx.textBaseline = 'middle'
+            ctx.fillText(label, (textLeft + textRight) / 2, rect.y + offsetY + rect.height / 2, Math.max(1, textRight - textLeft))
+          }
+          ctx.restore()
         }
       } else if (widget.type === 'slider') {
         const disabled = isDisabled(widget)
@@ -720,7 +804,7 @@ export function createCanvasUi(canvas: HTMLCanvasElement, options: {
           stroke: disabled ? '#3b4e5066' : isFocused ? theme.accent : theme.border,
           bevel: 4
         })
-        const fillW = Math.max(0, Math.round((rect.width - 6) * Math.max(0, Math.min(1, widget.ratio))))
+        const fillW = Math.max(0, Math.round((rect.width - 6) * clamp01(widget.ratio)))
         if (fillW > 0) {
           ctx.fillStyle = theme.accent
           ctx.fillRect(rect.x + 3, rect.y + 3, fillW, Math.max(2, rect.height - 6))
@@ -732,7 +816,7 @@ export function createCanvasUi(canvas: HTMLCanvasElement, options: {
         ctx.fillText(widget.valueText ?? widget.label, rect.x + rect.width / 2, rect.y + rect.height / 2, Math.max(1, rect.width - 10))
         ctx.restore()
       } else if (widget.type === 'bar') {
-        const clamped = Math.max(0, Math.min(1, Number.isFinite(widget.ratio) ? widget.ratio : 0))
+        const clamped = clamp01(widget.ratio)
         ctx.save()
         drawFacetedBox(ctx, rect, {
           fill: widget.track ?? '#0c1b23cc',
@@ -764,22 +848,143 @@ export function createCanvasUi(canvas: HTMLCanvasElement, options: {
     for (const child of node.children ?? []) paintNode(child)
   }
 
-  function primitives() {
-    const out: UiPrimitiveInstance[] = []
-    for (const node of nodes) {
-      const prim = node.widget?.primitive
-      if (isUiPrimitiveInstance(prim)) out.push(prim)
+  function snapshotHit(hit: CanvasUiHit): CanvasUiWidgetSnapshot {
+    const w = hit.widget
+    const disabled = isDisabled(w)
+    const hovered = !disabled && hoveredId === hit.id
+    const focused = !disabled && focusedId === hit.id
+    const pressed = !disabled && isPressed(hit.id)
+    const state: CanvasWidgetState = disabled
+      ? 'disabled'
+      : pressed
+        ? 'pressed'
+        : hovered
+          ? 'hovered'
+          : focused
+            ? 'focused'
+            : w.type === 'toggle'
+              ? (w.checked ? 'checked' : 'unchecked')
+              : w.type === 'button' && w.selected
+                ? 'selected'
+                : 'idle'
+    const actions: readonly string[] = disabled
+      ? []
+      : w.type === 'button'
+        ? (w.onHold ? ['press', 'hold', 'focus'] : ['press', 'focus'])
+        : w.type === 'toggle'
+          ? ['toggle', 'set', 'focus']
+          : w.type === 'select'
+            ? (w.onSelect || w.options ? ['next', 'prev', 'select', 'focus'] : ['next', 'prev', 'focus'])
+            : ['set', 'increment', 'decrement', 'focus']
+
+    return {
+      id: hit.id,
+      kind: w.type,
+      role: w.type,
+      label: w.label,
+      ...(w.type === 'button' && w.subtitle ? { subtitle: w.subtitle } : {}),
+      state,
+      ...(w.type === 'toggle'
+        ? { value: w.checked, checked: w.checked }
+        : w.type === 'select'
+          ? { value: w.value ?? w.valueLabel }
+          : w.type === 'slider'
+            ? { value: clamp01(w.ratio) }
+            : {}),
+      disabled,
+      focused,
+      hovered,
+      pressed,
+      ...(w.type === 'button' ? { selected: Boolean(w.selected) } : {}),
+      bounds: { x: hit.rect.x, y: hit.rect.y, width: hit.rect.width, height: hit.rect.height },
+      actions
     }
-    return out
   }
 
-  const agent = createUiAgent(primitives)
+  function snapshot(): CanvasUiWidgetSnapshot[] {
+    return interactiveHits(true, true).map(snapshotHit)
+  }
+
+  function query(filter: CanvasUiQuery = {}): CanvasUiWidgetSnapshot[] {
+    return snapshot().filter(item =>
+      (filter.id === undefined || item.id === filter.id) &&
+      (filter.kind === undefined || item.kind === filter.kind) &&
+      (filter.role === undefined || item.role === filter.role) &&
+      (filter.state === undefined || item.state === filter.state) &&
+      (filter.label === undefined || item.label === filter.label) &&
+      (filter.disabled === undefined || item.disabled === filter.disabled)
+    )
+  }
 
   function activate(id: string, direction: 1 | -1 = 1) {
     const hit = interactiveHits().find(h => h.id === id)
     if (!hit) return false
-    activateHit(hit, direction)
-    return true
+    return activateHit(hit, direction)
+  }
+
+  function act(id: string, action: string, payload?: unknown): boolean {
+    const hit = interactiveHits(false, true).find(h => h.id === id)
+    if (!hit) return false
+    if (action === 'focus') {
+      focusedId = hit.id
+      dirty = true
+      return true
+    }
+    if (action === 'blur') {
+      if (focusedId === hit.id) {
+        focusedId = null
+        dirty = true
+      }
+      return true
+    }
+    const w = hit.widget
+    if (w.type === 'button') {
+      if (action === 'press' || action === 'click') return activateHit(hit)
+      if (action === 'hold' && typeof payload === 'boolean' && w.onHold) {
+        w.onHold(payload)
+        dirty = true
+        return true
+      }
+      return false
+    }
+    if (w.type === 'toggle') {
+      if (action === 'toggle' || action === 'press' || action === 'click') return activateHit(hit)
+      if (action === 'set' && typeof payload === 'boolean') {
+        if (payload !== w.checked) w.onToggle?.(payload)
+        dirty = true
+        return true
+      }
+      return false
+    }
+    if (w.type === 'select') {
+      if (action === 'next' || action === 'press' || action === 'click') return activateHit(hit, 1)
+      if (action === 'prev') return activateHit(hit, -1)
+      if (action === 'select' && typeof payload === 'string') {
+        const ok = selectOptionValue(w, payload)
+        if (ok) dirty = true
+        return ok
+      }
+      return false
+    }
+    if (action === 'set' && typeof payload === 'number' && Number.isFinite(payload)) {
+      w.onChange?.(clamp01(payload))
+      dirty = true
+      return true
+    }
+    if (action === 'increment' || action === 'decrement') {
+      const mult = payload === undefined ? 1 : (typeof payload === 'number' && Number.isFinite(payload) ? payload : Number.NaN)
+      if (!Number.isFinite(mult)) return false
+      const dir = action === 'increment' ? 1 : -1
+      w.onChange?.(clamp01(w.ratio + dir * sliderStep(w) * mult))
+      dirty = true
+      return true
+    }
+    if (action === 'step' && typeof payload === 'number' && Number.isFinite(payload)) {
+      w.onChange?.(clamp01(w.ratio + sliderStep(w) * payload))
+      dirty = true
+      return true
+    }
+    return false
   }
 
   return {
@@ -797,6 +1002,14 @@ export function createCanvasUi(canvas: HTMLCanvasElement, options: {
       nodes = []
       collectNodes(tree, nodes)
       rects = resolveLayout(tree, { width: w, height: h }, options.safeArea)
+      const enabledIds = new Set(interactiveHits(false, true).map(hit => hit.id))
+      if (hoveredId && !enabledIds.has(hoveredId)) {
+        hoveredId = null
+        canvas.style.cursor = ''
+      }
+      if (focusedId && !enabledIds.has(focusedId)) {
+        focusedId = null
+      }
       ctx.setTransform(pw / w, 0, 0, ph / h, 0, 0)
       ctx.clearRect(0, 0, w, h)
       paintNode(tree)
@@ -835,19 +1048,14 @@ export function createCanvasUi(canvas: HTMLCanvasElement, options: {
     focus(id: string | null) { focusedId = id; dirty = true },
     moveFocus,
     activate,
-    snapshot: () => agent.snapshot(),
-    query: (filter?: { id?: string; kind?: string; state?: string; label?: string }) => agent.query(filter),
-    act: (id: string, action: string, payload?: unknown) => {
-      if (agent.act(id, action, payload)) { dirty = true; return true }
-      if (action === 'press' || action === 'click' || action === 'toggle') return activate(id)
-      if (action === 'next') return activate(id, 1)
-      if (action === 'prev') return activate(id, -1)
-      return false
-    },
+    snapshot,
+    query,
+    act,
     dispose() {
       disposed = true
       unsubPause()
       hoveredId = null
+      focusedId = null
       canvas.style.cursor = ''
       clearHolds()
       controller.abort()

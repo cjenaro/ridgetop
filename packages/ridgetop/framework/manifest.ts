@@ -12,14 +12,6 @@ export interface PackageExportEntry {
 export const RIDGETOP_BROWSER_SPECIFIER_FILES: Readonly<Record<string, string>> = Object.freeze({
   ridgetop: 'index.js',
   'ridgetop/ui': 'ui.js',
-  'ridgetop/ui-layout': 'ui-layout.js',
-  'ridgetop/ui-button': 'ui-button.js',
-  'ridgetop/ui-toggle': 'ui-toggle.js',
-  'ridgetop/ui-select': 'ui-select.js',
-  'ridgetop/ui-slider': 'ui-slider.js',
-  'ridgetop/ui-menu': 'ui-menu.js',
-  'ridgetop/ui-canvas': 'ui-canvas.js',
-  'ridgetop/ui-machine': 'ui-machine.js',
   'ridgetop/art-review': 'art-review.js',
   'ridgetop/testing': 'testing-runtime.js'
 })
@@ -67,7 +59,7 @@ export const BROWSER_RUNTIME_MODULES: readonly string[] = Object.freeze([
   'input.js', 'vehicle.js', 'page.js', 'platform.js', 'backup.js', 'audio.js', 'audio-assets.js', 'import-mesh.js',
   'hud.js', 'perf.js', 'sprites.js', 'sprite-sheet.js', 'pixel-rig.js',
   'art.js', 'art-recipe.js', 'art-builder.js', 'character-builder.js', 'platformer.js', 'animation.js', 'physics3d.js',
-  'ui.js', 'ui-machine.js', 'ui-layout.js', 'ui-button.js', 'ui-toggle.js', 'ui-select.js', 'ui-slider.js', 'ui-menu.js', 'ui-canvas.js'
+  'ui.js', 'ui-layout.js', 'ui-canvas.js'
 ])
 
 /** Browser-loadable studio/verification/testing modules served in dev hosts but stripped from release builds. */

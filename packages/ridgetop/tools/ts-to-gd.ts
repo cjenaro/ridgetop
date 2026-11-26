@@ -1018,6 +1018,18 @@ export function compileTsToGd(sourceText: string, fileName = 'module.ts', option
           topVars.add(el.name.text)
         }
       }
+    } else if (ts.isExportDeclaration(stmt) && !stmt.isTypeOnly && stmt.moduleSpecifier && ts.isStringLiteral(stmt.moduleSpecifier) && stmt.exportClause && ts.isNamedExports(stmt.exportClause)) {
+      const specifier = stmt.moduleSpecifier.text
+      for (const el of stmt.exportClause.elements) {
+        if (el.isTypeOnly) continue
+        const imported = (el.propertyName ?? el.name).text
+        const local = el.name.text
+        const resolved = options.resolveImport
+          ? options.resolveImport(specifier, imported)
+          : { resPath: specifier.replace(/\.ts$/, '.gd'), exportName: imported }
+        importedBindings.set(local, resolved)
+        topVars.add(local)
+      }
     } else if (ts.isImportDeclaration(stmt)) {
       if (stmt.importClause?.isTypeOnly) continue
       if (!ts.isStringLiteral(stmt.moduleSpecifier)) continue
@@ -1278,6 +1290,7 @@ export function compileTsToGd(sourceText: string, fileName = 'module.ts', option
       if (node.text === 'NaN') return 'NAN'
       const local = resolveLocal(node.text)
       if (!local.isLocal && !isCallee) {
+        if (node.text === 'globalThis') return '{}'
         if (node.text === 'Boolean') return 'Callable(RT, "truthy")'
         if (node.text === 'Number') return 'Callable(RT, "num")'
         if (node.text === 'String') return 'Callable(RT, "js_str")'
@@ -1744,6 +1757,11 @@ export function compileTsToGd(sourceText: string, fileName = 'module.ts', option
         if (method === 'apply') return `RT.invoke(${args[0] ?? 'null'}, ${args[2] ?? '[]'})`
         if (method === 'get') return `RT.get_prop(${args[0] ?? 'null'}, ${args[1] ?? 'null'})`
         if (method === 'set') return `(RT.set_prop(${args[0] ?? 'null'}, ${args[1] ?? 'null'}, ${args[2] ?? 'null'}) != null or true)`
+      }
+
+      // performance.now()
+      if (ts.isIdentifier(objNode) && objNode.text === 'performance' && method === 'now') {
+        return 'float(Time.get_ticks_msec())'
       }
 
       // Evaluate receiver BEFORE arguments (JS evaluation order & optional-chaining short-circuit).
@@ -2633,25 +2651,44 @@ export async function compileTsProjectToGodot(options: CompileProjectOptions): P
       astCache.set(normalized, sf)
     }
 
-    // Pre-resolve every runtime import specifier + symbol through barrels so all dependencies are compiled too.
+    // Pre-resolve every runtime import and re-export specifier + symbol through barrels so all dependencies are compiled too.
     const importMap = new Map<string, { resPath: string; exportName: string; absTarget: string }>()
     for (const stmt of sf.statements) {
-      if (!ts.isImportDeclaration(stmt) || stmt.importClause?.isTypeOnly || !ts.isStringLiteral(stmt.moduleSpecifier)) continue
-      const spec = stmt.moduleSpecifier.text
-      const direct = await resolveLocalModulePath(normalized, spec)
-      if (!direct) continue
-      const bindings = stmt.importClause?.namedBindings
-      if (bindings && ts.isNamedImports(bindings)) {
-        for (const el of bindings.elements) {
-          if (el.isTypeOnly) continue
-          const imported = (el.propertyName ?? el.name).text
-          const resolved = await resolveThroughBarrel(direct, imported, astCache)
-          const relOut = computeRelOutputPath(resolved.file, rootDir).replace(/\.(?:ts|js)$/, '.gd')
-          importMap.set(`${spec}::${imported}`, {
-            resPath: `${resPrefix}/${relOut}`,
-            exportName: resolved.symbol,
-            absTarget: resolved.file
-          })
+      if (ts.isImportDeclaration(stmt)) {
+        if (stmt.importClause?.isTypeOnly || !ts.isStringLiteral(stmt.moduleSpecifier)) continue
+        const spec = stmt.moduleSpecifier.text
+        const direct = await resolveLocalModulePath(normalized, spec)
+        if (!direct) continue
+        const bindings = stmt.importClause?.namedBindings
+        if (bindings && ts.isNamedImports(bindings)) {
+          for (const el of bindings.elements) {
+            if (el.isTypeOnly) continue
+            const imported = (el.propertyName ?? el.name).text
+            const resolved = await resolveThroughBarrel(direct, imported, astCache)
+            const relOut = computeRelOutputPath(resolved.file, rootDir).replace(/\.(?:ts|js)$/, '.gd')
+            importMap.set(`${spec}::${imported}`, {
+              resPath: `${resPrefix}/${relOut}`,
+              exportName: resolved.symbol,
+              absTarget: resolved.file
+            })
+          }
+        }
+      } else if (ts.isExportDeclaration(stmt) && !stmt.isTypeOnly && stmt.moduleSpecifier && ts.isStringLiteral(stmt.moduleSpecifier)) {
+        const spec = stmt.moduleSpecifier.text
+        const direct = await resolveLocalModulePath(normalized, spec)
+        if (!direct) continue
+        if (stmt.exportClause && ts.isNamedExports(stmt.exportClause)) {
+          for (const el of stmt.exportClause.elements) {
+            if (el.isTypeOnly) continue
+            const imported = (el.propertyName ?? el.name).text
+            const resolved = await resolveThroughBarrel(direct, imported, astCache)
+            const relOut = computeRelOutputPath(resolved.file, rootDir).replace(/\.(?:ts|js)$/, '.gd')
+            importMap.set(`${spec}::${imported}`, {
+              resPath: `${resPrefix}/${relOut}`,
+              exportName: resolved.symbol,
+              absTarget: resolved.file
+            })
+          }
         }
       }
     }

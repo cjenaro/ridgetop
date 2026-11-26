@@ -1,5 +1,4 @@
-import type { LayoutRect } from 'ridgetop/ui-layout'
-import type { CanvasWidgetDrawState } from 'ridgetop/ui-canvas'
+import type { CanvasWidgetDrawState, LayoutRect } from 'ridgetop/ui'
 import type {
   BattleUnit, ChapterSpec, CombatForecast, CombatForecastAlt, DifficultyLevel, EquipSlot, EquipmentSpec,
   HeroSpec, LandmarkKind, OwnedHeroCard, PackRevealItem, PackSpec, Rarity, SkillSpec, TacticCardSpec,

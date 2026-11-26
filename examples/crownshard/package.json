@@ -25,8 +25,7 @@
       "crownshard/simulation.ts",
       "crownshard/data.ts",
       "crownshard/types.ts",
-      "ridgetop/ui-layout",
-      "ridgetop/ui-button"
+      "ridgetop/ui"
     ]
   }
 }

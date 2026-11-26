@@ -67,6 +67,7 @@ for (const name of names.length ? names : Object.keys(runtimes)) {
     assert.match(await (await request('/racing/main.js')).text(), /createLowPolyRenderer/)
     assert.match(await (await request('/racing/progression.js')).text(), /export function buyUpgrade/)
     assert.match(await (await request('/racing/garage.js')).text(), /export function createGarageState/)
+    assert.match(await (await request('/framework/ui.js')).text(), /export \{.*createCanvasUi/)
     assert.match(await (await request('/framework/ui-canvas.js')).text(), /export function createCanvasUi/)
     assert.match(await (await request('/framework/ui-layout.js')).text(), /export function resolveLayout/)
     assert.match(await (await request('/racing/garage-art.js')).text(), /export function createGarageBay/)

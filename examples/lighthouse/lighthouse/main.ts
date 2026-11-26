@@ -2,9 +2,8 @@ import {
   bindActionControls, bindVirtualStick, createGamePage, createHud, createLowPolyRenderer, fixedLoop
 } from 'ridgetop'
 import type { Backend, HudPainter } from 'ridgetop'
-import { boxNode, column, overlay, row, spacerNode } from 'ridgetop/ui-layout'
-import { buttonPrimitive } from 'ridgetop/ui-button'
-import { createCanvasUi, createUiTheme } from 'ridgetop/ui-canvas'
+import { boxNode, column, createCanvasUi, createUiTheme, overlay, row, spacerNode } from 'ridgetop/ui'
+import type { CanvasUiQuery } from 'ridgetop/ui'
 import { isTestingPaused } from 'ridgetop/testing'
 import { createLighthouseAudio } from './audio.ts'
 import { createLighthouseScene } from './scene.ts'
@@ -132,72 +131,29 @@ async function start() {
     }
   }, { signal: shopKeyController.signal })
 
-  // UI Primitives (opt-in Ridgetop Canvas UI SDK)
-  const playBtn = buttonPrimitive.create({ id: 'lh-play', label: 'Start Watch', onPress: () => startWatch(false) })
-  const newGameBtn = buttonPrimitive.create({ id: 'lh-new', label: 'New Watch', onPress: () => startWatch(true) })
-  const shopBtn = buttonPrimitive.create({
-    id: 'lh-shop',
-    label: 'Shop (E)',
-    onPress: () => {
-      audio.unlock()
-      if (screen === 'playing') setScreen('shop')
-      else if (screen === 'shop') setScreen('playing')
-    }
-  })
-  const musicBtn = buttonPrimitive.create({
-    id: 'lh-music',
-    label: 'Music',
-    onPress: () => {
-      audio.unlock()
-      audio.setMusic(!audio.isMusicEnabled())
+  function purchaseUpgrade(id: UpgradeId) {
+    audio.unlock()
+    if (buyUpgrade(state, id)) {
+      persistSave(page.storage, state)
+      hudRev++
       uiDirty = true
-    }
-  })
-  const menuBtn = buttonPrimitive.create({
-    id: 'lh-menu',
-    label: 'Menu',
-    onPress: () => { audio.unlock(); togglePause() }
-  })
-  const resumeBtn = buttonPrimitive.create({ id: 'lh-resume', label: 'Resume Watch', onPress: () => setScreen('playing') })
-  const muteBtn = buttonPrimitive.create({
-    id: 'lh-mute',
-    label: 'Mute Audio',
-    onPress: () => {
-      audio.unlock()
-      audio.setMuted(!audio.isMuted())
-      uiDirty = true
-    }
-  })
-  const closeShopBtn = buttonPrimitive.create({ id: 'lh-shop-close', label: 'Back to Island (E)', onPress: () => setScreen('playing') })
-  const continueVictoryBtn = buttonPrimitive.create({ id: 'lh-continue', label: 'Keep Watching (Endless)', onPress: () => setScreen('playing') })
-
-  function makeUpgradeButton(id: UpgradeId) {
-    const spec = UPGRADES.find(u => u.id === id)
-    return buttonPrimitive.create({
-      id: `lh-upg-${id}`,
-      label: spec?.name ?? id,
-      onPress: () => {
-        audio.unlock()
-        if (buyUpgrade(state, id)) {
-          persistSave(page.storage, state)
-          hudRev++
-          uiDirty = true
-          if (state.victory && !victoryShown) {
-            victoryShown = true
-            setScreen('victory')
-          }
-        }
+      if (state.victory && !victoryShown) {
+        victoryShown = true
+        setScreen('victory')
       }
-    })
+    }
   }
 
-  const upgradeButtons: Record<UpgradeId, ReturnType<typeof buttonPrimitive.create>> = {
-    boots: makeUpgradeButton('boots'),
-    pack: makeUpgradeButton('pack'),
-    cloak: makeUpgradeButton('cloak'),
-    lens: makeUpgradeButton('lens'),
-    winch: makeUpgradeButton('winch'),
-    charter: makeUpgradeButton('charter')
+  function toggleMusic() {
+    audio.unlock()
+    audio.setMusic(!audio.isMusicEnabled())
+    uiDirty = true
+  }
+
+  function toggleMute() {
+    audio.unlock()
+    audio.setMuted(!audio.isMuted())
+    uiDirty = true
   }
 
   const ui = createCanvasUi(uiCanvas, {
@@ -270,13 +226,13 @@ async function start() {
           boxNode({
             id: 'lh-play',
             style: { height: 46 },
-            widget: { type: 'button', label: hasSave ? `Continue Watch (Day ${state.day} · ${state.coins}g)` : 'Begin Watch', primary: true, primitive: playBtn }
+            widget: { type: 'button', label: hasSave ? `Continue Watch (Day ${state.day} · ${state.coins}g)` : 'Begin Watch', primary: true, onPress: () => startWatch(false) }
           }),
           boxNode({
             id: 'lh-new',
             hidden: !hasSave,
             style: { height: 40 },
-            widget: { type: 'button', label: 'Start Fresh Watch', primitive: newGameBtn }
+            widget: { type: 'button', label: 'Start Fresh Watch', onPress: () => startWatch(true) }
           }),
           boxNode({
             id: 't-controls',
@@ -307,7 +263,7 @@ async function start() {
               pips: { filled: lv, total: spec.maxLevel },
               primary: affordable,
               disabled: !affordable,
-              primitive: upgradeButtons[spec.id]
+              onPress: () => purchaseUpgrade(spec.id)
             }
           })
         })))
@@ -334,7 +290,7 @@ async function start() {
           boxNode({
             id: 'lh-shop-close',
             style: { height: 42 },
-            widget: { type: 'button', label: 'Back to Island (E)', primitive: closeShopBtn }
+            widget: { type: 'button', label: 'Back to Island (E)', onPress: () => setScreen('playing') }
           })
         ])
       ])
@@ -367,22 +323,22 @@ async function start() {
           boxNode({
             id: isWin ? 'lh-continue' : 'lh-resume',
             style: { height: 44 },
-            widget: { type: 'button', label: isWin ? 'Keep Watching (Endless)' : 'Resume Watch', primary: true, primitive: isWin ? continueVictoryBtn : resumeBtn }
+            widget: { type: 'button', label: isWin ? 'Keep Watching (Endless)' : 'Resume Watch', primary: true, onPress: () => setScreen('playing') }
           }),
           boxNode({
             id: 'lh-mute',
             style: { height: 40 },
-            widget: { type: 'button', label: audio.isMuted() ? 'Audio: MUTED' : 'Audio: ON', primitive: muteBtn }
+            widget: { type: 'button', label: audio.isMuted() ? 'Audio: MUTED' : 'Audio: ON', onPress: toggleMute }
           }),
           boxNode({
             id: 'lh-music',
             style: { height: 40 },
-            widget: { type: 'button', label: audio.isMusicEnabled() ? 'Music: ON' : 'Music: OFF', primitive: musicBtn }
+            widget: { type: 'button', label: audio.isMusicEnabled() ? 'Music: ON' : 'Music: OFF', onPress: toggleMusic }
           }),
           boxNode({
             id: 'lh-new',
             style: { height: 40 },
-            widget: { type: 'button', label: 'Reset & New Watch', primitive: newGameBtn }
+            widget: { type: 'button', label: 'Reset & New Watch', onPress: () => startWatch(true) }
           })
         ])
       ])
@@ -398,17 +354,26 @@ async function start() {
         boxNode({
           id: 'lh-shop',
           style: { width: compact ? 88 : 118, height: btnH },
-          widget: { type: 'button', label: canBuy ? 'Gear * (E)' : 'Gear (E)', primary: canBuy || state.activePad === 'shop', primitive: shopBtn }
+          widget: {
+            type: 'button',
+            label: canBuy ? 'Gear * (E)' : 'Gear (E)',
+            primary: canBuy || state.activePad === 'shop',
+            onPress: () => {
+              audio.unlock()
+              if (screen === 'playing') setScreen('shop')
+              else if (screen === 'shop') setScreen('playing')
+            }
+          }
         }),
         boxNode({
           id: 'lh-music',
           style: { width: compact ? 76 : 96, height: btnH },
-          widget: { type: 'button', label: audio.isMusicEnabled() ? 'Music ON' : 'Music OFF', primitive: musicBtn }
+          widget: { type: 'button', label: audio.isMusicEnabled() ? 'Music ON' : 'Music OFF', onPress: toggleMusic }
         }),
         boxNode({
           id: 'lh-menu',
           style: { width: compact ? 62 : 74, height: btnH },
-          widget: { type: 'button', label: 'Menu', primitive: menuBtn }
+          widget: { type: 'button', label: 'Menu', onPress: () => { audio.unlock(); togglePause() } }
         })
       ])
     ])
@@ -535,7 +500,7 @@ async function start() {
     writable: true,
     value: {
       snapshot: () => ui.snapshot(),
-      query: (filter?: { id?: string; kind?: string; state?: string; label?: string }) => ui.query(filter),
+      query: (filter?: CanvasUiQuery) => ui.query(filter),
       act: (id: string, action: string, payload?: unknown) => {
         renderUiNow()
         const ok = ui.act(id, action, payload)

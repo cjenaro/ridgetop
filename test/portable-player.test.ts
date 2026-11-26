@@ -387,8 +387,9 @@ test('packageGame(--target player) builds a self-contained offline HTML player f
   assert.ok(importMap.imports['ridgetop-offline/main.js']?.startsWith('data:text/javascript;base64,'))
   assert.ok(importMap.imports['ridgetop-offline/game.js']?.startsWith('data:text/javascript;base64,'))
   assert.ok(importMap.imports['ridgetop-offline/framework/index.js']?.startsWith('data:text/javascript;base64,'))
+  assert.ok(importMap.imports['ridgetop-offline/framework/ui.js']?.startsWith('data:text/javascript;base64,'))
   assert.equal(importMap.imports['ridgetop-offline/framework/testing-studio.js'], undefined)
-  assert.equal(importMap.imports['ridgetop-offline/framework/ui-slider.js'], undefined)
+  assert.equal(importMap.imports['ridgetop-offline/framework/vehicle.js'], undefined)
 
   const mainJs = Buffer.from(importMap.imports['ridgetop-offline/main.js'].split(',')[1], 'base64').toString('utf8')
   assert.ok(mainJs.includes('"ridgetop-offline/game.js"'), 'Relative imports should be rewritten to ridgetop-offline/ specifiers')

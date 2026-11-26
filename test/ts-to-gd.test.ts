@@ -7,7 +7,7 @@ import test from 'node:test'
 import { fileURLToPath } from 'node:url'
 import { promisify } from 'node:util'
 import { createArcadeDriver, createCircuit, STEP } from '../packages/ridgetop/framework/index.ts'
-import { boxNode, buttonPrimitive, column, overlay, resolveLayout, row, spacerNode, togglePrimitive } from '../packages/ridgetop/framework/ui.ts'
+import { boxNode, column, createUiTheme, overlay, resolveLayout, row, spacerNode } from '../packages/ridgetop/framework/ui.ts'
 import { ROUTE } from '../examples/beacon-run/game/campaign.ts'
 import { courses } from '../examples/beacon-run/game/level.ts'
 import { createPlayer, stepPlayer } from '../examples/beacon-run/game/simulation.ts'
@@ -179,15 +179,13 @@ func _init() -> void:
   assert.ok(Math.abs(gd.near.progress - near.progress) < 0.001)
 })
 
-test('TS -> GDScript compiler compiles Ridgetop UI state machines & layout solver and matches Node in Godot 4', async t => {
+test('TS -> GDScript compiler compiles Ridgetop UI module (ridgetop/ui) & layout solver and matches Node in Godot 4', async t => {
   const projectDir = await mkdtemp(join(tmpdir(), 'ridgetop-gd-ui-'))
   t.after(() => rm(projectDir, { recursive: true, force: true }))
 
   await compileTsProjectToGodot({
     entries: [
-      join(repoRoot, 'packages', 'ridgetop', 'framework', 'ui-layout.ts'),
-      join(repoRoot, 'packages', 'ridgetop', 'framework', 'ui-button.ts'),
-      join(repoRoot, 'packages', 'ridgetop', 'framework', 'ui-toggle.ts')
+      join(repoRoot, 'packages', 'ridgetop', 'framework', 'ui.ts')
     ],
     rootDir: repoRoot,
     outDir: join(projectDir, 'scripts', 'compiled')
@@ -208,46 +206,36 @@ test('TS -> GDScript compiler compiles Ridgetop UI state machines & layout solve
     ])
   ])
   const expectedRects = Object.fromEntries(resolveLayout(tree, { width: 800, height: 600 }, { top: 20, right: 16, bottom: 24, left: 16 }))
+  const expectedTheme = createUiTheme({ accent: '#efac62' })
 
   const gd = await runGodotHarness(godot, projectDir, `extends SceneTree
 const RT = preload("res://scripts/compiled/rt.gd")
 func _init() -> void:
-\tvar lay = RT.mod("res://scripts/compiled/framework/ui-layout.gd")
-\tvar btn_mod = RT.mod("res://scripts/compiled/framework/ui-button.gd")
-\tvar tog_mod = RT.mod("res://scripts/compiled/framework/ui-toggle.gd")
-\tvar presses := [0]
-\tvar btn = btn_mod.buttonPrimitive["create"].call({ "id": "play", "label": "Play", "onPress": func(): presses[0] += 1 })
-\tbtn["api"]["setDisabled"].call(true)
-\tvar blocked: bool = btn["act"].call("press")
-\tbtn["api"]["setDisabled"].call(false)
-\tvar allowed: bool = btn["act"].call("press")
-\tvar tog = tog_mod.togglePrimitive["create"].call({ "id": "snd", "label": "Sound", "checked": true })
-\ttog["act"].call("toggle")
-\tvar tree = lay.overlay({ "id": "root", "style": { "anchor": "fill" } }, [
-\t\tlay.row({ "id": "bar", "style": { "anchor": "top", "width": 400, "height": 50, "inset": 10, "gap": 10, "padding": 5, "respectSafeArea": true } }, [
-\t\t\tlay.boxNode({ "id": "left", "style": { "width": 80, "height": 40 } }),
-\t\t\tlay.spacerNode(1),
-\t\t\tlay.boxNode({ "id": "right", "style": { "width": 100, "height": 40 } })
+\tvar ui = RT.mod("res://scripts/compiled/framework/ui.gd")
+\tvar theme = ui.createUiTheme.call({ "accent": "#efac62" })
+\tvar tree = ui.overlay.call({ "id": "root", "style": { "anchor": "fill" } }, [
+\t\tui.row.call({ "id": "bar", "style": { "anchor": "top", "width": 400, "height": 50, "inset": 10, "gap": 10, "padding": 5, "respectSafeArea": true } }, [
+\t\t\tui.boxNode.call({ "id": "left", "style": { "width": 80, "height": 40 } }),
+\t\t\tui.spacerNode.call(1),
+\t\t\tui.boxNode.call({ "id": "right", "style": { "width": 100, "height": 40 } })
 \t\t]),
-\t\tlay.column({ "id": "modal", "style": { "anchor": "center", "width": 200, "padding": 12, "gap": 8 } }, [
-\t\t\tlay.boxNode({ "id": "btn-a", "style": { "height": 40 } }),
-\t\t\tlay.boxNode({ "id": "btn-b", "style": { "height": 40 } })
+\t\tui.column.call({ "id": "modal", "style": { "anchor": "center", "width": 200, "padding": 12, "gap": 8 } }, [
+\t\t\tui.boxNode.call({ "id": "btn-a", "style": { "height": 40 } }),
+\t\t\tui.boxNode.call({ "id": "btn-b", "style": { "height": 40 } })
 \t\t])
 \t])
-\tvar rects = lay.resolveLayout(tree, { "width": 800, "height": 600 }, { "top": 20, "right": 16, "bottom": 24, "left": 16 })
+\tvar rects = ui.resolveLayout.call(tree, { "width": 800, "height": 600 }, { "top": 20, "right": 16, "bottom": 24, "left": 16 })
 \tprint("PARITY_JSON:" + JSON.stringify({
-\t\t"presses": presses[0], "blocked": blocked, "allowed": allowed,
-\t\t"toggleChecked": tog["api"]["checked"].call(),
+\t\t"accent": theme["accent"],
+\t\t"bevel": theme["bevel"],
 \t\t"rects": rects["__store"]
 \t}))
 \tRT.clear_modules()
 \tquit()
 `)
 
-  assert.equal(gd.presses, 1)
-  assert.equal(gd.blocked, false)
-  assert.equal(gd.allowed, true)
-  assert.equal(gd.toggleChecked, false)
+  assert.equal(gd.accent, expectedTheme.accent)
+  assert.equal(gd.bevel, expectedTheme.bevel)
   for (const id of ['bar', 'left', 'right', 'modal', 'btn-a', 'btn-b']) {
     assert.deepEqual(gd.rects[id], expectedRects[id], `layout rect parity for ${id}`)
   }
@@ -676,14 +664,6 @@ export function testEdge2() {
 `)
 
   await compileTsProjectToGodot({
-    entries: [
-      join(repoRoot, 'packages', 'ridgetop', 'framework', 'ui-machine.ts'),
-      join(repoRoot, 'packages', 'ridgetop', 'framework', 'ui-button.ts')
-    ],
-    rootDir: repoRoot,
-    outDir: join(projectDir, 'scripts', 'compiled')
-  })
-  await compileTsProjectToGodot({
     entries: [edge2Ts],
     rootDir: projectDir,
     outDir: join(projectDir, 'scripts', 'compiled')
@@ -696,14 +676,8 @@ export function testEdge2() {
 const RT = preload("res://scripts/compiled/rt.gd")
 func _init() -> void:
 \tvar edge2 = RT.mod("res://scripts/compiled/edge2.gd")
-\tvar mach = RT.mod("res://scripts/compiled/framework/ui-machine.gd")
-\tvar btn_mod = RT.mod("res://scripts/compiled/framework/ui-button.gd")
-\tvar btn = btn_mod.buttonPrimitive["create"].call({ "id": "go", "label": "Go" })
-\tvar agent = mach.createUiAgent(func(): return [btn])
-\tvar queried = agent["query"].call({ "id": "go" })
 \tprint("PARITY_JSON:" + JSON.stringify({
 \t\t"alias": edge2.aliasedSecret,
-\t\t"queriedCount": queried.size(),
 \t\t"res": edge2.testEdge2()
 \t}))
 \tRT.clear_modules()
@@ -711,7 +685,6 @@ func _init() -> void:
 `)
 
   assert.equal(gd.alias, 42)
-  assert.equal(gd.queriedCount, 1, 'createUiAgent().query() must work via object-literal this binding')
   const r = gd.res
   assert.equal(r.lenFallback, 77)
   assert.equal(r.thisDouble, 30)

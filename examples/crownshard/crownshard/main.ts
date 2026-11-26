@@ -2,11 +2,8 @@ import {
   createGamePage, createHud, createLowPolyRenderer, createPerfLogger, createPerfMonitor, fixedLoop
 } from 'ridgetop'
 import type { Backend, HudPainter } from 'ridgetop'
-import { boxNode, column, overlay, row, spacerNode } from 'ridgetop/ui-layout'
-import type { LayoutNode, LayoutRect } from 'ridgetop/ui-layout'
-import { buttonPrimitive } from 'ridgetop/ui-button'
-import { createCanvasUi, createUiTheme } from 'ridgetop/ui-canvas'
-import type { CanvasWidgetDrawState } from 'ridgetop/ui-canvas'
+import { boxNode, column, createCanvasUi, createUiTheme, overlay, row, spacerNode } from 'ridgetop/ui'
+import type { CanvasUiQuery, CanvasWidgetDrawState, LayoutNode, LayoutRect } from 'ridgetop/ui'
 import { isTestingPaused } from 'ridgetop/testing'
 import { bakePortraitCanvases } from './art.ts'
 import { createCrownshardAudio } from './audio.ts'
@@ -439,86 +436,49 @@ async function start() {
     }
   }
 
-  // Headless-accessible UI primitives for top-level actions
-  const playBtn = buttonPrimitive.create({ id: 'cs-play', label: 'Begin Campaign', onPress: () => startCampaign(false) })
-  const newBtn = buttonPrimitive.create({ id: 'cs-new', label: 'New Campaign', onPress: () => startCampaign(true) })
-  const storyGoBtn = buttonPrimitive.create({ id: 'cs-story-go', label: 'Deploy to Battle', onPress: launchBattle })
-  const storyBackBtn = buttonPrimitive.create({ id: 'cs-story-back', label: 'World Map', onPress: () => openWorldMap() })
-  const worldMapBtn = buttonPrimitive.create({ id: 'cs-world-map', label: 'World Map', onPress: () => openWorldMap() })
-  const endTurnBtn = buttonPrimitive.create({
-    id: 'cs-end-turn',
-    label: 'End Turn',
-    onPress: () => {
-      audio.unlock()
-      if (state.battle?.phase === 'player') {
-        lockedForecastCell = null
-        mobileHandOpen = false
-        endPlayerTurn(state)
-        uiDirty = true
-        hudRev++
-      }
-    }
-  })
-  const pauseBtn = buttonPrimitive.create({
-    id: 'cs-pause',
-    label: 'Menu',
-    onPress: () => {
-      audio.unlock()
-      if (screen === 'battle') setScreen('paused')
-      else if (screen === 'paused') setScreen('battle')
-    }
-  })
-  const resumeBtn = buttonPrimitive.create({ id: 'cs-resume', label: 'Resume Battle', onPress: () => setScreen('battle') })
-  const retreatBtn = buttonPrimitive.create({ id: 'cs-retreat', label: 'Retreat to Camp', onPress: () => openCamp('squad') })
-  const musicBtn = buttonPrimitive.create({
-    id: 'cs-music',
-    label: 'Music',
-    onPress: () => {
-      audio.unlock()
-      audio.setMusic(!audio.isMusicEnabled())
-      uiDirty = true
-    }
-  })
-  const muteBtn = buttonPrimitive.create({
-    id: 'cs-mute',
-    label: 'Mute',
-    onPress: () => {
-      audio.unlock()
-      audio.setMuted(!audio.isMuted())
-      uiDirty = true
-    }
-  })
-  const perfBtn = buttonPrimitive.create({
-    id: 'cs-perf',
-    label: 'FPS',
-    onPress: () => {
-      showPerfPanel = !showPerfPanel
+  function endBattleTurn() {
+    audio.unlock()
+    if (state.battle?.phase === 'player') {
+      lockedForecastCell = null
+      mobileHandOpen = false
+      endPlayerTurn(state)
       uiDirty = true
       hudRev++
     }
-  })
-  const victoryCampBtn = buttonPrimitive.create({ id: 'cs-victory-camp', label: 'Vanguard Camp', onPress: () => openCamp('squad') })
-  const victoryNextBtn = buttonPrimitive.create({
-    id: 'cs-victory-next',
-    label: 'Next Stage',
-    onPress: () => {
-      if (isEndlessUnlocked(state.campaign) && (state.battle?.endlessWave ?? 0) > 0) {
-        openStory(CHAPTER_BY_ID.eclipse_throne.index, (state.battle?.endlessWave ?? 0) + 1)
-      } else {
-        const nextStage = getNextRecommendedStage(state.campaign)
-        openWorldMap(nextStage.id)
-      }
+  }
+
+  function togglePauseScreen() {
+    audio.unlock()
+    if (screen === 'battle') setScreen('paused')
+    else if (screen === 'paused') setScreen('battle')
+  }
+
+  function toggleMusic() {
+    audio.unlock()
+    audio.setMusic(!audio.isMusicEnabled())
+    uiDirty = true
+  }
+
+  function toggleMute() {
+    audio.unlock()
+    audio.setMuted(!audio.isMuted())
+    uiDirty = true
+  }
+
+  function togglePerfOverlay() {
+    showPerfPanel = !showPerfPanel
+    uiDirty = true
+    hudRev++
+  }
+
+  function advanceAfterVictory() {
+    if (isEndlessUnlocked(state.campaign) && (state.battle?.endlessWave ?? 0) > 0) {
+      openStory(CHAPTER_BY_ID.eclipse_throne.index, (state.battle?.endlessWave ?? 0) + 1)
+    } else {
+      const nextStage = getNextRecommendedStage(state.campaign)
+      openWorldMap(nextStage.id)
     }
-  })
-  const defeatRetryBtn = buttonPrimitive.create({ id: 'cs-defeat-retry', label: 'Retry Battle', onPress: launchBattle })
-  const campBattleBtn = buttonPrimitive.create({
-    id: 'cs-camp-battle',
-    label: 'World Map',
-    onPress: () => {
-      audio.unlock()
-      openWorldMap()
-    }
-  })
+  }
 
   // Modern dark glass + warm gold accent UI theme
   const ui = createCanvasUi(uiCanvas, {
@@ -990,7 +950,7 @@ async function start() {
               type: 'button',
               label: playLabel,
               primary: true,
-              primitive: playBtn,
+              onPress: () => startCampaign(false),
               draw: (ctx: CanvasRenderingContext2D, rect: LayoutRect, st: CanvasWidgetDrawState) => drawButton(
                 ctx, rect, playLabel, st, { variant: 'primary', icon: 'play', size: shortH ? 14 : 15 }
               )
@@ -1001,7 +961,7 @@ async function start() {
             widget: {
               type: 'button',
               label: 'New Campaign',
-              primitive: newBtn,
+              onPress: () => startCampaign(true),
               draw: (ctx: CanvasRenderingContext2D, rect: LayoutRect, st: CanvasWidgetDrawState) => drawButton(
                 ctx, rect, 'New Run', st, { variant: 'secondary', size: 13 }
               )
@@ -1656,7 +1616,7 @@ async function start() {
             widget: {
               type: 'button',
               label: 'World Map',
-              primitive: storyBackBtn,
+              onPress: () => openWorldMap(),
               draw: (ctx: CanvasRenderingContext2D, rect: LayoutRect, st: CanvasWidgetDrawState) => drawButton(
                 ctx, rect, mobile ? 'Map' : 'World Map', st, { variant: 'secondary', icon: 'map', size: shortH ? 12 : 13 }
               )
@@ -1668,7 +1628,7 @@ async function start() {
               type: 'button',
               label: 'Deploy Squad',
               primary: true,
-              primitive: storyGoBtn,
+              onPress: launchBattle,
               draw: (ctx: CanvasRenderingContext2D, rect: LayoutRect, st: CanvasWidgetDrawState) => drawButton(
                 ctx, rect, alreadyCleared ? 'Replay Battle' : 'Deploy Squad', st, { variant: 'primary', icon: 'sword', size: shortH ? 14 : 15 }
               )
@@ -1933,7 +1893,7 @@ async function start() {
         boxNode({
           id: 'cs-perf', style: { width: 54, height: tbIconS },
           widget: {
-            type: 'button', label: `${fpsShort} FPS`, selected: showPerfPanel, primitive: perfBtn,
+            type: 'button', label: `${fpsShort} FPS`, selected: showPerfPanel, onPress: togglePerfOverlay,
             draw: (ctx: CanvasRenderingContext2D, rect: LayoutRect, st: CanvasWidgetDrawState) => drawIconButton(ctx, rect, 'gauge', st, {
               active: showPerfPanel,
               label: fpsShort,
@@ -1945,7 +1905,7 @@ async function start() {
       boxNode({
         id: 'cs-music', style: { width: tbIconS, height: tbIconS },
         widget: {
-          type: 'button', label: audio.isMusicEnabled() ? 'Music On' : 'Music Off', primitive: musicBtn,
+          type: 'button', label: audio.isMusicEnabled() ? 'Music On' : 'Music Off', onPress: toggleMusic,
           draw: (ctx: CanvasRenderingContext2D, rect: LayoutRect, st: CanvasWidgetDrawState) => drawIconButton(ctx, rect, 'music', st, {
             active: audio.isMusicEnabled()
           })
@@ -1954,7 +1914,7 @@ async function start() {
       boxNode({
         id: 'cs-pause', style: { width: tbIconS, height: tbIconS },
         widget: {
-          type: 'button', label: 'Pause', primitive: pauseBtn,
+          type: 'button', label: 'Pause', onPress: togglePauseScreen,
           draw: (ctx: CanvasRenderingContext2D, rect: LayoutRect, st: CanvasWidgetDrawState) => drawIconButton(ctx, rect, 'pause', st)
         }
       })
@@ -2044,7 +2004,7 @@ async function start() {
               label: !isPlayerTurn ? 'Enemy' : ctBonus > 0 ? `Wait (+${ctBonus} CT)` : 'End Turn',
               primary: isPlayerTurn,
               disabled: !isPlayerTurn,
-              primitive: endTurnBtn,
+              onPress: endBattleTurn,
               draw: (ctx: CanvasRenderingContext2D, rect: LayoutRect, st: CanvasWidgetDrawState) => drawEndTurnButton(ctx, rect, { isPlayerTurn, ctBonus }, st)
             }
           })
@@ -2110,7 +2070,7 @@ async function start() {
             label: !isPlayerTurn ? 'Enemy' : ctBonus > 0 ? `Wait (+${ctBonus} CT)` : 'End Turn',
             primary: isPlayerTurn,
             disabled: !isPlayerTurn,
-            primitive: endTurnBtn,
+            onPress: endBattleTurn,
             draw: (ctx: CanvasRenderingContext2D, rect: LayoutRect, st: CanvasWidgetDrawState) => drawEndTurnButton(ctx, rect, { isPlayerTurn, ctBonus }, st)
           }
         })
@@ -2178,7 +2138,7 @@ async function start() {
             label: !isPlayerTurn ? 'Enemy...' : ctBonus > 0 ? `Wait (+${ctBonus} CT)` : 'End Turn',
             primary: isPlayerTurn,
             disabled: !isPlayerTurn,
-            primitive: endTurnBtn,
+            onPress: endBattleTurn,
             draw: (ctx: CanvasRenderingContext2D, rect: LayoutRect, st: CanvasWidgetDrawState) => drawEndTurnButton(ctx, rect, { isPlayerTurn, ctBonus }, st)
           }
         })
@@ -3234,7 +3194,7 @@ async function start() {
               type: 'button',
               label: 'World Map',
               primary: true,
-              primitive: campBattleBtn,
+              onPress: () => { audio.unlock(); openWorldMap() },
               draw: (ctx: CanvasRenderingContext2D, rect: LayoutRect, st: CanvasWidgetDrawState) => drawButton(
                 ctx, rect, mobile ? 'Map' : 'World Map', st, { variant: 'primary', icon: 'map', size: 13 }
               )
@@ -3664,7 +3624,7 @@ async function start() {
           boxNode({
             id: 'cs-victory-camp', style: { grow: 1, height: btnH },
             widget: {
-              type: 'button', label: 'Camp', primitive: victoryCampBtn,
+              type: 'button', label: 'Camp', onPress: () => openCamp('squad'),
               draw: (ctx: CanvasRenderingContext2D, rect: LayoutRect, st: CanvasWidgetDrawState) => drawButton(
                 ctx, rect, 'Camp', st, { variant: 'secondary', icon: 'camp', size: 13 }
               )
@@ -3676,7 +3636,7 @@ async function start() {
               type: 'button',
               label: (state.battle?.endlessWave ?? 0) > 0 ? 'Next Wave' : 'World Map',
               primary: true,
-              primitive: victoryNextBtn,
+              onPress: advanceAfterVictory,
               draw: (ctx: CanvasRenderingContext2D, rect: LayoutRect, st: CanvasWidgetDrawState) => drawButton(
                 ctx,
                 rect,
@@ -3690,7 +3650,7 @@ async function start() {
           boxNode({
             id: 'cs-world-map', style: { grow: 1, height: btnH },
             widget: {
-              type: 'button', label: 'World Map', primitive: worldMapBtn,
+              type: 'button', label: 'World Map', onPress: () => openWorldMap(),
               draw: (ctx: CanvasRenderingContext2D, rect: LayoutRect, st: CanvasWidgetDrawState) => drawButton(
                 ctx, rect, 'World Map', st, { variant: 'secondary', icon: 'map', size: 12.5 }
               )
@@ -3699,7 +3659,7 @@ async function start() {
           boxNode({
             id: 'cs-victory-camp', style: { grow: 1, height: btnH },
             widget: {
-              type: 'button', label: 'Camp', primitive: victoryCampBtn,
+              type: 'button', label: 'Camp', onPress: () => openCamp('squad'),
               draw: (ctx: CanvasRenderingContext2D, rect: LayoutRect, st: CanvasWidgetDrawState) => drawButton(
                 ctx, rect, 'Camp', st, { variant: 'secondary', icon: 'camp', size: 12.5 }
               )
@@ -3708,7 +3668,7 @@ async function start() {
           boxNode({
             id: 'cs-defeat-retry', style: { grow: 1.2, height: btnH },
             widget: {
-              type: 'button', label: 'Retry', primary: true, primitive: defeatRetryBtn,
+              type: 'button', label: 'Retry', primary: true, onPress: launchBattle,
               draw: (ctx: CanvasRenderingContext2D, rect: LayoutRect, st: CanvasWidgetDrawState) => drawButton(
                 ctx, rect, 'Retry', st, { variant: 'primary', icon: 'play', size: 13.5 }
               )
@@ -3750,7 +3710,7 @@ async function start() {
         boxNode({
           id: 'cs-resume', style: { height: btnH },
           widget: {
-            type: 'button', label: 'Resume Battle', primary: true, primitive: resumeBtn,
+            type: 'button', label: 'Resume Battle', primary: true, onPress: () => setScreen('battle'),
             draw: (ctx: CanvasRenderingContext2D, rect: LayoutRect, st: CanvasWidgetDrawState) => drawButton(
               ctx, rect, 'Resume Battle', st, { variant: 'primary', icon: 'play', size: 14 }
             )
@@ -3759,7 +3719,7 @@ async function start() {
         boxNode({
           id: 'cs-perf', style: { height: rowH },
           widget: {
-            type: 'button', label: 'FPS Overlay', primitive: perfBtn,
+            type: 'button', label: 'FPS Overlay', onPress: togglePerfOverlay,
             draw: (ctx: CanvasRenderingContext2D, rect: LayoutRect, st: CanvasWidgetDrawState) => drawSettingRow(
               ctx, rect, 'Performance Overlay', 'gauge', showPerfPanel, st
             )
@@ -3768,7 +3728,7 @@ async function start() {
         boxNode({
           id: 'cs-music', style: { height: rowH },
           widget: {
-            type: 'button', label: 'Music', primitive: musicBtn,
+            type: 'button', label: 'Music', onPress: toggleMusic,
             draw: (ctx: CanvasRenderingContext2D, rect: LayoutRect, st: CanvasWidgetDrawState) => drawSettingRow(
               ctx, rect, 'Background Music', 'music', audio.isMusicEnabled(), st
             )
@@ -3777,7 +3737,7 @@ async function start() {
         boxNode({
           id: 'cs-mute', style: { height: rowH },
           widget: {
-            type: 'button', label: 'Audio', primitive: muteBtn,
+            type: 'button', label: 'Audio', onPress: toggleMute,
             draw: (ctx: CanvasRenderingContext2D, rect: LayoutRect, st: CanvasWidgetDrawState) => drawSettingRow(
               ctx, rect, 'Master Audio', audio.isMuted() ? 'mute' : 'volume', !audio.isMuted(), st
             )
@@ -3786,7 +3746,7 @@ async function start() {
         boxNode({
           id: 'cs-retreat', style: { height: rowH },
           widget: {
-            type: 'button', label: 'Retreat to Camp', primitive: retreatBtn,
+            type: 'button', label: 'Retreat to Camp', onPress: () => openCamp('squad'),
             draw: (ctx: CanvasRenderingContext2D, rect: LayoutRect, st: CanvasWidgetDrawState) => drawButton(
               ctx, rect, 'Retreat to Camp', st, { variant: 'danger', icon: 'retreat', size: 13 }
             )
@@ -3966,7 +3926,7 @@ async function start() {
 
   const globalUi = {
     snapshot: () => ui.snapshot(),
-    query: (filter?: { id?: string; kind?: string; state?: string; label?: string }) => ui.query(filter),
+    query: (filter?: CanvasUiQuery) => ui.query(filter),
     act: (id: string, action = 'press', payload?: unknown) => {
       if (uiDirty) renderUiNow()
       const resolvedId = ACT_ID_ALIASES[id] ?? id

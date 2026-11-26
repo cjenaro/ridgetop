@@ -1,11 +1,8 @@
 import { artModels, bindActionControls, color, createArtKit, createArtRecipe, createLowPolyRenderer, createPlatform,
   createSpriteAtlas, fixedLoop, modelFromArtRecipe, multiply, orthographic, projectPoint, registerTestingHooks, view } from 'ridgetop'
 import type { ArtRecipe, Backend, LowPolyRenderer, Matrix, Vec3 } from 'ridgetop'
-import { boxNode, column, overlay, row, spacerNode } from 'ridgetop/ui-layout'
-import { buttonPrimitive } from 'ridgetop/ui-button'
-import { togglePrimitive } from 'ridgetop/ui-toggle'
-import { dialogPrimitive, menuPrimitive } from 'ridgetop/ui-menu'
-import { createCanvasUi, createUiTheme } from 'ridgetop/ui-canvas'
+import { boxNode, column, createCanvasUi, createUiTheme, overlay, row, spacerNode } from 'ridgetop/ui'
+import type { CanvasUiQuery } from 'ridgetop/ui'
 import { game, modelFiles, models, sprites } from './game.ts'
 
 const moves = { left: [-1, 0], up: [0, -1], down: [0, 1], right: [1, 0] } as const
@@ -124,46 +121,26 @@ async function start() {
   let errorBanner = ''
   document.title = game.title
 
-  // Opt-in UI state machines (only button, toggle, menu, dialog are imported; unused widgets stay out of the bundle).
-  let syncingView = false
-  const menuDialog = dialogPrimitive.create({ id: 'pause-dialog', open: false, onOpenChange: () => { uiDirty = true } })
-  const viewToggle = togglePrimitive.create({
-    id: 'view-toggle',
-    label: '2D Sprites',
-    checked: params.get('view') === '2d',
-    onChange(checked) {
-      if (syncingView) return
-      void setViewMode(checked ? '2d' : '3d').catch(err => {
-        syncingView = true
-        viewToggle.api.set(spriteView)
-        syncingView = false
-        errorBanner = err.message
-        uiDirty = true
-      })
-    }
-  })
-  const resumeBtn = buttonPrimitive.create({ id: 'resume-btn', label: 'Resume', onPress: () => menuDialog.api.close() })
-  const restartBtn = buttonPrimitive.create({ id: 'restart-btn', label: 'Restart', onPress: () => { menuDialog.api.close(); restart() } })
-  const menuBtn = buttonPrimitive.create({ id: 'menu-btn', label: 'Menu', onPress: () => menuDialog.api.toggle() })
-  const quitBtn = buttonPrimitive.create({ id: 'quit-btn', label: 'Quit', onPress: () => { void platform.quit() } })
-  const pauseMenu = menuPrimitive.create({
-    id: 'pause-menu',
-    items: [
-      { id: 'resume-btn' },
-      { id: 'view-toggle' },
-      { id: 'restart-btn' },
-      ...(platform.canQuit ? [{ id: 'quit-btn' }] : [])
-    ],
-    onBack: () => menuDialog.api.close()
-  })
+  let menuOpen = false
+  function setMenuOpen(open: boolean) {
+    if (menuOpen === open) return
+    menuOpen = open
+    uiDirty = true
+  }
+  function toggleViewMode(checked: boolean) {
+    void setViewMode(checked ? '2d' : '3d').catch(err => {
+      errorBanner = err instanceof Error ? err.message : String(err)
+      uiDirty = true
+    })
+  }
 
-  const isMenuOpen = () => menuDialog.api.isOpen() || won
+  const isMenuOpen = () => menuOpen || won
 
   const ui = createCanvasUi(uiCanvas, {
     theme: createUiTheme(game.palette),
     safeArea: { top: 12, right: 12, bottom: 12, left: 12 },
     keyboardEnabled: () => isMenuOpen(),
-    onBack: () => { if (menuDialog.api.isOpen()) menuDialog.api.close() }
+    onBack: () => setMenuOpen(false)
   })
   function renderUiNow() {
     const w = Math.max(1, board.clientWidth), h = Math.max(1, board.clientHeight)
@@ -176,7 +153,7 @@ async function start() {
     writable: true,
     value: {
       snapshot: () => ui.snapshot(),
-      query: (filter?: { id?: string; kind?: string; state?: string; label?: string }) => ui.query(filter),
+      query: (filter?: CanvasUiQuery) => ui.query(filter),
       act: (id: string, action: string, payload?: unknown) => {
         if (uiDirty) renderUiNow()
         const ok = ui.act(id, action, payload)
@@ -188,7 +165,7 @@ async function start() {
         count: `${pickups.length - remaining.size} / ${pickups.length}`,
         view: spriteView ? '2d' : '3d',
         won,
-        paused: menuDialog.api.isOpen()
+        paused: menuOpen
       })
     }
   })
@@ -196,8 +173,8 @@ async function start() {
   const controls = bindActionControls({
     keys,
     buttons: [],
-    enabled: () => !won && !menuDialog.api.isOpen(),
-    onPause: () => { if (!won) { menuDialog.api.toggle(); uiDirty = true } },
+    enabled: () => !won && !menuOpen,
+    onPause: () => { if (!won) setMenuOpen(!menuOpen) },
     onPress: key => { queued = key }
   })
 
@@ -259,7 +236,7 @@ async function start() {
   }
 
   restart()
-  await setViewMode(viewToggle.api.checked() ? '2d' : '3d')
+  await setViewMode(params.get('view') === '2d' ? '2d' : '3d')
 
   const cx = (width - 1) / 2, cz = (depth - 1) / 2
   const target: Vec3 = [cx, .5, cz]
@@ -309,12 +286,12 @@ async function start() {
         boxNode({
           id: 'hud-view-toggle',
           style: { width: compact ? 88 : 128, height: 44 },
-          widget: { type: 'toggle', label: compact ? '2D' : '2D Sprites', checked: viewToggle.api.checked(), disabled: modalOpen, primitive: viewToggle }
+          widget: { type: 'toggle', label: compact ? '2D' : '2D Sprites', checked: spriteView, disabled: modalOpen, onToggle: toggleViewMode }
         }),
         boxNode({
           id: 'menu-btn',
           style: { width: 78, height: 44 },
-          widget: { type: 'button', label: 'Menu', disabled: modalOpen, primitive: menuBtn }
+          widget: { type: 'button', label: 'Menu', disabled: modalOpen, onPress: () => setMenuOpen(!menuOpen) }
         })
       ]),
 
@@ -343,36 +320,36 @@ async function start() {
           id: 'resume-btn',
           hidden: won,
           style: { height: 42 },
-          widget: { type: 'button', label: 'Resume', primary: true, primitive: resumeBtn }
+          widget: { type: 'button', label: 'Resume', primary: true, onPress: () => setMenuOpen(false) }
         }),
         ...(won ? [
           boxNode({
             id: 'restart-btn',
             style: { height: 42 },
-            widget: { type: 'button', label: 'Play Again', primary: true, primitive: restartBtn }
+            widget: { type: 'button', label: 'Play Again', primary: true, onPress: () => { setMenuOpen(false); restart() } }
           }),
           boxNode({
             id: 'modal-view-toggle',
             style: { height: 40 },
-            widget: { type: 'toggle', label: '2D Sprites', checked: viewToggle.api.checked(), primitive: viewToggle }
+            widget: { type: 'toggle', label: '2D Sprites', checked: spriteView, onToggle: toggleViewMode }
           })
         ] : [
           boxNode({
             id: 'modal-view-toggle',
             style: { height: 40 },
-            widget: { type: 'toggle', label: '2D Sprites', checked: viewToggle.api.checked(), primitive: viewToggle }
+            widget: { type: 'toggle', label: '2D Sprites', checked: spriteView, onToggle: toggleViewMode }
           }),
           boxNode({
             id: 'restart-btn',
             style: { height: 42 },
-            widget: { type: 'button', label: 'Restart', primary: false, primitive: restartBtn }
+            widget: { type: 'button', label: 'Restart', primary: false, onPress: () => { setMenuOpen(false); restart() } }
           })
         ]),
         boxNode({
           id: 'quit-btn',
           hidden: !platform.canQuit,
           style: { height: 40 },
-          widget: { type: 'button', label: 'Quit', primitive: quitBtn }
+          widget: { type: 'button', label: 'Quit', onPress: () => { void platform.quit() } }
         })
       ])
     ])
@@ -420,7 +397,7 @@ async function start() {
 
   const stop = fixedLoop({
     update(dt) {
-      if (menuDialog.api.isOpen()) return
+      if (menuOpen) return
       if (travel > 0 || flashTime > 0) dirty = true
       flashTime = Math.max(0, flashTime - dt)
       if (travel > 0) {
@@ -480,9 +457,6 @@ async function start() {
           typeof nextTravel !== 'number' || typeof nextFlashTime !== 'number') return
       if (![...raw.player, time, nextFromX, nextFromZ, nextTravel, nextFlashTime].every(Number.isFinite) || !Array.isArray(nextPickups)) return
       await setViewMode(viewMode)
-      syncingView = true
-      viewToggle.api.set(spriteView)
-      syncingView = false
       player = { ...spawn, x: raw.player[0], z: raw.player[1], yaw: raw.player[2] }
       fromX = nextFromX; fromZ = nextFromZ; travel = nextTravel
       lastPaintTime = time
@@ -497,7 +471,6 @@ async function start() {
     }
   })
 
-  void pauseMenu
   window.addEventListener('pagehide', event => {
     if (event.persisted) return
     unregisterTestingHooks()

@@ -27,7 +27,7 @@
     "godotMain": "godot-main.gd",
     "godotEntries": [
       "game.ts",
-      "ridgetop/ui-layout"
+      "ridgetop/ui"
     ]
   }
 }

@@ -5,11 +5,8 @@ import type { Backend } from 'ridgetop'
 import {
   bindPlatformControls, connectRoom, createGamePage, createHud, createLowPolyRenderer, fixedLoop, STEP
 } from 'ridgetop'
-import { boxNode, column, overlay, row, spacerNode } from 'ridgetop/ui-layout'
-import { buttonPrimitive } from 'ridgetop/ui-button'
-import { togglePrimitive } from 'ridgetop/ui-toggle'
-import { selectPrimitive } from 'ridgetop/ui-select'
-import { createCanvasUi, createUiTheme } from 'ridgetop/ui-canvas'
+import { boxNode, column, createCanvasUi, createUiTheme, overlay, row, spacerNode } from 'ridgetop/ui'
+import type { CanvasUiQuery } from 'ridgetop/ui'
 import { courses } from './game/level.ts'
 import { canEnterRegion, expeditionLoot, GUILD_WORLD } from './game/expedition.ts'
 import { createPlayer, restartPlayer, stepPlayer } from './game/simulation.ts'
@@ -137,68 +134,25 @@ async function start() {
   function shared() { return mode === 'online' || mode === 'expedition' }
   let knownFalls = 0, knownCrystals = 0, knownSignal = false, wasGrounded = false, knownRevision = -1
 
-  // Opt-in UI primitives (zero HTML menus).
-  const soundToggle = togglePrimitive.create({
-    id: 'sound',
-    label: 'Sound',
-    checked: progress.sound,
-    onChange(checked) {
-      progress.sound = checked
-      unlockSound()
-      audio.mute(!checked)
-      saveCampaign(storage, progress)
-      uiDirty = true
-    }
-  })
+  function setSound(checked: boolean) {
+    progress.sound = checked
+    unlockSound()
+    audio.mute(!checked)
+    saveCampaign(storage, progress)
+    uiDirty = true
+  }
 
-  let syncingCourse = false
-  const courseSelect = selectPrimitive.create({
-    id: 'course',
-    label: 'Course',
-    options: ROUTE.map(id => ({ value: id, label: courses[id].name })),
-    value: courseId,
-    onChange(value) {
-      if (syncingCourse || value === courseId || !isCourseId(value)) return
-      enter(mode, value)
-    }
-  })
-
-  const expeditionBtn = buttonPrimitive.create({
-    id: 'expedition',
-    label: 'Join expedition',
-    onPress: () => { void joinExpedition() }
-  })
-  const campaignBtn = buttonPrimitive.create({
-    id: 'campaign',
-    label: 'Start campaign',
-    onPress: () => { unlockSound(); enter('campaign', campaignSummary(progress).next ?? ROUTE[0]) }
-  })
-  const practiceBtn = buttonPrimitive.create({
-    id: 'practice',
-    label: 'Practice',
-    onPress: () => { unlockSound(); enter('practice', ROUTE[0]) }
-  })
-  const endingBtn = buttonPrimitive.create({
-    id: 'view-ending',
-    label: 'View ending',
-    onPress: () => { unlockSound(); showEnding() }
-  })
-  const resumeBtn = buttonPrimitive.create({ id: 'resume', label: 'Resume', onPress: togglePause })
-  const resetBtn = buttonPrimitive.create({ id: 'reset', label: 'Restart', onPress: restartRun })
-  const inviteBtn = buttonPrimitive.create({ id: 'invite', label: 'Invite players', onPress: () => { void copyInvite() } })
-  const modeBtn = buttonPrimitive.create({
-    id: 'mode',
-    label: 'Solo practice',
-    onPress: () => { if (mode === 'expedition') showTitle(); else enter('practice') }
-  })
-  const pauseMenuBtn = buttonPrimitive.create({ id: 'pause-menu', label: 'Main menu', onPress: showTitle })
-  const journalOpenBtn = buttonPrimitive.create({ id: 'journal-open', label: 'Journal', onPress: () => setScreen('journal') })
-  const journalCloseBtn = buttonPrimitive.create({ id: 'journal-close', label: 'Close', onPress: togglePause })
-  const pauseOpenBtn = buttonPrimitive.create({ id: 'pause', label: 'Menu', onPress: togglePause })
-  const againBtn = buttonPrimitive.create({ id: 'again', label: 'Play again', onPress: restartRun })
-  const nextBtn = buttonPrimitive.create({ id: 'next', label: 'Next course', onPress: advanceNext })
-  const endingMenuBtn = buttonPrimitive.create({ id: 'ending-menu', label: 'Main menu', onPress: showTitle })
-  const quitBtn = buttonPrimitive.create({ id: 'quit', label: 'Quit', onPress: () => { void page.platform.quit() } })
+  function courseOptions() {
+    const nextCourse = campaignSummary(progress).next
+    const unlocked = nextCourse ? ROUTE.indexOf(nextCourse) : -1
+    return ROUTE.map((id, i) => ({
+      value: id,
+      label: courses[id].name,
+      disabled: mode === 'expedition'
+        ? Boolean(character && !canEnterRegion(character.cleared, id))
+        : mode === 'campaign' && unlocked >= 0 && i > unlocked
+    }))
+  }
 
   const ui = createCanvasUi(uiCanvas, {
     theme: createUiTheme({
@@ -216,23 +170,6 @@ async function start() {
     keyboardEnabled: () => screen !== 'play' || Boolean(latest?.finished),
     onBack: togglePause
   })
-
-  function syncCourseOptions() {
-    const nextCourse = campaignSummary(progress).next
-    const unlocked = nextCourse ? ROUTE.indexOf(nextCourse) : -1
-    syncingCourse = true
-    try {
-      courseSelect.api.setOptions(ROUTE.map((id, i) => ({
-        value: id,
-        label: courses[id].name,
-        disabled: mode === 'expedition'
-          ? Boolean(character && !canEnterRegion(character.cleared, id))
-          : mode === 'campaign' && unlocked >= 0 && i > unlocked
-      })), courseId)
-    } finally {
-      syncingCourse = false
-    }
-  }
 
   function setScreen(value: string) {
     screen = value
@@ -307,7 +244,6 @@ async function start() {
     knownRevision = -1
     standingsLines = []
     if (!preserveToast) toastMessage = ''
-    syncCourseOptions()
     syncUrl()
     join()
     recordTime()
@@ -458,7 +394,6 @@ async function start() {
     if (mode === 'campaign') {
       recordRelay(progress, courseId, local)
       saveCampaign(storage, progress)
-      syncCourseOptions()
       if (campaignSummary(progress).complete) void page.platform.steam.unlockAchievement('BEACON_CAMPAIGN_COMPLETE')
     }
     recordTime(local.ticks)
@@ -498,8 +433,8 @@ async function start() {
     return overlay({ id: 'root', style: { anchor: 'fill' } }, [
       // Top-right play actions
       row({ id: 'play-actions', hidden: !showControls, style: { anchor: 'top-right', inset: 14, gap: 8, respectSafeArea: true } }, [
-        boxNode({ id: 'journal-open', hidden: !shared(), style: { width: 88, height: 40 }, widget: { type: 'button', label: 'Journal', primitive: journalOpenBtn } }),
-        boxNode({ id: 'pause', style: { width: 78, height: 40 }, widget: { type: 'button', label: 'Menu', primitive: pauseOpenBtn } })
+        boxNode({ id: 'journal-open', hidden: !shared(), style: { width: 88, height: 40 }, widget: { type: 'button', label: 'Journal', onPress: () => setScreen('journal') } }),
+        boxNode({ id: 'pause', style: { width: 78, height: 40 }, widget: { type: 'button', label: 'Menu', onPress: togglePause } })
       ]),
 
       // Multi-touch platformer deck (only on coarse-pointer touch screens)
@@ -537,16 +472,16 @@ async function start() {
         boxNode({ id: 'hero-title', style: { height: 50 }, widget: { type: 'text', text: 'BEACON RUN', size: compact ? 36 : 44, weight: 900 } }),
         boxNode({ id: 'hero-desc', style: { height: 42 }, widget: { type: 'text', text: 'Join the Wayfarers’ Guild and bring six island beacons back online.', size: 14, color: ui.theme.muted, wrap: true } }),
         boxNode({ id: 'campaign-progress', style: { height: 20 }, widget: { type: 'text', text: campaignProgress.toUpperCase(), size: 12, weight: 700, color: ui.theme.accent, mono: true } }),
-        boxNode({ id: 'expedition', style: { height: 44 }, widget: { type: 'button', label: expeditionLoading ? 'Joining…' : 'Join expedition', primary: true, disabled: expeditionLoading, primitive: expeditionBtn } }),
+        boxNode({ id: 'expedition', style: { height: 44 }, widget: { type: 'button', label: expeditionLoading ? 'Joining…' : 'Join expedition', primary: true, disabled: expeditionLoading, onPress: () => { void joinExpedition() } } }),
         row({ id: 'title-row-2', style: { gap: 8 } }, [
-          boxNode({ id: 'campaign', style: { grow: 1, height: 42 }, widget: { type: 'button', label: campaignLabel, primitive: campaignBtn } }),
-          boxNode({ id: 'practice', style: { width: 112, height: 42 }, widget: { type: 'button', label: 'Practice', primitive: practiceBtn } })
+          boxNode({ id: 'campaign', style: { grow: 1, height: 42 }, widget: { type: 'button', label: campaignLabel, onPress: () => { unlockSound(); enter('campaign', campaignSummary(progress).next ?? ROUTE[0]) } } }),
+          boxNode({ id: 'practice', style: { width: 112, height: 42 }, widget: { type: 'button', label: 'Practice', onPress: () => { unlockSound(); enter('practice', ROUTE[0]) } } })
         ]),
-        boxNode({ id: 'view-ending', hidden: !summary.complete, style: { height: 40 }, widget: { type: 'button', label: 'View ending', primitive: endingBtn } }),
+        boxNode({ id: 'view-ending', hidden: !summary.complete, style: { height: 40 }, widget: { type: 'button', label: 'View ending', onPress: () => { unlockSound(); showEnding() } } }),
         row({ id: 'title-footer', style: { gap: 8 } }, [
-          boxNode({ id: 'sound', style: { grow: 1, height: 38 }, widget: { type: 'toggle', label: 'Sound', checked: progress.sound, primitive: soundToggle } }),
+          boxNode({ id: 'sound', style: { grow: 1, height: 38 }, widget: { type: 'toggle', label: 'Sound', checked: progress.sound, onToggle: setSound } }),
           boxNode({ id: 'play-racing', hidden: !isHosted, style: { grow: 1, height: 38 }, widget: { type: 'button', label: 'Play Signal Drift', onPress: () => { location.href = '/racing' } } }),
-          boxNode({ id: 'quit', hidden: !page.platform.canQuit, style: { width: 88, height: 38 }, widget: { type: 'button', label: 'Quit', primitive: quitBtn } })
+          boxNode({ id: 'quit', hidden: !page.platform.canQuit, style: { width: 88, height: 38 }, widget: { type: 'button', label: 'Quit', onPress: () => { void page.platform.quit() } } })
         ])
       ]),
 
@@ -561,18 +496,29 @@ async function start() {
         boxNode({ id: 'menu-status', style: { height: 18 }, widget: { type: 'text', text: (mode === 'expedition' ? 'Expedition menu' : shared() ? 'Room menu' : 'Paused').toUpperCase(), size: 11, weight: 800, color: ui.theme.accent, mono: true } }),
         boxNode({ id: 'course-heading', style: { height: 34 }, widget: { type: 'text', text: courses[courseId].name, size: 26, weight: 800 } }),
         boxNode({ id: 'briefing', style: { height: 38 }, widget: { type: 'text', text: courses[courseId].description, size: 13, color: ui.theme.muted, wrap: true } }),
-        boxNode({ id: 'course', style: { height: 42 }, widget: { type: 'select', label: 'Course', valueLabel: courses[courseId].name, primitive: courseSelect } }),
+        boxNode({
+          id: 'course',
+          style: { height: 42 },
+          widget: {
+            type: 'select',
+            label: 'Course',
+            value: courseId,
+            valueLabel: courses[courseId].name,
+            options: courseOptions(),
+            onSelect: (value: string) => { if (value !== courseId && isCourseId(value)) enter(mode, value) }
+          }
+        }),
         row({ id: 'pause-row-1', style: { gap: 8 } }, [
-          boxNode({ id: 'resume', style: { grow: 1, height: 42 }, widget: { type: 'button', label: 'Resume', primary: true, primitive: resumeBtn } }),
-          boxNode({ id: 'reset', style: { grow: 1, height: 42 }, widget: { type: 'button', label: 'Restart', primitive: resetBtn } })
+          boxNode({ id: 'resume', style: { grow: 1, height: 42 }, widget: { type: 'button', label: 'Resume', primary: true, onPress: togglePause } }),
+          boxNode({ id: 'reset', style: { grow: 1, height: 42 }, widget: { type: 'button', label: 'Restart', onPress: restartRun } })
         ]),
         row({ id: 'pause-row-2', style: { gap: 8 } }, [
-          boxNode({ id: 'invite', style: { grow: 1, height: 40 }, widget: { type: 'button', label: code ? 'Copy room link' : 'Invite players', primitive: inviteBtn } }),
-          boxNode({ id: 'pause-sound', style: { grow: 1, height: 40 }, widget: { type: 'toggle', label: 'Sound', checked: progress.sound, primitive: soundToggle } })
+          boxNode({ id: 'invite', style: { grow: 1, height: 40 }, widget: { type: 'button', label: code ? 'Copy room link' : 'Invite players', onPress: () => { void copyInvite() } } }),
+          boxNode({ id: 'pause-sound', style: { grow: 1, height: 40 }, widget: { type: 'toggle', label: 'Sound', checked: progress.sound, onToggle: setSound } })
         ]),
         row({ id: 'pause-row-3', style: { gap: 8 } }, [
-          boxNode({ id: 'mode', hidden: !shared(), style: { grow: 1, height: 40 }, widget: { type: 'button', label: mode === 'expedition' ? 'Main menu' : 'Solo practice', primitive: modeBtn } }),
-          boxNode({ id: 'pause-menu', hidden: mode === 'expedition', style: { grow: 1, height: 40 }, widget: { type: 'button', label: 'Main menu', primitive: pauseMenuBtn } })
+          boxNode({ id: 'mode', hidden: !shared(), style: { grow: 1, height: 40 }, widget: { type: 'button', label: mode === 'expedition' ? 'Main menu' : 'Solo practice', onPress: () => { if (mode === 'expedition') showTitle(); else enter('practice') } } }),
+          boxNode({ id: 'pause-menu', hidden: mode === 'expedition', style: { grow: 1, height: 40 }, widget: { type: 'button', label: 'Main menu', onPress: showTitle } })
         ]),
         boxNode({ id: 'pause-guide', style: { height: 18 }, widget: { type: 'text', text: 'Move: A/D or Stick · Jump: Space or A · Menu: Esc or Start', size: 11, color: ui.theme.muted, mono: true, align: 'center' } })
       ]),
@@ -587,7 +533,7 @@ async function start() {
       }, [
         row({ id: 'journal-head', style: { height: 38, align: 'center' } }, [
           boxNode({ id: 'journal-title', style: { grow: 1, height: 32 }, widget: { type: 'text', text: mode === 'expedition' ? 'Journal' : 'Room standings', size: 24, weight: 800 } }),
-          boxNode({ id: 'journal-close', style: { width: 82, height: 36 }, widget: { type: 'button', label: 'Close', primitive: journalCloseBtn } })
+          boxNode({ id: 'journal-close', style: { width: 82, height: 36 }, widget: { type: 'button', label: 'Close', onPress: togglePause } })
         ]),
         ...(mode === 'expedition' && character ? [
           row({ id: 'char-row', style: { height: 46, gap: 10, align: 'center' } }, [
@@ -620,8 +566,8 @@ async function start() {
         boxNode({ id: 'finish-medal', style: { height: 24 }, widget: { type: 'text', text: mode === 'expedition' && character ? (guildClear ? 'Guild contract complete' : 'Stay at the relay for a second wayfarer to finish.') : finishMedalText, size: 14, color: ui.theme.muted, align: 'center' } }),
         spacerNode(0),
         row({ id: 'finish-actions', style: { gap: 8 } }, [
-          boxNode({ id: 'again', style: { grow: 1, height: 42 }, widget: { type: 'button', label: 'Play again', primitive: againBtn } }),
-          boxNode({ id: 'next', style: { grow: 1, height: 42 }, widget: { type: 'button', label: nextLabel, primary: true, primitive: nextBtn } })
+          boxNode({ id: 'again', style: { grow: 1, height: 42 }, widget: { type: 'button', label: 'Play again', onPress: restartRun } }),
+          boxNode({ id: 'next', style: { grow: 1, height: 42 }, widget: { type: 'button', label: nextLabel, primary: true, onPress: advanceNext } })
         ])
       ]),
 
@@ -637,7 +583,7 @@ async function start() {
         boxNode({ id: 'ending-title', style: { height: 36, width: Math.min(w - 84, 360) }, widget: { type: 'text', text: 'Signal restored', size: 28, weight: 900, align: 'center' } }),
         boxNode({ id: 'ending-desc', style: { height: 40, width: Math.min(w - 84, 360) }, widget: { type: 'text', text: 'All six relays are lit. The valley can see its way home.', size: 14, color: ui.theme.muted, align: 'center', wrap: true } }),
         boxNode({ id: 'ending-stats', style: { height: 22, width: Math.min(w - 84, 380) }, widget: { type: 'text', text: endingStats, size: 12, color: ui.theme.accent, mono: true, align: 'center' } }),
-        boxNode({ id: 'ending-menu', style: { width: 180, height: 44 }, widget: { type: 'button', label: 'Main menu', primary: true, primitive: endingMenuBtn } })
+        boxNode({ id: 'ending-menu', style: { width: 180, height: 44 }, widget: { type: 'button', label: 'Main menu', primary: true, onPress: showTitle } })
       ]),
 
       // Toast notice
@@ -652,14 +598,9 @@ async function start() {
     writable: true,
     value: {
       snapshot: () => ui.snapshot(),
-      query: (filter?: { id?: string; kind?: string; state?: string; label?: string }) => ui.query(filter),
+      query: (filter?: CanvasUiQuery) => ui.query(filter),
       act: (id: string, action: string, payload?: unknown) => {
         if (uiDirty) renderUiNow()
-        if (id === 'course' && action === 'select' && typeof payload === 'string') {
-          courseSelect.api.select(payload)
-          renderUiNow()
-          return true
-        }
         const ok = ui.act(id, action, payload)
         renderUiNow()
         return ok
@@ -735,7 +676,6 @@ async function start() {
         if (charKey !== lastCharacterKey) {
           lastCharacterKey = charKey
           character = nextChar
-          syncCourseOptions()
           uiDirty = true
         }
       }

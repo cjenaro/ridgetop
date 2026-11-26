@@ -31,9 +31,7 @@
     "godotEntries": [
       "game/simulation.ts",
       "game/campaign.ts",
-      "ridgetop/ui-layout",
-      "ridgetop/ui-button",
-      "ridgetop/ui-toggle"
+      "ridgetop/ui"
     ]
   }
 }

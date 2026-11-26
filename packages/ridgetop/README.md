@@ -6,8 +6,7 @@ Dependency-free low-poly WebGPU / WebGL 2 / Canvas 2D game framework, Canvas UI 
 
 - `ridgetop` — browser & shared game runtime (3D renderer, geometry, instancing, sprites, animation rigs, physics, input, audio, platform bridge, art kit)
 - `ridgetop/server` — HTTP game host (`createGameHost`), multiplayer rooms (`createRoomService`), records/sessions, packager (`packageGame`), Godot exporter (`exportGodotProject`)
-- `ridgetop/ui` — full Canvas UI SDK barrel
-- `ridgetop/ui-layout`, `ridgetop/ui-button`, `ridgetop/ui-toggle`, `ridgetop/ui-select`, `ridgetop/ui-slider`, `ridgetop/ui-menu`, `ridgetop/ui-canvas`, `ridgetop/ui-machine` — tree-shakable Canvas UI primitives
+- `ridgetop/ui` — cross-platform Canvas UI & pure-math layout SDK (`createCanvasUi`, `createUiTheme`, `resolveLayout`, `column`, `row`, `overlay`, `boxNode`, `spacerNode`)
 - `ridgetop/art-review` & `ridgetop/art-review/server` — 3D/2D picking and art review store
 - `ridgetop/testing` — Testing Mode runtime hooks
 

@@ -1,8 +1,7 @@
 import { bindActionControls, createGamePage, createHud, createLowPolyRenderer, createSynthAudio, fixedLoop } from 'ridgetop'
 import type { Backend } from 'ridgetop'
-import { boxNode, column, overlay, row } from 'ridgetop/ui-layout'
-import { buttonPrimitive } from 'ridgetop/ui-button'
-import { createCanvasUi, createUiTheme } from 'ridgetop/ui-canvas'
+import { boxNode, column, createCanvasUi, createUiTheme, overlay, row } from 'ridgetop/ui'
+import type { CanvasUiQuery } from 'ridgetop/ui'
 import { createRace, recover, standings, stepRace } from './race.ts'
 import { createRaceScene } from './scene.ts'
 import { circuits } from './track.ts'
@@ -163,31 +162,12 @@ async function start() {
     else if (screen === 'events' || screen === 'results' || screen === 'saves') goHome()
   }
 
-  // Opt-in UI primitives (zero HTML/CSS menus).
-  const startBtn = buttonPrimitive.create({ id: 'race-start', label: 'Start race', onPress: () => screen === 'paused' ? togglePause() : startRace() })
-  const nextBtn = buttonPrimitive.create({ id: 'race-next', label: 'Next event', onPress: () => startRace(selected + 1) })
-  const eventsBtn = buttonPrimitive.create({ id: 'race-events', label: 'Events', onPress: () => setScreen('events') })
-  const garageBtn = buttonPrimitive.create({
-    id: 'race-garage',
-    label: 'Garage',
-    onPress: () => {
-      if (screen === 'home' || screen === 'events' || screen === 'results') {
-        garageReturn = screen
-        setScreen('garage')
-      }
+  function openGarage() {
+    if (screen === 'home' || screen === 'events' || screen === 'results') {
+      garageReturn = screen
+      setScreen('garage')
     }
-  })
-  const savesBtn = buttonPrimitive.create({ id: 'race-saves', label: 'Save backup', onPress: () => setScreen('saves') })
-  const restartBtn = buttonPrimitive.create({ id: 'race-restart', label: 'Restart race', onPress: () => startRace() })
-  const homeBtn = buttonPrimitive.create({ id: 'race-home', label: 'Main menu', onPress: goHome })
-  const garageBackBtn = buttonPrimitive.create({ id: 'garage-back', label: 'Back', onPress: leaveGarage })
-  const garageInstallBtn = buttonPrimitive.create({ id: 'garage-install', label: 'Install', onPress: () => { garage.install(); uiDirty = true } })
-  const recoverBtn = buttonPrimitive.create({ id: 'race-recover', label: 'Recover', onPress: () => { if (!countdown) recover(race.drivers[0], race.circuit) } })
-  const pauseBtn = buttonPrimitive.create({ id: 'race-pause', label: 'Pause', onPress: togglePause })
-  const saveExportBtn = buttonPrimitive.create({ id: 'race-save-export', label: 'Download backup', onPress: () => saves.exportBackup() })
-  const saveImportBtn = buttonPrimitive.create({ id: 'race-save-import', label: 'Choose backup…', onPress: () => saves.chooseFile() })
-  const saveRestoreBtn = buttonPrimitive.create({ id: 'race-save-restore', label: 'Replace current progress', onPress: () => saves.applyRestore() })
-  const quitBtn = buttonPrimitive.create({ id: 'race-quit', label: 'Quit', onPress: () => { void page.platform.quit() } })
+  }
 
   const ui = createCanvasUi(uiCanvas, {
     theme: createUiTheme({
@@ -248,8 +228,8 @@ async function start() {
     return overlay({ id: 'root', style: { anchor: 'fill' } }, [
       // In-race top-right controls
       row({ id: 'race-actions', hidden: !racing, style: { anchor: 'top-right', inset: 14, gap: 8, respectSafeArea: true } }, [
-        boxNode({ id: 'race-recover', style: { width: 88, height: 40 }, widget: { type: 'button', label: 'Recover', primitive: recoverBtn } }),
-        boxNode({ id: 'race-pause', style: { width: 78, height: 40 }, widget: { type: 'button', label: 'Pause', primitive: pauseBtn } })
+        boxNode({ id: 'race-recover', style: { width: 88, height: 40 }, widget: { type: 'button', label: 'Recover', onPress: () => { if (!countdown) recover(race.drivers[0], race.circuit) } } }),
+        boxNode({ id: 'race-pause', style: { width: 78, height: 40 }, widget: { type: 'button', label: 'Pause', onPress: togglePause } })
       ]),
 
       // Multi-touch driving controls (only on touch devices during racing)
@@ -310,7 +290,7 @@ async function start() {
           id: 'race-next',
           hidden: !(qualified && selected < circuits.length - 1),
           style: { height: 44 },
-          widget: { type: 'button', label: 'Next event', primary: true, primitive: nextBtn }
+          widget: { type: 'button', label: 'Next event', primary: true, onPress: () => startRace(selected + 1) }
         }),
         boxNode({
           id: 'race-start',
@@ -320,19 +300,19 @@ async function start() {
             type: 'button',
             label: home ? `Race ${circuit.name}` : paused ? 'Resume race' : 'Race again',
             primary: !(qualified && selected < circuits.length - 1),
-            primitive: startBtn
+            onPress: () => screen === 'paused' ? togglePause() : startRace()
           }
         }),
         row({ id: 'race-nav-row', style: { gap: 8 } }, [
-          boxNode({ id: 'race-events', hidden: !(home || results), style: { grow: 1, height: 40 }, widget: { type: 'button', label: 'Events', primitive: eventsBtn } }),
-          boxNode({ id: 'race-garage', hidden: !(home || events || results), style: { grow: 1, height: 40 }, widget: { type: 'button', label: 'Garage', primitive: garageBtn } }),
-          boxNode({ id: 'race-restart', hidden: !paused, style: { grow: 1, height: 40 }, widget: { type: 'button', label: 'Restart race', primitive: restartBtn } }),
-          boxNode({ id: 'race-home', hidden: !(!home && !racing), style: { grow: 1, height: 40 }, widget: { type: 'button', label: 'Main menu', primitive: homeBtn } })
+          boxNode({ id: 'race-events', hidden: !(home || results), style: { grow: 1, height: 40 }, widget: { type: 'button', label: 'Events', onPress: () => setScreen('events') } }),
+          boxNode({ id: 'race-garage', hidden: !(home || events || results), style: { grow: 1, height: 40 }, widget: { type: 'button', label: 'Garage', onPress: openGarage } }),
+          boxNode({ id: 'race-restart', hidden: !paused, style: { grow: 1, height: 40 }, widget: { type: 'button', label: 'Restart race', onPress: () => startRace() } }),
+          boxNode({ id: 'race-home', hidden: !(!home && !racing), style: { grow: 1, height: 40 }, widget: { type: 'button', label: 'Main menu', onPress: goHome } })
         ]),
         row({ id: 'race-home-footer', hidden: !home, style: { gap: 8 } }, [
-          boxNode({ id: 'race-saves', style: { grow: 1, height: 38 }, widget: { type: 'button', label: 'Save backup', primitive: savesBtn } }),
+          boxNode({ id: 'race-saves', style: { grow: 1, height: 38 }, widget: { type: 'button', label: 'Save backup', onPress: () => setScreen('saves') } }),
           boxNode({ id: 'race-beacon', hidden: !isHosted, style: { grow: 1, height: 38 }, widget: { type: 'button', label: 'Play Beacon Run', onPress: () => { location.href = '/' } } }),
-          boxNode({ id: 'race-quit', hidden: !page.platform.canQuit, style: { width: 88, height: 38 }, widget: { type: 'button', label: 'Quit', primitive: quitBtn } })
+          boxNode({ id: 'race-quit', hidden: !page.platform.canQuit, style: { width: 88, height: 38 }, widget: { type: 'button', label: 'Quit', onPress: () => { void page.platform.quit() } } })
         ]),
         boxNode({
           id: 'race-save-warning',
@@ -359,12 +339,12 @@ async function start() {
         boxNode({ id: 'saves-kicker', style: { height: 18 }, widget: { type: 'text', text: 'PORTABLE CHAMPIONSHIP', size: 11, weight: 800, color: ui.theme.accent, mono: true } }),
         boxNode({ id: 'saves-title', style: { height: 34 }, widget: { type: 'text', text: 'Save backup', size: 26, weight: 800 } }),
         row({ id: 'saves-buttons', style: { gap: 8 } }, [
-          boxNode({ id: 'race-save-export', style: { grow: 1, height: 42 }, widget: { type: 'button', label: 'Download backup', primitive: saveExportBtn } }),
-          boxNode({ id: 'race-save-import', style: { grow: 1, height: 42 }, widget: { type: 'button', label: 'Choose backup…', primitive: saveImportBtn } })
+          boxNode({ id: 'race-save-export', style: { grow: 1, height: 42 }, widget: { type: 'button', label: 'Download backup', onPress: () => saves.exportBackup() } }),
+          boxNode({ id: 'race-save-import', style: { grow: 1, height: 42 }, widget: { type: 'button', label: 'Choose backup…', onPress: () => saves.chooseFile() } })
         ]),
         boxNode({ id: 'race-save-status', hidden: !saves.status, style: { height: 38 }, widget: { type: 'text', text: saves.status, size: 13, color: '#8df5d5', wrap: true } }),
-        boxNode({ id: 'race-save-restore', hidden: !saves.hasCandidate, style: { height: 44 }, widget: { type: 'button', label: 'Replace current progress', primary: true, primitive: saveRestoreBtn } }),
-        boxNode({ id: 'saves-back', style: { height: 40 }, widget: { type: 'button', label: 'Back', primitive: homeBtn } })
+        boxNode({ id: 'race-save-restore', hidden: !saves.hasCandidate, style: { height: 44 }, widget: { type: 'button', label: 'Replace current progress', primary: true, onPress: () => saves.applyRestore() } }),
+        boxNode({ id: 'saves-back', style: { height: 40 }, widget: { type: 'button', label: 'Back', onPress: goHome } })
       ]),
 
       // Live 3D Garage overlay (3D rally car renders directly on #race-stage behind!)
@@ -376,7 +356,7 @@ async function start() {
       }, [
         boxNode({ id: 'garage-heading', style: { grow: 1, height: 28 }, widget: { type: 'text', text: 'SIGNAL DRIFT · GARAGE', size: 18, weight: 900 } }),
         boxNode({ id: 'garage-credits', style: { width: 130, height: 24 }, widget: { type: 'text', text: `${g.creditsText} CR`, size: 16, weight: 800, color: '#8df5d5', mono: true, align: 'right' } }),
-        boxNode({ id: 'garage-back', style: { width: 82, height: 38 }, widget: { type: 'button', label: 'Back', primitive: garageBackBtn } })
+        boxNode({ id: 'garage-back', style: { width: 82, height: 38 }, widget: { type: 'button', label: 'Back', onPress: leaveGarage } })
       ]),
       column({
         id: 'garage-parts',
@@ -411,7 +391,7 @@ async function start() {
         boxNode({
           id: 'garage-install',
           style: { height: 42 },
-          widget: { type: 'button', label: g.installLabel, primary: g.canInstall, disabled: !g.canInstall, primitive: garageInstallBtn }
+          widget: { type: 'button', label: g.installLabel, primary: g.canInstall, disabled: !g.canInstall, onPress: () => { garage.install(); uiDirty = true } }
         }),
         boxNode({ id: 'garage-feedback', hidden: !g.feedback, style: { height: 28 }, widget: { type: 'text', text: g.feedback, size: 11, color: '#8df5d5', wrap: true } })
       ])
@@ -432,7 +412,7 @@ async function start() {
     writable: true,
     value: {
       snapshot: () => ui.snapshot(),
-      query: (filter?: { id?: string; kind?: string; state?: string; label?: string }) => ui.query(filter),
+      query: (filter?: CanvasUiQuery) => ui.query(filter),
       act: (id: string, action: string, payload?: unknown) => {
         if (uiDirty) renderUiNow()
         const ok = ui.act(id, action, payload)

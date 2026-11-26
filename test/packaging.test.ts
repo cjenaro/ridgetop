@@ -104,13 +104,11 @@ test('packageGame builds tree-shaken Web, Steam, Mobile, and Godot outputs for S
   assert.ok(!webHtml.includes('data-hosted="1"'), 'Standalone build should strip hosted cross-game flag')
   await access(join(webDir, 'framework', 'vehicle.js'))
   await access(join(webDir, 'framework', 'platform.js'))
+  await access(join(webDir, 'framework', 'ui.js'))
   await access(join(webDir, 'framework', 'ui-canvas.js'))
-  await access(join(webDir, 'framework', 'ui-button.js'))
   await access(join(webDir, 'framework', 'ui-layout.js'))
-  await assert.rejects(access(join(webDir, 'framework', 'ui-slider.js')), 'unused ui-slider.js must be dropped')
-  await assert.rejects(access(join(webDir, 'framework', 'ui-select.js')), 'unused ui-select.js must be dropped')
-  await assert.rejects(access(join(webDir, 'framework', 'ui-toggle.js')), 'unused ui-toggle.js must be dropped')
-  await assert.rejects(access(join(webDir, 'framework', 'ui-menu.js')), 'unused ui-menu.js must be dropped')
+  await assert.rejects(access(join(webDir, 'framework', 'ui-button.js')), 'deleted ui-button.js must not exist')
+  await assert.rejects(access(join(webDir, 'framework', 'ui-machine.js')), 'deleted ui-machine.js must not exist')
   await assert.rejects(access(join(webDir, 'framework', 'verification.js')), 'verification.js must be dropped')
   await assert.rejects(access(join(webDir, 'framework', 'art-review.js')), 'art-review.js must be dropped')
   await assert.rejects(access(join(webDir, 'framework', 'review-store.js')), 'review-store.js must be dropped')
@@ -225,10 +223,10 @@ test('packageGame rewrites Beacon Run asset paths for offline native bundles', a
   const spritesJs = await readFile(join(outDir, 'game', 'sprites.js'), 'utf8')
   assert.ok(spritesJs.includes('./game/assets/sprites.json'))
   await access(join(outDir, 'game', 'assets', 'sprites.png'))
-  await access(join(outDir, 'framework', 'ui-button.js'))
-  await access(join(outDir, 'framework', 'ui-toggle.js'))
-  await access(join(outDir, 'framework', 'ui-select.js'))
-  await assert.rejects(access(join(outDir, 'framework', 'ui-slider.js')))
+  await access(join(outDir, 'framework', 'ui.js'))
+  await access(join(outDir, 'framework', 'ui-layout.js'))
+  await access(join(outDir, 'framework', 'ui-canvas.js'))
+  await assert.rejects(access(join(outDir, 'framework', 'ui-button.js')))
   await assert.rejects(access(join(outDir, 'framework', 'vehicle.js')))
   await assert.rejects(access(join(outDir, 'framework', 'verification.js')))
   await assert.rejects(access(join(outDir, 'framework', 'testing-runtime.js')))
@@ -267,15 +265,13 @@ test('generated create-game projects use pure Canvas UI, drop studio reviews/too
   assert.match(stdout, /Packaged Lantern Grove/)
 
   const webDir = join(projectDir, 'dist', 'packages', 'web')
-  // Used Canvas UI primitives ARE included
+  // Consolidated Canvas UI modules ARE included
+  await access(join(webDir, 'framework', 'ui.js'))
   await access(join(webDir, 'framework', 'ui-layout.js'))
-  await access(join(webDir, 'framework', 'ui-button.js'))
-  await access(join(webDir, 'framework', 'ui-toggle.js'))
-  await access(join(webDir, 'framework', 'ui-menu.js'))
   await access(join(webDir, 'framework', 'ui-canvas.js'))
-  // Unused UI primitives & studio/testing files are DROPPED
-  await assert.rejects(access(join(webDir, 'framework', 'ui-slider.js')), 'unused ui-slider.js must be dropped')
-  await assert.rejects(access(join(webDir, 'framework', 'ui-select.js')), 'unused ui-select.js must be dropped')
+  // Studio/testing files and unused runtime modules are DROPPED
+  await assert.rejects(access(join(webDir, 'framework', 'vehicle.js')), 'unused vehicle.js must be dropped')
+  await assert.rejects(access(join(webDir, 'framework', 'platformer.js')), 'unused platformer.js must be dropped')
   await assert.rejects(access(join(webDir, 'framework', 'verification.js')), 'verification.js must be dropped')
   await assert.rejects(access(join(webDir, 'framework', 'art-review.js')), 'art-review.js must be dropped')
   await assert.rejects(access(join(webDir, 'framework', 'review-store.js')), 'review-store.js must be dropped')
@@ -473,8 +469,8 @@ test('packageGame builds tree-shaken Web, Steam, Mobile, and Godot outputs for T
   await access(join(webDir, 'framework', 'index.js'))
   await access(join(webDir, 'framework', 'rng.js'))
   await access(join(webDir, 'framework', 'animation.js'))
+  await access(join(webDir, 'framework', 'ui.js'))
   await access(join(webDir, 'framework', 'ui-layout.js'))
-  await access(join(webDir, 'framework', 'ui-button.js'))
   await access(join(webDir, 'framework', 'ui-canvas.js'))
   await assert.rejects(access(join(webDir, 'framework', 'verification.js')), 'verification.js must be dropped')
   await assert.rejects(access(join(webDir, 'framework', 'art-review.js')), 'art-review.js must be dropped')
@@ -484,10 +480,6 @@ test('packageGame builds tree-shaken Web, Steam, Mobile, and Godot outputs for T
   await assert.rejects(access(join(webDir, 'framework', 'testing-studio.js')), 'testing-studio.js must be dropped')
   await assert.rejects(access(join(webDir, 'framework', 'testing-overlay.css')), 'testing-overlay.css must be dropped')
   await assert.rejects(access(join(webDir, 'framework', 'art-builder.js')), 'art-builder.js must be dropped')
-  await assert.rejects(access(join(webDir, 'framework', 'ui-slider.js')), 'unused ui-slider.js must be dropped')
-  await assert.rejects(access(join(webDir, 'framework', 'ui-select.js')), 'unused ui-select.js must be dropped')
-  await assert.rejects(access(join(webDir, 'framework', 'ui-toggle.js')), 'unused ui-toggle.js must be dropped')
-  await assert.rejects(access(join(webDir, 'framework', 'ui-menu.js')), 'unused ui-menu.js must be dropped')
   await assert.rejects(access(join(webDir, 'framework', 'vehicle.js')), 'unused vehicle.js must be dropped')
   await assert.rejects(access(join(webDir, 'framework', 'platformer.js')), 'unused platformer.js must be dropped')
   await assert.rejects(access(join(webDir, 'framework', 'room-client.js')), 'unused room-client.js must be dropped')
@@ -539,8 +531,8 @@ test('packageGame builds tree-shaken Web, Steam, Mobile, and Godot outputs for T
   await access(join(godotDir, 'scripts', 'compiled', 'lighthouse', 'types.gd'))
   await access(join(godotDir, 'scripts', 'compiled', 'framework', 'rng.gd'))
   await assert.rejects(access(join(godotDir, 'scripts', 'compiled', 'framework', 'verification.gd')), 'verification.gd must not be emitted when only PRNG is used')
+  await access(join(godotDir, 'scripts', 'compiled', 'framework', 'ui.gd'))
   await access(join(godotDir, 'scripts', 'compiled', 'framework', 'ui-layout.gd'))
-  await access(join(godotDir, 'scripts', 'compiled', 'framework', 'ui-button.gd'))
 })
 
 test('external standalone project outside repo with bare ridgetop imports works in host Import Map & packager (all + player)', async t => {
@@ -557,7 +549,7 @@ test('external standalone project outside repo with bare ridgetop imports works 
     ridgetop: {
       name: 'External Quest',
       appId: 'com.example.externalquest',
-      godotEntries: ['src/sim.ts', 'ridgetop/ui-layout']
+      godotEntries: ['src/sim.ts', 'ridgetop/ui']
     }
   }, null, 2))
   await writeFile(join(projectDir, 'index.html'), `<!doctype html>
@@ -577,11 +569,10 @@ export const sim = createPlatformer()
 export function ping(x: number) { return x + 1 }
 `)
   await writeFile(join(projectDir, 'main.js'), `import { color, registerTestingHooks } from 'ridgetop'
-import { boxNode, overlay } from 'ridgetop/ui-layout'
-import { buttonPrimitive } from 'ridgetop/ui-button'
+import { boxNode, createUiTheme, overlay } from 'ridgetop/ui'
 export const theme = color('#efac62')
-export const rootNode = overlay({ id: 'root' }, [boxNode({ id: 'go', style: { width: 120, height: 40 } })])
-export const btn = buttonPrimitive.create({ id: 'go', label: 'Go' })
+export const uiTheme = createUiTheme({ accent: '#efac62' })
+export const rootNode = overlay({ id: 'root' }, [boxNode({ id: 'go', style: { width: 120, height: 40 }, widget: { type: 'button', label: 'Go' } })])
 registerTestingHooks({ snapshot: () => ({ ok: true }) })
 `)
 
@@ -604,7 +595,7 @@ registerTestingHooks({ snapshot: () => ({ ok: true }) })
   const servedHtml = await htmlRes.text()
   assert.ok(servedHtml.includes('<script type="importmap">'), 'Host must inject importmap for bare ridgetop specifiers')
   assert.ok(servedHtml.includes('"ridgetop":"/framework/index.js"'))
-  assert.ok(servedHtml.includes('"ridgetop/ui-layout":"/framework/ui-layout.js"'))
+  assert.ok(servedHtml.includes('"ridgetop/ui":"/framework/ui.js"'))
   assert.equal((await fetch(`http://127.0.0.1:${port}/framework/index.js`)).status, 200)
 
   // 2. Verify packageGame(all + player) resolves bare specifiers, tree-shakes, compiles Godot GDScript, and leaves ZERO bare specifiers
@@ -615,22 +606,24 @@ registerTestingHooks({ snapshot: () => ({ ok: true }) })
 
   const webMain = await readFile(join(outDir, 'web', 'main.js'), 'utf8')
   assert.ok(!webMain.includes("'ridgetop'"), 'Bundled main.js must rewrite bare ridgetop import')
-  assert.ok(!webMain.includes("'ridgetop/ui-layout'"), 'Bundled main.js must rewrite bare ridgetop/ui-layout import')
+  assert.ok(!webMain.includes("'ridgetop/ui'"), 'Bundled main.js must rewrite bare ridgetop/ui import')
   assert.ok(webMain.includes("'./framework/index.js'"))
-  assert.ok(webMain.includes("'./framework/ui-layout.js'"))
-  assert.ok(webMain.includes("'./framework/ui-button.js'"))
-  await assert.rejects(access(join(outDir, 'web', 'framework', 'ui-slider.js')), 'unused ui-slider.js must be dropped')
+  assert.ok(webMain.includes("'./framework/ui.js'"))
+  await access(join(outDir, 'web', 'framework', 'ui-layout.js'))
+  await access(join(outDir, 'web', 'framework', 'ui-canvas.js'))
+  await assert.rejects(access(join(outDir, 'web', 'framework', 'vehicle.js')), 'unused vehicle.js must be dropped')
   await assert.rejects(access(join(outDir, 'web', 'framework', 'testing-runtime.js')), 'testing-runtime.js must be dropped')
 
   // Verify bundled main.js actually executes cleanly in Node!
   const bundled = await import(pathToFileURL(join(outDir, 'web', 'main.js')).href)
   assert.equal(bundled.rootNode.id, 'root')
-  assert.equal(bundled.btn.id, 'go')
+  assert.equal(bundled.uiTheme.accent, '#efac62')
 
   // Verify Godot target compiled TS using bundled packages/ridgetop/tools/ts-to-gd!
   await access(join(outDir, 'godot', 'scripts', 'compiled', 'rt.gd'))
   await access(join(outDir, 'godot', 'scripts', 'compiled', 'src', 'sim.gd'))
   await access(join(outDir, 'godot', 'scripts', 'compiled', 'framework', 'platformer.gd'))
+  await access(join(outDir, 'godot', 'scripts', 'compiled', 'framework', 'ui.gd'))
   await access(join(outDir, 'godot', 'scripts', 'compiled', 'framework', 'ui-layout.gd'))
 
   // Verify portable player HTML target also works cleanly
