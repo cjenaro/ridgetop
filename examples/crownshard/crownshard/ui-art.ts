@@ -4,6 +4,8 @@ import type {
   FacingDir, FacingExposureLevel, HeroSpec, LandmarkKind, OwnedHeroCard, PackRevealItem, PackSpec,
   Rarity, SkillSpec, StatusKind, TacticCardSpec, TurnOrderActionPreview, TurnPreviewEntry
 } from './types.ts'
+import { ARMORY_STAT_ORDER, formatStatDelta, formatStatValue } from './armory-diff.ts'
+import type { EquipmentStatDiff } from './armory-diff.ts'
 import { DIFFICULTY_META, RARITY_META, RARITY_ORDER } from './data.ts'
 
 // ===========================================================================
@@ -3473,23 +3475,71 @@ export function drawHeroHeader(
   drawText(ctx, `${o.power}`, x + w - pw / 2, y + h * 0.68, { size: 19, weight: 900, color: COLOR.accentHi, align: 'center', display: true, stroke: true, strokeWidth: 2.6 })
 }
 
-export function drawStatStrip(ctx: CanvasRenderingContext2D, rect: LayoutRect, stats: readonly { icon: IconName; label: string; value: string; color: string }[]) {
+export interface StatStripItem {
+  readonly icon: IconName
+  readonly label: string
+  readonly value: string
+  readonly color: string
+  /** Optional live Armory hover stat delta (positive = upgrade, negative = downgrade). */
+  readonly delta?: number
+  /** Optional formatted delta badge (e.g. "▲+5", "▼-2", "▲+8%"). */
+  readonly deltaText?: string
+}
+
+export function drawStatStrip(ctx: CanvasRenderingContext2D, rect: LayoutRect, stats: readonly StatStripItem[]) {
   const { x, y, width: w, height: h } = rect
-  const gap = 6
+  if (stats.length === 0) return
+  const gap = stats.length >= 7 ? 5 : 6
   const cw = (w - gap * (stats.length - 1)) / stats.length
   const showLabel = cw >= 58
   stats.forEach((s, i) => {
     const cx = x + i * (cw + gap)
+    const delta = s.delta ?? 0
+    const hasDelta = delta !== 0
+    const deltaColor = delta > 0 ? '#52f598' : '#ff6b7a'
+    const deltaText = hasDelta
+      ? (s.deltaText ?? (delta > 0 ? `▲+${delta}` : `▼${delta}`))
+      : ''
+
     rr(ctx, cx, y, cw, h, RADIUS.sm)
-    ctx.fillStyle = '#1f2b4a'
+    ctx.fillStyle = hasDelta ? (delta > 0 ? '#163528' : '#3a1824') : '#1f2b4a'
     ctx.fill()
-    ctx.strokeStyle = COLOR.outline
-    ctx.lineWidth = 1.8
+    ctx.strokeStyle = hasDelta ? (delta > 0 ? COLOR.good : COLOR.danger) : COLOR.outline
+    ctx.lineWidth = hasDelta ? 2 : 1.8
     ctx.stroke()
+
     if (showLabel) {
-      drawIcon(ctx, s.icon, cx + 13, y + h / 2, 13, s.color)
-      drawText(ctx, s.value, cx + 24, y + h / 2 - (h >= 34 ? 6 : 0) + 0.5, { size: 13, weight: 900, maxW: cw - 28, display: true, shadow: true })
-      if (h >= 34) drawText(ctx, s.label, cx + 24, y + h / 2 + 8.5, { size: 8.5, weight: 800, color: COLOR.muted, upper: true, spacing: 0.6, maxW: cw - 28, display: true })
+      drawIcon(ctx, s.icon, cx + 12, y + h / 2, 12.5, hasDelta ? deltaColor : s.color)
+      const valX = cx + 23
+      const rightX = cx + cw - 5
+      if (hasDelta) {
+        if (cw >= 82) {
+          drawText(ctx, s.value, valX, y + h / 2 - (h >= 30 ? 5.5 : 0) + 0.5, {
+            size: 12.5, weight: 900, maxW: Math.max(18, cw * 0.36), display: true, shadow: true
+          })
+          drawText(ctx, deltaText, rightX, y + h / 2 - (h >= 30 ? 5.5 : 0) + 0.5, {
+            size: 10.5, weight: 900, color: deltaColor, align: 'right', maxW: Math.max(24, cw - 46), display: true, shadow: true
+          })
+          if (h >= 30) {
+            drawText(ctx, s.label, valX, y + h / 2 + 8, {
+              size: 8.5, weight: 800, color: COLOR.muted, upper: true, spacing: 0.6, maxW: cw - 28, display: true
+            })
+          }
+        } else {
+          drawText(ctx, s.value, valX, y + h * 0.32, {
+            size: 11.5, weight: 900, maxW: cw - 26, display: true, shadow: true
+          })
+          drawText(ctx, deltaText, valX, y + h * 0.72, {
+            size: 9.5, weight: 900, color: deltaColor, maxW: cw - 26, display: true, shadow: true
+          })
+        }
+      } else {
+        drawText(ctx, s.value, valX, y + h / 2 - (h >= 34 ? 6 : 0) + 0.5, { size: 13, weight: 900, maxW: cw - 28, display: true, shadow: true })
+        if (h >= 34) drawText(ctx, s.label, valX, y + h / 2 + 8.5, { size: 8.5, weight: 800, color: COLOR.muted, upper: true, spacing: 0.6, maxW: cw - 28, display: true })
+      }
+    } else if (hasDelta) {
+      drawText(ctx, s.value, cx + cw / 2, y + h * 0.30, { size: 10.5, weight: 900, align: 'center', maxW: cw - 4, display: true })
+      drawText(ctx, deltaText, cx + cw / 2, y + h * 0.73, { size: 9, weight: 900, color: deltaColor, align: 'center', maxW: cw - 4, display: true, shadow: true })
     } else {
       drawIcon(ctx, s.icon, cx + cw / 2, y + h * 0.32, 11, s.color)
       drawText(ctx, s.value, cx + cw / 2, y + h * 0.72, { size: 11, weight: 900, align: 'center', maxW: cw - 4, display: true })
@@ -3631,6 +3681,263 @@ export function drawEquipCard(
   drawCornerRibbon(ctx, x, y, w, faceH + 1, r, meta?.hex ?? '#888', 13)
   ctx.restore()
   if (st.focused) drawFocusRing(ctx, x, y, w, drawH, r)
+}
+
+/**
+ * Live Armory equipment comparison dock showing candidate vs current slot (or Empty Slot),
+ * cross-hero swap notice, net power delta, and green/red ▲/▼ stat diffs across all 7 stats.
+ */
+export function drawArmoryStatDiffPanel(
+  ctx: CanvasRenderingContext2D,
+  rect: LayoutRect,
+  diff: EquipmentStatDiff
+) {
+  const { x, y, width: w, height: h } = rect
+  if (w < 40 || h < 34) return
+
+  const candMeta = RARITY_META[diff.candidateRarity]
+  const rimColor = diff.isAlreadyEquipped
+    ? COLOR.accent
+    : diff.netPowerDelta > 0
+      ? COLOR.good
+      : diff.netPowerDelta < 0
+        ? COLOR.danger
+        : COLOR.borderHi
+
+  ctx.save()
+  drawSurface(ctx, rect, {
+    r: RADIUS.md,
+    lipH: 3,
+    fill: '#233054',
+    fillBot: '#151d36',
+    rim: rimColor + '88',
+    border: COLOR.outline,
+    glow: diff.isAlreadyEquipped ? undefined : rimColor + '33'
+  })
+
+  // Crisp inner colored border highlight
+  rr(ctx, x + 2, y + 2, w - 4, h - 5, Math.max(2, RADIUS.md - 2))
+  ctx.strokeStyle = rimColor + 'aa'
+  ctx.lineWidth = 1.4
+  ctx.stroke()
+
+  const padX = w < 420 ? 8 : 10
+  const padY = h < 60 ? 5 : 6
+  const innerW = w - padX * 2
+  const headerH = h < 60 ? 18 : 20
+  const headerCy = y + padY + headerH / 2
+
+  // Right-aligned Power delta badge (+ optional cross-hero swap pill)
+  let rightCursor = x + w - padX
+  const pwrText = diff.isAlreadyEquipped
+    ? 'EQUIPPED'
+    : diff.netPowerDelta > 0
+      ? `▲ +${diff.netPowerDelta} PWR`
+      : diff.netPowerDelta < 0
+        ? `▼ ${diff.netPowerDelta} PWR`
+        : '±0 PWR'
+  const pwrColor = diff.isAlreadyEquipped
+    ? COLOR.accentHi
+    : diff.netPowerDelta > 0
+      ? '#52f598'
+      : diff.netPowerDelta < 0
+        ? '#ff6b7a'
+        : COLOR.muted
+  const pwrBg = diff.isAlreadyEquipped
+    ? '#382a14'
+    : diff.netPowerDelta > 0
+      ? '#123824'
+      : diff.netPowerDelta < 0
+        ? '#3f1520'
+        : COLOR.wellDeep
+  const pwrW = drawChip(ctx, rightCursor, headerCy - 9, pwrText, {
+    h: 18,
+    size: 9.5,
+    color: pwrColor,
+    bg: pwrBg,
+    border: diff.isAlreadyEquipped ? COLOR.accent : diff.netPowerDelta !== 0 ? pwrColor : COLOR.outline,
+    align: 'right'
+  })
+  rightCursor -= pwrW + 6
+
+  if (diff.currentOwnerName && w >= 420) {
+    const swapLabel = `⇄ Held by ${diff.currentOwnerName}`
+    const swapW = drawChip(ctx, rightCursor, headerCy - 9, swapLabel, {
+      h: 18,
+      size: 9,
+      color: '#ffe299',
+      bg: '#382c16',
+      border: '#d99a26',
+      align: 'right'
+    })
+    rightCursor -= swapW + 6
+  }
+
+  // Left side: Slot badge + "Comparing: Candidate vs Current (or Empty Slot)"
+  let leftCursor = x + padX
+  const slotW = drawChip(ctx, leftCursor, headerCy - 9, diff.slot.toUpperCase(), {
+    h: 18,
+    size: 9,
+    color: candMeta.hex,
+    bg: COLOR.wellDeep,
+    border: candMeta.hex + '99'
+  })
+  leftCursor += slotW + 7
+
+  const vsLabel = diff.currentItemName ?? 'Empty Slot'
+  const headerText = diff.isAlreadyEquipped
+    ? `Equipped: ${diff.candidateName} (${diff.heroName})`
+    : diff.currentOwnerName && w < 420
+      ? `${diff.candidateName} vs ${vsLabel} (⇄ ${diff.currentOwnerName})`
+      : `Comparing: ${diff.candidateName} vs ${vsLabel}`
+  const headerMaxW = Math.max(40, rightCursor - leftCursor)
+  drawText(ctx, headerText, leftCursor, headerCy + 0.5, {
+    size: w < 420 ? 10.5 : 11.5,
+    weight: 800,
+    color: COLOR.text,
+    maxW: headerMaxW,
+    display: true,
+    shadow: true
+  })
+
+  // Stat-diff grid across all 7 stats: ATK, DEF, HP, SPD, MOVE, RANGE, CRIT
+  const statsY = y + padY + headerH + (h < 60 ? 3 : 4)
+  const statsH = Math.max(20, y + h - 5 - statsY)
+  const twoRow = w < 520 && statsH >= 38
+
+  const drawStatRow = (
+    items: readonly (typeof ARMORY_STAT_ORDER)[number][],
+    rowY: number,
+    rowH: number
+  ) => {
+    const gap = w < 460 ? 4 : 5
+    const availW = innerW - gap * (items.length - 1)
+    let totalWeight = 0
+    for (const meta of items) {
+      const entry = diff.stats[meta.key]
+      totalWeight += entry.delta !== 0 ? 1.55 : 0.78
+    }
+    let sx = x + padX
+    for (const meta of items) {
+      const entry = diff.stats[meta.key]
+      const changed = entry.delta !== 0
+      const weight = changed ? 1.55 : 0.78
+      const cellW = (availW * weight) / totalWeight
+      const positive = entry.delta > 0
+      const cellBg = changed ? (positive ? '#143828' : '#3d1623') : '#12192d'
+      const cellBorder = changed ? (positive ? COLOR.good : COLOR.danger) : '#2a3759'
+      const arrowColor = positive ? '#52f598' : '#ff6b7a'
+
+      rr(ctx, sx, rowY, cellW, rowH, RADIUS.xs)
+      ctx.fillStyle = cellBg
+      ctx.fill()
+      ctx.strokeStyle = cellBorder
+      ctx.lineWidth = changed ? 1.6 : 1.1
+      ctx.stroke()
+
+      const statLabel = cellW < 62 ? meta.shortLabel : meta.label
+      if (changed) {
+        const deltaStr = formatStatDelta(entry.delta, meta.isPercent, true)
+        const showBeforeAfter = cellW >= 112
+        const cy = rowY + rowH / 2 + 0.5
+        if (cellW >= 78) {
+          drawText(ctx, statLabel, sx + 6, cy, {
+            size: 9,
+            weight: 900,
+            color: '#d9e6ff',
+            display: true
+          })
+          const textRight = sx + cellW - 6
+          if (showBeforeAfter) {
+            const afterStr = `${formatStatValue(entry.before, meta.isPercent)}→${formatStatValue(entry.after, meta.isPercent)}`
+            drawText(ctx, `${deltaStr} (${afterStr})`, textRight, cy, {
+              size: 10,
+              weight: 900,
+              color: arrowColor,
+              align: 'right',
+              maxW: cellW - 42,
+              display: true,
+              shadow: true
+            })
+          } else {
+            drawText(ctx, deltaStr, textRight, cy, {
+              size: 10.5,
+              weight: 900,
+              color: arrowColor,
+              align: 'right',
+              maxW: cellW - 36,
+              display: true,
+              shadow: true
+            })
+          }
+        } else {
+          drawText(ctx, statLabel, sx + cellW / 2, rowY + rowH * 0.30, {
+            size: 8,
+            weight: 800,
+            color: '#d9e6ff',
+            align: 'center',
+            maxW: cellW - 4,
+            display: true
+          })
+          drawText(ctx, deltaStr, sx + cellW / 2, rowY + rowH * 0.72, {
+            size: 9.5,
+            weight: 900,
+            color: arrowColor,
+            align: 'center',
+            maxW: cellW - 4,
+            display: true,
+            shadow: true
+          })
+        }
+      } else {
+        // Compact, muted zero-delta cell
+        if (cellW >= 54) {
+          const cy = rowY + rowH / 2 + 0.5
+          drawText(ctx, statLabel, sx + 5, cy, {
+            size: 8.5,
+            weight: 700,
+            color: COLOR.faint,
+            display: true
+          })
+          drawText(ctx, '0', sx + cellW - 5, cy, {
+            size: 9.5,
+            weight: 700,
+            color: '#5f7099',
+            align: 'right',
+            display: true
+          })
+        } else {
+          drawText(ctx, statLabel, sx + cellW / 2, rowY + rowH * 0.34, {
+            size: 7.5,
+            weight: 700,
+            color: COLOR.faint,
+            align: 'center',
+            maxW: cellW - 3,
+            display: true
+          })
+          drawText(ctx, '0', sx + cellW / 2, rowY + rowH * 0.72, {
+            size: 8.5,
+            weight: 700,
+            color: '#5f7099',
+            align: 'center',
+            display: true
+          })
+        }
+      }
+      sx += cellW + gap
+    }
+  }
+
+  if (twoRow) {
+    const rowGap = 4
+    const rowH = Math.floor((statsH - rowGap) / 2)
+    drawStatRow(ARMORY_STAT_ORDER.slice(0, 4), statsY, rowH)
+    drawStatRow(ARMORY_STAT_ORDER.slice(4), statsY + rowH + rowGap, rowH)
+  } else {
+    drawStatRow(ARMORY_STAT_ORDER, statsY, statsH)
+  }
+
+  ctx.restore()
 }
 
 export function drawSkillRow(ctx: CanvasRenderingContext2D, rect: LayoutRect, o: { tier: 1 | 2 | 3; name: string; desc: string; unlocked: boolean; vfx: SkillSpec['vfx']; skillId: string }) {
