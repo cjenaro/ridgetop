@@ -1,409 +1,46 @@
 import assert from 'node:assert/strict'
-import { spawn, type ChildProcess } from 'node:child_process'
-import { once } from 'node:events'
-import { existsSync } from 'node:fs'
-import { mkdtemp, rm } from 'node:fs/promises'
-import { createServer } from 'node:net'
-import { homedir, tmpdir } from 'node:os'
-import { join } from 'node:path'
-import { createInterface } from 'node:readline'
-import { setTimeout as wait } from 'node:timers/promises'
+import type { FirefoxSession, HostedServer } from './browser-driver.ts'
+import {
+  isRecord,
+  launchFirefoxSession,
+  parseSmokeFilter,
+  startHostedServer
+} from './browser-driver.ts'
+import type { BenchmarkRecord, BenchmarkRunSpec, SmokeSuiteEntry } from './smoke-suites.ts'
+import {
+  parseBackends,
+  runFilteredSuites,
+  verifyBeaconRunCore,
+  verifyBenchmarkCore,
+  verifyCrownshardCore,
+  verifySignalDriftCore,
+  verifyStarterCore,
+  verifyTestingModeCore,
+  verifyTidewatchCore
+} from './smoke-suites.ts'
 
-interface BiDiPending {
-  resolve: (value: Record<string, unknown>) => void
-  reject: (error: Error) => void
-  timeout: ReturnType<typeof setTimeout>
-}
+const filter = parseSmokeFilter()
+const backends = parseBackends(process.env.RIDGETOP_FIREFOX_BACKENDS, ['webgl2', 'canvas'], ['webgl2', 'canvas'])
+const benchmarkCount = Number(process.env.RIDGETOP_BENCHMARK_COUNT ?? '1024')
+const runTag = 'ff-' + Date.now().toString(36)
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value)
-}
-
-function isPredicate<T>(expected: T | ((value: T) => boolean)): expected is (value: T) => boolean {
-  return typeof expected === 'function'
-}
-
-interface BenchmarkRecord {
-  backend: string
-  workload: string
-  width: number
-  height: number
-  count: number
-  drawCalls: number
-  triangles: number
-  instances: number
-  uploadBytes: number
-  culledBatches: number
-  samples: number
-  cpuMedianMs: number
-  cpuP95Ms: number
-  frameMedianMs: number
-  frameP95Ms: number
-  browser: string
-}
-
-function parseBenchmarkRecord(value: unknown): BenchmarkRecord {
-  if (!isRecord(value)) throw new TypeError('Expected benchmark record object')
-  const {
-    backend, workload, width, height, count, drawCalls, triangles, instances,
-    uploadBytes, culledBatches, samples, cpuMedianMs, cpuP95Ms, frameMedianMs, frameP95Ms, browser
-  } = value
-  if (typeof backend !== 'string' || typeof workload !== 'string' || typeof browser !== 'string' ||
-      typeof width !== 'number' || typeof height !== 'number' || typeof count !== 'number' ||
-      typeof drawCalls !== 'number' || typeof triangles !== 'number' || typeof instances !== 'number' ||
-      typeof uploadBytes !== 'number' || typeof culledBatches !== 'number' || typeof samples !== 'number' ||
-      typeof cpuMedianMs !== 'number' || typeof cpuP95Ms !== 'number' ||
-      typeof frameMedianMs !== 'number' || typeof frameP95Ms !== 'number') {
-    throw new TypeError('Invalid benchmark record fields')
-  }
-  return {
-    backend, workload, width, height, count, drawCalls, triangles, instances,
-    uploadBytes, culledBatches, samples, cpuMedianMs, cpuP95Ms, frameMedianMs, frameP95Ms, browser
-  }
-}
-
-const RENDERER_NAMES = {
-  webgl2: 'WebGL 2',
-  canvas: 'Canvas 2D'
-} as const
-
-type FirefoxBackend = keyof typeof RENDERER_NAMES
-
-function isFirefoxBackend(value: string): value is FirefoxBackend {
-  return Object.hasOwn(RENDERER_NAMES, value)
-}
-
-const rawBackends = process.env.RIDGETOP_FIREFOX_BACKENDS?.split(',')
-const BACKENDS: FirefoxBackend[] = rawBackends
-  ? rawBackends.map(name => {
-    if (!isFirefoxBackend(name)) throw new Error(`Unknown Firefox backend: ${name}`)
-    return name
-  })
-  : ['webgl2', 'canvas']
-const BENCHMARK_COUNT = Number(process.env.RIDGETOP_BENCHMARK_COUNT ?? '1024')
-const FIREFOX_BIN = process.env.RIDGETOP_FIREFOX ?? 'firefox'
-
-async function getFreePort(): Promise<number> {
-  return await new Promise((resolve, reject) => {
-    const srv = createServer()
-    srv.once('error', reject)
-    srv.listen(0, '127.0.0.1', () => {
-      const addr = srv.address()
-      const port = typeof addr === 'object' && addr ? addr.port : 0
-      srv.close(err => (err ? reject(err) : resolve(port)))
-    })
-  })
-}
-
-async function createFirefoxProfileDir(): Promise<string> {
-  // Snap-packaged Firefox on Ubuntu cannot access /tmp; place profile inside snap common dir when present.
-  const snapCommon = join(homedir(), 'snap', 'firefox', 'common')
-  const baseDir = existsSync(snapCommon) ? snapCommon : tmpdir()
-  return await mkdtemp(join(baseDir, 'ridgetop-ff-smoke-'))
-}
-
-async function until<T>(
-  read: () => Promise<T>,
-  expected: T | ((value: T) => boolean),
-  description: string,
-  limit = 160
-): Promise<T> {
-  let actual: T | undefined
-  for (let i = 0; i < limit; i++) {
-    actual = await read()
-    if (isPredicate(expected) ? expected(actual) : expected === actual) {
-      return actual
-    }
-    await wait(100)
-  }
-  assert.fail(`${description}. Last value: ${JSON.stringify(actual)}`)
-}
-
-class FirefoxBiDi {
-  private ws: WebSocket
-  private nextId = 0
-  private pending = new Map<number, BiDiPending>()
-  readonly errors: string[] = []
-  context = ''
-
-  private constructor(ws: WebSocket) {
-    this.ws = ws
-    const rejectAll = (reason: string) => {
-      for (const [id, entry] of this.pending) {
-        clearTimeout(entry.timeout)
-        entry.reject(new Error(reason))
-        this.pending.delete(id)
-      }
-    }
-    this.ws.onclose = () => rejectAll('Firefox BiDi WebSocket closed unexpectedly')
-    this.ws.onerror = () => rejectAll('Firefox BiDi WebSocket error')
-    this.ws.onmessage = ({ data }: MessageEvent) => {
-      const msg = JSON.parse(String(data))
-      if (typeof msg.id === 'number') {
-        const entry = this.pending.get(msg.id)
-        if (!entry) return
-        clearTimeout(entry.timeout)
-        this.pending.delete(msg.id)
-        if (msg.type === 'error') {
-          entry.reject(new Error(`BiDi ${msg.error}: ${msg.message}`))
-        } else {
-          entry.resolve(isRecord(msg.result) ? msg.result : {})
-        }
-        return
-      }
-      if (msg.type === 'event' && msg.method === 'log.entryAdded') {
-        const entry = msg.params
-        if (entry?.level === 'error') {
-          const detail = entry.text || entry.stackTrace?.callFrames?.[0]?.functionName || JSON.stringify(entry)
-          this.errors.push(`[${entry.type ?? 'log'}] ${detail}`)
-        }
-      }
-    }
-  }
-
-  static async connect(wsBaseUrl: string): Promise<FirefoxBiDi> {
-    const ws = new WebSocket(wsBaseUrl + '/session')
-    await new Promise<void>((resolve, reject) => {
-      ws.addEventListener('open', () => resolve(), { once: true })
-      ws.addEventListener('error', () => reject(new Error('WebSocket error connecting to Firefox BiDi')), { once: true })
-    })
-    const client = new FirefoxBiDi(ws)
-    await client.send('session.new', { capabilities: {} })
-    await client.send('session.subscribe', { events: ['log.entryAdded'] })
-    const tree = await client.send('browsingContext.getTree', {})
-    const contexts = Array.isArray(tree.contexts) ? tree.contexts : []
-    const firstContext = contexts[0]
-    assert.ok(isRecord(firstContext) && typeof firstContext.context === 'string', 'Firefox BiDi opened a browsing context')
-    client.context = firstContext.context
-    await client.send('browsingContext.setViewport', {
-      context: client.context,
-      viewport: { width: 1280, height: 800 }
-    })
-    return client
-  }
-
-  send(method: string, params: Record<string, unknown> = {}): Promise<Record<string, unknown>> {
-    return new Promise<Record<string, unknown>>((resolve, reject) => {
-      const id = ++this.nextId
-      const timeout = setTimeout(() => {
-        this.pending.delete(id)
-        reject(new Error(`BiDi timeout calling ${method}`))
-      }, 45_000)
-      this.pending.set(id, { resolve, reject, timeout })
-      this.ws.send(JSON.stringify({ id, method, params }))
-    })
-  }
-
-  async addPreloadScript(functionDeclaration: string): Promise<string> {
-    const res = await this.send('script.addPreloadScript', { functionDeclaration })
-    if (typeof res.script !== 'string') throw new Error('Missing preload script id from BiDi')
-    return res.script
-  }
-
-  async removePreloadScript(script: string): Promise<void> {
-    await this.send('script.removePreloadScript', { script })
-  }
-
-  async navigate(url: string): Promise<void> {
-    await this.send('browsingContext.navigate', {
-      context: this.context,
-      url,
-      wait: 'complete'
-    })
-  }
-
-  async evaluate(expression: string): Promise<unknown> {
-    const wrapped = `(async () => { const __v = await (${expression}); return JSON.stringify(__v === undefined ? null : __v); })()`
-    const res = await this.send('script.evaluate', {
-      expression: wrapped,
-      target: { context: this.context },
-      awaitPromise: true,
-      resultOwnership: 'none'
-    })
-    if (res.type === 'exception') {
-      const detail = isRecord(res.exceptionDetails) && typeof res.exceptionDetails.text === 'string'
-        ? res.exceptionDetails.text
-        : JSON.stringify(res)
-      throw new Error(`Page evaluation exception: ${detail}`)
-    }
-    if (isRecord(res.result) && res.result.type === 'string' && typeof res.result.value === 'string') {
-      const parsed: unknown = JSON.parse(res.result.value)
-      return parsed
-    }
-    return undefined
-  }
-
-  clearErrors(): void {
-    this.errors.length = 0
-  }
-
-  async close(): Promise<void> {
-    try {
-      await this.send('session.end', {})
-    } catch {
-      // Ignore shutdown races
-    }
-    this.ws.close()
-  }
-}
-
-async function startServer(): Promise<{ origin: string; stop: () => Promise<void> }> {
-  const existing = process.env.RIDGETOP_URL
-  if (existing) {
-    return { origin: existing.replace(/\/$/, ''), stop: async () => {} }
-  }
-  const serverDir = await mkdtemp(join(tmpdir(), 'ridgetop-ff-server-'))
-  const saveFile = join(serverDir, 'characters.json')
-  const child = spawn(process.execPath, ['dist/server.js', '--testing'], {
-    cwd: new URL('../', import.meta.url),
-    env: { ...process.env, HOST: '127.0.0.1', PORT: '0', RIDGETOP_CHARACTER_SAVE: saveFile },
-    stdio: ['ignore', 'pipe', 'inherit']
-  })
-  let origin = ''
-  for await (const line of createInterface({ input: child.stdout })) {
-    const port = /listening on port (\d+)/.exec(line)?.[1]
-    if (port) {
-      origin = `http://127.0.0.1:${port}`
-      break
-    }
-  }
-  assert.ok(origin, 'Ridgetop testing server started')
-  return {
-    origin,
-    async stop() {
-      if (child.exitCode === null && child.signalCode === null) {
-        const exited = once(child, 'exit')
-        child.kill('SIGTERM')
-        await exited
-      }
-      await rm(serverDir, { recursive: true, force: true })
-    }
-  }
-}
-
-async function launchFirefox(): Promise<{ client: FirefoxBiDi; stop: () => Promise<void> }> {
-  const profileDir = await createFirefoxProfileDir()
-  const port = await getFreePort()
-  const ff: ChildProcess = spawn(
-    FIREFOX_BIN,
-    [
-      '--headless',
-      '--new-instance',
-      '--no-remote',
-      '--profile', profileDir,
-      `--remote-debugging-port=${port}`,
-      'about:blank'
-    ],
-    { stdio: ['ignore', 'pipe', 'pipe'] }
-  )
-
-  async function cleanupFirefox() {
-    if (ff.exitCode === null && ff.signalCode === null) {
-      const exited = once(ff, 'exit')
-      ff.kill('SIGTERM')
-      const killer = setTimeout(() => ff.kill('SIGKILL'), 5_000)
-      try {
-        await exited
-      } finally {
-        clearTimeout(killer)
-      }
-    }
-    await rm(profileDir, { recursive: true, force: true })
-  }
-
-  let logs = ''
-  let client: FirefoxBiDi
-  try {
-    const wsUrl = await new Promise<string>((resolve, reject) => {
-      const timer = setTimeout(() => reject(new Error(`Firefox BiDi startup timed out:\n${logs}`)), 20_000)
-      const detach = () => {
-        clearTimeout(timer)
-        ff.stdout?.off('data', onData)
-        ff.stderr?.off('data', onData)
-      }
-      const onData = (chunk: Buffer) => {
-        logs += chunk.toString()
-        const match = /WebDriver BiDi listening on (ws:\/\/[^\s]+)/.exec(logs)
-        if (match) {
-          detach()
-          resolve(match[1])
-        }
-      }
-      ff.stdout?.on('data', onData)
-      ff.stderr?.on('data', onData)
-      ff.once('error', err => { detach(); reject(err) })
-      ff.once('exit', code => { detach(); reject(new Error(`Firefox exited early (${code}):\n${logs}`)) })
-    })
-
-    client = await FirefoxBiDi.connect(wsUrl)
-  } catch (error) {
-    await cleanupFirefox().catch(() => {})
-    throw error
-  }
-  return {
-    client,
-    async stop() {
-      await client.close()
-      await cleanupFirefox()
-    }
-  }
-}
-
-const uiState = (client: FirefoxBiDi, field: string) =>
-  client.evaluate(`window.__ridgetopUi?.state?.()?.[${JSON.stringify(field)}]`)
-
-const uiAct = (client: FirefoxBiDi, id: string, action = 'press', payload?: unknown) =>
-  client.evaluate(`window.__ridgetopUi?.act(${JSON.stringify(id)}, ${JSON.stringify(action)}, ${JSON.stringify(payload)})`)
-
-async function assertGameViewport(client: FirefoxBiDi, stage: string, uiLayer: string): Promise<void> {
-  await client.evaluate('new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))')
-  const layout = await client.evaluate(`(() => {
-    const world = document.getElementById(${JSON.stringify(stage)})
-    const ui = document.getElementById(${JSON.stringify(uiLayer)})
-    if (!world || !ui) return { missing: true }
-    const fillsViewport = el => {
-      const rect = el.getBoundingClientRect()
-      return Math.abs(rect.top) <= 1 && Math.abs(rect.left) <= 1 &&
-        Math.abs(rect.width - innerWidth) <= 1 && Math.abs(rect.height - innerHeight) <= 1
-    }
-    const ctx = ui.getContext('2d')
-    let painted = false
-    if (ctx && ui.width > 0 && ui.height > 0) {
-      const data = ctx.getImageData(0, 0, ui.width, ui.height).data
-      for (let i = 3; i < data.length; i += 64) {
-        if (data[i] > 0) { painted = true; break }
-      }
-    }
-    return {
-      playfield: fillsViewport(world),
-      ui: fillsViewport(ui),
-      noSeparateHud: document.querySelectorAll('canvas[id$="-hud"]').length === 0,
-      noHtmlMenus: [...document.querySelectorAll('button, select')].every(el => Boolean(el.closest('#ridgetop-testing-root'))),
-      matchingPixels: ui.width === world.width && ui.height === world.height,
-      painted
-    }
-  })()`)
-  assert.deepEqual(layout, {
-    playfield: true,
-    ui: true,
-    noSeparateHud: true,
-    noHtmlMenus: true,
-    matchingPixels: true,
-    painted: true
-  }, `viewport check failed for ${stage}`)
-}
-
-let server: { origin: string; stop: () => Promise<void> } | undefined
-let firefox: { client: FirefoxBiDi; stop: () => Promise<void> } | undefined
+let server: HostedServer | undefined
+let firefox: FirefoxSession | undefined
 const benchmarkResults: BenchmarkRecord[] = []
 
 try {
-  server = await startServer()
-  firefox = await launchFirefox()
-  const { client } = firefox
-  // 0. Inspect Firefox capabilities & GPU renderer info
-  await client.navigate(`${server.origin}/benchmark`)
-  const gpuInfo = await client.evaluate(`(() => {
+  server = await startHostedServer({
+    existingUrl: process.env.RIDGETOP_URL,
+    testing: true,
+    tempPrefix: 'ridgetop-ff-server-'
+  })
+  firefox = await launchFirefoxSession()
+  const { page } = firefox
+  const origin = server.origin
+
+  // Inspect Firefox capabilities & GPU renderer info
+  await page.navigate(`${origin}/benchmark`)
+  const gpuInfo = await page.evaluate(`(() => {
     const c = document.createElement('canvas')
     const gl = c.getContext('webgl2')
     const dbg = gl?.getExtension('WEBGL_debug_renderer_info')
@@ -422,155 +59,97 @@ try {
   console.log('Firefox GPU info:', JSON.stringify(gpuInfo))
   assert.ok(isRecord(gpuInfo) && gpuInfo.webgl2, 'Firefox WebGL 2 context available')
 
-  // 1. Verify all 4 games across WebGL 2 and Canvas 2D
-  for (const backend of BACKENDS) {
-    const expectedName = RENDERER_NAMES[backend]
-
-    // 1a. Beacon Run (/)
-    client.clearErrors()
-    await client.navigate(`${server.origin}/?mode=practice&renderer=${backend}`)
-    await until(() => uiState(client, 'backend'), expectedName, `Beacon Run ${backend} initialized`)
-    await until(() => uiState(client, 'connection'), 'Solo practice', `Beacon Run ${backend} practice loaded`)
-    await assertGameViewport(client, 'stage', 'ui')
-    await uiAct(client, 'pause')
-    await until(() => uiState(client, 'screen'), 'pause', `Beacon Run ${backend} pause`)
-    await uiAct(client, 'resume')
-    await until(() => uiState(client, 'screen'), 'play', `Beacon Run ${backend} resume`)
-    assert.deepEqual(client.errors, [], `Beacon Run (${backend}) console/JS errors`)
-    console.log(`PASS Firefox ${backend}: Beacon Run (/)`)
-
-    // 1b. Signal Drift (/racing)
-    client.clearErrors()
-    await client.navigate(`${server.origin}/racing?renderer=${backend}`)
-    await until(() => uiState(client, 'backend'), expectedName, `Signal Drift ${backend} initialized`)
-    await uiAct(client, 'race-garage')
-    await until(() => uiState(client, 'screen'), 'garage', `Signal Drift ${backend} garage`)
-    await uiAct(client, 'garage-back')
-    await uiAct(client, 'race-start')
-    await until(() => uiState(client, 'screen'), 'racing', `Signal Drift ${backend} race started`)
-    await assertGameViewport(client, 'race-stage', 'race-ui')
-    assert.deepEqual(client.errors, [], `Signal Drift (${backend}) console/JS errors`)
-    console.log(`PASS Firefox ${backend}: Signal Drift (/racing)`)
-
-    // 1c. Tidewatch (/lighthouse)
-    client.clearErrors()
-    await client.navigate(`${server.origin}/lighthouse?renderer=${backend}`)
-    await until(() => uiState(client, 'screen'), 'title', `Tidewatch ${backend} title`)
-    await uiAct(client, 'lh-play')
-    await until(() => uiState(client, 'screen'), 'playing', `Tidewatch ${backend} playing`)
-    await assertGameViewport(client, 'lh-stage', 'lh-ui')
-    const lhState = await client.evaluate('window.__ridgetopUi?.state?.()')
-    assert.ok(isRecord(lhState), `Tidewatch ${backend} state object missing`)
-    for (const metric of ['day', 'coins', 'fuel', 'warmth', 'carry', 'shipsGuided']) {
-      const value = lhState[metric]
-      assert.ok(typeof value === 'number' && Number.isFinite(value), `Tidewatch ${backend} ${metric} finite`)
-    }
-    assert.deepEqual(client.errors, [], `Tidewatch (${backend}) console/JS errors`)
-    console.log(`PASS Firefox ${backend}: Tidewatch (/lighthouse)`)
-
-    // 1d. Starter / Lantern Grove (/starter/)
-    client.clearErrors()
-    await client.navigate(`${server.origin}/starter/?renderer=${backend}`)
-    await until(() => uiState(client, 'count'), '0 / 3', `Starter ${backend} initialized`)
-    const starterReady = await until(
-      () => client.evaluate(`(() => {
-        const world = document.querySelector('#world')
-        return Boolean(world && !world.hidden && world.width > 0 && world.height > 0)
-      })()`),
-      true,
-      `Starter ${backend} 3D canvas active`
-    )
-    assert.equal(starterReady, true)
-    await uiAct(client, 'hud-view-toggle', 'toggle')
-    await until(
-      () => client.evaluate(`(() => {
-        const layer = document.querySelector('#sprites')
-        if (!layer || layer.hidden) return false
-        const pixels = layer.getContext('2d').getImageData(0, 0, layer.width, layer.height).data
-        return pixels.some((v, i) => i % 4 === 3 && v > 0)
-      })()`),
-      true,
-      `Starter ${backend} 2D sprite view rendered`
-    )
-    assert.deepEqual(client.errors, [], `Starter (${backend}) console/JS errors`)
-    console.log(`PASS Firefox ${backend}: Starter (/starter/)`)
-  }
-
-  // 2. Verify Testing Mode (?testing=1)
-  client.clearErrors()
-  await client.navigate(`${server.origin}/starter/?testing=1&renderer=webgl2`)
-  await until(
-    () => client.evaluate("document.querySelector('#rt-pause-btn')?.textContent?.trim() ?? null"),
-    'Pause & Inspect (F9)',
-    'Testing Mode studio mounted on /starter/?testing=1'
-  )
-  await client.evaluate("document.querySelector('#rt-pause-btn').click()")
-  await until(
-    () => client.evaluate("Boolean(document.querySelector('#ridgetop-testing-drawer'))"),
-    true,
-    'Testing Mode drawer opened on pause'
-  )
-  assert.deepEqual(client.errors, [], 'Testing Mode (?testing=1) console/JS errors')
-  console.log('PASS Firefox webgl2: Testing Mode (/starter/?testing=1)')
-
-  // 3. Run /benchmark across WebGL 2 and Canvas 2D (static + dynamic)
-  const preloadId = await client.addPreloadScript(`() => {
-    const orig = URL.createObjectURL.bind(URL)
-    window.__ridgetopLastBenchmarkJson = null
-    URL.createObjectURL = (blob) => {
-      if (blob && typeof blob.text === 'function') {
-        blob.text().then(text => { window.__ridgetopLastBenchmarkJson = text })
+  const suites: SmokeSuiteEntry[] = [
+    {
+      name: 'beacon-run',
+      aliases: ['beacon'],
+      async run() {
+        for (const backend of backends) {
+          await verifyBeaconRunCore(page, origin, backend, { noScroll: false })
+          console.log(`PASS Firefox ${backend}: Beacon Run (/)`)
+        }
       }
-      return orig(blob)
-    }
-  }`)
-  try {
-    client.clearErrors()
-    await client.navigate(`${server.origin}/benchmark`)
-    await until(() => client.evaluate("document.readyState === 'complete'"), true, 'Benchmark page loaded')
-    const workloads: Array<'static' | 'dynamic'> = ['static', 'dynamic']
-    for (const backend of BACKENDS) {
-      for (const workload of workloads) {
-        await client.evaluate(`(() => {
-          window.__ridgetopLastBenchmarkJson = null
-          document.querySelector('[name=backend]').value = ${JSON.stringify(backend)}
-          document.querySelector('[name=count]').value = ${JSON.stringify(String(BENCHMARK_COUNT))}
-          document.querySelector('[name=workload]').value = ${JSON.stringify(workload)}
-          document.querySelector('#run').click()
-        })()`)
-        const line = await until(
-          () => client.evaluate("document.querySelector('#result')?.textContent ?? null"),
-          s => typeof s === 'string' && s.length > 0 && s !== 'Running…',
-          `Firefox benchmark ${backend} ${workload}`,
-          300
-        )
-        assert.ok(typeof line === 'string' && line.startsWith(RENDERER_NAMES[backend] + ' ·'), `Unexpected benchmark result: ${String(line)}`)
-        const rawJson = await until(
-          () => client.evaluate('window.__ridgetopLastBenchmarkJson'),
-          value => typeof value === 'string' && value.length > 0,
-          `Firefox benchmark JSON capture ${backend} ${workload}`,
-          50
-        )
-        assert.ok(typeof rawJson === 'string', 'Benchmark JSON payload is a string')
-        const parsed = parseBenchmarkRecord(JSON.parse(rawJson))
-        if (backend === 'webgl2' && workload === 'static') {
-          assert.equal(parsed.drawCalls, 2, 'WebGL 2 static drawCalls === 2')
-          assert.equal(parsed.uploadBytes, 0, 'WebGL 2 static uploadBytes === 0')
+    },
+    {
+      name: 'signal-drift',
+      aliases: ['racing'],
+      async run() {
+        for (const backend of backends) {
+          await verifySignalDriftCore(page, origin, backend, {
+            noScroll: false,
+            storagePrefix: `${runTag}.racing.${backend}.`,
+            checkGarageUpgrade: true
+          })
+          console.log(`PASS Firefox ${backend}: Signal Drift (/racing)`)
         }
-        if (backend === 'webgl2' && workload === 'dynamic') {
-          assert.equal(parsed.drawCalls, 2, 'WebGL 2 dynamic drawCalls === 2')
-          assert.equal(parsed.uploadBytes, BENCHMARK_COUNT * 64, 'WebGL 2 dynamic uploadBytes === count * 64')
+      }
+    },
+    {
+      name: 'lighthouse',
+      aliases: ['tidewatch'],
+      async run() {
+        for (const backend of backends) {
+          await verifyTidewatchCore(page, origin, backend, {
+            noScroll: false,
+            storagePrefix: `${runTag}.lighthouse.${backend}.`
+          })
+          console.log(`PASS Firefox ${backend}: Tidewatch (/lighthouse)`)
         }
-        benchmarkResults.push(parsed)
-        console.log(`BENCH Firefox ${backend} ${workload}: ${line}`)
+      }
+    },
+    {
+      name: 'crownshard',
+      async run() {
+        for (const backend of backends) {
+          await verifyCrownshardCore(page, origin, backend, {
+            noScroll: false,
+            storagePrefix: `${runTag}.crownshard.${backend}.`
+          })
+          console.log(`PASS Firefox ${backend}: Crownshard (/crownshard)`)
+        }
+      }
+    },
+    {
+      name: 'starter',
+      async run() {
+        for (const backend of backends) {
+          await verifyStarterCore(page, origin, backend)
+          console.log(`PASS Firefox ${backend}: Starter (/starter/)`)
+        }
+      }
+    },
+    {
+      name: 'testing',
+      aliases: ['testing-mode'],
+      async run() {
+        await verifyTestingModeCore(page, origin, 'webgl2')
+        console.log('PASS Firefox webgl2: Testing Mode (/starter/?testing=1)')
+      }
+    },
+    {
+      name: 'benchmark',
+      async run() {
+        const runs: BenchmarkRunSpec[] = backends.flatMap(backend => [
+          { backend, workload: 'static' },
+          { backend, workload: 'dynamic' }
+        ])
+        const outcomes = await verifyBenchmarkCore(page, origin, runs, {
+          count: benchmarkCount,
+          captureJson: true
+        })
+        for (const outcome of outcomes) {
+          if (outcome.record) benchmarkResults.push(outcome.record)
+          console.log(`BENCH Firefox ${outcome.backend} ${outcome.workload}: ${outcome.line}`)
+        }
       }
     }
-    assert.deepEqual(client.errors, [], 'Benchmark page console/JS errors')
-  } finally {
-    await client.removePreloadScript(preloadId)
-  }
+  ]
 
-  console.log('FIREFOX_BENCHMARK_JSON=' + JSON.stringify(benchmarkResults, null, 2))
+  await runFilteredSuites(filter, suites)
+
+  if (benchmarkResults.length > 0) {
+    console.log('FIREFOX_BENCHMARK_JSON=' + JSON.stringify(benchmarkResults, null, 2))
+  }
   console.log('All Firefox headless smoke & benchmark checks passed.')
 } finally {
   if (firefox) await firefox.stop()

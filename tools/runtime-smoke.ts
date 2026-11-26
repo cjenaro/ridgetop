@@ -1,9 +1,6 @@
 import assert from 'node:assert/strict'
-import { spawn } from 'node:child_process'
-import { mkdtemp, readFile, rm } from 'node:fs/promises'
-import { tmpdir } from 'node:os'
-import { join } from 'node:path'
-import { once } from 'node:events'
+import { readFile } from 'node:fs/promises'
+import { startHostedServer } from './browser-driver.ts'
 
 const runtimes = {
   node: [process.execPath],
@@ -14,42 +11,28 @@ type RuntimeName = keyof typeof runtimes
 function isRuntimeName(name: string): name is RuntimeName {
   return Object.hasOwn(runtimes, name)
 }
+
 const names = process.argv.slice(2)
 for (const name of names.length ? names : Object.keys(runtimes)) {
   if (!isRuntimeName(name)) throw new Error('Unknown runtime: ' + name)
   const [command, ...args] = runtimes[name]
-  const temporary = await mkdtemp(join(tmpdir(), 'ridgetop-runtime-'))
-  const save = join(temporary, 'characters.json')
-  const server = spawn(command, [...args, 'dist/server.js'], {
-    cwd: new URL('../', import.meta.url),
-    env: { ...process.env, HOST: '127.0.0.1', PORT: '0', RIDGETOP_CHARACTER_SAVE: save },
-    stdio: ['ignore', 'pipe', 'pipe']
+  const server = await startHostedServer({
+    command,
+    args: [...args, 'dist/server.js'],
+    tempPrefix: 'ridgetop-runtime-',
+    startupTimeoutMs: 8_000,
+    stdioStderr: 'pipe'
   })
-  const closed = once(server, 'close')
-  // A missing binary is reported by the readiness check.
-  closed.catch(() => {})
   const lifetime = new AbortController()
-  let log = ''
-  function record(chunk: Buffer) { log += chunk.toString() }
-  server.stderr.on('data', record)
   try {
-    const port = await new Promise<string>((resolve, reject) => {
-      const timer = setTimeout(() => reject(new Error(name + ' startup timed out\n' + log)), 8_000)
-      server.once('error', reject)
-      server.once('close', code => { clearTimeout(timer); reject(new Error(name + ' exited ' + code + '\n' + log)) })
-      server.stdout.on('data', chunk => {
-        record(chunk)
-        const ready = /listening on port (\d+)/.exec(log)?.[1]
-        if (ready) { clearTimeout(timer); resolve(ready) }
-      })
-    })
-    const base = 'http://127.0.0.1:' + port
-    const request = (path: string, options: RequestInit = {}) => fetch(base + path, {
+    const request = (path: string, options: RequestInit = {}) => fetch(server.origin + path, {
       ...options, signal: AbortSignal.any([lifetime.signal, AbortSignal.timeout(4_000)])
     })
     assert.equal(await (await request('/healthz')).text(), 'ok')
     assert.match(await (await request('/')).text(), /Beacon Run/)
     assert.match(await (await request('/racing')).text(), /Signal Drift/)
+    assert.match(await (await request('/lighthouse')).text(), /Tidewatch/)
+    assert.match(await (await request('/crownshard')).text(), /Crownshard/)
     assert.match(await (await request('/sprites')).text(), /Sprite workshop/)
     assert.match(await (await request('/models')).text(), /Low-poly models/)
     assert.match(await (await request('/models/main.js')).text(), /createLowPolyRenderer/)
@@ -81,7 +64,8 @@ for (const name of names.length ? names : Object.keys(runtimes)) {
     assert.ok(setCookie)
     const cookie = setCookie.split(';')[0]
     assert.match(await profile.text(), /"xp":0/)
-    assert.match(await readFile(save, 'utf8'), /"cleared":\[\]/)
+    assert.ok(server.saveFile, 'saveFile created for hosted server')
+    assert.match(await readFile(server.saveFile, 'utf8'), /"cleared":\[\]/)
     const zone = '/expeditions/ridge/runtime-smoke'
     const stream = await request(zone + '/events', { headers: { Cookie: cookie } })
     assert.equal(stream.status, 200)
@@ -110,8 +94,6 @@ for (const name of names.length ? names : Object.keys(runtimes)) {
     console.log(name + ' passed static game assets, character persistence, SSE and authoritative input')
   } finally {
     lifetime.abort()
-    server.kill('SIGTERM')
-    const shutdown = setTimeout(() => server.kill('SIGKILL'), 4000)
-    try { await closed } finally { clearTimeout(shutdown); await rm(temporary, { recursive: true }) }
+    await server.stop()
   }
 }
