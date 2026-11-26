@@ -191,6 +191,8 @@ export const FACING_DIRS: readonly FacingDir[] = ['n', 'e', 's', 'w']
 
 export type AttackArc = 'front' | 'flank' | 'back'
 
+export type CounterAvoidReason = 'flank' | 'backstab' | 'ranged' | 'stunned' | 'lethal' | null
+
 export type FacingExposureLevel = 'safe' | 'flank' | 'back'
 
 export interface FacingThreatEntry {
@@ -627,6 +629,9 @@ export interface CombatForecastAlt {
   readonly lethalNormal: boolean
   readonly requiresMove: boolean
   readonly attackArc: AttackArc
+  readonly canCounter?: boolean
+  readonly counterDmg?: number
+  readonly counterLethal?: boolean
   readonly active: boolean
 }
 
@@ -679,6 +684,10 @@ export interface CombatForecast {
   readonly targetHpAfterCrit: number
   readonly lethalNormal: boolean
   readonly lethalCrit: boolean
+  readonly canCounter?: boolean
+  readonly counterDmg?: number
+  readonly counterLethal?: boolean
+  readonly counterAvoidReason?: CounterAvoidReason
   readonly alternatives: readonly CombatForecastAlt[]
 }
 

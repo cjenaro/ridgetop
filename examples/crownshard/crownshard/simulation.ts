@@ -5,6 +5,15 @@ import {
   MERGE_COPIES_REQUIRED, PACK_BY_ID, PLAYABLE_CHAPTERS, RARITY_META, RARITY_ORDER, TACTIC_BY_ID, TACTIC_LIST
 } from './data.ts'
 import {
+  COUNTER_DAMAGE_MULTIPLIER, COUNTER_MIN_DAMAGE, canCounterAttack, computeCounterDamage,
+  getCounterAvoidReason, isMeleeSkillEligibleForCounter
+} from './counter-attack.ts'
+export {
+  COUNTER_DAMAGE_MULTIPLIER, COUNTER_MIN_DAMAGE, canCounterAttack, computeCounterDamage,
+  getCounterAvoidReason, isMeleeSkillEligibleForCounter
+}
+export type { CounterDamageOptions, CounterDamageResult, CounterEligibilityOptions } from './counter-attack.ts'
+import {
   BARRICADE_DEFAULT_HP, CURSED_ALTAR_HP_COST, FACING_DIRS, GRID_COLS, GRID_ROWS, KO_COUNTDOWN_TURNS,
   LAVA_GEYSER_DAMAGE, LAVA_GEYSER_PERIOD, MAX_HEIGHT_LEVEL, MAX_POISON_STACKS,
   TALL_GRASS_RANGED_COVER, TALL_GRASS_RANGED_CRIT_REDUCTION, TAUNT_RADIUS,
@@ -16,7 +25,7 @@ import type {
   AttackArc, BattleCellSnapshot, BattleObjectiveEvaluation, BattleObjectiveKind, BattleObjectiveSnapshot,
   BattleObjectiveState, BattleReward, BattleSaveSnapshot, BattleState, BattleUnit,
   BattleUnitSnapshot, BiomeId, CampaignState, ChapterSpec, CombatForecast, CombatForecastAlt,
-  DangerZoneMap, DangerZoneTile, DifficultyLevel, EnemyArchetypeId, EnemyThreatMap, EquipSlot,
+  CounterAvoidReason, DangerZoneMap, DangerZoneTile, DifficultyLevel, EnemyArchetypeId, EnemyThreatMap, EquipSlot,
   EquipmentSpec, FacingDir, FacingExposureLevel, FacingExposureReport, FacingThreatEntry,
   FlankThreatTile, GameState, GridCell, GridCoord, HeroClassId, MoveAttackTile, OwnedEquipCard,
   OwnedHeroCard, OwnedTacticCard, PackId, PackRevealItem, Rarity, SaveData, SkillSpec, StatusKind,
@@ -4125,6 +4134,9 @@ export function computeCombatForecast(state: GameState, col: number, row: number
   const alternatives: CombatForecastAlt[] = []
   const keycaps: readonly string[] = ['2', '3', '4']
   const distNow = manhattan(active.col, active.row, primary.col, primary.row)
+  const equipInflictsStun = [active.weaponId, active.armorId, active.relicId].some(
+    eqId => Boolean(eqId && EQUIPMENT_BY_ID[eqId]?.onHitStatus === 'stun')
+  )
 
   // Basic Strike option (for living enemy targets)
   if (!primaryDowned && primary.team !== active.team) {
@@ -4135,6 +4147,25 @@ export function computeCombatForecast(state: GameState, col: number, row: number
       : (!active.moved ? pickBestApproachTile(battle, active, battle.moveTiles, primary.col, primary.row, active.range, false) : null)
     if (strikeApproach) {
       const m = previewDamageMath(battle, active, primary, strikeApproach.col, strikeApproach.row, active.atk, 0, true)
+      const strikeDist = manhattan(strikeApproach.col, strikeApproach.row, primary.col, primary.row)
+      const strikeRanged = active.range > 1 || strikeDist !== 1
+      const strikeLethal = m.hpAfterNormal <= 0
+      const altCanCounter = canCounterAttack(battle, active, primary, m.attackArc, strikeRanged, {
+        attackerCol: strikeApproach.col,
+        attackerRow: strikeApproach.row,
+        incomingLethal: strikeLethal,
+        incomingStun: equipInflictsStun
+      })
+      const strikeHitHp = Math.max(0, m.normalDmg - primary.shield)
+      const strikeLifesteal = active.lifesteal > 0 && strikeHitHp > 0 ? Math.max(2, Math.round(strikeHitHp * active.lifesteal)) : 0
+      const altCounter = altCanCounter
+        ? computeCounterDamage(battle, primary, active, {
+          attackerCol: strikeApproach.col,
+          attackerRow: strikeApproach.row,
+          attackerHp: Math.min(active.maxHp, active.hp + strikeLifesteal),
+          attackerShield: active.shield
+        })
+        : null
       alternatives.push({
         skillIndex: null,
         keycap: '1',
@@ -4144,9 +4175,12 @@ export function computeCombatForecast(state: GameState, col: number, row: number
         critChance: m.critChance,
         healAmount: 0,
         selfShield: 0,
-        lethalNormal: m.hpAfterNormal <= 0,
+        lethalNormal: strikeLethal,
         requiresMove: !strikeDirect,
         attackArc: m.attackArc,
+        canCounter: altCanCounter,
+        counterDmg: altCounter ? altCounter.normalDmg : 0,
+        counterLethal: altCounter ? altCounter.lethalToAttacker : false,
         active: armedIdx === null
       })
     }
@@ -4184,6 +4218,9 @@ export function computeCombatForecast(state: GameState, col: number, row: number
         lethalNormal: false,
         requiresMove: !skDirect,
         attackArc: 'front',
+        canCounter: false,
+        counterDmg: 0,
+        counterLethal: false,
         active: armedIdx === i
       })
     } else if (sk.target === 'ally') {
@@ -4201,11 +4238,34 @@ export function computeCombatForecast(state: GameState, col: number, row: number
         lethalNormal: false,
         requiresMove: !skDirect,
         attackArc: 'front',
+        canCounter: false,
+        counterDmg: 0,
+        counterLethal: false,
         active: armedIdx === i
       })
     } else {
       const raw = active.atk * sk.powerMul + sk.flatBonus
       const m = previewDamageMath(battle, active, primary, skApproach.col, skApproach.row, raw, sk.ignoreArmor, true)
+      const skLethal = m.hpAfterNormal <= 0
+      const skRangedOrNonMelee = !isMeleeSkillEligibleForCounter(sk)
+      const skCanCounter = canCounterAttack(battle, active, primary, m.attackArc, skRangedOrNonMelee, {
+        attackerCol: skApproach.col,
+        attackerRow: skApproach.row,
+        incomingLethal: skLethal,
+        incomingStun: sk.status === 'stun' || equipInflictsStun
+      })
+      const skHitHp = Math.max(0, m.normalDmg - primary.shield)
+      const skLifesteal = active.lifesteal > 0 && skHitHp > 0 ? Math.max(2, Math.round(skHitHp * active.lifesteal)) : 0
+      const skSelfHeal = sk.healAmount > 0 && sk.pattern === 'single' ? sk.healAmount : 0
+      const skSelfShield = sk.shieldAmount > 0 && sk.pattern !== 'aura' ? sk.shieldAmount : 0
+      const skCounter = skCanCounter
+        ? computeCounterDamage(battle, primary, active, {
+          attackerCol: skApproach.col,
+          attackerRow: skApproach.row,
+          attackerHp: Math.min(active.maxHp, active.hp + skSelfHeal + skLifesteal),
+          attackerShield: active.shield + skSelfShield
+        })
+        : null
       alternatives.push({
         skillIndex: i,
         keycap: keycaps[i] ?? '2',
@@ -4217,11 +4277,54 @@ export function computeCombatForecast(state: GameState, col: number, row: number
         selfShield: sk.shieldAmount,
         status: sk.status,
         selfStatus: sk.selfStatus,
-        lethalNormal: m.hpAfterNormal <= 0,
+        lethalNormal: skLethal,
         requiresMove: !skDirect,
         attackArc: m.attackArc,
+        canCounter: skCanCounter,
+        counterDmg: skCounter ? skCounter.normalDmg : 0,
+        counterLethal: skCounter ? skCounter.lethalToAttacker : false,
         active: armedIdx === i
       })
+    }
+  }
+
+  // Primary frontal melee counter-attack forecast
+  const primaryLethalNormal = normalDmg > 0 && hpAfterNormal <= 0
+  let canCounter = false
+  let counterDmg = 0
+  let counterLethal = false
+  let counterAvoidReason: CounterAvoidReason = null
+  if (effectiveIsOffensive && primary.team !== active.team && primary.alive) {
+    const primaryDist = manhattan(approachCol, approachRow, primary.col, primary.row)
+    const isRangedOrSkill = armedSkill
+      ? !isMeleeSkillEligibleForCounter(armedSkill)
+      : (active.range > 1 || primaryDist !== 1)
+    const incomingStun = armedSkill?.status === 'stun' || equipInflictsStun
+    const counterOpts = {
+      attackerCol: approachCol,
+      attackerRow: approachRow,
+      incomingLethal: primaryLethalNormal,
+      incomingStun
+    }
+    canCounter = canCounterAttack(battle, active, primary, attackArc, isRangedOrSkill, counterOpts)
+    counterAvoidReason = getCounterAvoidReason(battle, active, primary, attackArc, isRangedOrSkill, counterOpts)
+    if (canCounter) {
+      const primaryHitHp = Math.max(0, normalDmg - primary.shield)
+      const primaryLifesteal = active.lifesteal > 0 && primaryHitHp > 0
+        ? Math.max(2, Math.round(primaryHitHp * active.lifesteal))
+        : 0
+      const primarySelfHeal = armedSkill && armedSkill.healAmount > 0 && armedSkill.pattern === 'single'
+        && armedSkill.target !== 'ally' && armedSkill.target !== 'self'
+        ? armedSkill.healAmount
+        : 0
+      const cCalc = computeCounterDamage(battle, primary, active, {
+        attackerCol: approachCol,
+        attackerRow: approachRow,
+        attackerHp: Math.min(active.maxHp, active.hp + primarySelfHeal + primaryLifesteal),
+        attackerShield: active.shield + selfShield
+      })
+      counterDmg = cCalc.normalDmg
+      counterLethal = cCalc.lethalToAttacker
     }
   }
 
@@ -4272,8 +4375,12 @@ export function computeCombatForecast(state: GameState, col: number, row: number
     targetShieldBefore: primary.shield,
     targetHpAfterNormal: hpAfterNormal,
     targetHpAfterCrit: hpAfterCrit,
-    lethalNormal: normalDmg > 0 && hpAfterNormal <= 0,
+    lethalNormal: primaryLethalNormal,
     lethalCrit: critDmg > 0 && hpAfterCrit <= 0,
+    canCounter,
+    counterDmg,
+    counterLethal,
+    counterAvoidReason,
     alternatives
   }
 }
@@ -4869,10 +4976,82 @@ function executeBasicAttackOnBarricade(state: GameState, attacker: BattleUnit, c
   damageBarricade(state, attacker, col, row, attacker.atk)
 }
 
+function executeCounterAttack(state: GameState, defender: BattleUnit, attacker: BattleUnit): number {
+  const battle = state.battle
+  if (!battle || !defender.alive || !attacker.alive) return 0
+
+  faceToward(defender, attacker.x, attacker.z)
+  defender.animState = 'attack'
+  defender.animTimer = 0.34
+
+  const dx = attacker.x - defender.x
+  const dz = attacker.z - defender.z
+  const dist = Math.hypot(dx, dz) || 1
+  defender.lungeX = (dx / dist) * 0.42
+  defender.lungeZ = (dz / dist) * 0.42
+
+  state.sounds.push({ kind: 'slash', pitch: 1.12 })
+  state.vfx.push({
+    kind: 'burst',
+    style: 'slash',
+    at: [attacker.x, attacker.y + 0.75, attacker.z],
+    uid: defender.uid
+  })
+
+  const calc = computeCounterDamage(battle, defender, attacker)
+  const absorbed = calc.shieldAbsorbed
+  const hpDmg = calc.hpDamage
+  attacker.shield = Math.max(0, attacker.shield - absorbed)
+  attacker.hp = calc.attackerHpAfter
+
+  state.vfx.push({
+    kind: 'impact',
+    uid: attacker.uid,
+    attackerUid: defender.uid,
+    arc: 'front',
+    crit: false,
+    blocked: hpDmg === 0 && absorbed > 0,
+    absorbed,
+    damage: hpDmg
+  })
+  attacker.hitFlash = 0.28
+  attacker.animState = 'hit'
+  attacker.animTimer = 0.30
+  battle.shake = Math.max(battle.shake, 0.22)
+
+  addFloat(battle, defender.x, defender.y + 0.46, defender.z, 'COUNTER!', '#ff9f43')
+  if (hpDmg > 0) {
+    addFloat(battle, attacker.x, attacker.y + 0.12, attacker.z, `-${hpDmg}`, '#ff6b7a')
+    state.sounds.push({ kind: 'hit', pitch: 1.06 })
+  } else if (absorbed > 0) {
+    addFloat(battle, attacker.x, attacker.y + 0.12, attacker.z, `BLOCK ${absorbed}`, '#7ed9ff')
+    state.sounds.push({ kind: 'shield' })
+  }
+
+  if (attacker.hp <= 0) {
+    handleUnitDefeat(state, attacker)
+  }
+  checkBattleOutcome(state)
+
+  if (!isBattleEnded(battle) && !attacker.alive && attacker.uid === battle.activeUnitUid && battle.phase === 'player') {
+    battle.pendingAction = null
+    battle.armedSkillIndex = null
+    battle.armedTacticUid = null
+    battle.moveUndo = null
+    battle.facingPicker = null
+    battle.objective.roundsElapsed += 1
+    advanceToNextUnitTurn(state)
+  }
+
+  return calc.normalDmg
+}
+
 function executeBasicAttack(state: GameState, attacker: BattleUnit, target: BattleUnit): void {
   const battle = state.battle
   if (!battle) return
   battle.moveUndo = null
+  const attackArc = computeAttackArc(attacker.col, attacker.row, target.col, target.row, target.facing)
+  const isRanged = attacker.range > 1 || manhattan(attacker.col, attacker.row, target.col, target.row) !== 1
   faceToward(attacker, target.x, target.z)
   attacker.animState = 'attack'
   attacker.animTimer = 0.36
@@ -4910,6 +5089,9 @@ function executeBasicAttack(state: GameState, attacker: BattleUnit, target: Batt
     } else if (attacker.enemyId === 'bog_shaman') {
       applyStatus(battle, target, 'poison', 2)
     }
+  }
+  if (canCounterAttack(battle, attacker, target, attackArc, isRanged)) {
+    executeCounterAttack(state, target, attacker)
   }
   checkBattleOutcome(state)
 }
@@ -4989,6 +5171,8 @@ function executeHeroSkill(
     // Offensive skill: can target empty spaces AND allies (friendly fire!)
     const directTarget = skill.canRevive ? unitOrDownedAt(battle, col, row) : unitAt(battle, col, row)
     const isDawnsJudgmentSafe = skill.id === 'dawns_judgment' && (!directTarget || directTarget.team !== caster.team || isUnitDowned(directTarget))
+    const skillAllowsCounter = isMeleeSkillEligibleForCounter(skill)
+    let counterCandidate: { target: BattleUnit; arc: AttackArc } | null = null
     if (skill.shieldAmount > 0 && skill.pattern !== 'aura') {
       applyHealAndShield(state, caster, 0, skill.shieldAmount)
     }
@@ -5021,6 +5205,7 @@ function executeHeroSkill(
         continue
       }
       if (skill.powerMul > 0) {
+        const hitArc = computeAttackArc(caster.col, caster.row, target.col, target.row, target.facing)
         const raw = caster.atk * skill.powerMul + skill.flatBonus
         applyDamage(state, caster, target, raw, skill.ignoreArmor, true)
         if (target.alive) {
@@ -5030,12 +5215,21 @@ function executeHeroSkill(
           if (caster.team === 'ally') {
             applyEquipmentOnHitStatus(battle, caster, target)
           }
+          if (skillAllowsCounter && target.team !== caster.team && !counterCandidate) {
+            counterCandidate = { target, arc: hitArc }
+          }
         }
         hitAny = true
       }
     }
     if (skill.status && isBeneficialStatus(skill.status)) applyStatus(battle, caster, skill.status, skill.statusStacks)
     if (skill.selfStatus) applyStatus(battle, caster, skill.selfStatus, skill.statusStacks)
+    if (
+      counterCandidate &&
+      canCounterAttack(battle, caster, counterCandidate.target, counterCandidate.arc, false)
+    ) {
+      executeCounterAttack(state, counterCandidate.target, caster)
+    }
   }
 
   if (!hitAny) {

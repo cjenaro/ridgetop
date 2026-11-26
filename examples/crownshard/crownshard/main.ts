@@ -2920,7 +2920,12 @@ async function start() {
         : tgtUnit
           ? battleUnitPortrait(tgtUnit)
           : portraits[fc.targetHeroId ?? fc.targetEnemyId ?? 'goblin']
-      const mainH = fcCompact ? 96 : 104
+      const hasCounterStrip = !fc.emptyTileTarget && fc.isOffensive && (
+        Boolean(fc.canCounter && (fc.counterDmg ?? 0) > 0) ||
+        fc.counterAvoidReason === 'flank' ||
+        fc.counterAvoidReason === 'backstab'
+      )
+      const mainH = (fcCompact ? 96 : 104) + (hasCounterStrip ? 22 : 0)
 
       const altRows: LayoutNode[] = []
       if (fc.alternatives.length > 1) {
