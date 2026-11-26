@@ -122,13 +122,20 @@ test('createArtBuilder supports unlit on solid/attach/adjust, and createRng/crea
   assert.equal(rngA.next(), rngB.next())
   assert.equal(rngA.next(), rngB.next())
 
-  const s = createSoundscape({ beds: { ocean: { type: 'lowpass', frequency: 400, gain: 0.1 } } })
+  const s = createSoundscape({
+    beds: { ocean: { type: 'lowpass', frequency: 400, gain: 0.1 } },
+    motifs: { ping: { notes: [[440, 0.1, 0]], waveform: 'sine' } }
+  })
   s.setMuted(true)
   assert.equal(s.isMuted(), true)
   s.setMusicEnabled(false)
   assert.equal(s.isMusicEnabled(), false)
   s.tone({ frequency: 440, duration: 0.1 })
+  s.playMotif('ping')
   s.noiseBurst({ duration: 0.1 })
+  const seq = s.createSequencer({ melody: [440, 550], stepDuration: 0.2 })
+  assert.equal(seq.step(0.5), 0)
+  assert.equal(s.playSample('missing').playing, false)
   s.close()
 
   // createParticles(0) must enforce zero capacity

@@ -5,6 +5,7 @@ import {
   amberRig, arch, buildStaticIslandBatches, buoyRig, cone, domeMesh, drum, drum12,
   keeperRig, salvageRig, shipRig
 } from './art.ts'
+import { SFX_MOTIFS } from './audio.ts'
 
 export function resolvePackageAssets(): ResolvedGameAssets {
   const models: Record<string, readonly InstanceBatch[]> = {}
@@ -66,16 +67,7 @@ export function resolvePackageAssets(): ResolvedGameAssets {
     title: 'Tidewatch',
     icon: { batches: iconBatches, span: 1.9, centerY: 0.85, background: '#142431', accent: '#2c5a66' },
     models,
-    audio: {
-      pickup: { notes: [[460, 0.11, 0, 690]], waveform: 'triangle' },
-      sell: { notes: [[740, 0.09, 0], [1080, 0.14, 0.055]], waveform: 'triangle' },
-      fuel: { notes: [[220, 0.16, 0, 440]], waveform: 'triangle' },
-      upgrade: { notes: [[392, 0.16, 0], [493.88, 0.16, 0.09], [587.33, 0.22, 0.18], [783.99, 0.36, 0.28]], waveform: 'sine' },
-      foghorn: { notes: [[116.54, 0.85, 0, 110], [174.61, 0.82, 0.02, 168]], waveform: 'sawtooth' },
-      tideLow: { notes: [[523.25, 0.18, 0], [392.0, 0.26, 0.14]], waveform: 'sine' },
-      tideHigh: { notes: [[329.63, 0.18, 0], [440.0, 0.26, 0.14]], waveform: 'sine' },
-      victory: { notes: [[293.66, 0.2, 0], [392.0, 0.2, 0.14], [493.88, 0.24, 0.28], [587.33, 0.52, 0.42]], waveform: 'sine' }
-    },
+    audio: SFX_MOTIFS,
     gameData: {
       game: 'lighthouse',
       theme: {

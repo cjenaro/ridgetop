@@ -2,11 +2,77 @@ declare global {
   var webkitAudioContext: typeof AudioContext | undefined
 }
 
-type AudioSource = string | URL | ArrayBuffer | Uint8Array
+export type AudioSampleSource = string | URL | ArrayBuffer | Uint8Array
+
+/** Minimal structural Web Audio `AudioParam` contract satisfied by browser `AudioParam` and Node test doubles. */
+export interface AudioParamLike {
+  value: number
+  setValueAtTime?(value: number, startTime: number): unknown
+  exponentialRampToValueAtTime?(value: number, endTime: number): unknown
+  setTargetAtTime?(target: number, startTime: number, timeConstant: number): unknown
+}
+
+/** Minimal structural Web Audio `AudioNode` contract satisfied by browser `AudioNode` and Node test doubles. */
+export interface AudioNodeLike {
+  connect(destinationNode: AudioNodeLike): unknown
+  disconnect?(): void
+}
+
+export interface GainNodeLike extends AudioNodeLike {
+  readonly gain: AudioParamLike
+}
+
+export interface BiquadFilterNodeLike extends AudioNodeLike {
+  type: BiquadFilterType
+  readonly frequency: AudioParamLike
+  readonly Q: AudioParamLike
+}
+
+export interface OscillatorNodeLike extends AudioNodeLike {
+  type: OscillatorType
+  readonly frequency: AudioParamLike
+  start(when?: number): void
+  stop(when?: number): void
+  onended: ((...args: never[]) => unknown) | null
+}
+
+export interface AudioBufferSourceNodeLike extends AudioNodeLike {
+  buffer: AudioBuffer | null
+  loop: boolean
+  readonly playbackRate?: AudioParamLike
+  readonly detune?: AudioParamLike
+  start(when?: number, offset?: number, duration?: number): void
+  stop?(when?: number): void
+  onended: ((...args: never[]) => unknown) | null
+}
+
+/**
+ * Minimal structural Web Audio `AudioContext` contract satisfied by browser `AudioContext`
+ * as well as lightweight injectable Node test doubles.
+ */
+export interface AudioContextLike {
+  readonly state: string
+  readonly currentTime: number
+  readonly sampleRate: number
+  readonly destination: AudioNodeLike
+  createGain(): GainNodeLike
+  createOscillator?(): OscillatorNodeLike
+  createBiquadFilter?(): BiquadFilterNodeLike
+  createBuffer?(numberOfChannels: number, length: number, sampleRate: number): AudioBuffer
+  createBufferSource?(): AudioBufferSourceNodeLike
+  decodeAudioData?(
+    audioData: ArrayBuffer,
+    successCallback?: ((decodedData: AudioBuffer) => void) | null,
+    errorCallback?: ((error: DOMException) => void) | null
+  ): Promise<AudioBuffer> | void
+  resume?(): Promise<void>
+  suspend?(): Promise<void>
+  close?(): Promise<void>
+}
 
 function isAudioEntryIterable(
-  entries: Record<string, AudioSource> | Iterable<readonly [string, AudioSource]>
-): entries is Iterable<readonly [string, AudioSource]> {
+  entries: Record<string, AudioSampleSource> | Iterable<readonly [string, AudioSampleSource]>
+): entries is Iterable<readonly [string, AudioSampleSource]> {
   return Symbol.iterator in Object(entries)
 }
 
@@ -23,9 +89,15 @@ export interface ParsedWav {
 }
 
 export interface AudioBankOptions {
-  context?: AudioContext
-  destination?: AudioNode
-  buses?: Partial<Record<string, AudioNode>>
+  context?: AudioContextLike
+  /** Optional lazy/shared context provider (used when attaching an `AudioBank` to `createSoundscape`). */
+  getContext?: () => AudioContextLike | null
+  destination?: AudioNodeLike
+  /** Optional lazy destination provider (used when attaching an `AudioBank` to `createSoundscape`). */
+  getDestination?: () => AudioNodeLike | null
+  buses?: Partial<Record<string, AudioNodeLike>>
+  /** Optional lazy bus map provider (used when attaching an `AudioBank` to `createSoundscape`). */
+  getBuses?: () => Partial<Record<string, AudioNodeLike>> | null
   fetch?: typeof globalThis.fetch
 }
 
@@ -34,7 +106,7 @@ export interface AudioPlayOptions {
   rate?: number
   loop?: boolean
   detune?: number
-  bus?: string | AudioNode
+  bus?: string | AudioNodeLike
   offset?: number
   duration?: number
 }
@@ -45,11 +117,11 @@ export interface AudioPlayHandle {
 }
 
 export interface AudioBank {
-  load(name: string, source: string | URL | ArrayBuffer | Uint8Array): Promise<boolean>
+  load(name: string, source: AudioSampleSource): Promise<boolean>
   loadAll(
     entries:
-      | Record<string, string | URL | ArrayBuffer | Uint8Array>
-      | Iterable<readonly [string, string | URL | ArrayBuffer | Uint8Array]>
+      | Record<string, AudioSampleSource>
+      | Iterable<readonly [string, AudioSampleSource]>
   ): Promise<Record<string, boolean>>
   play(name: string, options?: AudioPlayOptions): AudioPlayHandle
   stopAll(): void
@@ -199,7 +271,7 @@ export function parseWav(bytes: Uint8Array | ArrayBuffer): ParsedWav {
   }
 }
 
-const NOOP_HANDLE: AudioPlayHandle = {
+export const NOOP_PLAY_HANDLE: AudioPlayHandle = {
   stop() {},
   get playing() { return false }
 }
@@ -213,8 +285,12 @@ function copyToArrayBuffer(input: ArrayBuffer | Uint8Array): ArrayBuffer {
   return input.slice(0)
 }
 
-function decodeAudio(ctx: AudioContext, arrayBuffer: ArrayBuffer): Promise<AudioBuffer> {
+function decodeAudio(ctx: AudioContextLike, arrayBuffer: ArrayBuffer): Promise<AudioBuffer> {
   return new Promise<AudioBuffer>((resolve, reject) => {
+    if (typeof ctx.decodeAudioData !== 'function') {
+      reject(new Error('AudioContext does not support decodeAudioData'))
+      return
+    }
     let settled = false
     const onResolve = (buf: AudioBuffer) => {
       if (!settled) {
@@ -239,7 +315,7 @@ function decodeAudio(ctx: AudioContext, arrayBuffer: ArrayBuffer): Promise<Audio
   })
 }
 
-function isAudioNodeLike(value: unknown): value is AudioNode {
+function isAudioNodeLike(value: unknown): value is AudioNodeLike {
   return typeof value === 'object' && value !== null && 'connect' in value
 }
 
@@ -248,9 +324,9 @@ function isAudioNodeLike(value: unknown): value is AudioNode {
  * bus routing, looping, pitch/detune controls, and headless-safe fallbacks.
  */
 export function createAudioBank(options: AudioBankOptions = {}): AudioBank {
-  let ctx: AudioContext | null = options.context ?? null
-  const ownsContext = !options.context
-  let masterGain: GainNode | null = null
+  let ctx: AudioContextLike | null = options.context ?? null
+  const ownsContext = !options.context && !options.getContext
+  let masterGain: GainNodeLike | null = null
   let masterVolume = 1
   let muted = false
   let disposed = false
@@ -258,11 +334,23 @@ export function createAudioBank(options: AudioBankOptions = {}): AudioBank {
   const buffers = new Map<string, AudioBuffer>()
   const pending = new Map<string, Promise<boolean>>()
   const active = new Set<AudioPlayHandle>()
-  const buses = options.buses ?? {}
+  const staticBuses = options.buses ?? {}
 
-  function ensureContext(): AudioContext | null {
+  function ensureContext(): AudioContextLike | null {
     if (disposed) return null
-    if (!ctx) {
+    if (options.getContext) {
+      const provided = options.getContext()
+      if (provided !== ctx) {
+        if (ctx) {
+          stopAll()
+          buffers.clear()
+          pending.clear()
+          try { masterGain?.disconnect?.() } catch { /* ignore */ }
+          masterGain = null
+        }
+        ctx = provided
+      }
+    } else if (!ctx) {
       const AudioCtor = globalThis.AudioContext ?? globalThis.webkitAudioContext
       if (!AudioCtor) return null
       try {
@@ -271,11 +359,12 @@ export function createAudioBank(options: AudioBankOptions = {}): AudioBank {
         return null
       }
     }
+    if (!ctx) return null
     if (!masterGain && typeof ctx.createGain === 'function') {
       try {
         masterGain = ctx.createGain()
         masterGain.gain.value = muted ? 0 : masterVolume
-        const target = options.destination ?? ctx.destination
+        const target = options.getDestination?.() ?? options.destination ?? ctx.destination
         if (target) masterGain.connect(target)
       } catch {
         masterGain = null
@@ -284,15 +373,15 @@ export function createAudioBank(options: AudioBankOptions = {}): AudioBank {
     return ctx
   }
 
-  async function load(name: string, source: string | URL | ArrayBuffer | Uint8Array): Promise<boolean> {
+  async function load(name: string, source: AudioSampleSource): Promise<boolean> {
     if (disposed) return false
+    const audioCtx = ensureContext()
+    if (!audioCtx || typeof audioCtx.decodeAudioData !== 'function') return false
     if (buffers.has(name)) return true
     const inFlight = pending.get(name)
     if (inFlight) return inFlight
 
-    const audioCtx = ensureContext()
-    if (!audioCtx || typeof audioCtx.decodeAudioData !== 'function') return false
-
+    const targetCtx = audioCtx
     const task = (async () => {
       try {
         let rawBuffer: ArrayBuffer
@@ -305,9 +394,9 @@ export function createAudioBank(options: AudioBankOptions = {}): AudioBank {
         } else {
           rawBuffer = copyToArrayBuffer(source)
         }
-        if (disposed) return false
-        const decoded = await decodeAudio(audioCtx, copyToArrayBuffer(rawBuffer))
-        if (disposed || !decoded) return false
+        if (disposed || ctx !== targetCtx) return false
+        const decoded = await decodeAudio(targetCtx, copyToArrayBuffer(rawBuffer))
+        if (disposed || !decoded || ctx !== targetCtx) return false
         buffers.set(name, decoded)
         return true
       } catch {
@@ -323,10 +412,10 @@ export function createAudioBank(options: AudioBankOptions = {}): AudioBank {
 
   async function loadAll(
     entries:
-      | Record<string, string | URL | ArrayBuffer | Uint8Array>
-      | Iterable<readonly [string, string | URL | ArrayBuffer | Uint8Array]>
+      | Record<string, AudioSampleSource>
+      | Iterable<readonly [string, AudioSampleSource]>
   ): Promise<Record<string, boolean>> {
-    const pairs: [string, AudioSource][] = isAudioEntryIterable(entries)
+    const pairs: [string, AudioSampleSource][] = isAudioEntryIterable(entries)
       ? Array.from(entries, ([k, v]) => [k, v])
       : Object.entries(entries)
 
@@ -338,11 +427,11 @@ export function createAudioBank(options: AudioBankOptions = {}): AudioBank {
   }
 
   function play(name: string, playOptions: AudioPlayOptions = {}): AudioPlayHandle {
-    if (disposed) return NOOP_HANDLE
-    const buffer = buffers.get(name)
+    if (disposed) return NOOP_PLAY_HANDLE
     const audioCtx = ensureContext()
+    const buffer = buffers.get(name)
     if (!buffer || !audioCtx || typeof audioCtx.createBufferSource !== 'function') {
-      return NOOP_HANDLE
+      return NOOP_PLAY_HANDLE
     }
 
     try {
@@ -369,13 +458,14 @@ export function createAudioBank(options: AudioBankOptions = {}): AudioBank {
         gain.gain.value = Number.isFinite(volume) ? Math.max(0, volume) : 1
       }
 
-      let dest: AudioNode | null = null
+      const activeBuses = options.getBuses?.() ?? staticBuses
+      let dest: AudioNodeLike | null = null
       if (isAudioNodeLike(playOptions.bus)) {
         dest = playOptions.bus
-      } else if (typeof playOptions.bus === 'string' && buses[playOptions.bus]) {
-        dest = buses[playOptions.bus] ?? null
+      } else if (typeof playOptions.bus === 'string' && activeBuses[playOptions.bus]) {
+        dest = activeBuses[playOptions.bus] ?? null
       } else {
-        dest = masterGain ?? options.destination ?? audioCtx.destination ?? null
+        dest = masterGain ?? options.getDestination?.() ?? options.destination ?? audioCtx.destination ?? null
       }
 
       if (gain && dest) {
@@ -390,15 +480,15 @@ export function createAudioBank(options: AudioBankOptions = {}): AudioBank {
         if (!isPlaying) return
         isPlaying = false
         active.delete(handle)
-        try { source.disconnect() } catch { /* ignore */ }
-        try { gain?.disconnect() } catch { /* ignore */ }
+        try { source.disconnect?.() } catch { /* ignore */ }
+        try { gain?.disconnect?.() } catch { /* ignore */ }
       }
 
       const handle: AudioPlayHandle = {
         stop() {
           if (!isPlaying) return
           cleanup()
-          try { source.stop() } catch { /* already stopped */ }
+          try { source.stop?.() } catch { /* already stopped */ }
         },
         get playing() { return isPlaying }
       }
@@ -419,12 +509,12 @@ export function createAudioBank(options: AudioBankOptions = {}): AudioBank {
         }
       } catch {
         cleanup()
-        return NOOP_HANDLE
+        return NOOP_PLAY_HANDLE
       }
 
       return handle
     } catch {
-      return NOOP_HANDLE
+      return NOOP_PLAY_HANDLE
     }
   }
 
@@ -451,7 +541,7 @@ export function createAudioBank(options: AudioBankOptions = {}): AudioBank {
     stopAll()
     buffers.clear()
     pending.clear()
-    try { masterGain?.disconnect() } catch { /* ignore */ }
+    try { masterGain?.disconnect?.() } catch { /* ignore */ }
     masterGain = null
     if (ownsContext && ctx && typeof ctx.close === 'function') {
       try {

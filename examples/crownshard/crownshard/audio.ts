@@ -1,4 +1,5 @@
 import { createSoundscape } from 'ridgetop'
+import type { AudioMotif } from 'ridgetop'
 import type { GameState, SoundEvent } from './types.ts'
 
 // Heroic D-minor / D-Dorian tactical score motifs (Hz)
@@ -16,14 +17,7 @@ const BOSS_MELODY = [
 ]
 const BASS_LINE = [146.83, 146.83, 110.0, 110.0, 130.81, 130.81, 146.83, 110.0]
 
-type Waveform = 'sine' | 'triangle' | 'square' | 'sawtooth'
-/** `[frequency, duration, delay, endFrequency?]` — the same note format `ridgetop package` bakes into WAVs. */
-type MotifNote = readonly [number, number, number, number?]
-export interface SfxMotif {
-  readonly notes: readonly MotifNote[]
-  readonly waveform: Waveform
-  readonly volume: number
-}
+export type SfxMotif = AudioMotif
 
 /**
  * Single source of truth for Crownshard's tonal SFX. The live soundscape plays these (plus noise
@@ -54,7 +48,7 @@ export const SFX_MOTIFS = {
   turn_enemy: { notes: [[246.94, 0.14, 0], [196.0, 0.22, 0.10]], waveform: 'triangle', volume: 0.17 },
   victory: { notes: [[293.66, 0.18, 0], [392, 0.18, 0.12], [440, 0.22, 0.24], [587.33, 0.5, 0.36]], waveform: 'sine', volume: 0.34 },
   defeat: { notes: [[293.66, 0.22, 0], [261.63, 0.24, 0.18], [220, 0.46, 0.38]], waveform: 'triangle', volume: 0.27 }
-} as const satisfies Record<string, SfxMotif>
+} as const satisfies Record<string, AudioMotif>
 
 export type SfxMotifId = keyof typeof SFX_MOTIFS
 
@@ -64,28 +58,18 @@ export function createCrownshardAudio() {
     music: 0.14,
     sfx: 0.28,
     musicCutoff: 1900,
+    motifs: SFX_MOTIFS,
     beds: {
       wind: { type: 'bandpass', frequency: 420, q: 1.8, gain: 0.014 },
       fire: { type: 'lowpass', frequency: 320, q: 0.9, gain: 0.02 }
     }
   })
 
-  let stepIndex = 0
-  let stepAccum = 0
-
-  function playMotif(id: SfxMotifId, pitch = 1) {
-    const motif: SfxMotif = SFX_MOTIFS[id]
-    for (const [frequency, duration, delay, endFrequency] of motif.notes) {
-      sound.tone({
-        frequency: frequency * pitch,
-        endFrequency: endFrequency === undefined ? undefined : endFrequency * pitch,
-        duration,
-        delay,
-        type: motif.waveform,
-        volume: motif.volume
-      })
-    }
-  }
+  const sequencer = sound.createSequencer({
+    stepDuration: 0.40,
+    melody: { notes: CAMP_MELODY, waveform: 'sine', volume: 0.24, gate: 1.15 },
+    bass: { notes: BASS_LINE, divide: 2, waveform: 'triangle', volume: 0.26, gate: 1.7 }
+  })
 
   function playSfx(ev: SoundEvent) {
     switch (ev.kind) {
@@ -95,44 +79,44 @@ export function createCrownshardAudio() {
         break
       case 'slash':
         sound.noiseBurst({ duration: 0.11, frequency: 1450 * (ev.pitch ?? 1), type: 'bandpass', volume: 0.26 })
-        playMotif('slash', ev.pitch)
+        sound.playMotif('slash', { pitch: ev.pitch })
         break
       case 'arrow':
-        playMotif('arrow', ev.pitch)
+        sound.playMotif('arrow', { pitch: ev.pitch })
         sound.noiseBurst({ duration: 0.07, frequency: 2400, type: 'highpass', volume: 0.14 })
         break
       case 'hit':
         sound.noiseBurst({ duration: 0.09, frequency: 320, type: 'lowpass', volume: 0.34 })
-        playMotif('hit', ev.pitch)
+        sound.playMotif('hit', { pitch: ev.pitch })
         break
       case 'crit':
         sound.noiseBurst({ duration: 0.14, frequency: 640, type: 'bandpass', volume: 0.38 })
-        playMotif('crit', ev.pitch)
+        sound.playMotif('crit', { pitch: ev.pitch })
         break
       case 'ko':
-        playMotif('ko', ev.pitch)
+        sound.playMotif('ko', { pitch: ev.pitch })
         sound.noiseBurst({ duration: 0.22, frequency: 260, type: 'lowpass', volume: 0.30 })
         break
       case 'magic':
       case 'card':
-        playMotif(ev.kind, ev.pitch)
+        sound.playMotif(ev.kind, { pitch: ev.pitch })
         break
       case 'heal':
       case 'shield':
       case 'coin':
-        playMotif(ev.kind)
+        sound.playMotif(ev.kind)
         break
       case 'pack':
-        playMotif(ev.rarity === 'legendary' || ev.rarity === 'epic' ? 'pack_rare' : 'pack')
+        sound.playMotif(ev.rarity === 'legendary' || ev.rarity === 'epic' ? 'pack_rare' : 'pack')
         break
       case 'turn':
-        playMotif(ev.team === 'ally' ? 'turn_ally' : 'turn_enemy')
+        sound.playMotif(ev.team === 'ally' ? 'turn_ally' : 'turn_enemy')
         break
       case 'merge':
       case 'equip':
       case 'victory':
       case 'defeat':
-        playMotif(ev.kind)
+        sound.playMotif(ev.kind)
         break
     }
   }
@@ -151,35 +135,11 @@ export function createCrownshardAudio() {
     sound.setMusicFilter(isBoss ? 2200 : inBattle ? 1850 : 1400)
     sound.setMusicVolume(active ? 0.14 : 0.09)
 
-    if (!sound.isMusicEnabled() || sound.isMuted()) return
-
-    const stepLen = isBoss ? 0.26 : inBattle ? 0.32 : 0.40
-    stepAccum += dt
-    if (stepAccum >= stepLen) {
-      stepAccum -= stepLen
-      const melody = isBoss ? BOSS_MELODY : inBattle ? BATTLE_MELODY : CAMP_MELODY
-      const note = melody[stepIndex % melody.length]
-      if (note > 0) {
-        sound.tone({
-          frequency: note,
-          duration: stepLen * 1.15,
-          type: inBattle ? 'triangle' : 'sine',
-          volume: 0.24,
-          bus: 'music'
-        })
-      }
-      if (stepIndex % 2 === 0) {
-        const bass = BASS_LINE[(stepIndex >> 1) % BASS_LINE.length]
-        sound.tone({
-          frequency: bass,
-          duration: stepLen * 1.7,
-          type: 'triangle',
-          volume: 0.26,
-          bus: 'music'
-        })
-      }
-      stepIndex = (stepIndex + 1) % 32
-    }
+    sequencer.step(dt, {
+      stepDuration: isBoss ? 0.26 : inBattle ? 0.32 : 0.40,
+      melody: isBoss ? BOSS_MELODY : inBattle ? BATTLE_MELODY : CAMP_MELODY,
+      melodyWaveform: inBattle ? 'triangle' : 'sine'
+    })
   }
 
   return {

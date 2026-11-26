@@ -22,11 +22,6 @@ export function resolvePackageAssets(): ResolvedGameAssets {
   for (const [id, rig] of Object.entries(HERO_RIGS)) models[id] = bakeRig(rig)
   for (const [id, rig] of Object.entries(ENEMY_RIGS)) models[id] = bakeRig(rig)
 
-  const audio: ResolvedGameAssets['audio'] = {}
-  for (const [id, motif] of Object.entries(SFX_MOTIFS)) {
-    audio[id] = { notes: motif.notes, waveform: motif.waveform }
-  }
-
   return {
     title: 'Crownshard',
     // Combat-ready stance reads far better at launcher-icon size than the T-ish rest pose.
@@ -38,7 +33,7 @@ export function resolvePackageAssets(): ResolvedGameAssets {
       accent: COLOR.accent
     },
     models,
-    audio,
+    audio: SFX_MOTIFS,
     gameData: {
       game: 'crownshard',
       units: {

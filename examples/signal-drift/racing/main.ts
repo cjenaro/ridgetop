@@ -1,7 +1,8 @@
-import { bindActionControls, createGamePage, createLowPolyRenderer, createSynthAudio, fixedLoop } from 'ridgetop'
+import { bindActionControls, createGamePage, createLowPolyRenderer, fixedLoop } from 'ridgetop'
 import type { Backend } from 'ridgetop'
 import { boxNode, column, createCanvasUi, createUiTheme, overlay, row } from 'ridgetop/ui'
 import type { CanvasUiQuery } from 'ridgetop/ui'
+import { createRaceAudio } from './audio.ts'
 import { createRace, recover, standings, stepRace } from './race.ts'
 import { createRaceScene } from './scene.ts'
 import { circuits } from './track.ts'
@@ -31,11 +32,7 @@ async function start() {
   const uiCanvas = element<HTMLCanvasElement>('race-ui')
   const touch = matchMedia('(any-pointer: coarse)')
   touch.addEventListener('change', () => { uiDirty = true })
-  const audio = createSynthAudio({
-    pulse: [[610, .12, 0, 240]], snare: [[300, .18, 0, 105]],
-    hit: [[175, .2, 0, 68]], go: [[660, .15, 0], [880, .20, .10]],
-    podium: [[392, .18, 0], [523, .17, .12], [660, .24, .26], [784, .38, .42]]
-  }, { volume: .13, waveform: { pulse: 'triangle', hit: 'triangle' } })
+  const audio = createRaceAudio()
 
   const progress = loadChampionship(page.storage)
   let saveFailed = !page.storage

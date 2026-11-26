@@ -13,10 +13,19 @@ export type {
   SaveBackupEnvelope, SaveBackupInspectResult, SaveBackupManager, SaveBackupOptions,
   SaveBackupRestoreResult, SaveBackupStorage
 } from './backup.ts'
-export { createSoundscape, createSynthAudio } from './audio.ts'
-export type { AudioBus, NoiseBedSpec } from './audio.ts'
+export { createSoundscape, createStepSequencer, createSynthAudio } from './audio.ts'
+export type {
+  AudioBus, AudioMotif, MotifInput, MotifNote, NoiseBedSpec, NoiseBurstOptions, PlayMotifOptions,
+  SequencerTrack, Soundscape, SoundscapeBus, SoundscapeBuses, SoundscapeOptions, SoundscapeSamplePlayOptions,
+  StepSequencer, StepSequencerOptions, StepSequencerStepEvent, StepSequencerStepOverrides, StepSequencerTarget,
+  SynthAudio, SynthAudioOptions, SynthWaveform, ToneOptions
+} from './audio.ts'
 export { createAudioBank, parseWav } from './audio-assets.ts'
-export type { AudioBank, AudioBankOptions, AudioPlayHandle, AudioPlayOptions, ParsedWav } from './audio-assets.ts'
+export type {
+  AudioBank, AudioBankOptions, AudioBufferSourceNodeLike, AudioContextLike, AudioNodeLike, AudioParamLike,
+  AudioPlayHandle, AudioPlayOptions, AudioSampleSource, BiquadFilterNodeLike, GainNodeLike, OscillatorNodeLike,
+  ParsedWav
+} from './audio-assets.ts'
 export { loadMesh, parseGlb, parseObj } from './import-mesh.ts'
 export type { ImportedMeshPart } from './import-mesh.ts'
 export { createSpriteAtlas, spriteColumn } from './sprites.ts'

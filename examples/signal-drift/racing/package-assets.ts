@@ -4,6 +4,7 @@ import { fileURLToPath } from 'node:url'
 import { createArtKit } from 'ridgetop'
 import type { InstanceBatch } from 'ridgetop'
 import type { ResolvedGameAssets } from 'ridgetop/server'
+import { AUDIO_MOTIFS } from './audio.ts'
 import { createCarModels } from './car-art.ts'
 import { buildCircuitBatches } from './scene.ts'
 import { circuits } from './track.ts'
@@ -62,13 +63,7 @@ export async function resolvePackageAssets(ctx?: { projectDir?: string }): Promi
     title: 'Signal Drift',
     icon: { batches: iconBatches, span: 3.6, centerY: 0.55, background: '#191b24', accent: '#623a2c' },
     models,
-    audio: {
-      pulse: { notes: [[610, .12, 0, 240]], waveform: 'triangle' },
-      snare: { notes: [[300, .18, 0, 105]], waveform: 'sine' },
-      hit: { notes: [[175, .2, 0, 68]], waveform: 'triangle' },
-      go: { notes: [[660, .15, 0], [880, .20, .10]], waveform: 'sine' },
-      podium: { notes: [[392, .18, 0], [523, .17, .12], [660, .24, .26], [784, .38, .42]], waveform: 'sine' }
-    },
+    audio: AUDIO_MOTIFS,
     gameData: {
       game: 'signal-drift',
       theme: {
