@@ -1,5 +1,5 @@
 import { createArtKit, modelFromArtRecipe } from './art.ts'
-import { multiply, orthographic, uncoloredMesh, view } from './geometry.ts'
+import { createTurntableCamera, multiply, uncoloredMesh } from './geometry.ts'
 import { INSTANCE_SIZE, frustum, instances, visible } from './instances.ts'
 import { bakeSpritePixels, renderMeshFrame, renderMeshPixels, spriteDirections } from './low-poly.ts'
 import type { ArtModel, ArtPart, ArtRecipe } from './art-recipe.ts'
@@ -243,9 +243,7 @@ export function modelReviewFrame(kit: ReviewKit, pose: ArtView, size: number, id
       angle = matched.index * Math.PI / 4
     }
   }
-  const r = pose.span * 4, horizontal = r * Math.cos(pose.elevation)
-  const camera = multiply(orthographic(pose.span, pose.span, pose.span / 100, pose.span * 8),
-    view([horizontal * Math.sin(angle), pose.centerY + r * Math.sin(pose.elevation), horizontal * Math.cos(angle)], [0, pose.centerY, 0]))
+  const camera = createTurntableCamera(pose.span, [0, pose.centerY, 0], angle, pose.elevation)
   group.add(pose.asset, [0, 0, 0], { yaw: sprite ? 0 : pose.yaw, partTint: ids ? (_part, index) => tint(index + 1) : undefined })
   renderMeshFrame(canvas, camera, group.batches, ids ? { ambient: 1 } : undefined)
   return canvas

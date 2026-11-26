@@ -239,15 +239,27 @@ test('bug-hunt regressions: mesh/AO/extrude/tube/shadows/pixel-engine/pixel-rig/
   const bDark = Number.parseInt(gray.dark.slice(5, 7), 16)
   assert.ok(bDark >= rDark, `Expected cool blue-slate shadow for gray, got ${gray.dark}`)
 
-  // 6. PixelRig rejects prototype pollution keys and isolates outline from pre-existing backdrop pixels
+  // 6. PixelRig rejects prototype pollution keys, cycles, duplicates, missing parents, and composites cleanly via RGBA blit
   assert.throws(() => createPixelRig([{ id: '__proto__' }]))
+  assert.throws(() => createPixelRig([{ id: 'constructor' }]))
+  assert.throws(() => createPixelRig([{ id: 'a' }, { id: 'a' }]), /Duplicate or invalid pixel rig joint id/)
+  assert.throws(() => createPixelRig([{ id: 'child', parent: 'missing' }]), /Unknown parent pixel joint/)
+  assert.throws(() => createPixelRig([{ id: 'self', parent: 'self' }]), /Cyclic pixel joint hierarchy/)
+  assert.throws(
+    () => createPixelRig([{ id: 'a', parent: 'c' }, { id: 'b', parent: 'a' }, { id: 'c', parent: 'b' }]),
+    /Cyclic pixel joint hierarchy/
+  )
   const rigSheet = createSpriteSheet(16, 16, 1, 1)
   const rf = rigSheet.frame(0, 0)
   rf.pixel(1, 1, '#224466') // existing background pixel
-  const tinyRig = createPixelRig([{ id: 'body', pivot: [0, 0], stamp: { offset: [0, 0], rows: ['aa', 'aa'] } }])
-  renderPixelRig(rf, tinyRig, [8, 8], {}, { a: '#88cc66' }, { outline: '#111111' })
+  rf.pixel(8, 8, '#ff0000') // backdrop under a semi-transparent rig pixel
+  const tinyRig = createPixelRig([{ id: 'body', pivot: [0, 0], stamp: { offset: [0, 0], rows: ['ta', 'aa'] } }])
+  renderPixelRig(rf, tinyRig, [8, 8], {}, { a: '#88cc66', t: '#0000ff80' }, { outline: '#111111' })
   assert.equal(rf.getPixel(1, 0), null, 'Backdrop pixel should NOT be outlined by renderPixelRig')
-  assert.equal(rf.getPixel(7, 8), '#111111', 'Rig itself should be outlined cleanly')
+  assert.equal(rf.getPixel(7, 9), '#111111', 'Rig itself should be outlined cleanly')
+  // Semi-transparent blue (#0000ff80) blitted over red (#ff0000) yields blended purple
+  const blendOff = (8 * 16 + 8) * 4
+  assert.ok(rigSheet.pixels[blendOff] > 100 && rigSheet.pixels[blendOff + 2] > 100 && rigSheet.pixels[blendOff + 3] === 255)
 
   // 7. auditArtModel accepts ArtRecipe directly and sees additive inner flame inside translucent globe
   const art = createArtBuilder('lantern-check', { frameSize: 32 })

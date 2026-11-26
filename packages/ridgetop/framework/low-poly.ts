@@ -4,12 +4,14 @@ import type {
   ShadowProjection, Vec3
 } from './types.ts'
 import type { SpriteClip } from './sprites.ts'
-import { multiply, normalTiltQuaternion, orthographic, projectShadow, shadowDisc, view } from './geometry.ts'
+import { createTurntableCameras, normalTiltQuaternion, projectShadow, shadowDisc } from './geometry.ts'
 import { canvasMeshes, meshViewPixels } from './mesh-canvas.ts'
 import { glMeshes } from './mesh-gl.ts'
 import { gpuMeshes } from './mesh-gpu.ts'
 import { instances } from './instances.ts'
 import { createFramePreparer, createLightingState, prepareLighting } from './renderer.ts'
+import { canvasFromRgbaPixels, outlinePixelRegion, parseHexRgba } from './sprite-sheet.ts'
+import type { SpriteOutlineMode, SpriteOutlineOptions } from './sprite-sheet.ts'
 import { isTestingActive, recordFrame } from './testing-runtime.ts'
 
 export {
@@ -333,54 +335,39 @@ export function renderMeshPixels(camera: Matrix, batches: readonly InstanceBatch
   return meshViewPixels([camera], batches, size, prepareLighting(lighting))
 }
 
+const SPRITE_DIRECTION_ANGLES: readonly number[] = spriteDirections.map(
+  (_, column) => (column * 2 * Math.PI) / spriteDirections.length
+)
+
 type SpriteCamera = { span: number; center?: Vec3; frameSize?: number; elevation?: number; lighting?: LightingOptions; outline?: string }
 
-export function applySpriteOutline(pixels: Uint8ClampedArray, width: number, height: number, frameSize: number, outline: string) {
+export function applySpriteOutline(
+  pixels: Uint8ClampedArray,
+  width: number,
+  height: number,
+  frameSize: number,
+  outline: string,
+  modeOrOptions?: SpriteOutlineMode | SpriteOutlineOptions
+) {
   if (!Number.isInteger(width) || width <= 0 || !Number.isInteger(height) || height <= 0 ||
       !Number.isInteger(frameSize) || frameSize <= 0 || pixels.length < width * height * 4) {
     throw new RangeError('applySpriteOutline requires positive integer dimensions matching the pixel buffer')
   }
-  if (typeof outline !== 'string') throw new RangeError('Expected outline to be "selout" or a 6-digit hex color')
-  const isSelout = outline === 'selout'
-  let fr = 20, fg = 28, fb = 42
-  if (!isSelout) {
-    const raw = outline.charCodeAt(0) === 35 ? outline.slice(1) : outline
-    if (!/^[0-9a-f]{6}$/i.test(raw)) throw new RangeError(`Invalid sprite outline color: ${outline}`)
-    const n = Number.parseInt(raw, 16)
-    fr = (n >>> 16) & 255; fg = (n >>> 8) & 255; fb = n & 255
+  if (typeof outline !== 'string' || !outline) {
+    throw new RangeError('Expected outline to be "selout" or a 6- or 8-digit hex color')
   }
   const cols = Math.floor(width / frameSize), rows = Math.floor(height / frameSize)
-  const snap = new Uint8ClampedArray(pixels)
-  const dirs = [[-1, 0], [1, 0], [0, -1], [0, 1]] as const
+  const opts: SpriteOutlineOptions = typeof modeOrOptions === 'object' && modeOrOptions !== null
+    ? { emptyAlphaThreshold: 16, ...modeOrOptions }
+    : { mode: modeOrOptions, emptyAlphaThreshold: 16 }
+  if (!cols || !rows) {
+    if (outline !== 'selout') parseHexRgba(outline)
+    return
+  }
+  const scratch = new Uint8ClampedArray(frameSize * frameSize * 4)
   for (let cr = 0; cr < rows; cr++) {
     for (let cc = 0; cc < cols; cc++) {
-      const x0 = cc * frameSize, y0 = cr * frameSize
-      for (let py = 0; py < frameSize; py++) {
-        for (let px = 0; px < frameSize; px++) {
-          const di = ((y0 + py) * width + (x0 + px)) * 4
-          if (snap[di + 3] > 16) continue
-          let nr = 0, ng = 0, nb = 0, hits = 0, topLeft = 0
-          for (const [ox, oy] of dirs) {
-            const nx = px + ox, ny = py + oy
-            if (nx < 0 || nx >= frameSize || ny < 0 || ny >= frameSize) continue
-            const ni = ((y0 + ny) * width + (x0 + nx)) * 4
-            if (snap[ni + 3] > 128) {
-              nr += snap[ni]; ng += snap[ni + 1]; nb += snap[ni + 2]; hits++
-              if (ox > 0 || oy > 0) topLeft++
-            }
-          }
-          if (!hits) continue
-          if (isSelout) {
-            const scale = topLeft > 0 ? 0.44 : 0.24
-            pixels[di] = Math.round((nr / hits) * scale + 10)
-            pixels[di + 1] = Math.round((ng / hits) * scale + 14)
-            pixels[di + 2] = Math.round((nb / hits) * scale + 24)
-            pixels[di + 3] = 255
-          } else {
-            pixels[di] = fr; pixels[di + 1] = fg; pixels[di + 2] = fb; pixels[di + 3] = 255
-          }
-        }
-      }
+      outlinePixelRegion(pixels, width, cc * frameSize, cr * frameSize, frameSize, frameSize, outline, opts, scratch)
     }
   }
 }
@@ -395,14 +382,7 @@ export function bakeSpritePixels(batches: readonly InstanceBatch[], {
       Math.abs(elevation) < Math.PI / 2)) {
     throw new RangeError('Invalid sprite camera framing')
   }
-  const projection = orthographic(span, span, span / 100, span * 8)
-  const radius = span * 4
-  const horizontal = radius * Math.cos(elevation)
-  const cameras = spriteDirections.map((_, column) => {
-    const angle = column * 2 * Math.PI / spriteDirections.length
-    return multiply(projection, view([center[0] + horizontal * Math.sin(angle), center[1] + radius * Math.sin(elevation),
-      center[2] + horizontal * Math.cos(angle)], center))
-  })
+  const cameras = createTurntableCameras(span, center, SPRITE_DIRECTION_ANGLES, elevation)
   const out = meshViewPixels(cameras, batches, frameSize, prepareLighting(lighting))
   if (outline) applySpriteOutline(out.pixels, out.width, out.height, frameSize, outline)
   return out
@@ -411,12 +391,7 @@ export function bakeSpritePixels(batches: readonly InstanceBatch[], {
 /** Bake eight camera views of a +Z-facing model into one transparent horizontal sprite sheet. */
 export function bakeSpriteDirections(batches: readonly InstanceBatch[], { src = 'sprite.png', ...camera }: SpriteCamera & { src?: string }) {
   const { width, height: frameSize, pixels } = bakeSpritePixels(batches, camera)
-  const image = document.createElement('canvas')
-  image.width = width
-  image.height = frameSize
-  const context = image.getContext('2d')
-  if (!context) throw new Error('Could not create the sprite sheet')
-  context.putImageData(new ImageData(pixels, width, frameSize), 0, 0)
+  const image = canvasFromRgbaPixels(pixels, width, frameSize, 'Could not create the sprite sheet')
   const clips: Record<string, SpriteClip> = { turntable: { column: 0, frames: spriteDirections.length, frameMs: 150 } }
   spriteDirections.forEach((name, column) => { clips[name] = { column, frames: 1, frameMs: 150 } })
   return { image, manifest: { src, frameWidth: frameSize, frameHeight: frameSize, clips } }

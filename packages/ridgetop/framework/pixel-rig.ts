@@ -1,7 +1,6 @@
+import { sortJointHierarchy } from './animation.ts'
 import { createSpriteSheet } from './sprite-sheet.ts'
 import type { SpriteFrame } from './sprite-sheet.ts'
-
-const FORBIDDEN_JOINT_KEYS = new Set(['__proto__', 'constructor', 'prototype'])
 
 export type Vec2 = readonly [number, number]
 
@@ -50,29 +49,11 @@ export interface WorldPixelJoint {
 
 /** Compile a hierarchical 2D pixel-art animation skeleton in topological parent-first order. */
 export function createPixelRig(joints: readonly PixelJoint[]): PixelRig {
-  const indexById = new Map<string, number>()
-  for (let i = 0; i < joints.length; i++) {
-    const id = joints[i].id
-    if (!id || FORBIDDEN_JOINT_KEYS.has(id) || indexById.has(id)) throw new Error('Duplicate or invalid pixel rig joint id: ' + id)
-    indexById.set(id, i)
-  }
-  const parentIndex = joints.map(j => {
-    if (!j.parent) return -1
-    const idx = indexById.get(j.parent)
-    if (idx === undefined) throw new Error(`Unknown parent pixel joint "${j.parent}" for "${j.id}"`)
-    return idx
+  const { order, parentIndex } = sortJointHierarchy(joints, {
+    duplicate: id => new Error('Duplicate or invalid pixel rig joint id: ' + id),
+    missingParent: (id, parent) => new Error(`Unknown parent pixel joint "${parent}" for "${id}"`),
+    cycle: id => new Error('Cyclic pixel joint hierarchy detected at ' + id)
   })
-  const visited = new Uint8Array(joints.length)
-  const order: number[] = []
-  function visit(i: number) {
-    if (visited[i] === 2) return
-    if (visited[i] === 1) throw new Error('Cyclic pixel joint hierarchy detected at ' + joints[i].id)
-    visited[i] = 1
-    if (parentIndex[i] >= 0) visit(parentIndex[i])
-    visited[i] = 2
-    order.push(i)
-  }
-  for (let i = 0; i < joints.length; i++) visit(i)
   const drawOrder = Array.from({ length: joints.length }, (_, i) => i)
     .sort((a, b) => (joints[a].z ?? 0) - (joints[b].z ?? 0) || a - b)
   return { joints, order, drawOrder, parentIndex }
@@ -192,21 +173,7 @@ export function renderPixelRig(
     }
   }
   if (scratchSheet) {
-    const pxData = scratchSheet.pixels
-    const sw = scratchSheet.width
-    const sh = scratchSheet.height
-    for (let py = 0; py < sh; py++) {
-      for (let px = 0; px < sw; px++) {
-        const i = (py * sw + px) * 4
-        const a = pxData[i + 3]
-        if (a === 0) continue
-        const hex = '#' + pxData[i].toString(16).padStart(2, '0') +
-          pxData[i + 1].toString(16).padStart(2, '0') +
-          pxData[i + 2].toString(16).padStart(2, '0') +
-          (a < 255 ? a.toString(16).padStart(2, '0') : '')
-        frame.pixel(px, py, hex)
-      }
-    }
+    frame.blit(scratchSheet.pixels, scratchSheet.width, scratchSheet.height)
   }
   if (options.postDraw) options.postDraw(frame, out)
   return out
