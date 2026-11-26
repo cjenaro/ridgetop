@@ -1,9 +1,9 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import {
-  boxNode, column, createCanvasUi, createUiTheme, overlay, resolveLayout, row, spacerNode
+  boxNode, column, createCanvasUi, createHud, createHudPainter, createUiTheme, overlay, resolveLayout, row, spacerNode
 } from '../packages/ridgetop/framework/ui.ts'
-import type { LayoutNode } from '../packages/ridgetop/framework/ui.ts'
+import type { CanvasUiGlobalHandle, LayoutNode } from '../packages/ridgetop/framework/ui.ts'
 
 function createFakeDomEnv(gamepads: unknown = { length: 0 }) {
   const prevNav = Object.getOwnPropertyDescriptor(globalThis, 'navigator')
@@ -622,6 +622,243 @@ test('createCanvasUi paints HUD underlay before widgets with key memoization and
     assert.ok(ops.includes('text:Menu'))
 
     ui.dispose()
+  } finally {
+    env.restore()
+  }
+})
+
+test('createHudPainter and createHud render panels, fallback rects, text styles, and memoized HUD layers', () => {
+  const ops: string[] = []
+  let size = { width: 640, height: 360 }
+
+  function makeContext(withRoundRect: boolean) {
+    const ctx: Record<string, unknown> = {
+      fillStyle: '',
+      strokeStyle: '',
+      lineWidth: 0,
+      font: '',
+      textAlign: 'left',
+      textBaseline: 'alphabetic',
+      beginPath: () => ops.push('beginPath'),
+      rect: (x: number, y: number, w: number, h: number) => ops.push(`rect:${x},${y},${w},${h}`),
+      fill: () => ops.push(`fill:${ctx.fillStyle}`),
+      stroke: () => ops.push(`stroke:${ctx.strokeStyle}:${ctx.lineWidth}`),
+      fillText: (value: string, x: number, y: number, maxWidth?: number) =>
+        ops.push(`text:${value}@${x},${y}:${ctx.font}:${ctx.textAlign}:${ctx.textBaseline}:${maxWidth ?? 'none'}`),
+      setTransform: (a: number, _b: number, _c: number, d: number) => ops.push(`transform:${a},${d}`),
+      clearRect: (x: number, y: number, w: number, h: number) => ops.push(`clear:${x},${y},${w},${h}`)
+    }
+    if (withRoundRect) {
+      ctx.roundRect = (x: number, y: number, w: number, h: number, r: number) => ops.push(`roundRect:${x},${y},${w},${h},${r}`)
+    }
+    return ctx as unknown as CanvasRenderingContext2D
+  }
+
+  const painter = createHudPainter(makeContext(true), () => size)
+  assert.equal(painter.width, 640)
+  assert.equal(painter.height, 360)
+  size = { width: 800, height: 450 }
+  assert.equal(painter.width, 800)
+  assert.equal(painter.height, 450)
+
+  painter.panel(10, 20, 120, 40, { fill: '#112233', stroke: '#aabbcc', radius: 6 })
+  painter.text('SCORE 42', 16, 26, { fill: '#ffffff', size: 14, weight: 800, align: 'right', mono: true, maxWidth: 90 })
+  painter.text('READY', 16, 44, { fill: '#eeeeee', size: 12 })
+
+  assert.deepEqual(ops, [
+    'beginPath',
+    'roundRect:10,20,120,40,6',
+    'fill:#112233',
+    'stroke:#aabbcc:1',
+    'text:SCORE 42@16,26:800 14px ui-monospace, monospace:right:top:90',
+    'text:READY@16,44:600 12px system-ui, sans-serif:left:top:none'
+  ])
+
+  // Fallback to rect() when roundRect() is unavailable and omit stroke when unset
+  ops.length = 0
+  const fallbackPainter = createHudPainter(makeContext(false), () => ({ width: 320, height: 200 }))
+  fallbackPainter.panel(0, 0, 50, 25, { fill: '#223344', radius: 4 })
+  assert.deepEqual(ops, ['beginPath', 'rect:0,0,50,25', 'fill:#223344'])
+
+  // Standalone createHud compatibility wrapper memoizes by stage/key/dimensions and handles contextrestored
+  ops.length = 0
+  const hudCtx = makeContext(true)
+  const hudCanvas = Object.assign(new EventTarget(), {
+    width: 0,
+    height: 0,
+    getContext: () => hudCtx
+  }) as unknown as HTMLCanvasElement
+  const stage = { clientWidth: 400, clientHeight: 200, width: 800, height: 400 } as unknown as HTMLCanvasElement
+  const hud = createHud(hudCanvas)
+
+  let paints = 0
+  hud.render(stage, 'k1', p => {
+    paints++
+    assert.equal(p.width, 400)
+    assert.equal(p.height, 200)
+  })
+  assert.equal(paints, 1)
+  assert.equal(hudCanvas.width, 800)
+  assert.equal(hudCanvas.height, 400)
+  assert.ok(ops.includes('transform:2,2'))
+
+  // Same stage, key, and dimensions skips repaint
+  hud.render(stage, 'k1', () => { paints++ })
+  assert.equal(paints, 1)
+
+  // Key change triggers repaint
+  hud.render(stage, 'k2', () => { paints++ })
+  assert.equal(paints, 2)
+
+  // contextrestored invalidates cached stage and repaints on same key
+  hudCanvas.dispatchEvent(new Event('contextrestored'))
+  hud.render(stage, 'k2', () => { paints++ })
+  assert.equal(paints, 3)
+})
+
+test('createCanvasUi.sync tracks viewport, DPR, backing-store, and dirty invalidation automatically', () => {
+  const env = createFakeDomEnv()
+  const prevDpr = Object.getOwnPropertyDescriptor(globalThis, 'devicePixelRatio')
+  Object.defineProperty(globalThis, 'devicePixelRatio', { value: 1, configurable: true, writable: true })
+  try {
+    const canvas = env.createCanvas(640, 360)
+    const mutableCanvas = canvas as unknown as { clientWidth: number; clientHeight: number; width: number; height: number }
+    const ui = createCanvasUi(canvas)
+    let builds = 0
+    let lastBuiltSize = ''
+    const buildTree = (w: number, h: number): LayoutNode => {
+      builds++
+      lastBuiltSize = `${w}x${h}`
+      return overlay({ id: 'root', style: { anchor: 'fill' } }, [
+        boxNode({ id: 'ok', style: { anchor: 'center', width: 100, height: 40 }, widget: { type: 'button', label: 'OK' } })
+      ])
+    }
+
+    // Initial sync renders and clears dirty
+    assert.equal(ui.sync(buildTree), true)
+    assert.equal(builds, 1)
+    assert.equal(lastBuiltSize, '640x360')
+    assert.equal(ui.dirty, false)
+    assert.equal(canvas.width, 640)
+    assert.equal(canvas.height, 360)
+
+    // Repeat sync with unchanged viewport/DPR/state is skipped
+    assert.equal(ui.sync(buildTree), false)
+    assert.equal(builds, 1)
+
+    // invalidate() triggers next sync
+    ui.invalidate()
+    assert.equal(ui.dirty, true)
+    assert.equal(ui.sync(buildTree), true)
+    assert.equal(builds, 2)
+    assert.equal(ui.dirty, false)
+
+    // Viewport resize triggers sync automatically
+    mutableCanvas.clientWidth = 800
+    mutableCanvas.clientHeight = 450
+    assert.equal(ui.sync(buildTree), true)
+    assert.equal(builds, 3)
+    assert.equal(lastBuiltSize, '800x450')
+    assert.equal(ui.sync(buildTree), false)
+
+    // DPR change triggers sync and caps at 2x
+    Object.defineProperty(globalThis, 'devicePixelRatio', { value: 3, configurable: true, writable: true })
+    assert.equal(ui.sync(buildTree), true)
+    assert.equal(builds, 4)
+    assert.equal(canvas.width, 1600)
+    assert.equal(canvas.height, 900)
+    assert.equal(ui.sync(buildTree), false)
+
+    // External backing-buffer change triggers sync
+    mutableCanvas.width = 400
+    assert.equal(ui.sync(buildTree), true)
+    assert.equal(builds, 5)
+    assert.equal(canvas.width, 1600)
+
+    // External dirty and force flags bypass clean cache
+    assert.equal(ui.sync(buildTree, { dirty: true }), true)
+    assert.equal(builds, 6)
+    assert.equal(ui.sync(buildTree, { force: true }), true)
+    assert.equal(builds, 7)
+
+    // contextrestored triggers next sync
+    canvas.dispatchEvent(new Event('contextrestored'))
+    assert.equal(ui.sync(buildTree), true)
+    assert.equal(builds, 8)
+
+    ui.dispose()
+  } finally {
+    if (prevDpr) Object.defineProperty(globalThis, 'devicePixelRatio', prevDpr)
+    else delete (globalThis as Record<string, unknown>).devicePixelRatio
+    env.restore()
+  }
+})
+
+test('createCanvasUi.exposeGlobal registers __ridgetopUi contract, aliases, extras, and cleans up safely', () => {
+  const env = createFakeDomEnv()
+  try {
+    const canvas = env.createCanvas(640, 360)
+    const ui = createCanvasUi(canvas)
+    let count = 0
+    const phases: string[] = []
+    const acted: string[] = []
+
+    const buildTree = (): LayoutNode => overlay({ id: 'root', style: { anchor: 'fill' } }, [
+      boxNode({
+        id: 'play-btn',
+        style: { anchor: 'center', width: 140, height: 44 },
+        widget: { type: 'button', label: `Play ${count}`, onPress: () => { count++ } }
+      })
+    ])
+    ui.sync(buildTree)
+
+    const target: Record<string, unknown> = { __ridgetopUi: 'previous-handle' }
+    const unexpose = ui.exposeGlobal({
+      target,
+      property: ['__ridgetopUi', '__CUSTOM__'],
+      aliases: { 'legacy-play': 'play-btn', 'broken-alias': 'missing-id' },
+      renderNow: phase => {
+        phases.push(phase)
+        ui.sync(buildTree, { force: phase === 'after' })
+      },
+      onAct: (id, action) => acted.push(`${id}:${action}`),
+      getState: () => ({ count, ready: true }),
+      extra: { ping: () => 'pong' }
+    })
+
+    const handle = target.__ridgetopUi as CanvasUiGlobalHandle<{ count: number; ready: boolean }> & { ping(): string }
+    assert.ok(handle)
+    assert.equal(target.__CUSTOM__, handle)
+    assert.equal(handle.ping(), 'pong')
+    assert.deepEqual(handle.state(), { count: 0, ready: true })
+    assert.deepEqual(handle.snapshot().map(s => s.id), ['play-btn'])
+    assert.equal(handle.query({ id: 'play-btn' })[0]?.label, 'Play 0')
+    assert.ok(handle.rects()['play-btn'])
+
+    // Alias triggers canonical button, invokes before/after renderNow and onAct, and updates snapshot label immediately
+    assert.equal(handle.act('legacy-play'), true)
+    assert.equal(count, 1)
+    assert.deepEqual(phases, ['before', 'after'])
+    assert.deepEqual(acted, ['legacy-play:press'])
+    assert.equal(handle.query({ id: 'play-btn' })[0]?.label, 'Play 1')
+    assert.deepEqual(handle.state(), { count: 1, ready: true })
+
+    // Missing widget returns false and does not fire onAct
+    assert.equal(handle.act('broken-alias', 'press'), false)
+    assert.deepEqual(acted, ['legacy-play:press'])
+
+    // Cleanup restores previous descriptor on __ridgetopUi and deletes __CUSTOM__
+    unexpose()
+    assert.equal(target.__ridgetopUi, 'previous-handle')
+    assert.equal('__CUSTOM__' in target, false)
+    unexpose() // Idempotent
+
+    // Re-expose on target, then verify ui.dispose() cleans it up automatically
+    const target2: Record<string, unknown> = {}
+    ui.exposeGlobal({ target: target2, getState: () => ({ ok: true }) })
+    assert.ok(target2.__ridgetopUi)
+    ui.dispose()
+    assert.equal('__ridgetopUi' in target2, false)
   } finally {
     env.restore()
   }

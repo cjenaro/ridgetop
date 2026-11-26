@@ -1,9 +1,9 @@
 import {
   createGamePage, createLowPolyRenderer, createPerfLogger, createPerfMonitor, fixedLoop
 } from 'ridgetop'
-import type { Backend, HudPainter } from 'ridgetop'
+import type { HudPainter } from 'ridgetop'
 import { boxNode, column, createCanvasUi, createUiTheme, overlay, row, spacerNode } from 'ridgetop/ui'
-import type { CanvasUiQuery, CanvasWidgetDrawState, LayoutNode, LayoutRect } from 'ridgetop/ui'
+import type { CanvasWidgetDrawState, LayoutNode, LayoutRect } from 'ridgetop/ui'
 import { isTestingPaused } from 'ridgetop/testing'
 import { bakePortraitCanvases } from './art.ts'
 import { createCrownshardAudio } from './audio.ts'
@@ -114,8 +114,7 @@ const TITLE_HINTS: readonly (readonly [string, string])[] = [
 async function start() {
   const page = createGamePage()
   const { element } = page
-  const requested = page.url.searchParams.has('canvas') ? 'canvas' : page.url.searchParams.get('renderer')
-  const backend: Backend = requested === 'webgpu' || requested === 'webgl2' || requested === 'canvas' ? requested : 'auto'
+  const backend = page.requestedBackend()
   let showPerfPanel = page.url.searchParams.has('fps') || page.url.searchParams.has('perf')
 
   const stage = element<HTMLCanvasElement>('cs-stage')
@@ -3907,39 +3906,33 @@ async function start() {
     }
   }
 
-  let prevW = 0
-  let prevH = 0
   let lastBattlePhase: string | null = null
   let lastActiveUid: string | null = null
 
-  function renderUiNow() {
+  function syncUi(force = false) {
     const canvas = renderer.canvas
-    const w = Math.max(1, canvas.clientWidth)
-    const h = Math.max(1, canvas.clientHeight)
-    prevW = w
-    prevH = h
-    ui.render(buildUiTree(w, h), { width: w, height: h })
-    uiDirty = false
+    const rendered = ui.sync(buildUiTree, {
+      width: Math.max(1, canvas.clientWidth),
+      height: Math.max(1, canvas.clientHeight),
+      dirty: uiDirty,
+      force
+    })
+    if (rendered) uiDirty = false
   }
+  const renderUiNow = () => syncUi(true)
 
-  const globalUi = {
-    snapshot: () => ui.snapshot(),
-    query: (filter?: CanvasUiQuery) => ui.query(filter),
-    act: (id: string, action = 'press', payload?: unknown) => {
-      if (uiDirty) renderUiNow()
-      const resolvedId = ACT_ID_ALIASES[id] ?? id
-      const ok = ui.act(resolvedId, action, payload) || (resolvedId !== id && ui.act(id, action, payload))
-      if (ok) {
-        uiDirty = true
-        hudRev++
-        renderUiNow()
-      }
-      return ok
+  ui.exposeGlobal({
+    property: ['__ridgetopUi', '__CROWNSHARD__'],
+    aliases: ACT_ID_ALIASES,
+    onAct: () => {
+      uiDirty = true
+      hudRev++
     },
-    rects: () => Object.fromEntries(ui.rects),
-    perf: () => perf.snapshot(),
-    perfLog: () => perfLogger.getHistory(),
-    state: () => ({
+    renderNow: phase => {
+      if (phase === 'before') syncUi(false)
+      else if (uiDirty || ui.dirty) syncUi(true)
+    },
+    getState: () => ({
       screen,
       campTab,
       backend: renderer.name,
@@ -3969,81 +3962,83 @@ async function start() {
       campCollapsed: mobileCampCollapsed,
       cameraZoom: Math.round(scene.getCameraZoom() * 1000) / 1000
     }),
-    openWorldMap: (stageId?: string) => {
-      openWorldMap(stageId)
-      renderUiNow()
-    },
-    setWorldMapView: (panX: number, panY: number, zoom: number) => {
-      worldMapTargetPanX = panX
-      worldMapTargetPanY = panY
-      worldMapTargetZoom = zoom
-      clampWorldMapView()
-      worldMapPanX = worldMapTargetPanX
-      worldMapPanY = worldMapTargetPanY
-      worldMapZoom = worldMapTargetZoom
-      uiDirty = true
-      renderUiNow()
-    },
-    openCamp: (tab: CampTab = 'squad') => {
-      openCamp(tab)
-      renderUiNow()
-    },
-    skipPackAnim: () => {
-      skipPackCeremony()
-      renderUiNow()
-    },
-    zoom: (z: number) => {
-      scene.setCameraZoom(z)
-      uiDirty = true
-      hudRev++
-      renderUiNow()
-      return scene.getCameraZoom()
-    },
-    autoEquip: (heroUid?: string) => {
-      const uid = heroUid ?? state.campaign.selectedCampHeroUid ?? state.campaign.heroes[0]?.uid
-      if (!uid) return 0
-      const count = runBestFit(uid)
-      renderUiNow()
-      return count
-    },
-    selectTile: (col: number, row: number) => {
-      lockedForecastCell = null
-      const ok = selectTile(state, col, row)
-      if (ok) { uiDirty = true; hudRev++; renderUiNow() }
-      return ok
-    },
-    previewTile: (col: number, row: number) => {
-      const fc = computeCombatForecast(state, col, row)
-      if (!fc) {
-        lockedForecastCell = null
-        scene.setForecast(null)
+    extra: {
+      perf: () => perf.snapshot(),
+      perfLog: () => perfLogger.getHistory(),
+      openWorldMap: (stageId?: string) => {
+        openWorldMap(stageId)
+        renderUiNow()
+      },
+      setWorldMapView: (panX: number, panY: number, zoom: number) => {
+        worldMapTargetPanX = panX
+        worldMapTargetPanY = panY
+        worldMapTargetZoom = zoom
+        clampWorldMapView()
+        worldMapPanX = worldMapTargetPanX
+        worldMapPanY = worldMapTargetPanY
+        worldMapZoom = worldMapTargetZoom
+        uiDirty = true
+        renderUiNow()
+      },
+      openCamp: (tab: CampTab = 'squad') => {
+        openCamp(tab)
+        renderUiNow()
+      },
+      skipPackAnim: () => {
+        skipPackCeremony()
+        renderUiNow()
+      },
+      zoom: (z: number) => {
+        scene.setCameraZoom(z)
         uiDirty = true
         hudRev++
         renderUiNow()
-        return null
-      }
-      lockedForecastCell = { col, row }
-      mobileHandOpen = false
-      scene.setForecast(fc)
-      uiDirty = true
-      hudRev++
-      renderUiNow()
-      return fc
-    },
-    forecast: () => resolveActiveForecast(),
-    buyPack: (id: PackId) => {
-      const res = buyPack(state, id)
-      if (res) {
-        saveNow()
-        startPackCeremony(id, res)
-        uiDirty = true
+        return scene.getCameraZoom()
+      },
+      autoEquip: (heroUid?: string) => {
+        const uid = heroUid ?? state.campaign.selectedCampHeroUid ?? state.campaign.heroes[0]?.uid
+        if (!uid) return 0
+        const count = runBestFit(uid)
         renderUiNow()
+        return count
+      },
+      selectTile: (col: number, row: number) => {
+        lockedForecastCell = null
+        const ok = selectTile(state, col, row)
+        if (ok) { uiDirty = true; hudRev++; renderUiNow() }
+        return ok
+      },
+      previewTile: (col: number, row: number) => {
+        const fc = computeCombatForecast(state, col, row)
+        if (!fc) {
+          lockedForecastCell = null
+          scene.setForecast(null)
+          uiDirty = true
+          hudRev++
+          renderUiNow()
+          return null
+        }
+        lockedForecastCell = { col, row }
+        mobileHandOpen = false
+        scene.setForecast(fc)
+        uiDirty = true
+        hudRev++
+        renderUiNow()
+        return fc
+      },
+      forecast: () => resolveActiveForecast(),
+      buyPack: (id: PackId) => {
+        const res = buyPack(state, id)
+        if (res) {
+          saveNow()
+          startPackCeremony(id, res)
+          uiDirty = true
+          renderUiNow()
+        }
+        return Boolean(res)
       }
-      return Boolean(res)
     }
-  }
-  Object.defineProperty(globalThis, '__ridgetopUi', { value: globalUi, configurable: true, writable: true })
-  Object.defineProperty(globalThis, '__CROWNSHARD__', { value: globalUi, configurable: true, writable: true })
+  })
 
   let lastRenderAt: number | undefined
   let perfUiTick = 0
@@ -4170,9 +4165,7 @@ async function start() {
       }
 
       const u0 = performance.now()
-      if (uiDirty || ui.dirty || w !== prevW || h !== prevH) {
-        renderUiNow()
-      }
+      syncUi()
       const uiMs = performance.now() - u0
 
       const dpr = Math.round((canvas.width / Math.max(1, canvas.clientWidth)) * 100) / 100
@@ -4205,6 +4198,7 @@ async function start() {
       saveNow()
       stop()
       stopLifecycle()
+      page.dispose()
       perfLogger.dispose()
       inputAbort.abort()
       ui.dispose()

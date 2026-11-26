@@ -1,7 +1,10 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { bindActionControls, bindPlatformControls, color, createPlatform, createPlatformer, createSynthAudio, fixedLoop, resolveStorage, STEP } from '../packages/ridgetop/framework/index.ts'
-import type { RidgetopNativeBridge } from '../packages/ridgetop/framework/index.ts'
+import {
+  bindActionControls, bindPlatformControls, bindVirtualStick, color, createGamePage, createPlatform,
+  createPlatformer, createSynthAudio, fixedLoop, resolveStorage, setTestingPaused, STEP
+} from '../packages/ridgetop/framework/index.ts'
+import type { MediaQueryLike, RidgetopNativeBridge } from '../packages/ridgetop/framework/index.ts'
 
 function withGlobals(overrides: Record<string, unknown>, run: () => void | Promise<void>) {
   const previous = new Map<string, PropertyDescriptor | undefined>()
@@ -449,5 +452,271 @@ test('bindActionControls and bindPlatformControls support programmatic virtual t
     assert.deepEqual(platform.read(), { left: false, right: false, jump: 2 })
     assert.equal(platformGestures, 3)
     platform.dispose()
+  })
+})
+
+test('createGamePage parses backend/query params, supports injectable adapters, touch listeners, and LIFO disposal', async () => {
+  function makeMediaQuery(initial: boolean, media: string) {
+    let matches = initial
+    const listeners = new Set<(event: { readonly matches: boolean }) => void>()
+    const mql: MediaQueryLike & { emit(next: boolean): void; listenerCount(): number } = {
+      get matches() { return matches },
+      media,
+      addEventListener(_type, listener) { listeners.add(listener) },
+      removeEventListener(_type, listener) { listeners.delete(listener) },
+      emit(next: boolean) {
+        matches = next
+        for (const listener of Array.from(listeners)) listener({ matches: next })
+      },
+      listenerCount: () => listeners.size
+    }
+    return mql
+  }
+
+  // requestedBackend() parsing matrix
+  const backendCases: Array<[string, string, string?]> = [
+    ['https://example.test/', 'auto'],
+    ['https://example.test/?canvas=1', 'canvas'],
+    ['https://example.test/?canvas', 'canvas'],
+    ['https://example.test/?canvas=true', 'canvas'],
+    ['https://example.test/?canvas=0', 'auto'],
+    ['https://example.test/?canvas=false&renderer=webgl2', 'webgl2'],
+    ['https://example.test/?canvas=1&renderer=webgl2', 'canvas'],
+    ['https://example.test/?renderer=webgpu', 'webgpu'],
+    ['https://example.test/?renderer=WEBGL2', 'webgl2'],
+    ['https://example.test/?renderer=canvas', 'canvas'],
+    ['https://example.test/?renderer=auto', 'auto'],
+    ['https://example.test/?renderer=invalid', 'webgl2', 'webgl2']
+  ]
+  for (const [href, expected, fallback] of backendCases) {
+    const page = createGamePage({ location: { href }, storage: undefined })
+    assert.equal(
+      page.requestedBackend(fallback as 'auto' | 'webgpu' | 'webgl2' | 'canvas' | undefined),
+      expected,
+      `requestedBackend for ${href}`
+    )
+    assert.equal(page.storage, undefined)
+  }
+
+  // Full injectable DOM/history/matchMedia/clipboard/fetch/crypto/storage/platform test
+  const stageNode = { id: 'stage' } as unknown as HTMLElement
+  const replacedUrls: string[] = []
+  const copied: string[] = []
+  const reducedMql = makeMediaQuery(true, '(prefers-reduced-motion: reduce)')
+  const touchMql = makeMediaQuery(false, '(any-pointer: coarse)')
+  const mem = new Map<string, string>()
+  const fakeStorage = {
+    get length() { return mem.size },
+    key: (i: number) => Array.from(mem.keys())[i] ?? null,
+    getItem: (k: string) => mem.get(k) ?? null,
+    setItem: (k: string, v: string) => { mem.set(k, v) },
+    removeItem: (k: string) => { mem.delete(k) },
+    clear: () => { mem.clear() }
+  }
+  const customPlatform = createPlatform()
+
+  const page = createGamePage({
+    location: { href: 'https://ridgetop.test/play?course=ridge&mode=practice&renderer=webgpu' },
+    document: {
+      querySelector<T extends Element>(selector: string): T | null {
+        return selector.includes('stage') ? (stageNode as unknown as T) : null
+      }
+    },
+    history: {
+      replaceState(_data, _unused, nextUrl) { replacedUrls.push(String(nextUrl)) }
+    },
+    matchMedia: q => q.includes('coarse') ? touchMql : reducedMql,
+    storage: fakeStorage,
+    platform: customPlatform,
+    clipboard: { async writeText(text: string) { copied.push(text) } },
+    crypto: {
+      getRandomValues<T extends ArrayBufferView | null>(arr: T): T {
+        if (arr instanceof Uint32Array) {
+          arr[0] = 46656 // '1000' in base36
+          arr[1] = 1295  // 'zz' in base36
+        }
+        return arr
+      }
+    },
+    fetch: (async (input: string | URL | Request) => {
+      const path = String(input)
+      if (path === '/ok') return new Response(JSON.stringify({ ok: true }), { status: 200 })
+      return new Response('nope', { status: 500 })
+    }) as typeof globalThis.fetch
+  })
+
+  assert.equal(page.element('stage'), stageNode)
+  assert.throws(() => page.element('missing'), /missing #missing/)
+  assert.equal(page.query('course'), 'ridge')
+  assert.equal(page.query('mode'), 'practice')
+  assert.equal(page.query('absent'), null)
+  assert.equal(page.requestedBackend(), 'webgpu')
+  assert.equal(page.reducedMotion.matches, true)
+  assert.equal(page.touch.matches, false)
+  assert.equal(page.storage, fakeStorage)
+  assert.equal(page.platform, customPlatform)
+  assert.equal(page.roomCode(), '1000-zz')
+
+  page.replaceUrl(new URL('https://ridgetop.test/play?course=harbor'))
+  assert.deepEqual(replacedUrls, ['https://ridgetop.test/play?course=harbor'])
+
+  await page.copy('invite-link')
+  assert.deepEqual(copied, ['invite-link'])
+
+  assert.deepEqual(await page.requestJson('/ok'), { ok: true })
+  await assert.rejects(() => page.requestJson('/fail', undefined, 'Custom boom'), /Custom boom/)
+
+  // Touch change listener & unsubscribe & auto-cleanup on page.dispose()
+  const touchEvents: boolean[] = []
+  const unsub1 = page.onTouchChange(isTouch => touchEvents.push(isTouch))
+  const touchEvents2: boolean[] = []
+  page.onTouchChange(isTouch => touchEvents2.push(isTouch))
+  assert.equal(touchMql.listenerCount(), 2)
+
+  touchMql.emit(true)
+  assert.deepEqual(touchEvents, [true])
+  assert.deepEqual(touchEvents2, [true])
+
+  unsub1()
+  unsub1() // Idempotent
+  assert.equal(touchMql.listenerCount(), 1)
+  touchMql.emit(false)
+  assert.deepEqual(touchEvents, [true])
+  assert.deepEqual(touchEvents2, [true, false])
+
+  // LIFO disposal order, cancellation, idempotency, and late registration
+  const order: string[] = []
+  page.onDispose(() => order.push('first'))
+  const cancelMid = page.onDispose(() => order.push('cancelled'))
+  page.onDispose(() => order.push('second'))
+  cancelMid()
+  page.dispose()
+  assert.deepEqual(order, ['second', 'first'])
+  assert.equal(touchMql.listenerCount(), 0, 'dispose() must clean up remaining touch listeners')
+
+  // Second dispose() is a no-op; late onDispose() invokes immediately
+  page.dispose()
+  assert.deepEqual(order, ['second', 'first'])
+  page.onDispose(() => order.push('late'))
+  assert.deepEqual(order, ['second', 'first', 'late'])
+
+  // Missing clipboard rejects cleanly
+  const noClipPage = createGamePage({ location: { href: 'https://ridgetop.test/' }, clipboard: undefined })
+  await assert.rejects(() => noClipPage.copy('x'), /Clipboard is unavailable/)
+})
+
+test('bindVirtualStick handles drag deadzone, clamping, cameraYaw, blocking, multi-touch isolation, and Testing Mode pause', () => {
+  const fakeWindow = new EventTarget()
+  const fakeDocument = Object.assign(new EventTarget(), { hidden: false })
+  const element = Object.assign(new EventTarget(), {
+    getBoundingClientRect: () => ({ left: 100, top: 50, width: 400, height: 300 }),
+    setPointerCapture() { throw new Error('synthetic pointer') }
+  }) as unknown as HTMLElement
+
+  function pointerEvent(type: string, props: Record<string, unknown>) {
+    return Object.assign(new Event(type), { button: 0, pointerType: 'touch', pointerId: 1, clientX: 0, clientY: 0, ...props })
+  }
+
+  withGlobals({ window: fakeWindow, document: fakeDocument }, () => {
+    let enabled = true
+    let blocked = false
+    let gestures = 0
+    const yaw = Math.PI / 2 // 90 deg: cos=0, sin=1 -> vecX = sy, vecZ = -sx
+
+    const stick = bindVirtualStick(element, {
+      enabled: () => enabled,
+      isBlocked: () => blocked,
+      onGesture: () => { gestures++ },
+      cameraYaw: yaw,
+      deadzone: 10,
+      maxRadius: 50
+    })
+
+    // Right-click mouse event ignored (onGesture still called before button check)
+    element.dispatchEvent(pointerEvent('pointerdown', { button: 2, pointerType: 'mouse', pointerId: 1, clientX: 200, clientY: 150 }))
+    assert.equal(stick.active(), false)
+    assert.equal(gestures, 1)
+
+    // Blocked UI point ignored
+    blocked = true
+    element.dispatchEvent(pointerEvent('pointerdown', { pointerId: 1, clientX: 200, clientY: 150 }))
+    assert.equal(stick.active(), false)
+    blocked = false
+
+    // Disabled stick ignored
+    enabled = false
+    element.dispatchEvent(pointerEvent('pointerdown', { pointerId: 1, clientX: 200, clientY: 150 }))
+    assert.equal(stick.active(), false)
+    enabled = true
+
+    // Start valid drag at local (100, 100) => client (200, 150)
+    element.dispatchEvent(pointerEvent('pointerdown', { pointerId: 1, clientX: 200, clientY: 150 }))
+    assert.equal(stick.active(), true)
+    assert.deepEqual(stick.state(), { active: true, originX: 100, originY: 100, currentX: 100, currentY: 100, x: 0, z: 0 })
+
+    // Move inside deadzone (dx = 6, dy = 0 <= 10) keeps zero vector
+    element.dispatchEvent(pointerEvent('pointermove', { pointerId: 1, clientX: 206, clientY: 150 }))
+    assert.deepEqual(stick.vector(), { x: 0, z: 0 })
+
+    // Move halfway to maxRadius along +X (dx = 25, dy = 0 -> sx = 0.5, sy = 0 -> with yaw=pi/2: vecX ~= 0, vecZ ~= -0.5)
+    element.dispatchEvent(pointerEvent('pointermove', { pointerId: 1, clientX: 225, clientY: 150 }))
+    assert.ok(Math.abs(stick.vector().x) < 1e-6)
+    assert.ok(Math.abs(stick.vector().z - -0.5) < 1e-6)
+
+    // Move beyond maxRadius along +Y (dx = 0, dy = 200 -> clamped mag = 1 -> with yaw=pi/2: vecX ~= 1, vecZ ~= 0)
+    element.dispatchEvent(pointerEvent('pointermove', { pointerId: 1, clientX: 200, clientY: 350 }))
+    assert.ok(Math.abs(stick.vector().x - 1) < 1e-6)
+    assert.ok(Math.abs(stick.vector().z) < 1e-6)
+
+    // Multi-touch isolation: pointer 2 moving or releasing must not affect pointer 1
+    element.dispatchEvent(pointerEvent('pointermove', { pointerId: 2, clientX: 100, clientY: 50 }))
+    element.dispatchEvent(pointerEvent('pointerup', { pointerId: 2, clientX: 100, clientY: 50 }))
+    assert.equal(stick.active(), true)
+    assert.ok(Math.abs(stick.vector().x - 1) < 1e-6)
+
+    // Pointer 1 release resets stick
+    element.dispatchEvent(pointerEvent('pointerup', { pointerId: 1, clientX: 200, clientY: 350 }))
+    assert.equal(stick.active(), false)
+    assert.deepEqual(stick.vector(), { x: 0, z: 0 })
+
+    // pointercancel clears active drag
+    element.dispatchEvent(pointerEvent('pointerdown', { pointerId: 5, clientX: 200, clientY: 150 }))
+    element.dispatchEvent(pointerEvent('pointermove', { pointerId: 5, clientX: 200, clientY: 200 }))
+    assert.equal(stick.active(), true)
+    element.dispatchEvent(pointerEvent('pointercancel', { pointerId: 5 }))
+    assert.equal(stick.active(), false)
+
+    // window blur & document visibilitychange clear active drag
+    element.dispatchEvent(pointerEvent('pointerdown', { pointerId: 6, clientX: 200, clientY: 150 }))
+    fakeWindow.dispatchEvent(new Event('blur'))
+    assert.equal(stick.active(), false)
+
+    element.dispatchEvent(pointerEvent('pointerdown', { pointerId: 7, clientX: 200, clientY: 150 }))
+    fakeDocument.hidden = true
+    fakeDocument.dispatchEvent(new Event('visibilitychange'))
+    assert.equal(stick.active(), false)
+    fakeDocument.hidden = false
+
+    // Testing Mode pause clears active drag and blocks new drags until resumed
+    element.dispatchEvent(pointerEvent('pointerdown', { pointerId: 8, clientX: 200, clientY: 150 }))
+    element.dispatchEvent(pointerEvent('pointermove', { pointerId: 8, clientX: 200, clientY: 200 }))
+    assert.equal(stick.active(), true)
+    try {
+      setTestingPaused(true)
+      assert.equal(stick.active(), false)
+      assert.deepEqual(stick.vector(), { x: 0, z: 0 })
+      element.dispatchEvent(pointerEvent('pointerdown', { pointerId: 9, clientX: 200, clientY: 150 }))
+      assert.equal(stick.active(), false)
+    } finally {
+      setTestingPaused(false)
+    }
+
+    // Works again after Testing Mode resumes, and dispose() detaches listeners
+    element.dispatchEvent(pointerEvent('pointerdown', { pointerId: 10, clientX: 200, clientY: 150 }))
+    assert.equal(stick.active(), true)
+    stick.dispose()
+    assert.equal(stick.active(), false)
+    element.dispatchEvent(pointerEvent('pointerdown', { pointerId: 11, clientX: 200, clientY: 150 }))
+    assert.equal(stick.active(), false)
   })
 })

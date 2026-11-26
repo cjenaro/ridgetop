@@ -1,12 +1,10 @@
 import type { CourseId } from './game/level.ts'
 import type { CharacterView } from './game/expedition.ts'
 import type { Player, PlayerSnapshot } from './game/simulation.ts'
-import type { Backend } from 'ridgetop'
 import {
   bindPlatformControls, connectRoom, createGamePage, createLowPolyRenderer, fixedLoop, STEP
 } from 'ridgetop'
 import { boxNode, column, createCanvasUi, createUiTheme, overlay, row, spacerNode } from 'ridgetop/ui'
-import type { CanvasUiQuery } from 'ridgetop/ui'
 import { courses } from './game/level.ts'
 import { canEnterRegion, expeditionLoot, GUILD_WORLD } from './game/expedition.ts'
 import { createPlayer, restartPlayer, stepPlayer } from './game/simulation.ts'
@@ -17,9 +15,8 @@ import { campaignSummary, loadCampaign, medal, recordRelay, ROUTE, saveCampaign 
 
 const page = createGamePage()
 const { element: $, url, storage, reducedMotion } = page
-const requestedCourse = url.searchParams.get('course')
-const roomCode = url.searchParams.get('room')
-const requestedBackend = url.searchParams.has('canvas') ? 'canvas' : url.searchParams.get('renderer')
+const requestedCourse = page.query('course')
+const roomCode = page.query('room')
 const progress = loadCampaign(storage)
 const audio = createAudio()
 const isHosted = document.body.dataset.hosted === '1' && !page.platform.isNative
@@ -33,32 +30,24 @@ function cs(ticks: number) { return Math.floor(ticks * STEP * 100) }
 function unlockSound() { if (progress.sound) audio.unlock() }
 audio.mute(!progress.sound)
 
-function parseBackend(value: string | null): Backend | undefined {
-  if (value === 'webgpu' || value === 'webgl2' || value === 'canvas') return value
-  return undefined
-}
 function isCourseId(value: string): value is CourseId {
   return Object.hasOwn(courses, value)
 }
 
 async function start() {
-  const backend = parseBackend(requestedBackend)
-  const config = backend ? { backend } : {}
   const [renderer, sprites] = await Promise.all([
-    createLowPolyRenderer($<HTMLCanvasElement>('stage'), config),
+    createLowPolyRenderer($<HTMLCanvasElement>('stage'), { backend: page.requestedBackend() }),
     createSprites($<HTMLCanvasElement>('sprites'), reducedMotion)
   ])
   const uiCanvas = $<HTMLCanvasElement>('ui')
-  const touch = matchMedia('(any-pointer: coarse)')
-  touch.addEventListener('change', () => { uiDirty = true })
   const portrait = new Image()
   portrait.src = './game/assets/scout.png'
   let portraitReady = false
-  portrait.onload = () => { portraitReady = true; uiDirty = true }
+  portrait.onload = () => { portraitReady = true; ui.invalidate() }
 
   let courseId: CourseId = requestedCourse && isCourseId(requestedCourse) ? requestedCourse : ROUTE[0]
   let code = /^[a-z0-9-]{1,32}$/.test(roomCode ?? '') ? roomCode : null
-  const requestedMode = url.searchParams.get('mode')
+  const requestedMode = page.query('mode')
   let mode = requestedMode === 'expedition' ? 'expedition' :
     code ? 'online' : requestedCourse || requestedMode === 'practice' ? 'practice' : 'campaign'
   if (mode === 'expedition') code ??= GUILD_WORLD
@@ -79,7 +68,6 @@ async function start() {
   let expeditionLoading = false
   let lastFinished = false
   let lastCharacterKey = ''
-  let uiDirty = true
 
   const controls = bindPlatformControls({
     enabled: () => screen === 'play' && !latest?.finished,
@@ -123,7 +111,7 @@ async function start() {
     unlockSound()
     audio.mute(!checked)
     saveCampaign(storage, progress)
-    uiDirty = true
+    ui.invalidate()
   }
 
   function courseOptions() {
@@ -154,11 +142,12 @@ async function start() {
     keyboardEnabled: () => screen !== 'play' || Boolean(latest?.finished),
     onBack: togglePause
   })
+  page.onTouchChange(() => ui.invalidate())
 
   function setScreen(value: string) {
     screen = value
     clearInput()
-    uiDirty = true
+    ui.invalidate()
   }
 
   function syncUrl() {
@@ -190,12 +179,12 @@ async function start() {
     if (!code) {
       connectionLabel = mode === 'campaign' ? 'Campaign' : 'Solo practice'
       connectionOnline = false
-      uiDirty = true
+      ui.invalidate()
       return
     }
     connectionLabel = 'Joining room…'
     connectionOnline = false
-    uiDirty = true
+    ui.invalidate()
     room = connectRoom<PlayerSnapshot>({
       endpoint: (mode === 'expedition' ? '/expeditions/' : '/rooms/') + courseId + '/' + code,
       readInput: controls.read,
@@ -212,7 +201,7 @@ async function start() {
             ? 'This expedition instance is unavailable. Return to the main menu to rejoin.'
             : 'This room is unavailable. Select Solo practice to keep playing.'
         }
-        uiDirty = true
+        ui.invalidate()
       }
     })
   }
@@ -231,7 +220,7 @@ async function start() {
     syncUrl()
     join()
     recordTime()
-    uiDirty = true
+    ui.invalidate()
   }
 
   function enter(nextMode: string, nextCourse: CourseId = courseId) {
@@ -271,7 +260,7 @@ async function start() {
   async function joinExpedition() {
     if (expeditionLoading) return
     expeditionLoading = true
-    uiDirty = true
+    ui.invalidate()
     unlockSound()
     try {
       await loadCharacter()
@@ -280,7 +269,7 @@ async function start() {
       if (screen === 'title') toastMessage = error.message
     } finally {
       expeditionLoading = false
-      uiDirty = true
+      ui.invalidate()
     }
   }
 
@@ -299,7 +288,7 @@ async function start() {
     } catch {
       toastMessage = share.href
     }
-    uiDirty = true
+    ui.invalidate()
   }
 
   function restartRun() {
@@ -380,7 +369,7 @@ async function start() {
       if (campaignSummary(progress).complete) void page.platform.steam.unlockAchievement('BEACON_CAMPAIGN_COMPLETE')
     }
     recordTime(local.ticks)
-    uiDirty = true
+    ui.invalidate()
   }
 
   function updateStandings(players: readonly PlayerSnapshot[], local: PlayerSnapshot | undefined) {
@@ -393,7 +382,7 @@ async function start() {
           item.finished ? time(item.ticks) : 'On course'))
     if (lines.join('|') !== standingsLines.join('|')) {
       standingsLines = lines
-      if (screen === 'journal') uiDirty = true
+      if (screen === 'journal') ui.invalidate()
     }
   }
 
@@ -403,7 +392,7 @@ async function start() {
     const playing = screen === 'play'
     const finished = playing && Boolean(latest?.finished)
     const showControls = playing && !finished
-    const showTouch = showControls && touch.matches
+    const showTouch = showControls && page.touch.matches
     const campaignLabel = summary.complete ? 'Replay campaign' : summary.cleared ? 'Continue campaign' : 'Start campaign'
     const campaignProgress = `${summary.cleared} / ${ROUTE.length} relays online`
     const endingStats = `${summary.signals} / ${ROUTE.length} signal chips · ${summary.gold} / ${ROUTE.length} gold · best combined ${time(summary.ticks)}`
@@ -576,59 +565,40 @@ async function start() {
     ])
   }
 
-  Object.defineProperty(globalThis, '__ridgetopUi', {
-    configurable: true,
-    writable: true,
-    value: {
-      snapshot: () => ui.snapshot(),
-      query: (filter?: CanvasUiQuery) => ui.query(filter),
-      act: (id: string, action: string, payload?: unknown) => {
-        if (uiDirty) renderUiNow()
-        const ok = ui.act(id, action, payload)
-        renderUiNow()
-        return ok
-      },
-      rects: () => Object.fromEntries(ui.rects),
-      state: () => {
-        const summary = campaignSummary(progress)
-        return {
-          screen,
-          mode,
-          courseId,
-          courseName: courses[courseId].name,
-          backend: renderer.name,
-          connection: connectionLabel,
-          online: connectionOnline,
-          falls: (latest?.falls ?? 0) + ((latest?.falls ?? 0) === 1 ? ' fall' : ' falls'),
-          finished: Boolean(latest?.finished),
-          finishMedal: finishMedalText,
-          campaignProgress: `${summary.cleared} / ${ROUTE.length} relays online`,
-          endingStats: `${summary.signals} / ${ROUTE.length} signal chips · ${summary.gold} / ${ROUTE.length} gold · best combined ${time(summary.ticks)}`,
-          sound: progress.sound ? 'Sound on' : 'Sound off',
-          standings: [...standingsLines],
-          character: character ? { ...character } : null,
-          message: toastMessage,
-          courseDisabled: Object.fromEntries(ROUTE.map(id => {
-            const unlocked = summary.next ? ROUTE.indexOf(summary.next) : -1
-            const disabled = mode === 'expedition'
-              ? Boolean(character && !canEnterRegion(character.cleared, id))
-              : mode === 'campaign' && unlocked >= 0 && ROUTE.indexOf(id) > unlocked
-            return [id, disabled]
-          }))
-        }
+  const syncUi = (force = false) => ui.sync(w => buildUiTree(w), { force })
+  ui.exposeGlobal({
+    renderNow: phase => syncUi(phase === 'after'),
+    getState: () => {
+      const summary = campaignSummary(progress)
+      return {
+        screen,
+        mode,
+        courseId,
+        courseName: courses[courseId].name,
+        backend: renderer.name,
+        connection: connectionLabel,
+        online: connectionOnline,
+        falls: (latest?.falls ?? 0) + ((latest?.falls ?? 0) === 1 ? ' fall' : ' falls'),
+        finished: Boolean(latest?.finished),
+        finishMedal: finishMedalText,
+        campaignProgress: `${summary.cleared} / ${ROUTE.length} relays online`,
+        endingStats: `${summary.signals} / ${ROUTE.length} signal chips · ${summary.gold} / ${ROUTE.length} gold · best combined ${time(summary.ticks)}`,
+        sound: progress.sound ? 'Sound on' : 'Sound off',
+        standings: [...standingsLines],
+        character: character ? { ...character } : null,
+        message: toastMessage,
+        courseDisabled: Object.fromEntries(ROUTE.map(id => {
+          const unlocked = summary.next ? ROUTE.indexOf(summary.next) : -1
+          const disabled = mode === 'expedition'
+            ? Boolean(character && !canEnterRegion(character.cleared, id))
+            : mode === 'campaign' && unlocked >= 0 && ROUTE.indexOf(id) > unlocked
+          return [id, disabled]
+        }))
       }
     }
   })
 
-  function renderUiNow() {
-    const w = Math.max(1, uiCanvas.clientWidth), h = Math.max(1, uiCanvas.clientHeight)
-    const ratio = Math.min(devicePixelRatio || 1, 2)
-    lastW = w; lastH = h; lastRatio = ratio
-    ui.render(buildUiTree(w), { width: w, height: h, pixelRatio: ratio })
-    uiDirty = false
-  }
-  let lastW = 0, lastH = 0, lastRatio = 0
-  renderUiNow()
+  syncUi(true)
   const stop = fixedLoop({
     update(dt) {
       if (screen === 'play' && !room) stepPlayer(player, controls.read(), dt, courses[courseId])
@@ -642,7 +612,7 @@ async function start() {
       const nowFinished = Boolean(local?.finished)
       if (nowFinished !== lastFinished) {
         lastFinished = nowFinished
-        uiDirty = true
+        ui.invalidate()
       }
       scene.render(players, local, now)
       if (screen === 'play') paintRun(local)
@@ -654,12 +624,10 @@ async function start() {
         if (charKey !== lastCharacterKey) {
           lastCharacterKey = charKey
           character = nextChar
-          uiDirty = true
+          ui.invalidate()
         }
       }
-      const w = Math.max(1, uiCanvas.clientWidth), h = Math.max(1, uiCanvas.clientHeight)
-      const ratio = Math.min(devicePixelRatio || 1, 2)
-      if (uiDirty || ui.dirty || w !== lastW || h !== lastH || ratio !== lastRatio) renderUiNow()
+      syncUi()
     }
   })
 
@@ -678,6 +646,7 @@ async function start() {
       clearInput()
       stop()
       stopLifecycle()
+      page.dispose()
       ui.dispose()
       controls.dispose()
       scene.dispose()

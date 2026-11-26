@@ -1,9 +1,8 @@
 import {
   bindActionControls, bindVirtualStick, createGamePage, createLowPolyRenderer, fixedLoop
 } from 'ridgetop'
-import type { Backend, HudPainter } from 'ridgetop'
+import type { HudPainter } from 'ridgetop'
 import { boxNode, column, createCanvasUi, createUiTheme, overlay, row, spacerNode } from 'ridgetop/ui'
-import type { CanvasUiQuery } from 'ridgetop/ui'
 import { isTestingPaused } from 'ridgetop/testing'
 import { createLighthouseAudio } from './audio.ts'
 import { createLighthouseScene } from './scene.ts'
@@ -35,14 +34,12 @@ const TIDE_LABELS = {
 async function start() {
   const page = createGamePage()
   const { element } = page
-  const requested = page.url.searchParams.has('canvas') ? 'canvas' : page.url.searchParams.get('renderer')
-  const backend: Backend = requested === 'webgpu' || requested === 'webgl2' || requested === 'canvas' ? requested : 'auto'
 
   const stage = element<HTMLCanvasElement>('lh-stage')
   const uiCanvas = element<HTMLCanvasElement>('lh-ui')
 
   const renderer = await createLowPolyRenderer(stage, {
-    backend,
+    backend: page.requestedBackend(),
     canvasDepth: true,
     lighting: { direction: [-0.45, 0.82, 0.36], ambient: 0.50 }
   })
@@ -52,7 +49,6 @@ async function start() {
   const existingSave = loadSave(page.storage)
   let state: GameState = createInitialState(1337, existingSave)
   let screen: Screen = 'title'
-  let uiDirty = true
   let hudRev = 0
   let saveTimer = 0
   let victoryShown = state.victoryClaimed
@@ -65,7 +61,7 @@ async function start() {
     screen = next
     controls.clear()
     stick.clear()
-    uiDirty = true
+    ui.invalidate()
     hudRev++
   }
 
@@ -113,7 +109,7 @@ async function start() {
         if (screen === 'playing') setScreen('shop')
       } else if (action === 'music') {
         audio.setMusic(!audio.isMusicEnabled())
-        uiDirty = true
+        ui.invalidate()
       }
     }
   })
@@ -133,7 +129,7 @@ async function start() {
     if (buyUpgrade(state, id)) {
       persistSave(page.storage, state)
       hudRev++
-      uiDirty = true
+      ui.invalidate()
       if (state.victory && !victoryShown) {
         victoryShown = true
         setScreen('victory')
@@ -144,13 +140,13 @@ async function start() {
   function toggleMusic() {
     audio.unlock()
     audio.setMusic(!audio.isMusicEnabled())
-    uiDirty = true
+    ui.invalidate()
   }
 
   function toggleMute() {
     audio.unlock()
     audio.setMuted(!audio.isMuted())
-    uiDirty = true
+    ui.invalidate()
   }
 
   const ui = createCanvasUi(uiCanvas, {
@@ -476,49 +472,34 @@ async function start() {
 
   let lastUiCoins = -1
   let lastUiPad: string | null = null
-  let lastW = 0, lastH = 0
   let hudTick = 0
   let lastRenderAt: number | undefined
 
-  function renderUiNow() {
+  function syncUi(force = false) {
     const canvas = renderer.canvas
-    const w = Math.max(1, canvas.clientWidth || canvas.width || 960)
-    const h = Math.max(1, canvas.clientHeight || canvas.height || 540)
-    lastW = w
-    lastH = h
-    ui.render(buildUiTree(w), { width: w, height: h, pixelRatio: Math.min(devicePixelRatio || 1, 2) })
-    uiDirty = false
+    ui.sync(w => buildUiTree(w), {
+      width: canvas.clientWidth || canvas.width || 960,
+      height: canvas.clientHeight || canvas.height || 540,
+      force
+    })
   }
 
-  renderUiNow()
+  syncUi(true)
 
-  Object.defineProperty(globalThis, '__ridgetopUi', {
-    configurable: true,
-    writable: true,
-    value: {
-      snapshot: () => ui.snapshot(),
-      query: (filter?: CanvasUiQuery) => ui.query(filter),
-      act: (id: string, action: string, payload?: unknown) => {
-        renderUiNow()
-        const ok = ui.act(id, action, payload)
-        uiDirty = true
-        renderUiNow()
-        return ok
-      },
-      rects: () => Object.fromEntries(ui.rects),
-      state: () => ({
-        screen,
-        day: state.day,
-        coins: state.coins,
-        fuel: Math.round(state.fuel),
-        warmth: Math.round(state.player.warmth),
-        carry: state.player.carry.length,
-        weather: state.weather,
-        tidePhase: state.tidePhase,
-        shipsGuided: state.shipsGuided,
-        upgrades: state.upgrades
-      })
-    }
+  ui.exposeGlobal({
+    renderNow: () => syncUi(true),
+    getState: () => ({
+      screen,
+      day: state.day,
+      coins: state.coins,
+      fuel: Math.round(state.fuel),
+      warmth: Math.round(state.player.warmth),
+      carry: state.player.carry.length,
+      weather: state.weather,
+      tidePhase: state.tidePhase,
+      shipsGuided: state.shipsGuided,
+      upgrades: state.upgrades
+    })
   })
 
   const stop = fixedLoop({
@@ -555,13 +536,10 @@ async function start() {
       if (state.coins !== lastUiCoins || state.activePad !== lastUiPad) {
         lastUiCoins = state.coins
         lastUiPad = state.activePad
-        uiDirty = true
+        ui.invalidate()
       }
     },
     render(_alpha, now) {
-      const canvas = renderer.canvas
-      const w = Math.max(1, canvas.clientWidth)
-      const h = Math.max(1, canvas.clientHeight)
       const rawDt = lastRenderAt === undefined ? 1 / 60 : Math.min(0.05, Math.max(0, (now - lastRenderAt) / 1000))
       lastRenderAt = now
       const renderDt = screen === 'paused' ? 0 : rawDt
@@ -575,9 +553,7 @@ async function start() {
           : `${screen}:${hudRev}`
       ui.setUnderlay(screen === 'title' ? null : paintHud, hudKey)
 
-      if (uiDirty || ui.dirty || w !== lastW || h !== lastH) {
-        renderUiNow()
-      }
+      syncUi()
     }
   })
 
@@ -596,6 +572,7 @@ async function start() {
       shopKeyController.abort()
       stop()
       stopLifecycle()
+      page.dispose()
       ui.dispose()
       stick.dispose()
       controls.dispose()

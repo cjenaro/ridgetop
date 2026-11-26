@@ -1,7 +1,5 @@
 import { bindActionControls, createGamePage, createLowPolyRenderer, fixedLoop } from 'ridgetop'
-import type { Backend } from 'ridgetop'
 import { boxNode, column, createCanvasUi, createUiTheme, overlay, row } from 'ridgetop/ui'
-import type { CanvasUiQuery } from 'ridgetop/ui'
 import { createRaceAudio } from './audio.ts'
 import { createRace, recover, standings, stepRace } from './race.ts'
 import { createRaceScene } from './scene.ts'
@@ -25,19 +23,14 @@ function time(seconds: number) {
 }
 
 async function start() {
-  const requested = page.url.searchParams.has('canvas') ? 'canvas' : page.url.searchParams.get('renderer')
-  const backend: Backend = requested === 'webgpu' || requested === 'webgl2' || requested === 'canvas' ? requested : 'auto'
   const stage = element<HTMLCanvasElement>('race-stage')
-  const renderer = await createLowPolyRenderer(stage, { backend })
+  const renderer = await createLowPolyRenderer(stage, { backend: page.requestedBackend() })
   const uiCanvas = element<HTMLCanvasElement>('race-ui')
-  const touch = matchMedia('(any-pointer: coarse)')
-  touch.addEventListener('change', () => { uiDirty = true })
   const audio = createRaceAudio()
 
   const progress = loadChampionship(page.storage)
   let saveFailed = !page.storage
-  let uiDirty = true
-  const garage = createGarageState(progress, () => { persist(); uiDirty = true })
+  const garage = createGarageState(progress, () => { persist(); ui.invalidate() })
   const saves = createSaveBackup(
     element<HTMLInputElement>('race-save-file'),
     progress,
@@ -45,10 +38,10 @@ async function start() {
       Object.assign(progress, next)
       prepare(Math.max(0, leadingEvent(progress)))
       const saved = persist()
-      uiDirty = true
+      ui.invalidate()
       return saved
     },
-    () => { uiDirty = true }
+    () => { ui.invalidate() }
   )
   const preview = createGarageBay(renderer)
   let selected = Math.max(0, leadingEvent(progress))
@@ -103,7 +96,7 @@ async function start() {
     queuedPulse = queuedSnare = false
     if (screen === 'garage') garage.open()
     if (screen !== 'saves') saves.clear()
-    uiDirty = true
+    ui.invalidate()
   }
 
   function prepare(index: number) {
@@ -166,6 +159,7 @@ async function start() {
     keyboardEnabled: () => screen !== 'racing',
     onBack: togglePause
   })
+  page.onTouchChange(() => ui.invalidate())
 
   function overlayTitleText() {
     if (screen === 'home') return 'Signal Drift'
@@ -191,7 +185,7 @@ async function start() {
     const results = screen === 'results'
     const qualified = Boolean(results && result?.qualified)
     const showOverlay = home || events || paused || results
-    const showTouch = racing && touch.matches
+    const showTouch = racing && page.touch.matches
     const g = garage.view()
 
     const overlayKicker = home ? (status < 0 ? 'CHAMPIONSHIP WON' : 'CHAMPIONSHIP')
@@ -353,7 +347,7 @@ async function start() {
           icon: tile.icon,
           selected: tile.selected,
           pips: { filled: tile.fitted, total: tile.total },
-          onPress: () => { garage.select(tile.id); uiDirty = true }
+          onPress: () => { garage.select(tile.id); ui.invalidate() }
         }
       }))),
       column({
@@ -372,60 +366,40 @@ async function start() {
         boxNode({
           id: 'garage-install',
           style: { height: 42 },
-          widget: { type: 'button', label: g.installLabel, primary: g.canInstall, disabled: !g.canInstall, onPress: () => { garage.install(); uiDirty = true } }
+          widget: { type: 'button', label: g.installLabel, primary: g.canInstall, disabled: !g.canInstall, onPress: () => { garage.install(); ui.invalidate() } }
         }),
         boxNode({ id: 'garage-feedback', hidden: !g.feedback, style: { height: 28 }, widget: { type: 'text', text: g.feedback, size: 11, color: '#8df5d5', wrap: true } })
       ])
     ])
   }
 
-  function renderUiNow() {
-    const w = Math.max(1, uiCanvas.clientWidth), h = Math.max(1, uiCanvas.clientHeight)
-    const ratio = Math.min(devicePixelRatio || 1, 2)
-    lastW = w; lastH = h; lastRatio = ratio
-    ui.render(buildUiTree(w, h), { width: w, height: h, pixelRatio: ratio })
-    uiDirty = false
-  }
-  let lastW = 0, lastH = 0, lastRatio = 0
-
-  Object.defineProperty(globalThis, '__ridgetopUi', {
-    configurable: true,
-    writable: true,
-    value: {
-      snapshot: () => ui.snapshot(),
-      query: (filter?: CanvasUiQuery) => ui.query(filter),
-      act: (id: string, action: string, payload?: unknown) => {
-        if (uiDirty) renderUiNow()
-        const ok = ui.act(id, action, payload)
-        renderUiNow()
-        return ok
-      },
-      rects: () => Object.fromEntries(ui.rects),
-      state: () => {
-        const player = race.drivers[0]
-        const g = garage.view()
-        return {
-          screen,
-          backend: renderer.name,
-          hosted: isHosted,
-          overlayTitle: overlayTitleText(),
-          purse: `${progress.credits} credits`,
-          speed: `${Math.round(Math.hypot(player.vx, player.vz) * 3.6)} km/h`,
-          shield: `Shield ${player.shield} / ${player.maxShield}`,
-          ammo: `Pulse ${player.pulses}  ·  Snare ${player.snares}`,
-          eventsLocked: circuits.map((_, i) => !unlocked(progress, i)),
-          garageCredits: g.creditsText,
-          garagePart: g.partName,
-          garageTier: g.tierText,
-          garageStats: g.statLines.join(' | '),
-          saveStatus: saves.status,
-          hasSaveCandidate: saves.hasCandidate
-        }
+  const syncUi = (force = false) => ui.sync(buildUiTree, { force })
+  ui.exposeGlobal({
+    renderNow: phase => syncUi(phase === 'after'),
+    getState: () => {
+      const player = race.drivers[0]
+      const g = garage.view()
+      return {
+        screen,
+        backend: renderer.name,
+        hosted: isHosted,
+        overlayTitle: overlayTitleText(),
+        purse: `${progress.credits} credits`,
+        speed: `${Math.round(Math.hypot(player.vx, player.vz) * 3.6)} km/h`,
+        shield: `Shield ${player.shield} / ${player.maxShield}`,
+        ammo: `Pulse ${player.pulses}  ·  Snare ${player.snares}`,
+        eventsLocked: circuits.map((_, i) => !unlocked(progress, i)),
+        garageCredits: g.creditsText,
+        garagePart: g.partName,
+        garageTier: g.tierText,
+        garageStats: g.statLines.join(' | '),
+        saveStatus: saves.status,
+        hasSaveCandidate: saves.hasCandidate
       }
     }
   })
 
-  renderUiNow()
+  syncUi(true)
   const stop = fixedLoop({
     update(dt) {
       if (screen !== 'racing') return
@@ -481,7 +455,7 @@ async function start() {
         const ammo = 'Pulse ' + player.pulses + '  ·  Snare ' + player.snares
         const racing = screen === 'racing'
         const count = Math.ceil(countdown)
-        const key = racing ? [circuit.id, lap, position, speed, elapsed, surface, shield, ammo, count, touch.matches].join('|') : 'overlay'
+        const key = racing ? [circuit.id, lap, position, speed, elapsed, surface, shield, ammo, count, page.touch.matches].join('|') : 'overlay'
         ui.setUnderlay(racing ? painter => {
           const inset = Math.max(10, Math.min(24, painter.width * .02))
           const width = painter.width <= 520 ? 156 : 191
@@ -496,7 +470,7 @@ async function start() {
           painter.text(position, left, inset + 26, number)
           painter.text(elapsed, right, inset + 32, { ...label, align: 'right', fill: '#fff0dc' })
           painter.text(circuit.name.toUpperCase(), left, inset + 63, label)
-          const bottom = touch.matches || painter.width <= 520 ? inset + 96 : painter.height - inset - 107
+          const bottom = page.touch.matches || painter.width <= 520 ? inset + 96 : painter.height - inset - 107
           painter.panel(inset, bottom, width, 107, panel)
           painter.text(speed, left, bottom + 8, { ...number, size: 30 })
           painter.text('KM/H', right, bottom + 21, { ...label, align: 'right' })
@@ -514,9 +488,7 @@ async function start() {
         } : null, key)
       }
 
-      const w = Math.max(1, uiCanvas.clientWidth), h = Math.max(1, uiCanvas.clientHeight)
-      const ratio = Math.min(devicePixelRatio || 1, 2)
-      if (uiDirty || ui.dirty || w !== lastW || h !== lastH || ratio !== lastRatio) renderUiNow()
+      syncUi()
     }
   })
 
@@ -535,6 +507,7 @@ async function start() {
       ui.clearHolds()
       stop()
       stopLifecycle()
+      page.dispose()
       ui.dispose()
       controls.dispose()
       preview.dispose()

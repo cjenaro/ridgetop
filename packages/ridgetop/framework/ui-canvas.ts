@@ -1,10 +1,87 @@
-import type { HudPainter } from './hud.ts'
-import { createHudPainter } from './hud.ts'
 import { readConnectedGamepads } from './input.ts'
 import type { LayoutNode, LayoutRect, SafeInsets } from './ui-layout.ts'
 import { resolveLayout } from './ui-layout.ts'
 import { isTestingActive, isTestingPaused, onTestingPause, recordCanvasUiRegions } from './testing-runtime.ts'
 import type { HudRegion } from './testing-runtime.ts'
+
+export interface HudPainter {
+  readonly width: number
+  readonly height: number
+  panel(x: number, y: number, width: number, height: number, style: {
+    fill: string
+    stroke?: string
+    radius?: number
+  }): void
+  text(value: string, x: number, y: number, style: {
+    fill: string
+    size: number
+    weight?: number
+    align?: CanvasTextAlign
+    mono?: boolean
+    maxWidth?: number
+  }): void
+}
+
+/** Create a lightweight screen-space HUD painter backed by any Canvas 2D context. */
+export function createHudPainter(
+  context: CanvasRenderingContext2D,
+  getSize: () => { width: number; height: number }
+): HudPainter {
+  return {
+    get width() { return getSize().width },
+    get height() { return getSize().height },
+    panel(x, y, w, h, { fill, stroke, radius = 0 }) {
+      context.beginPath()
+      if (typeof context.roundRect === 'function') context.roundRect(x, y, w, h, radius)
+      else context.rect(x, y, w, h)
+      context.fillStyle = fill
+      context.fill()
+      if (stroke) {
+        context.strokeStyle = stroke
+        context.lineWidth = 1
+        context.stroke()
+      }
+    },
+    text(value, x, y, { fill, size, weight = 600, align = 'left', mono = false, maxWidth }) {
+      context.fillStyle = fill
+      context.font = weight + ' ' + size + 'px ' + (mono ? 'ui-monospace, monospace' : 'system-ui, sans-serif')
+      context.textAlign = align
+      context.textBaseline = 'top'
+      if (maxWidth === undefined) context.fillText(value, x, y)
+      else context.fillText(value, x, y, maxWidth)
+    }
+  }
+}
+
+/** Standalone screen-space HUD canvas helper (compatibility wrapper around `createHudPainter`). */
+export function createHud(canvas: HTMLCanvasElement) {
+  const context = canvas.getContext('2d')
+  if (!context) throw new Error('Could not create the game HUD')
+  let previous: string | undefined
+  let previousStage: HTMLCanvasElement | undefined
+  let width = 0
+  let height = 0
+  canvas.addEventListener('contextrestored', () => { previousStage = undefined })
+  const painter = createHudPainter(context, () => ({ width, height }))
+
+  return {
+    render(stage: HTMLCanvasElement, key: string, paint: (ui: HudPainter) => void) {
+      const w = Math.max(1, stage.clientWidth)
+      const h = Math.max(1, stage.clientHeight)
+      if (stage === previousStage && key === previous && w === width && h === height &&
+          canvas.width === stage.width && canvas.height === stage.height) return
+      previous = key
+      previousStage = stage
+      width = w
+      height = h
+      if (canvas.width !== stage.width) canvas.width = stage.width
+      if (canvas.height !== stage.height) canvas.height = stage.height
+      context.setTransform(canvas.width / width, 0, 0, canvas.height / height, 0, 0)
+      context.clearRect(0, 0, width, height)
+      paint(painter)
+    }
+  }
+}
 
 export type CanvasUiUnderlay = (painter: HudPainter, ctx: CanvasRenderingContext2D) => void
 
@@ -13,6 +90,49 @@ export interface CanvasUiViewport {
   height: number
   pixelRatio?: number
   underlay?: CanvasUiUnderlay | null
+}
+
+export interface CanvasUiSyncOptions {
+  /** Override logical CSS width (defaults to `Math.max(1, canvas.clientWidth)`). */
+  width?: number
+  /** Override logical CSS height (defaults to `Math.max(1, canvas.clientHeight)`). */
+  height?: number
+  /** Override pixel ratio before capping at 2 (defaults to `globalThis.devicePixelRatio || 1`). */
+  pixelRatio?: number
+  /** Override underlay painter for this render pass. */
+  underlay?: CanvasUiUnderlay | null
+  /** Render even if internal `ui.dirty` and viewport dimensions are unchanged. */
+  dirty?: boolean
+  /** Force an unconditional re-render. */
+  force?: boolean
+}
+
+export interface CanvasUiGlobalHandle<State extends Record<string, unknown> = Record<string, unknown>> {
+  snapshot(): CanvasUiWidgetSnapshot[]
+  query(filter?: CanvasUiQuery): CanvasUiWidgetSnapshot[]
+  act(id: string, action?: string, payload?: unknown): boolean
+  rects(): Record<string, LayoutRect>
+  state(): State
+}
+
+export interface CanvasUiExposeOptions<
+  State extends Record<string, unknown> = Record<string, unknown>,
+  Extra extends Record<string, unknown> = Record<string, unknown>
+> {
+  /** Called before and after `act()` to flush UI layout/painting to the canvas. */
+  renderNow?(phase: 'before' | 'after'): void
+  /** Return the game-specific state snapshot exposed via `__ridgetopUi.state()`. */
+  getState?(): State
+  /** Optional map of legacy/alias widget IDs to canonical IDs tried during `act()`. */
+  aliases?: Readonly<Record<string, string>>
+  /** Optional hook invoked after a successful `act()` and before the post-act render. */
+  onAct?(id: string, action: string, payload?: unknown): void
+  /** Additional game-specific helper methods/fields merged onto the exposed handle. */
+  extra?: Extra
+  /** Target object to define the handle on (defaults to `globalThis`). */
+  target?: object
+  /** Property name or names to register on `target` (defaults to `'__ridgetopUi'`). */
+  property?: string | readonly string[]
 }
 
 export interface UiTheme {
@@ -295,6 +415,10 @@ function collectNodes(node: LayoutNode, out: LayoutNode[]) {
   for (const child of node.children ?? []) collectNodes(child, out)
 }
 
+function isRecordObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
+}
+
 function isCanvasWidget(value: unknown): value is CanvasWidget {
   if (typeof value !== 'object' || value === null || !('type' in value)) return false
   const t = value.type
@@ -351,6 +475,8 @@ export function createCanvasUi(canvas: HTMLCanvasElement, options: {
   }>()
   let viewportW = 0
   let viewportH = 0
+  let lastRatio = 0
+  let hasRendered = false
   let currentUnderlay: CanvasUiUnderlay | null = options.underlay ?? null
   let underlayKey: string | undefined
   let disposed = false
@@ -360,6 +486,7 @@ export function createCanvasUi(canvas: HTMLCanvasElement, options: {
   let padMoveAt = 0
   let padConfirm = false
   let padBack = false
+  const globalCleanups = new Set<() => void>()
 
   const hudPainter = createHudPainter(ctx, () => ({ width: viewportW, height: viewportH }))
   canvas.addEventListener('contextrestored', () => { dirty = true }, signal)
@@ -1011,66 +1138,159 @@ export function createCanvasUi(canvas: HTMLCanvasElement, options: {
     return false
   }
 
+  function resolvePixelRatio(override?: number): number {
+    const raw = override ?? globalThis.devicePixelRatio ?? 1
+    return Math.min(Number.isFinite(raw) && raw > 0 ? raw : 1, 2)
+  }
+
+  function render(tree: LayoutNode, viewport?: CanvasUiViewport) {
+    const w = Math.max(1, viewport?.width ?? canvas.clientWidth)
+    const h = Math.max(1, viewport?.height ?? canvas.clientHeight)
+    const ratio = resolvePixelRatio(viewport?.pixelRatio)
+    viewportW = w
+    viewportH = h
+    lastRatio = ratio
+    hasRendered = true
+    const pw = Math.max(1, Math.round(w * ratio))
+    const ph = Math.max(1, Math.round(h * ratio))
+    if (canvas.width !== pw) canvas.width = pw
+    if (canvas.height !== ph) canvas.height = ph
+    nodes = []
+    collectNodes(tree, nodes)
+    rects = resolveLayout(tree, { width: w, height: h }, options.safeArea)
+    const enabledIds = new Set(interactiveHits(false, true).map(hit => hit.id))
+    if (hoveredId && !enabledIds.has(hoveredId)) {
+      hoveredId = null
+      canvas.style.cursor = ''
+    }
+    if (focusedId && !enabledIds.has(focusedId)) {
+      focusedId = null
+    }
+    ctx.setTransform(pw / w, 0, 0, ph / h, 0, 0)
+    ctx.clearRect(0, 0, w, h)
+    const underlay = viewport?.underlay !== undefined ? viewport.underlay : currentUnderlay
+    if (underlay) {
+      ctx.save()
+      underlay(hudPainter, ctx)
+      ctx.restore()
+    }
+    paintNode(tree)
+    if (isTestingActive()) {
+      const hudRegions: HudRegion[] = []
+      for (const node of nodes) {
+        if (!node.id) continue
+        const widget = getCanvasWidget(node)
+        if (!widget || (widget.type === 'panel' && widget.scrim)) continue
+        const rect = rects.get(node.id)
+        if (!rect || rect.width <= 0 || rect.height <= 0) continue
+        const label = 'label' in widget && widget.label
+          ? widget.label
+          : widget.type === 'text' ? widget.text.slice(0, 32) : node.id
+        hudRegions.push({
+          id: node.id,
+          label,
+          asset: node.id,
+          source: 'canvas-ui#' + node.id,
+          canvas,
+          rect: { x: rect.x, y: rect.y, width: rect.width, height: rect.height },
+          viewportWidth: w,
+          viewportHeight: h
+        })
+      }
+      recordCanvasUiRegions(canvas, hudRegions)
+    }
+    dirty = false
+    return rects
+  }
+
+  function invalidate() {
+    dirty = true
+  }
+
+  function sync(
+    buildTree: (width: number, height: number) => LayoutNode,
+    syncOptions?: CanvasUiSyncOptions
+  ): boolean {
+    const w = Math.max(1, syncOptions?.width ?? canvas.clientWidth)
+    const h = Math.max(1, syncOptions?.height ?? canvas.clientHeight)
+    const ratio = resolvePixelRatio(syncOptions?.pixelRatio)
+    const pw = Math.max(1, Math.round(w * ratio))
+    const ph = Math.max(1, Math.round(h * ratio))
+    const needsRender = Boolean(syncOptions?.force || syncOptions?.dirty) ||
+      !hasRendered || dirty ||
+      w !== viewportW || h !== viewportH || ratio !== lastRatio ||
+      canvas.width !== pw || canvas.height !== ph
+    if (!needsRender) return false
+    render(buildTree(w, h), {
+      width: w,
+      height: h,
+      pixelRatio: ratio,
+      ...(syncOptions?.underlay !== undefined ? { underlay: syncOptions.underlay } : {})
+    })
+    return true
+  }
+
+  function exposeGlobal<
+    State extends Record<string, unknown> = Record<string, unknown>,
+    Extra extends Record<string, unknown> = Record<string, unknown>
+  >(exposeOptions: CanvasUiExposeOptions<State, Extra> = {}): () => void {
+    const target = exposeOptions.target ?? globalThis
+    const propList = exposeOptions.property === undefined
+      ? ['__ridgetopUi']
+      : typeof exposeOptions.property === 'string'
+        ? [exposeOptions.property]
+        : Array.from(exposeOptions.property)
+
+    const handle = {
+      ...exposeOptions.extra,
+      snapshot: () => snapshot(),
+      query: (filter?: CanvasUiQuery) => query(filter),
+      act: (id: string, action = 'press', payload?: unknown) => {
+        exposeOptions.renderNow?.('before')
+        const mapped = exposeOptions.aliases?.[id]
+        const ok = mapped !== undefined
+          ? (act(mapped, action, payload) || (mapped !== id && act(id, action, payload)))
+          : act(id, action, payload)
+        if (ok) exposeOptions.onAct?.(id, action, payload)
+        exposeOptions.renderNow?.('after')
+        return ok
+      },
+      rects: () => Object.fromEntries(rects),
+      state: () => (exposeOptions.getState ? exposeOptions.getState() : {})
+    }
+
+    const previous: Array<{ prop: string; existed: boolean; value: unknown }> = propList.map(prop => ({
+      prop,
+      existed: Object.hasOwn(target, prop),
+      value: Reflect.get(target, prop)
+    }))
+    for (const prop of propList) {
+      Reflect.set(target, prop, handle)
+    }
+
+    let active = true
+    const cleanup = () => {
+      if (!active) return
+      active = false
+      globalCleanups.delete(cleanup)
+      for (const { prop, existed, value } of previous) {
+        if (Reflect.get(target, prop) !== handle) continue
+        if (existed) Reflect.set(target, prop, value)
+        else if (isRecordObject(target)) delete target[prop]
+        else Reflect.set(target, prop, undefined)
+      }
+    }
+    globalCleanups.add(cleanup)
+    return cleanup
+  }
+
   return {
     theme,
     setUnderlay,
-    render(tree: LayoutNode, viewport?: CanvasUiViewport) {
-      const w = Math.max(1, viewport?.width ?? canvas.clientWidth)
-      const h = Math.max(1, viewport?.height ?? canvas.clientHeight)
-      viewportW = w
-      viewportH = h
-      const ratio = Math.min(viewport?.pixelRatio ?? globalThis.devicePixelRatio ?? 1, 2)
-      const pw = Math.max(1, Math.round(w * ratio))
-      const ph = Math.max(1, Math.round(h * ratio))
-      if (canvas.width !== pw) canvas.width = pw
-      if (canvas.height !== ph) canvas.height = ph
-      nodes = []
-      collectNodes(tree, nodes)
-      rects = resolveLayout(tree, { width: w, height: h }, options.safeArea)
-      const enabledIds = new Set(interactiveHits(false, true).map(hit => hit.id))
-      if (hoveredId && !enabledIds.has(hoveredId)) {
-        hoveredId = null
-        canvas.style.cursor = ''
-      }
-      if (focusedId && !enabledIds.has(focusedId)) {
-        focusedId = null
-      }
-      ctx.setTransform(pw / w, 0, 0, ph / h, 0, 0)
-      ctx.clearRect(0, 0, w, h)
-      const underlay = viewport?.underlay !== undefined ? viewport.underlay : currentUnderlay
-      if (underlay) {
-        ctx.save()
-        underlay(hudPainter, ctx)
-        ctx.restore()
-      }
-      paintNode(tree)
-      if (isTestingActive()) {
-        const hudRegions: HudRegion[] = []
-        for (const node of nodes) {
-          if (!node.id) continue
-          const widget = getCanvasWidget(node)
-          if (!widget || (widget.type === 'panel' && widget.scrim)) continue
-          const rect = rects.get(node.id)
-          if (!rect || rect.width <= 0 || rect.height <= 0) continue
-          const label = 'label' in widget && widget.label
-            ? widget.label
-            : widget.type === 'text' ? widget.text.slice(0, 32) : node.id
-          hudRegions.push({
-            id: node.id,
-            label,
-            asset: node.id,
-            source: 'canvas-ui#' + node.id,
-            canvas,
-            rect: { x: rect.x, y: rect.y, width: rect.width, height: rect.height },
-            viewportWidth: w,
-            viewportHeight: h
-          })
-        }
-        recordCanvasUiRegions(canvas, hudRegions)
-      }
-      dirty = false
-      return rects
-    },
+    render,
+    sync,
+    invalidate,
+    exposeGlobal,
     hitTest: findHit,
     blocksPoint,
     clearHolds,
@@ -1084,6 +1304,7 @@ export function createCanvasUi(canvas: HTMLCanvasElement, options: {
     act,
     dispose() {
       disposed = true
+      for (const cleanup of Array.from(globalCleanups)) cleanup()
       unsubPause()
       hoveredId = null
       focusedId = null
@@ -1097,3 +1318,5 @@ export function createCanvasUi(canvas: HTMLCanvasElement, options: {
     }
   }
 }
+
+export type CanvasUi = ReturnType<typeof createCanvasUi>
