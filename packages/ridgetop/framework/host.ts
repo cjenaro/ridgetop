@@ -20,7 +20,7 @@ const importMapTag = `\n  <script type="importmap">${importMapJson}</script>\n`
 const contentSecurityPolicy =
   `default-src 'self'; script-src 'self' 'sha256-${importMapHash}'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'`
 
-const testingBootTag = '\n<script type="module" src="/framework/testing-boot.js"></script>\n'
+const testingStudioTag = '\n<script type="module" src="/framework/testing-studio.js"></script>\n'
 const mime: Record<string, string> = {
   html: 'text/html', css: 'text/css', js: 'text/javascript', png: 'image/png', json: 'application/json',
   glb: 'model/gltf-binary', obj: 'text/plain', wav: 'audio/wav', ogg: 'audio/ogg', mp3: 'audio/mpeg'
@@ -51,11 +51,11 @@ function prepareHtml(html: Buffer, testingEnabled: boolean, hosted: boolean): Bu
   if (hasModuleScript || testingEnabled) {
     text = injectImportMap(text)
   }
-  if (testingEnabled && !text.includes('/framework/testing-boot.js')) {
+  if (testingEnabled && !text.includes('/framework/testing-studio.js')) {
     const closeBody = text.lastIndexOf('</body>')
     text = closeBody >= 0
-      ? text.slice(0, closeBody) + testingBootTag + text.slice(closeBody)
-      : text + testingBootTag
+      ? text.slice(0, closeBody) + testingStudioTag + text.slice(closeBody)
+      : text + testingStudioTag
   }
   return Buffer.from(text, 'utf8')
 }

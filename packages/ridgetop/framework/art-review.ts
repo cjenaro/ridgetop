@@ -392,3 +392,26 @@ export function auditArtModel(
     warnings
   }
 }
+
+export {
+  REVIEW_UUID_RE, TestingProtocolError, allowedScopesForSurface, checkPin, checkReview,
+  checkSpriteManifest, isReviewEntry, isReviewScope, isReviewStatus, isReviewSurface,
+  isThreeDSurface, isUnitRegion, parseReviewEntry, parseReviewList, resolveTestingUrlActivation,
+  validateReviewComment, validateReviewId
+} from './testing-protocol.ts'
+export type {
+  CreateReviewInput, ReviewEntry, ReviewListResult, ReviewStorePort, SaveRecipeInput,
+  SaveRecipeResult, SaveSpriteInput, SaveSpriteResult, SpriteManifestInput, UpdateReviewInput
+} from './testing-protocol.ts'
+export {
+  instanceWorldAabb, projectAabbToNormalizedScreen, recognizeAssetFromPick
+} from './testing-recognition.ts'
+export type { WorldAabb } from './testing-recognition.ts'
+export {
+  createArtRecipeEditor, createHttpReviewStore, createMemoryReviewStore,
+  createTestingStudioSession, surfaceLabel
+} from './testing-session.ts'
+export type {
+  ArtPartEditPatch, ArtRecipeEditor, MemoryReviewStore, PickResult, ReloadCompareState,
+  StudioSelection, TestingStudioEnvironment, TestingStudioSession, ViewportRect
+} from './testing-session.ts'

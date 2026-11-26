@@ -74,8 +74,10 @@ export const BROWSER_RUNTIME_MODULES: readonly string[] = Object.freeze([
 export const BROWSER_STUDIO_MODULES: readonly string[] = Object.freeze([
   'verification.js',
   'art-review.js',
+  'testing-protocol.js',
+  'testing-recognition.js',
   'testing-runtime.js',
-  'testing-boot.js',
+  'testing-session.js',
   'testing-studio.js'
 ])
 

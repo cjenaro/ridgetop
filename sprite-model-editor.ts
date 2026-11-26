@@ -1,5 +1,7 @@
-import { artPalette, artShapes, fitArtRecipe } from 'ridgetop'
-import type { ArtRecipe, ArtShape, ArtTone, SpriteSheetImage, Vec3 } from 'ridgetop'
+import { artPalette, artShapes } from 'ridgetop'
+import type { ArtRecipe, SpriteSheetImage, Vec3 } from 'ridgetop'
+import { createArtRecipeEditor } from 'ridgetop/art-review'
+import type { ArtRecipeEditor } from 'ridgetop/art-review'
 
 function query<T extends Element>(parent: ParentNode, selector: string): T {
   const el = parent.querySelector<T>(selector)
@@ -13,14 +15,6 @@ function require2d(canvas: HTMLCanvasElement): CanvasRenderingContext2D {
   return ctx
 }
 
-function isArtShape(value: string): value is ArtShape {
-  return Object.hasOwn(artShapes, value)
-}
-
-function isArtTone(value: string): value is ArtTone {
-  return Object.hasOwn(artPalette, value)
-}
-
 export function createPartEditor(root: HTMLDetailsElement, onApply: (source: ArtRecipe) => void) {
   const select = query<HTMLSelectElement>(root, '#part-name')
   const shape = query<HTMLSelectElement>(root, '#part-shape')
@@ -29,7 +23,7 @@ export function createPartEditor(root: HTMLDetailsElement, onApply: (source: Art
   const status = query<HTMLOutputElement>(root, '#part-status')
   shape.replaceChildren(...Object.keys(artShapes).map(key => new Option(key, key)))
   tone.replaceChildren(...Object.keys(artPalette).map(key => new Option(key, key)))
-  let source: ArtRecipe | undefined
+  let editor: ArtRecipeEditor | undefined
 
   function vectorControls(id: string) {
     const area = query(root, '#part-' + id)
@@ -48,18 +42,13 @@ export function createPartEditor(root: HTMLDetailsElement, onApply: (source: Art
   const position = vectorControls('position'), scale = vectorControls('scale')
   const rotation = vectorControls('rotation'), angles = ['pitch', 'yaw', 'roll'] as const
   const values = ([x, y, z]: HTMLInputElement[]): Vec3 => [x.valueAsNumber, y.valueAsNumber, z.valueAsNumber]
-  function syncSelectOptions(recipe: ArtRecipe, isTube: boolean) {
-    const shapeKeys = Object.keys(artShapes)
-    if (isTube) shapeKeys.push('tube')
-    shape.replaceChildren(...shapeKeys.map(key => new Option(key, key)))
-    const toneKeys = Object.keys(artPalette)
-    for (const k of Object.keys(recipe.palette)) if (!toneKeys.includes(k)) toneKeys.push(k)
-    tone.replaceChildren(...toneKeys.map(key => new Option(key, key)))
-  }
+
   function showPart() {
-    if (!source) return
-    const part = source.parts[select.selectedIndex]
-    syncSelectOptions(source, part.shape === 'tube')
+    if (!editor) return
+    editor.selectPart(select.selectedIndex)
+    const part = editor.getSelectedPart()
+    shape.replaceChildren(...editor.getAvailableShapes().map(key => new Option(key, key)))
+    tone.replaceChildren(...editor.getAvailableTones().map(key => new Option(key, key)))
     shape.value = part.shape
     shape.disabled = part.shape === 'tube'
     tone.value = part.tone
@@ -68,42 +57,50 @@ export function createPartEditor(root: HTMLDetailsElement, onApply: (source: Art
       scale[i].value = String(part.scale[i])
       rotation[i].value = String((part[angles[i]] ?? 0) * 180 / Math.PI)
     }
-    frameSize.value = String(source.frameSize)
+    frameSize.value = String(editor.getRecipe().frameSize)
     status.textContent = ''
   }
+
   select.onchange = showPart
   query<HTMLFormElement>(root, 'form').onsubmit = event => {
     event.preventDefault()
-    if (!source) return
+    if (!editor) return
     try {
-      const next = structuredClone(source)
-      const part = next.parts[select.selectedIndex]
-      if (part.shape !== 'tube') {
-        if (!isArtShape(shape.value)) throw new Error('Unknown shape: ' + shape.value)
-        part.shape = shape.value
-      }
-      if (!isArtTone(tone.value) && !Object.hasOwn(next.palette, tone.value)) throw new Error('Unknown tone: ' + tone.value)
-      part.tone = tone.value
-      part.position = values(position)
-      part.scale = values(scale)
-      angles.forEach((axis, i) => {
-        const degrees = rotation[i].valueAsNumber
-        if (degrees !== (part[axis] ?? 0) * 180 / Math.PI) part[axis] = degrees * Math.PI / 180
+      editor.selectPart(select.selectedIndex)
+      const current = editor.getSelectedPart()
+      const nextShape = current.shape === 'tube'
+        ? undefined
+        : editor.getAvailableShapes().find(s => s === shape.value)
+      if (current.shape !== 'tube' && !nextShape) throw new Error('Unknown shape: ' + shape.value)
+      const updated = editor.updatePart({
+        ...(nextShape !== undefined ? { shape: nextShape } : {}),
+        tone: tone.value,
+        position: values(position),
+        scale: values(scale),
+        rotationDeg: [rotation[0].valueAsNumber, rotation[1].valueAsNumber, rotation[2].valueAsNumber]
       })
-      next.frameSize = frameSize.valueAsNumber
+      editor.setFrameSize(frameSize.valueAsNumber)
       const fit = event.submitter?.id === 'fit-model'
-      onApply(fit ? fitArtRecipe(next) : next)
-      status.textContent = fit ? 'Grounded the model and fitted all eight views.' : 'Updated ' + part.name + '.'
-    } catch (error) { status.textContent = error.message }
+      const next = fit ? editor.fitAndGround() : editor.getRecipe()
+      onApply(structuredClone(next))
+      status.textContent = fit ? 'Grounded the model and fitted all eight views.' : 'Updated ' + updated.name + '.'
+    } catch (error) {
+      status.textContent = error.message
+    }
   }
+
   return {
     show(recipe?: ArtRecipe) {
       const previous = select.value
-      source = recipe
       root.hidden = !recipe
-      if (!recipe) return
+      if (!recipe) {
+        editor = undefined
+        return
+      }
+      const selected = recipe.parts.some(part => part.name === previous) ? previous : undefined
+      editor = createArtRecipeEditor(recipe, selected)
       select.replaceChildren(...recipe.parts.map(part => new Option(part.name, part.name)))
-      if (recipe.parts.some(part => part.name === previous)) select.value = previous
+      if (selected) select.value = selected
       showPart()
     }
   }
