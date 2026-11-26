@@ -198,8 +198,61 @@ function vfxColor(style: 'slash' | 'arrow' | 'arcane' | 'fire' | 'frost' | 'holy
   return C_FIRE_TIP
 }
 
+export const CAMERA_QUARTER_TURN = Math.PI / 2
+export const CAMERA_FULL_TURN = Math.PI * 2
+export const CAMERA_YAW_SMOOTH_SPEED = 14
+
+/** Normalize any yaw angle (radians) into the canonical [-PI, PI) range. */
+export function normalizeCameraYaw(rad: number): number {
+  if (!Number.isFinite(rad)) return 0
+  const wrapped = rad - CAMERA_FULL_TURN * Math.floor((rad + Math.PI) / CAMERA_FULL_TURN)
+  return Object.is(wrapped, -0) ? 0 : wrapped
+}
+
+/** Signed shortest-arc angular difference from `from` to `to` in [-PI, PI). */
+export function shortestYawDelta(from: number, to: number): number {
+  return normalizeCameraYaw(to - from)
+}
+
+/**
+ * Snap `currentTargetYaw` to the nearest 90-degree cardinal multiple and step by `steps * (PI / 2)`.
+ * Keeps the continuous turn direction intact across rapid multi-snaps; normalize via `normalizeCameraYaw` for display.
+ */
+export function snapYawStep(currentTargetYaw: number, steps: number): number {
+  const safeYaw = Number.isFinite(currentTargetYaw) ? currentTargetYaw : 0
+  const deltaSteps = Number.isFinite(steps) ? Math.trunc(steps) : 0
+  const nearestCardinal = Math.round(safeYaw / CAMERA_QUARTER_TURN) * CAMERA_QUARTER_TURN
+  const next = nearestCardinal + deltaSteps * CAMERA_QUARTER_TURN
+  return Object.is(next, -0) ? 0 : next
+}
+
+/** Framerate-independent exponential ease from `current` toward `target`. */
+export function stepCameraYaw(current: number, target: number, dt: number, speed = CAMERA_YAW_SMOOTH_SPEED): number {
+  if (!Number.isFinite(dt) || dt <= 0) return current
+  const delta = target - current
+  if (Math.abs(delta) < 1e-4) return target
+  const alpha = 1 - Math.exp(-speed * dt)
+  return current + delta * alpha
+}
+
+/** Convert screen-aligned horizontal pan deltas (right, down) into world XZ pan deltas at `yaw`. */
+export function cameraRelativePanDelta(right: number, down: number, yaw: number): readonly [number, number] {
+  const c = Math.cos(yaw)
+  const s = Math.sin(yaw)
+  return [right * c + down * s, -right * s + down * c]
+}
+
+/** Nearest cardinal compass heading ('N' | 'W' | 'S' | 'E') the battle camera is facing. */
+export function cameraCardinalHeading(yaw: number): 'N' | 'W' | 'S' | 'E' {
+  const q = ((Math.round(normalizeCameraYaw(yaw) / CAMERA_QUARTER_TURN) % 4) + 4) % 4
+  if (q === 1) return 'W'
+  if (q === 2) return 'S'
+  if (q === 3) return 'E'
+  return 'N'
+}
+
 function wrapAngle(a: number): number {
-  return a - Math.PI * 2 * Math.floor((a + Math.PI) / (Math.PI * 2))
+  return normalizeCameraYaw(a)
 }
 
 type Animator = ReturnType<typeof createAnimator<UnitClipName>>
@@ -282,7 +335,8 @@ export function createCrownshardScene(renderer: LowPolyRenderer) {
   let lastMatrix: Matrix = multiply(perspective(Math.PI / 3.6, 16 / 9, 0.5, 120), view([0, 12, 13], [0, 0, 0]))
   let hoveredCell: { col: number; row: number } | null = null
   let activeForecast: CombatForecast | null = null
-  let cameraYawOffset = 0
+  let cameraYawTarget = 0
+  let cameraYawActual = 0
   const DEFAULT_CAMERA_PITCH = 0.72
   const MIN_CAMERA_PITCH = 0.28
   const MAX_CAMERA_PITCH = 1.38
@@ -1176,6 +1230,11 @@ export function createCrownshardScene(renderer: LowPolyRenderer) {
 
     cameraZoomActual += (cameraZoom - cameraZoomActual) * Math.min(1, dt * 14)
     cameraPitchActual += (cameraPitch - cameraPitchActual) * Math.min(1, dt * 14)
+    cameraYawActual = stepCameraYaw(cameraYawActual, cameraYawTarget, dt)
+    if (Math.abs(cameraYawTarget - cameraYawActual) < 1e-4) {
+      cameraYawActual = normalizeCameraYaw(cameraYawTarget)
+      cameraYawTarget = cameraYawActual
+    }
     const maxPan = Math.max(0, (1.02 - cameraZoomActual) * 8.0)
     cameraPanX = Math.max(-maxPan, Math.min(maxPan, cameraPanX))
     cameraPanZ = Math.max(-maxPan, Math.min(maxPan, cameraPanZ))
@@ -1193,14 +1252,20 @@ export function createCrownshardScene(renderer: LowPolyRenderer) {
     const orbitRadius = Math.hypot(baseHoriz, baseEyeY) * cameraZoomActual
     const horizDist = Math.cos(cameraPitchActual) * orbitRadius
     const eyeY = Math.sin(cameraPitchActual) * orbitRadius
-    const camYaw = cameraYawOffset
-    const baseTargetZ = isPhonePortrait ? 0.9 : isPhoneLandscape ? 0.72 : 0.35
-    const eye: Vec3 = [
-      cameraPanX + Math.sin(camYaw) * horizDist * 0.88 + shakeX,
-      eyeY + shakeY,
-      cameraPanZ + Math.cos(camYaw) * horizDist + baseTargetZ
+    const camYaw = cameraYawActual
+    const sinYaw = Math.sin(camYaw)
+    const cosYaw = Math.cos(camYaw)
+    const baseTargetOffset = isPhonePortrait ? 0.9 : isPhoneLandscape ? 0.72 : 0.35
+    const target: Vec3 = [
+      cameraPanX + sinYaw * baseTargetOffset,
+      -0.2,
+      cameraPanZ + cosYaw * baseTargetOffset
     ]
-    const target: Vec3 = [cameraPanX, -0.2, cameraPanZ + baseTargetZ]
+    const eye: Vec3 = [
+      target[0] + sinYaw * horizDist + cosYaw * shakeX,
+      eyeY + shakeY,
+      target[2] + cosYaw * horizDist - sinYaw * shakeX
+    ]
     lastMatrix = multiply(perspective(Math.PI / 3.9, aspect, 0.5, 220), view(eye, target))
 
     // 1. Move tiles: Hollow Square Frame + center dot (unmistakable vs Attack [X] even in grayscale!)
@@ -1567,7 +1632,35 @@ export function createCrownshardScene(renderer: LowPolyRenderer) {
       activeForecast = forecast
     },
     rotateCamera(delta: number) {
-      cameraYawOffset = Math.max(-0.85, Math.min(0.85, cameraYawOffset + delta))
+      if (!Number.isFinite(delta)) return
+      cameraYawTarget += delta
+    },
+    snapCameraYaw(steps: number) {
+      cameraYawTarget = snapYawStep(cameraYawTarget, steps)
+      return normalizeCameraYaw(cameraYawTarget)
+    },
+    setCameraYaw(rad: number, instant = false) {
+      const normalized = normalizeCameraYaw(rad)
+      if (instant) {
+        cameraYawActual = normalized
+        cameraYawTarget = normalized
+      } else {
+        cameraYawTarget = cameraYawActual + shortestYawDelta(cameraYawActual, normalized)
+      }
+      return normalized
+    },
+    getCameraYaw() {
+      return normalizeCameraYaw(cameraYawTarget)
+    },
+    getCameraYawActual() {
+      return normalizeCameraYaw(cameraYawActual)
+    },
+    isCameraAnimating() {
+      return (
+        Math.abs(cameraYawTarget - cameraYawActual) > 1e-3 ||
+        Math.abs(cameraPitch - cameraPitchActual) > 1e-3 ||
+        Math.abs(cameraZoom - cameraZoomActual) > 1e-3
+      )
     },
     tiltCamera(delta: number) {
       cameraPitch = Math.max(MIN_CAMERA_PITCH, Math.min(MAX_CAMERA_PITCH, cameraPitch + delta))
@@ -1600,13 +1693,12 @@ export function createCrownshardScene(renderer: LowPolyRenderer) {
         cameraPanZ = 0
         return
       }
-      const c = Math.cos(cameraYawOffset)
-      const s = Math.sin(cameraYawOffset)
-      cameraPanX = Math.max(-maxPan, Math.min(maxPan, cameraPanX + dx * c + dz * s))
-      cameraPanZ = Math.max(-maxPan, Math.min(maxPan, cameraPanZ - dx * s + dz * c))
+      const [worldDx, worldDz] = cameraRelativePanDelta(dx, dz, cameraYawActual)
+      cameraPanX = Math.max(-maxPan, Math.min(maxPan, cameraPanX + worldDx))
+      cameraPanZ = Math.max(-maxPan, Math.min(maxPan, cameraPanZ + worldDz))
     },
     resetCamera() {
-      cameraYawOffset = 0
+      cameraYawTarget = cameraYawActual + shortestYawDelta(cameraYawActual, 0)
       cameraPitch = DEFAULT_CAMERA_PITCH
       cameraZoom = 1.0
       cameraPanX = 0

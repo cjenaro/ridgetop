@@ -1056,6 +1056,96 @@ export function drawIconButton(
   if (st.focused && !st.disabled) drawFocusRing(ctx, x, y, w, drawH, r)
 }
 
+/** Compact live camera compass dial button showing North relative to the battle camera's 360-degree yaw. */
+export function drawCameraCompassButton(
+  ctx: CanvasRenderingContext2D,
+  rect: LayoutRect,
+  yawRad: number,
+  heading: 'N' | 'W' | 'S' | 'E',
+  st: CanvasWidgetDrawState
+) {
+  const { x, width: w, height: h } = rect
+  const pressed = st.pressed && !st.disabled
+  const hot = (st.hovered || st.focused) && !st.disabled
+  const y = rect.y + (pressed ? 2 : 0)
+  const drawH = Math.max(8, h - (pressed ? 2 : 0))
+  const r = Math.min(RADIUS.sm + 2, drawH / 2)
+  const lip = pressed ? 1 : 3
+
+  ctx.save()
+  if (st.disabled) ctx.globalAlpha *= 0.45
+
+  // Base lip
+  rr(ctx, x, y, w, drawH, r)
+  ctx.fillStyle = '#141c33'
+  ctx.fill()
+
+  // Face
+  const faceH = Math.max(4, drawH - lip)
+  rr(ctx, x + 1, y + 1, w - 2, faceH - 1, Math.max(2, r - 1))
+  const g = ctx.createLinearGradient(0, y, 0, y + faceH)
+  g.addColorStop(0, hot ? '#5770ab' : '#3a4d7a')
+  g.addColorStop(1, hot ? '#394c7a' : '#243154')
+  ctx.fillStyle = g
+  ctx.fill()
+
+  // Dark ink outline
+  rr(ctx, x + 1, y + 1, w - 2, drawH - 2, Math.max(1, r - 1))
+  ctx.strokeStyle = COLOR.outline
+  ctx.lineWidth = 2
+  ctx.stroke()
+
+  // Recessed compass dial
+  const cx = x + w / 2
+  const cy = y + faceH / 2
+  const dialR = Math.max(7, Math.min(w, faceH) * 0.41)
+  ctx.beginPath()
+  ctx.arc(cx, cy, dialR, 0, Math.PI * 2)
+  ctx.fillStyle = COLOR.wellDeep
+  ctx.fill()
+  ctx.strokeStyle = hot ? COLOR.accentHi : COLOR.border
+  ctx.lineWidth = 1.4
+  ctx.stroke()
+
+  // Rotating North / South diamond needle (+yawRad rotates North tip clockwise to match screen-space North)
+  ctx.save()
+  ctx.translate(cx, cy)
+  ctx.rotate(yawRad)
+  const tip = dialR * 0.78
+  const side = dialR * 0.28
+  // North half (bright coral-gold pointer)
+  ctx.beginPath()
+  ctx.moveTo(0, -tip)
+  ctx.lineTo(side, 0)
+  ctx.lineTo(-side, 0)
+  ctx.closePath()
+  ctx.fillStyle = heading === 'N' ? COLOR.accentHi : COLOR.danger
+  ctx.fill()
+  // South half (cool steel tail)
+  ctx.beginPath()
+  ctx.moveTo(0, tip * 0.82)
+  ctx.lineTo(side * 0.85, 0)
+  ctx.lineTo(-side * 0.85, 0)
+  ctx.closePath()
+  ctx.fillStyle = '#6f85b8'
+  ctx.fill()
+  ctx.restore()
+
+  // Crisp heading badge at bottom-right corner of the compass button
+  drawText(ctx, heading, x + w - 5, y + faceH - 5, {
+    size: 8.5,
+    weight: 900,
+    color: heading === 'N' ? COLOR.accentHi : '#e6eeff',
+    align: 'right',
+    display: true,
+    stroke: true,
+    strokeWidth: 2
+  })
+
+  ctx.restore()
+  if (st.focused && !st.disabled) drawFocusRing(ctx, x, y, w, drawH, r)
+}
+
 /** Popped-out 3D game tab button (replaces flat web segmented control). */
 export function drawTab(ctx: CanvasRenderingContext2D, rect: LayoutRect, label: string, st: CanvasWidgetDrawState, o: { icon?: IconName; count?: string } = {}) {
   const { x, width: w, height: h } = rect

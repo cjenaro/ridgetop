@@ -12,7 +12,7 @@ import {
   MERGE_COPIES_REQUIRED, PACK_BY_ID, PACK_LIST, PLAYABLE_CHAPTERS, RARITY_META, RARITY_ORDER,
   TACTIC_BY_ID, WORLD_REGIONS
 } from './data.ts'
-import { createCrownshardScene } from './scene.ts'
+import { cameraCardinalHeading, createCrownshardScene } from './scene.ts'
 import {
   armSkill, armTacticCard, autoEquipBestFit, buyPack, canBuyPack, canMergeHero, clearSave,
   computeCombatForecast, computeDeckValue, computeHeroStats, computeSquadPower, createInitialState,
@@ -29,7 +29,7 @@ import type {
 } from './types.ts'
 import {
   COLOR, RADIUS, TIER_COLOR, TYPE, UI_THEME_PALETTE, WORLD_MAP_H, WORLD_MAP_W,
-  drawAnimatedRevealCard, drawApMeter, drawBattleInfo, drawBoosterPack, drawButton, drawCampHeader,
+  drawAnimatedRevealCard, drawApMeter, drawBattleInfo, drawBoosterPack, drawButton, drawCameraCompassButton, drawCampHeader,
   drawChapterPicker, drawChip, drawCombatForecast, drawControlHints, drawDefeatBackdrop,
   drawDifficultyBadge, drawEmptyNote, drawEndTurnButton, drawEquipCard, drawForecastAltChip,
   drawHeroHeader, drawHeroRosterCard, drawHintPill, drawIconButton, drawLabel, drawLetterbox,
@@ -106,10 +106,17 @@ const ACT_ID_ALIASES: Record<string, string> = {
 
 const TITLE_HINTS: readonly (readonly [string, string])[] = [
   ['Click', 'Move / Strike'],
-  ['1 Q W E', 'Skills'],
-  ['Space', 'End Turn'],
-  ['A / D', 'Orbit']
+  ['1-4', 'Skills'],
+  ['Q / E', 'Snap 90°'],
+  ['Space', 'End Turn']
 ]
+
+function isEditableEventTarget(target: EventTarget | null): boolean {
+  if (!(target instanceof HTMLElement)) return false
+  if (target.isContentEditable) return true
+  const tag = target.tagName.toUpperCase()
+  return tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT'
+}
 
 async function start() {
   const page = createGamePage()
@@ -417,6 +424,8 @@ async function start() {
   function launchBattle() {
     audio.unlock()
     startChapterBattle(state, pendingChapter, pendingEndless)
+    scene.resetCamera()
+    scene.setCameraYaw(0, true)
     setScreen('battle')
     renderer.canvas.focus()
   }
@@ -590,6 +599,7 @@ async function start() {
         scene.tiltCamera((y - boardDrag.lastY) * 0.0055)
         boardDrag.lastX = x
         boardDrag.lastY = y
+        uiDirty = true
         hudRev++
         return
       }
@@ -787,7 +797,7 @@ async function start() {
 
   // Battle & Debug Keyboard Shortcuts
   window.addEventListener('keydown', event => {
-    if (isTestingPaused() || event.altKey || event.ctrlKey || event.metaKey) return
+    if (isTestingPaused() || event.altKey || event.ctrlKey || event.metaKey || isEditableEventTarget(event.target)) return
     if (event.code === 'F3' && !event.repeat) {
       event.preventDefault()
       showPerfPanel = !showPerfPanel
@@ -837,13 +847,29 @@ async function start() {
         hudRev++
         return
       }
+      if (event.code === 'KeyQ' && !event.repeat) {
+        event.preventDefault()
+        scene.snapCameraYaw(-1)
+        uiDirty = true
+        hudRev++
+        return
+      }
+      if (event.code === 'KeyE' && !event.repeat) {
+        event.preventDefault()
+        scene.snapCameraYaw(1)
+        uiDirty = true
+        hudRev++
+        return
+      }
       if (event.code === 'KeyA' || event.code === 'ArrowLeft') {
         scene.rotateCamera(-0.12)
+        uiDirty = true
         hudRev++
         return
       }
       if (event.code === 'KeyD' || event.code === 'ArrowRight') {
         scene.rotateCamera(0.12)
+        uiDirty = true
         hudRev++
         return
       }
@@ -878,9 +904,9 @@ async function start() {
         return
       }
       if (event.code === 'Digit1' && !event.repeat) { armSkill(state, null); uiDirty = true; hudRev++; return }
-      if (event.code === 'KeyQ' && !event.repeat) { armSkill(state, 0); uiDirty = true; hudRev++; return }
-      if (event.code === 'KeyW' && !event.repeat) { armSkill(state, 1); uiDirty = true; hudRev++; return }
-      if (event.code === 'KeyE' && !event.repeat) { armSkill(state, 2); uiDirty = true; hudRev++; return }
+      if (event.code === 'Digit2' && !event.repeat) { armSkill(state, 0); uiDirty = true; hudRev++; return }
+      if (event.code === 'Digit3' && !event.repeat) { armSkill(state, 1); uiDirty = true; hudRev++; return }
+      if (event.code === 'Digit4' && !event.repeat) { armSkill(state, 2); uiDirty = true; hudRev++; return }
       if (event.code === 'Tab' && !event.repeat && state.battle.activeUnitUid) {
         event.preventDefault()
         selectHeroByUid(state, state.battle.activeUnitUid)
@@ -1680,12 +1706,12 @@ async function start() {
     })
     const timelineW = timelineNodes.length * tokenW + Math.max(0, timelineNodes.length - 1) * 5 + 18
 
-    // 2. Active Hero Skills (1, Q, W, E)
+    // 2. Active Hero Skills (1, 2, 3, 4)
     const buildSkillTiles = (tileH: number): LayoutNode[] => {
       if (!active || active.team !== 'ally' || !active.heroId) return []
       const spec = HERO_SPECS[active.heroId]
       const canAct = isPlayerTurn && !active.acted && active.stunTurns === 0
-      const keycaps: readonly string[] = ['Q', 'W', 'E']
+      const keycaps: readonly string[] = ['2', '3', '4']
 
       const basicNode = boxNode({
         id: 'sk-basic',
@@ -1738,7 +1764,7 @@ async function start() {
             draw: (ctx: CanvasRenderingContext2D, rect: LayoutRect, st: CanvasWidgetDrawState) => drawSkillTile(ctx, rect, {
               name: sk.name,
               subtitle: !unlocked ? `Tier ${sk.tier}` : cd > 0 ? `${cd}t` : `R${sk.range}`,
-              keycap: keycaps[i] ?? 'Q',
+              keycap: keycaps[i] ?? '2',
               vfx: sk.vfx,
               skillId: sk.id,
               tier: sk.tier,
@@ -1799,7 +1825,7 @@ async function start() {
       ? (active.moved && active.acted ? 0 : (active.moved || active.acted) ? 20 : 40)
       : 0
 
-    let statusLine = 'Click [.] frame to move, [X] crosshair to strike, or arm a skill. Arrows/right-drag tilt.'
+    let statusLine = 'Click [.] frame to move, [X] crosshair to strike, or arm a skill (1-4). Q/E snap 90°, right-drag 360° orbit.'
     let statusAccent: string = COLOR.accent
     let statusImportant = false
     if (!isPlayerTurn && active) {
@@ -1834,9 +1860,11 @@ async function start() {
     const fpsShort = `${Math.round(perf.snapshot().fps || 60)}`
     const chapterShort = battle.endlessWave > 0 ? `Endless Wave ${battle.endlessWave}` : `${ch.title} · D${battle.difficulty}`
 
-    // Top-right toolbar (compact on phone: Music + Pause only, touch drags to orbit!)
-    const tbIconS = isPhone ? 28 : 32
+    // Top-right toolbar (compact on phone: Music + Pause only, touch drags to orbit + side pill snaps 90°!)
+    const tbIconS = isPhone ? 28 : 30
     const facingLabel = active ? active.facing.toUpperCase() : 'E'
+    const camYawActual = scene.getCameraYawActual()
+    const camHeading = cameraCardinalHeading(camYawActual)
     const toolbarItems: LayoutNode[] = [
       ...(isPlayerTurn && active && active.team === 'ally' ? [
         boxNode({
@@ -1872,23 +1900,35 @@ async function start() {
           }
         }),
         boxNode({
-          id: 'tb-cam-l', style: { width: tbIconS, height: tbIconS },
+          id: 'tb-cam-l', style: { width: 42, height: tbIconS },
           widget: {
-            type: 'button', label: 'Orbit Left',
-            onPress: () => { scene.rotateCamera(-0.18); hudRev++ },
-            draw: (ctx: CanvasRenderingContext2D, rect: LayoutRect, st: CanvasWidgetDrawState) => drawIconButton(ctx, rect, 'rotate-left', st)
+            type: 'button', label: 'Rotate Camera Left 90° (Q)',
+            onPress: () => { scene.snapCameraYaw(-1); uiDirty = true; hudRev++ },
+            draw: (ctx: CanvasRenderingContext2D, rect: LayoutRect, st: CanvasWidgetDrawState) => drawIconButton(ctx, rect, 'rotate-left', st, {
+              label: 'Q'
+            })
           }
         }),
         boxNode({
-          id: 'tb-cam-r', style: { width: tbIconS, height: tbIconS },
+          id: 'tb-cam-compass', style: { width: 34, height: tbIconS },
           widget: {
-            type: 'button', label: 'Orbit Right',
-            onPress: () => { scene.rotateCamera(0.18); hudRev++ },
-            draw: (ctx: CanvasRenderingContext2D, rect: LayoutRect, st: CanvasWidgetDrawState) => drawIconButton(ctx, rect, 'rotate-right', st)
+            type: 'button', label: `Camera Facing ${camHeading} — Reset North (0)`,
+            onPress: () => { scene.setCameraYaw(0); uiDirty = true; hudRev++ },
+            draw: (ctx: CanvasRenderingContext2D, rect: LayoutRect, st: CanvasWidgetDrawState) => drawCameraCompassButton(ctx, rect, camYawActual, camHeading, st)
           }
         }),
         boxNode({
-          id: 'cs-perf', style: { width: 54, height: tbIconS },
+          id: 'tb-cam-r', style: { width: 42, height: tbIconS },
+          widget: {
+            type: 'button', label: 'Rotate Camera Right 90° (E)',
+            onPress: () => { scene.snapCameraYaw(1); uiDirty = true; hudRev++ },
+            draw: (ctx: CanvasRenderingContext2D, rect: LayoutRect, st: CanvasWidgetDrawState) => drawIconButton(ctx, rect, 'rotate-right', st, {
+              label: 'E'
+            })
+          }
+        }),
+        boxNode({
+          id: 'cs-perf', style: { width: 52, height: tbIconS },
           widget: {
             type: 'button', label: `${fpsShort} FPS`, selected: showPerfPanel, onPress: togglePerfOverlay,
             draw: (ctx: CanvasRenderingContext2D, rect: LayoutRect, st: CanvasWidgetDrawState) => drawIconButton(ctx, rect, 'gauge', st, {
@@ -1917,7 +1957,7 @@ async function start() {
       })
     ]
     const hasFaceBtn = isPlayerTurn && active && active.team === 'ally'
-    const toolbarW = (isPhone ? 74 : 284) + (hasFaceBtn ? (isPhone ? 52 : 62) : 0)
+    const toolbarW = (isPhone ? 74 : 346) + (hasFaceBtn ? (isPhone ? 52 : 62) : 0)
     const topBarH = isPhone ? 36 : 42
 
     // Mobile Tactic Hand Toggle Button (keeps battlefield spacious on phones!)
@@ -2323,7 +2363,7 @@ async function start() {
       )
     }
 
-    const singleTopRow = mobileLandscape || (!mobilePortrait && w >= 1040)
+    const singleTopRow = mobileLandscape || (!mobilePortrait && w >= 1160)
     const timelineInset: [number, number] = singleTopRow
       ? [6, mobileLandscape ? 6 : 8]
       : [8, topBarH + 12]
@@ -2370,13 +2410,13 @@ async function start() {
         }
       }, toolbarItems),
 
-      // Compact one-thumb Zoom In / Out pill on phones (supplements 2-finger pinch-to-zoom)
+      // Compact one-thumb Camera Snap & Zoom pill on phones (supplements 2-finger pinch & drag-orbit)
       ...(showPhoneZoom ? [column({
         id: 'mobile-zoom-bar',
         style: {
           anchor: 'top-right',
           width: 38,
-          height: 74,
+          height: 142,
           inset: [6, mobilePortrait ? 114 : 48],
           padding: [5, 5],
           gap: 6,
@@ -2389,6 +2429,34 @@ async function start() {
           draw: (ctx: CanvasRenderingContext2D, rect: LayoutRect) => drawToolbarBg(ctx, rect)
         }
       }, [
+        boxNode({
+          id: 'tb-cam-l',
+          style: { width: 28, height: 28 },
+          widget: {
+            type: 'button',
+            label: 'Rotate Camera Left 90° (Q)',
+            onPress: () => {
+              scene.snapCameraYaw(-1)
+              uiDirty = true
+              hudRev++
+            },
+            draw: (ctx: CanvasRenderingContext2D, rect: LayoutRect, st: CanvasWidgetDrawState) => drawIconButton(ctx, rect, 'rotate-left', st)
+          }
+        }),
+        boxNode({
+          id: 'tb-cam-r',
+          style: { width: 28, height: 28 },
+          widget: {
+            type: 'button',
+            label: 'Rotate Camera Right 90° (E)',
+            onPress: () => {
+              scene.snapCameraYaw(1)
+              uiDirty = true
+              hudRev++
+            },
+            draw: (ctx: CanvasRenderingContext2D, rect: LayoutRect, st: CanvasWidgetDrawState) => drawIconButton(ctx, rect, 'rotate-right', st)
+          }
+        }),
         boxNode({
           id: 'cs-zoom-in',
           style: { width: 28, height: 28 },
@@ -3960,7 +4028,8 @@ async function start() {
       moveAttackTargets: state.battle ? state.battle.moveAttackTiles.map(t => ({ col: t.col, row: t.row, fromCol: t.fromCol, fromRow: t.fromRow })) : [],
       mobileHandOpen,
       campCollapsed: mobileCampCollapsed,
-      cameraZoom: Math.round(scene.getCameraZoom() * 1000) / 1000
+      cameraZoom: Math.round(scene.getCameraZoom() * 1000) / 1000,
+      cameraYaw: Math.round(scene.getCameraYaw() * 1000) / 1000
     }),
     extra: {
       perf: () => perf.snapshot(),
@@ -3994,6 +4063,20 @@ async function start() {
         hudRev++
         renderUiNow()
         return scene.getCameraZoom()
+      },
+      snapCameraYaw: (steps: number) => {
+        const yaw = scene.snapCameraYaw(steps)
+        uiDirty = true
+        hudRev++
+        renderUiNow()
+        return yaw
+      },
+      setCameraYaw: (rad: number, instant = false) => {
+        const yaw = scene.setCameraYaw(rad, instant)
+        uiDirty = true
+        hudRev++
+        renderUiNow()
+        return yaw
       },
       autoEquip: (heroUid?: string) => {
         const uid = heroUid ?? state.campaign.selectedCampHeroUid ?? state.campaign.heroes[0]?.uid
@@ -4042,6 +4125,7 @@ async function start() {
 
   let lastRenderAt: number | undefined
   let perfUiTick = 0
+  let lastCompassSig = 0
 
   const stop = fixedLoop({
     update(dt) {
@@ -4150,8 +4234,16 @@ async function start() {
       audio.update(state, renderDt, screen === 'battle')
 
       const b = state.battle
+      const cameraMoving = scene.isCameraAnimating()
+      if (screen === 'battle') {
+        const compassSig = Math.round(scene.getCameraYawActual() * 120)
+        if (compassSig !== lastCompassSig) {
+          lastCompassSig = compassSig
+          uiDirty = true
+        }
+      }
       const animatingHud = Boolean(
-        b && (b.floatingNumbers.length > 0 || b.bannerTimer > 0 || b.shake > 0 || b.units.some(u => u.path.length > 0))
+        b && (cameraMoving || b.floatingNumbers.length > 0 || b.bannerTimer > 0 || b.shake > 0 || b.units.some(u => u.path.length > 0))
       )
       const hudKey = screen === 'battle'
         ? `b:${hudRev}:${animatingHud ? Math.floor(now / 33) : 0}:${scene.getHoveredCell()?.col ?? -1},${scene.getHoveredCell()?.row ?? -1}`
