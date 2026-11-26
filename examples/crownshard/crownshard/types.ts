@@ -451,12 +451,14 @@ export interface OwnedHeroCard {
   weaponUid: string | null
   armorUid: string | null
   relicUid: string | null
+  locked?: boolean
 }
 
 export interface OwnedEquipCard {
   readonly uid: string
   readonly equipId: string
   readonly slot: EquipSlot
+  locked?: boolean
 }
 
 export interface OwnedTacticCard {

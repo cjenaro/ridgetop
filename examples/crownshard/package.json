@@ -26,6 +26,7 @@
       "crownshard/counter-attack.ts",
       "crownshard/elemental-combos.ts",
       "crownshard/forced-movement.ts",
+      "crownshard/inventory-ops.ts",
       "crownshard/pincer.ts",
       "crownshard/zoc.ts",
       "crownshard/data.ts",

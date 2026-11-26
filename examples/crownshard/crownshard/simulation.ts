@@ -39,6 +39,13 @@ import {
   classifyElement, classifyHazardElement, collectWildfirePatch,
   previewElementalCombo, triggerElementalCombo
 } from './elemental-combos.ts'
+import { executeBulkSalvageCommonDupes } from './inventory-ops.ts'
+export {
+  findBulkSalvageableCommonDupes, isEquipLocked, isHeroLocked,
+  previewBulkSalvageCommonDupes, toggleEquipLock, toggleHeroLock
+} from './inventory-ops.ts'
+export type { BulkSalvagePreview, BulkSalvageResult } from './inventory-ops.ts'
+import type { BulkSalvageResult } from './inventory-ops.ts'
 import type {
   AttackArc, BattleCellSnapshot, BattleObjectiveEvaluation, BattleObjectiveKind, BattleObjectiveSnapshot,
   BattleObjectiveState, BattleReward, BattleSaveSnapshot, BattleState, BattleUnit,
@@ -245,8 +252,9 @@ export function computeDeckValue(campaign: CampaignState): number {
 export function getMergeCandidates(campaign: CampaignState, heroUid: string): OwnedHeroCard[] {
   const target = getHeroByUid(campaign, heroUid)
   if (!target || target.stars >= 3) return []
+  // Locked copies cannot be consumed as fodder, while a locked target hero can still ascend.
   const matching = campaign.heroes.filter(
-    h => h.heroId === target.heroId && h.stars === target.stars && h.uid !== target.uid
+    h => h.heroId === target.heroId && h.stars === target.stars && h.uid !== target.uid && !h.locked
   )
   // Prefer sacrificing non-squad, unequipped copies first
   matching.sort((a, b) => {
@@ -583,6 +591,7 @@ export function salvageHeroCard(state: GameState, heroUid: string): number {
   if (idx < 0 || campaign.heroes.length <= 1) return 0
   if (campaign.squadUids.includes(heroUid) && campaign.squadUids.length <= 1) return 0
   const hero = campaign.heroes[idx]
+  if (hero.locked) return 0
   const spec = HERO_SPECS[hero.heroId]
   const base = RARITY_META[spec.rarity].salvage
   const gold = hero.stars === 3 ? base * 4 : hero.stars === 2 ? base * 2 : base
@@ -601,6 +610,7 @@ export function salvageEquipCard(state: GameState, equipUid: string): number {
   const idx = campaign.equipment.findIndex(e => e.uid === equipUid)
   if (idx < 0) return 0
   const item = campaign.equipment[idx]
+  if (item.locked) return 0
   const spec = EQUIPMENT_BY_ID[item.equipId]
   if (!spec) return 0
   const owner = findEquipOwner(campaign, equipUid)
@@ -614,6 +624,10 @@ export function salvageEquipCard(state: GameState, equipUid: string): number {
   campaign.gold += gold
   state.sounds.push({ kind: 'coin' })
   return gold
+}
+
+export function bulkSalvageCommonDupes(state: GameState): BulkSalvageResult {
+  return executeBulkSalvageCommonDupes(state, salvageEquipCard)
 }
 
 export function createInitialCampaign(seed = 1337): CampaignState {
@@ -765,8 +779,8 @@ function cloneCampaignFromSave(c: CampaignState, fallbackSeed: number): Campaign
     endlessBest: Number.isFinite(c.endlessBest) ? Math.max(0, Math.floor(c.endlessBest)) : 0,
     battlesWon: Number.isFinite(c.battlesWon) ? Math.max(0, Math.floor(c.battlesWon)) : 0,
     packsOpened: Number.isFinite(c.packsOpened) ? Math.max(0, Math.floor(c.packsOpened)) : 0,
-    heroes: c.heroes.map(h => ({ ...h })),
-    equipment: Array.isArray(c.equipment) ? c.equipment.map(e => ({ ...e })) : [],
+    heroes: c.heroes.map(h => ({ ...h, locked: h.locked === true })),
+    equipment: Array.isArray(c.equipment) ? c.equipment.map(e => ({ ...e, locked: e.locked === true })) : [],
     tactics: Array.isArray(c.tactics) ? c.tactics.map(t => ({ ...t })) : [],
     squadUids: Array.isArray(c.squadUids) && c.squadUids.length ? c.squadUids.slice() : [c.heroes[0].uid],
     selectedCampHeroUid: c.selectedCampHeroUid ?? c.heroes[0].uid,
@@ -1514,8 +1528,19 @@ export function serializeSave(state: GameState): SaveData {
     campaign: {
       ...state.campaign,
       clearedStageIds: state.campaign.clearedStageIds.slice(),
-      heroes: state.campaign.heroes.map(h => ({ ...h })),
-      equipment: state.campaign.equipment.map(e => ({ ...e })),
+      heroes: state.campaign.heroes.map(h => (h.locked ? { ...h, locked: true } : {
+        uid: h.uid,
+        heroId: h.heroId,
+        stars: h.stars,
+        weaponUid: h.weaponUid,
+        armorUid: h.armorUid,
+        relicUid: h.relicUid
+      })),
+      equipment: state.campaign.equipment.map(e => (e.locked ? { ...e, locked: true } : {
+        uid: e.uid,
+        equipId: e.equipId,
+        slot: e.slot
+      })),
       tactics: state.campaign.tactics.map(t => ({ ...t })),
       squadUids: state.campaign.squadUids.slice(),
       lastPackReveal: []
@@ -1555,9 +1580,13 @@ export function loadSave(storage: StorageLike | null | undefined): SaveData | nu
         endlessBest: 'endlessBest' in camp && typeof camp.endlessBest === 'number' ? camp.endlessBest : 0,
         battlesWon: 'battlesWon' in camp && typeof camp.battlesWon === 'number' ? camp.battlesWon : 0,
         packsOpened: 'packsOpened' in camp && typeof camp.packsOpened === 'number' ? camp.packsOpened : 0,
-        heroes: camp.heroes.filter((h): h is OwnedHeroCard => typeof h === 'object' && h !== null && 'uid' in h && 'heroId' in h),
+        heroes: camp.heroes
+          .filter((h): h is OwnedHeroCard => typeof h === 'object' && h !== null && 'uid' in h && 'heroId' in h)
+          .map(h => ({ ...h, locked: h.locked === true })),
         equipment: 'equipment' in camp && Array.isArray(camp.equipment)
-          ? camp.equipment.filter((e): e is OwnedEquipCard => typeof e === 'object' && e !== null && 'uid' in e && 'equipId' in e)
+          ? camp.equipment
+            .filter((e): e is OwnedEquipCard => typeof e === 'object' && e !== null && 'uid' in e && 'equipId' in e)
+            .map(e => ({ ...e, locked: e.locked === true }))
           : [],
         tactics: 'tactics' in camp && Array.isArray(camp.tactics)
           ? camp.tactics.filter((t): t is OwnedTacticCard => typeof t === 'object' && t !== null && 'uid' in t && 'tacticId' in t)

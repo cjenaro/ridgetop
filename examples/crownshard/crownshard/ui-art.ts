@@ -79,7 +79,7 @@ export const UI_THEME_PALETTE = {
 export type IconName =
   | 'chevron-left' | 'chevron-right' | 'chevron-up' | 'chevron-down' | 'pause' | 'play' | 'music' | 'volume' | 'mute' | 'gauge'
   | 'rotate-left' | 'rotate-right' | 'sword' | 'shield' | 'heart' | 'boot' | 'bolt' | 'target'
-  | 'crit' | 'star' | 'coin' | 'gem' | 'hourglass' | 'lock' | 'check' | 'plus' | 'minus' | 'sparkle' | 'flag'
+  | 'crit' | 'star' | 'coin' | 'gem' | 'hourglass' | 'lock' | 'unlock' | 'check' | 'plus' | 'minus' | 'sparkle' | 'flag'
   | 'users' | 'bag' | 'cards' | 'camp' | 'arrow-right' | 'up' | 'sell' | 'retreat'
   | 'map' | 'skull' | 'crown' | 'chest'
 
@@ -783,6 +783,9 @@ export function drawIcon(ctx: CanvasRenderingContext2D, name: IconName, cx: numb
     case 'lock':
       rr(ctx, cx - s * 0.64, cy - s * 0.1, s * 1.28, s * 0.98, s * 0.2); ctx.fill()
       ctx.beginPath(); ctx.arc(cx, cy - s * 0.12, s * 0.42, Math.PI, 0); ctx.stroke(); break
+    case 'unlock':
+      rr(ctx, cx - s * 0.64, cy - s * 0.1, s * 1.28, s * 0.98, s * 0.2); ctx.fill()
+      ctx.beginPath(); ctx.arc(cx + s * 0.22, cy - s * 0.26, s * 0.42, Math.PI, Math.PI * 1.82); ctx.stroke(); break
     case 'check':
       ctx.moveTo(cx - s * 0.6, cy); ctx.lineTo(cx - s * 0.15, cy + s * 0.5); ctx.lineTo(cx + s * 0.65, cy - s * 0.5); ctx.stroke(); break
     case 'plus':
@@ -3366,13 +3369,40 @@ export function drawChapterPicker(ctx: CanvasRenderingContext2D, rect: LayoutRec
   drawText(ctx, label, x + w / 2, y + h * 0.70, { size: 13, weight: 900, align: 'center', maxW: w, display: true, stroke: true, strokeWidth: 2 })
 }
 
+function drawLockMedallion(ctx: CanvasRenderingContext2D, cx: number, cy: number, radius = 7.5) {
+  ctx.save()
+  ctx.beginPath()
+  ctx.arc(cx, cy, radius, 0, Math.PI * 2)
+  const g = ctx.createLinearGradient(cx, cy - radius, cx, cy + radius)
+  g.addColorStop(0, COLOR.accentHi)
+  g.addColorStop(1, COLOR.accentLo)
+  ctx.fillStyle = g
+  ctx.fill()
+  ctx.strokeStyle = COLOR.outline
+  ctx.lineWidth = 1.6
+  ctx.stroke()
+  drawIcon(ctx, 'lock', cx, cy + 0.5, radius * 1.12, COLOR.accentText)
+  ctx.restore()
+}
+
 export function drawHeroRosterCard(
   ctx: CanvasRenderingContext2D,
   rect: LayoutRect,
-  o: { hero: OwnedHeroCard; spec: HeroSpec; portrait?: CanvasImageSource; inSquad: boolean; copies: number; need: number; readyMerge: boolean; token?: boolean },
+  o: {
+    hero: OwnedHeroCard
+    spec: HeroSpec
+    portrait?: CanvasImageSource
+    inSquad: boolean
+    copies: number
+    need: number
+    readyMerge: boolean
+    token?: boolean
+    locked?: boolean
+  },
   st: CanvasWidgetDrawState
 ) {
   const meta = RARITY_META[o.spec.rarity]
+  const isLocked = o.locked ?? Boolean(o.hero.locked)
   const { x, width: w, height: h } = rect
   const pressed = st.pressed
   const y = rect.y + (pressed ? 2 : 0)
@@ -3386,7 +3416,7 @@ export function drawHeroRosterCard(
     lipH: pressed ? 1 : 3,
     fill: st.selected ? '#4c659e' : hot ? '#3d5180' : '#2d3b61',
     fillBot: st.selected ? '#2e406e' : '#1e2845',
-    rim: st.selected ? COLOR.accentHi : '#ffffff24',
+    rim: st.selected ? COLOR.accentHi : isLocked ? COLOR.accent + '88' : '#ffffff24',
     shadow: false
   })
   if (st.selected) {
@@ -3399,7 +3429,7 @@ export function drawHeroRosterCard(
   const faceH = drawH - (pressed ? 1 : 3)
   if (o.token) {
     const ps = Math.min(w - 10, faceH - 18)
-    drawPortraitTile(ctx, x + (w - ps) / 2, y + 4, ps, o.portrait, { ring: meta.hex, ringW: 2 })
+    drawPortraitTile(ctx, x + (w - ps) / 2, y + 4, ps, o.portrait, { ring: isLocked ? COLOR.accent : meta.hex, ringW: 2 })
     drawStars(ctx, x + w / 2, y + faceH - 7, o.hero.stars, 3, 8.5, 'center')
     if (o.inSquad) {
       ctx.beginPath()
@@ -3419,13 +3449,19 @@ export function drawHeroRosterCard(
       ctx.lineWidth = 1.6
       ctx.stroke()
     }
+    if (isLocked) {
+      drawLockMedallion(ctx, x + w - 9, y + faceH - 18, 6.5)
+    }
     ctx.restore()
     if (st.focused) drawFocusRing(ctx, x, y, w, drawH, r)
     return
   }
 
   const ps = faceH - 10
-  drawPortraitTile(ctx, x + 6, y + 5, ps, o.portrait, { ring: meta.hex, ringW: 2 })
+  drawPortraitTile(ctx, x + 6, y + 5, ps, o.portrait, { ring: isLocked ? COLOR.accent : meta.hex, ringW: 2 })
+  if (isLocked) {
+    drawLockMedallion(ctx, x + 6 + ps - 4, y + 5 + ps - 4, 7)
+  }
   const tx = x + ps + 14
   const right = x + w - 10
   const badgeW = o.inSquad ? 48 : 0
@@ -3447,19 +3483,27 @@ export function drawHeroRosterCard(
 export function drawHeroHeader(
   ctx: CanvasRenderingContext2D,
   rect: LayoutRect,
-  o: { name: string; title: string; stars: number; rarity: Rarity; power: number; portrait?: CanvasImageSource; inSquad: boolean }
+  o: { name: string; title: string; stars: number; rarity: Rarity; power: number; portrait?: CanvasImageSource; inSquad: boolean; locked?: boolean }
 ) {
   const meta = RARITY_META[o.rarity]
   const { x, y, width: w, height: h } = rect
   const ps = h
-  drawPortraitTile(ctx, x, y, ps, o.portrait, { ring: meta.hex, ringW: 2.5, bg: '#3e598c' })
+  drawPortraitTile(ctx, x, y, ps, o.portrait, { ring: o.locked ? COLOR.accent : meta.hex, ringW: 2.5, bg: '#3e598c' })
+  if (o.locked) {
+    drawLockMedallion(ctx, x + ps - 5, y + ps - 5, 7.5)
+  }
   const tx = x + ps + 12
   const powerW = 86
   drawText(ctx, o.name, tx, y + h * 0.28, { size: 19, weight: 900, maxW: w - ps - 12 - powerW, display: true, stroke: true, strokeWidth: 3 })
   const sw = drawStars(ctx, tx, y + h * 0.74, o.stars, 3, 13)
   let cx = tx + sw + 10
   cx += drawChip(ctx, cx, y + h * 0.74 - 9.5, o.title, { h: 19, size: 10, color: '#ffffff', bg: '#2c3d66', border: COLOR.outline }) + 6
-  if (cx + 70 < x + w - powerW) drawChip(ctx, cx, y + h * 0.74 - 9.5, meta.label, { h: 19, size: 10, color: meta.hex, bg: COLOR.wellDeep, border: COLOR.outline })
+  if (cx + 70 < x + w - powerW) {
+    cx += drawChip(ctx, cx, y + h * 0.74 - 9.5, meta.label, { h: 19, size: 10, color: meta.hex, bg: COLOR.wellDeep, border: COLOR.outline }) + 6
+  }
+  if (o.locked && cx + 66 < x + w - powerW) {
+    drawChip(ctx, cx, y + h * 0.74 - 9.5, 'LOCKED', { h: 19, size: 9.5, icon: 'lock', color: COLOR.accentText, bg: COLOR.accent, border: COLOR.outline })
+  }
 
   // Power crest badge on right
   const pw = 76
@@ -3500,11 +3544,12 @@ export function drawStatStrip(ctx: CanvasRenderingContext2D, rect: LayoutRect, s
 export function drawEquipCard(
   ctx: CanvasRenderingContext2D,
   rect: LayoutRect,
-  o: { slot: EquipSlot; spec?: EquipmentSpec; ownerText?: string; equippedOnSelected?: boolean },
+  o: { slot: EquipSlot; spec?: EquipmentSpec; ownerText?: string; equippedOnSelected?: boolean; locked?: boolean },
   st: CanvasWidgetDrawState
 ) {
   const spec = o.spec
   const meta = spec ? RARITY_META[spec.rarity] : undefined
+  const isLocked = Boolean(o.locked)
   const { x, width: w, height: h } = rect
   const pressed = st.pressed
   const y = rect.y + (pressed ? 2 : 0)
@@ -3552,12 +3597,13 @@ export function drawEquipCard(
     lipH: pressed ? 1 : 3,
     fill: on ? '#4a5f94' : hot ? '#3d507d' : '#2c3a61',
     fillBot: on ? '#2d3f6b' : '#1d2745',
+    rim: isLocked ? COLOR.accent + '99' : '#ffffff24',
     shadow: false
   })
-  if (on) {
+  if (on || isLocked) {
     rr(ctx, x + 2, y + 2, w - 4, drawH - 4, Math.max(1, r - 2))
-    ctx.strokeStyle = COLOR.accent
-    ctx.lineWidth = 2
+    ctx.strokeStyle = on ? COLOR.accent : COLOR.accent + '88'
+    ctx.lineWidth = on ? 2 : 1.5
     ctx.stroke()
   }
 
@@ -3576,6 +3622,9 @@ export function drawEquipCard(
     ctx.lineWidth = 1.6
     ctx.stroke()
     drawEquipIcon(ctx, spec.slot, spec.id, spec.accentHex, ix + is / 2, iy + is / 2, is * 0.36)
+    if (isLocked) {
+      drawLockMedallion(ctx, x + 10, y + 10, 6.2)
+    }
     drawText(ctx, spec.name, x + w / 2, y + faceH - 9, {
       size: 10,
       weight: 900,
@@ -3598,10 +3647,13 @@ export function drawEquipCard(
   ig.addColorStop(1, '#141c33')
   ctx.fillStyle = ig
   ctx.fill()
-  ctx.strokeStyle = COLOR.outline
+  ctx.strokeStyle = isLocked ? COLOR.accent : COLOR.outline
   ctx.lineWidth = 1.8
   ctx.stroke()
   drawEquipIcon(ctx, spec.slot, spec.id, spec.accentHex, ix + is / 2, iy + is / 2, is * 0.36)
+  if (isLocked) {
+    drawLockMedallion(ctx, ix + is - 3, iy + is - 3, 7)
+  }
 
   const tx = ix + is + 9
   const right = x + w - 9
