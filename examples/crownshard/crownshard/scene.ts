@@ -719,7 +719,18 @@ export function createCrownshardScene(renderer: LowPolyRenderer) {
   }
 
   function ensureBoard(battle: BattleState) {
-    const key = `${battle.stageId}:${battle.biome}:${battle.cols}x${battle.rows}:${battle.endlessWave}`
+    let terrainHash = 2166136261
+    for (let r = 0; r < battle.rows; r++) {
+      const row = battle.cells[r]
+      for (let c = 0; c < battle.cols; c++) {
+        const t = row[c].terrain
+        for (let k = 0; k < t.length; k++) {
+          terrainHash = Math.imul(terrainHash ^ t.charCodeAt(k), 16777619)
+        }
+        terrainHash = Math.imul(terrainHash ^ 44, 16777619)
+      }
+    }
+    const key = `${battle.stageId}:${battle.biome}:${battle.cols}x${battle.rows}:${battle.endlessWave}:${terrainHash >>> 0}`
     if (key === cachedBoardKey) return
     for (const b of boardBatches) renderer.release(b)
     const built = buildStaticBoardBatches(battle.biome, battle.cells)
@@ -940,6 +951,8 @@ export function createCrownshardScene(renderer: LowPolyRenderer) {
         const from: Vec3 = boss ? [boss.x, boss.y, boss.z] : ev.at
         landDelay = vfx.special(ev.move, from, ev.at, ev.cells, impactOf(clip))
         attackLand.set(ev.uid, landDelay)
+      } else if (ev.kind === 'combo') {
+        vfx.combo(ev, landDelay + 0.04)
       } else if (ev.kind === 'impact') {
         if (!battle) continue
         const d = ev.attackerUid ? (attackLand.get(ev.attackerUid) ?? landDelay) : landDelay

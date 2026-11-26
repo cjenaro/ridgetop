@@ -1,6 +1,6 @@
 import type { CanvasWidgetDrawState, LayoutRect } from 'ridgetop/ui'
 import type {
-  BattleUnit, ChapterSpec, CombatForecast, CombatForecastAlt, DifficultyLevel, EquipSlot, EquipmentSpec,
+  BattleUnit, ChapterSpec, CombatForecast, CombatForecastAlt, DifficultyLevel, ElementalComboPreview, EquipSlot, EquipmentSpec,
   FacingDir, FacingExposureLevel, HeroSpec, LandmarkKind, OwnedHeroCard, PackRevealItem, PackSpec,
   Rarity, SkillSpec, StatusKind, TacticCardSpec, TurnOrderActionPreview, TurnPreviewEntry
 } from './types.ts'
@@ -2738,6 +2738,19 @@ export function drawEmptyNote(ctx: CanvasRenderingContext2D, rect: LayoutRect, t
 // Pre-Attack Combat Forecast Card & Skill Comparison Chips
 // ===========================================================================
 
+function comboBadgeStyle(combo: ElementalComboPreview): { text: string; bg: string; color: string; border: string } {
+  if (combo.id === 'shatter') {
+    return { text: combo.badgeText, bg: '#1a4f7a', color: '#ffe66e', border: '#7ef0ff' }
+  }
+  if (combo.id === 'freeze') {
+    return { text: combo.badgeText, bg: '#0f4c75', color: '#c8f8ff', border: '#84e8ff' }
+  }
+  if (combo.id === 'wildfire') {
+    return { text: combo.badgeText, bg: '#8a2708', color: '#ffdf78', border: '#ff8f38' }
+  }
+  return { text: combo.badgeText, bg: '#3f5908', color: '#c8ff5c', border: '#ff8f38' }
+}
+
 /**
  * Chunky stylized Tactics Combat Forecast banner ("X -> Y", projected damage/crit range,
  * segmented HP preview with pulsing damage chunk + KO stamp, high ground & status badges).
@@ -2756,17 +2769,20 @@ export function drawCombatForecast(
   const isRevive = Boolean(fc.isRevive)
   const isHeal = isRevive || (!fc.isOffensive && fc.targetTeam === 'ally')
   const isEmpty = fc.emptyTileTarget || fc.targetTeam === 'none'
+  const comboStyle = fc.elementalCombo ? comboBadgeStyle(fc.elementalCombo) : null
   const accent = fc.friendlyFire
     ? '#ff4588'
     : isRevive
       ? COLOR.accent
       : fc.lethalNormal
         ? '#ff5768'
-        : isHeal
-          ? COLOR.good
-          : isEmpty
-            ? COLOR.muted
-            : fc.requiresMove ? '#ff9f38' : COLOR.accent
+        : comboStyle
+          ? comboStyle.border
+          : isHeal
+            ? COLOR.good
+            : isEmpty
+              ? COLOR.muted
+              : fc.requiresMove ? '#ff9f38' : COLOR.accent
   drawSurface(ctx, rect, {
     r: RADIUS.lg,
     lipH: 4,
@@ -2794,10 +2810,10 @@ export function drawCombatForecast(
     rr(ctx, rpx, topY, ps, ps, 8)
     ctx.fillStyle = '#1b243d'
     ctx.fill()
-    ctx.strokeStyle = '#6c7ea8'
+    ctx.strokeStyle = comboStyle ? comboStyle.border : '#6c7ea8'
     ctx.lineWidth = 2
     ctx.stroke()
-    drawIcon(ctx, 'target', rpx + ps / 2, topY + ps / 2, ps * 0.56, COLOR.muted)
+    drawIcon(ctx, 'target', rpx + ps / 2, topY + ps / 2, ps * 0.56, comboStyle ? comboStyle.color : COLOR.muted)
   } else {
     drawPortraitTile(ctx, rpx, topY, ps, o.targetPortrait, {
       ring: fc.friendlyFire ? '#ff5ca8' : isHeal ? COLOR.good : COLOR.enemy,
@@ -2824,8 +2840,11 @@ export function drawCombatForecast(
     strokeWidth: 2.2
   })
 
-  // Action + tactical modifier chips (priority: Revive / Friendly Fire / Backstab / Flank first!)
-  const tags: { text: string; bg: string; color: string }[] = []
+  // Action + tactical modifier chips (priority: Elemental Combo / Revive / Friendly Fire / Backstab / Flank first!)
+  const tags: { text: string; bg: string; color: string; border?: string }[] = []
+  if (comboStyle) {
+    tags.push(comboStyle)
+  }
   if (isRevive) {
     tags.push({
       text: fc.reviveKoCountdown ? `REVIVE · KO ${fc.reviveKoCountdown}` : 'REVIVE!',
@@ -2890,7 +2909,7 @@ export function drawCombatForecast(
   }
   let tx = cx - tagTotal / 2
   for (const t of visibleTags) {
-    drawChip(ctx, tx, chipY, t.text, { h: chipH, size: 8.5, color: t.color, bg: t.bg, border: COLOR.outline })
+    drawChip(ctx, tx, chipY, t.text, { h: chipH, size: 8.5, color: t.color, bg: t.bg, border: t.border ?? COLOR.outline })
     tx += t.cw + 4
   }
 
@@ -2903,6 +2922,30 @@ export function drawCombatForecast(
   const innerW = w - pad * 2 - 16
 
   if (isEmpty) {
+    if (fc.elementalCombo?.id === 'wildfire') {
+      drawText(ctx, 'WILDFIRE SPREAD', innerX, wellY + 15, {
+        size: o.compact ? 12 : 13,
+        weight: 900,
+        color: '#ffad42',
+        maxW: innerW * 0.65,
+        display: true
+      })
+      drawText(ctx, `${fc.elementalCombo.affectedTiles.length} GRASS TILES`, innerX + innerW, wellY + 15, {
+        size: 10,
+        weight: 800,
+        color: '#ffdf78',
+        align: 'right',
+        display: true
+      })
+      drawText(ctx, 'Ignites connected tall grass (10 Fire DMG + Burn)', innerX, wellY + wellH - 11, {
+        size: 9.5,
+        weight: 700,
+        color: '#ffd0a6',
+        maxW: innerW,
+        display: true
+      })
+      return
+    }
     drawText(ctx, 'NO TARGETS IN AREA', innerX, wellY + 15, {
       size: o.compact ? 12 : 13,
       weight: 900,
@@ -2950,14 +2993,19 @@ export function drawCombatForecast(
       display: true
     })
   } else {
+    const comboBonus = fc.elementalCombo?.bonusDamage ?? 0
     const dmgStr = fc.critChance > 0 && fc.critDmg > fc.normalDmg
-      ? `${fc.normalDmg}-${fc.critDmg} DMG`
-      : `${fc.normalDmg} DMG`
+      ? comboBonus > 0
+        ? `${fc.normalDmg}-${fc.critDmg} (+${comboBonus})`
+        : `${fc.normalDmg}-${fc.critDmg} DMG`
+      : comboBonus > 0
+        ? `${fc.normalDmg}+${comboBonus} DMG`
+        : `${fc.normalDmg} DMG`
     drawText(ctx, dmgStr, innerX, wellY + 14, {
       size: o.compact ? 14 : 16.5,
       weight: 900,
-      color: fc.lethalNormal ? '#ff7c89' : COLOR.accentHi,
-      maxW: innerW * 0.54,
+      color: fc.lethalNormal ? '#ff7c89' : comboStyle ? comboStyle.color : COLOR.accentHi,
+      maxW: innerW * 0.56,
       display: true,
       stroke: true,
       strokeWidth: 2.8

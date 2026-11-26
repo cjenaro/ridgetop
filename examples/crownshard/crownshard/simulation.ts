@@ -12,16 +12,25 @@ import {
   facingToYaw, facingVector, gridToWorld, isUnitActive, isUnitDowned, terrainDefBonus,
   terrainElevation, terrainMoveCost, terrainWalkable, vectorToFacing
 } from './types.ts'
+import {
+  classifyElement, classifyHazardElement, collectWildfirePatch,
+  previewElementalCombo, triggerElementalCombo
+} from './elemental-combos.ts'
 import type {
   AttackArc, BattleCellSnapshot, BattleObjectiveEvaluation, BattleObjectiveKind, BattleObjectiveSnapshot,
   BattleObjectiveState, BattleReward, BattleSaveSnapshot, BattleState, BattleUnit,
   BattleUnitSnapshot, BiomeId, CampaignState, ChapterSpec, CombatForecast, CombatForecastAlt,
-  DangerZoneMap, DangerZoneTile, DifficultyLevel, EnemyArchetypeId, EnemyThreatMap, EquipSlot,
+  DangerZoneMap, DangerZoneTile, DifficultyLevel, ElementalComboPreview, EnemyArchetypeId, EnemyThreatMap, EquipSlot,
   EquipmentSpec, FacingDir, FacingExposureLevel, FacingExposureReport, FacingThreatEntry,
   FlankThreatTile, GameState, GridCell, GridCoord, HeroClassId, MoveAttackTile, OwnedEquipCard,
   OwnedHeroCard, OwnedTacticCard, PackId, PackRevealItem, Rarity, SaveData, SkillSpec, StatusKind,
   TacticCardSpec, TileTerrain, TurnActionKind, TurnOrderActionPreview, TurnPreviewEntry
 } from './types.ts'
+
+export {
+  classifyElement, classifyHazardElement, collectWildfirePatch,
+  previewElementalCombo, triggerElementalCombo
+}
 
 export const SAVE_KEY = 'ridgetop.crownshard.save.v1'
 
@@ -3822,6 +3831,7 @@ export function computeCombatForecast(state: GameState, col: number, row: number
     let normalDmg = 0
     let healAmount = primary.team === 'ally' ? spec.heal : 0
     let hpAfterNormal = primary.hp
+    let elementalCombo: ElementalComboPreview | undefined
     const isRevive = Boolean(spec.canRevive && primary.team === 'ally' && isUnitDowned(primary))
     if (isRevive) {
       healAmount = computeReviveHp(primary, spec.reviveHpRatio)
@@ -3830,10 +3840,19 @@ export function computeCombatForecast(state: GameState, col: number, row: number
       const m = previewDamageMath(battle, null, primary, col, row, spec.damage, 0.6, false)
       normalDmg = m.normalDmg
       hpAfterNormal = m.hpAfterNormal
+      const tacticElement = classifyElement(spec)
+      if (tacticElement) {
+        const combo = previewElementalCombo(battle, tacticElement, primary, col, row)
+        if (combo) {
+          elementalCombo = combo
+          hpAfterNormal = Math.max(0, hpAfterNormal - combo.bonusDamage)
+        }
+      }
     } else if (spec.heal > 0 && primary.team === 'ally') {
       hpAfterNormal = Math.min(primary.maxHp, primary.hp + spec.heal)
     }
 
+    const totalTacticDmg = normalDmg + (elementalCombo?.bonusDamage ?? 0)
     return {
       mode: 'tactic',
       actionName: spec.name,
@@ -3880,8 +3899,9 @@ export function computeCombatForecast(state: GameState, col: number, row: number
       targetShieldBefore: primary.shield,
       targetHpAfterNormal: hpAfterNormal,
       targetHpAfterCrit: hpAfterNormal,
-      lethalNormal: normalDmg > 0 && hpAfterNormal <= 0,
-      lethalCrit: normalDmg > 0 && hpAfterNormal <= 0,
+      lethalNormal: totalTacticDmg > 0 && hpAfterNormal <= 0,
+      lethalCrit: totalTacticDmg > 0 && hpAfterNormal <= 0,
+      ...(elementalCombo ? { elementalCombo } : {}),
       alternatives: []
     }
   }
@@ -3991,6 +4011,8 @@ export function computeCombatForecast(state: GameState, col: number, row: number
       }
     }
     if (!armedSkill) return null
+    const emptySkillElement = isOffensive ? classifyElement(armedSkill) : null
+    const emptyCombo = emptySkillElement ? previewElementalCombo(battle, emptySkillElement, null, col, row) : null
     return {
       mode: 'skill',
       actionName: armedSkill.name,
@@ -4036,6 +4058,7 @@ export function computeCombatForecast(state: GameState, col: number, row: number
       targetHpAfterCrit: 0,
       lethalNormal: false,
       lethalCrit: false,
+      ...(emptyCombo ? { elementalCombo: emptyCombo } : {}),
       alternatives: []
     }
   }
@@ -4058,6 +4081,7 @@ export function computeCombatForecast(state: GameState, col: number, row: number
   let selfStatus: StatusKind | undefined
   let hpAfterNormal = primary.hp
   let hpAfterCrit = primary.hp
+  let elementalCombo: ElementalComboPreview | undefined
   const primaryDowned = isUnitDowned(primary)
   const isRevive = Boolean(armedSkill?.canRevive && primaryDowned && primary.team === active.team)
   const effectiveIsOffensive = isRevive ? false : isOffensive
@@ -4098,6 +4122,15 @@ export function computeCombatForecast(state: GameState, col: number, row: number
         attackArc = m.attackArc
         hpAfterNormal = m.hpAfterNormal
         hpAfterCrit = m.hpAfterCrit
+        const skillElement = classifyElement(armedSkill)
+        if (skillElement) {
+          const combo = previewElementalCombo(battle, skillElement, primary, col, row)
+          if (combo) {
+            elementalCombo = combo
+            hpAfterNormal = Math.max(0, hpAfterNormal - combo.bonusDamage)
+            hpAfterCrit = Math.max(0, hpAfterCrit - combo.bonusDamage)
+          }
+        }
       }
     }
   } else if (primary.team !== active.team) {
@@ -4206,6 +4239,9 @@ export function computeCombatForecast(state: GameState, col: number, row: number
     } else {
       const raw = active.atk * sk.powerMul + sk.flatBonus
       const m = previewDamageMath(battle, active, primary, skApproach.col, skApproach.row, raw, sk.ignoreArmor, true)
+      const skElement = classifyElement(sk)
+      const skCombo = skElement ? previewElementalCombo(battle, skElement, primary, primary.col, primary.row) : null
+      const altHpAfter = Math.max(0, m.hpAfterNormal - (skCombo?.bonusDamage ?? 0))
       alternatives.push({
         skillIndex: i,
         keycap: keycaps[i] ?? '2',
@@ -4217,7 +4253,7 @@ export function computeCombatForecast(state: GameState, col: number, row: number
         selfShield: sk.shieldAmount,
         status: sk.status,
         selfStatus: sk.selfStatus,
-        lethalNormal: m.hpAfterNormal <= 0,
+        lethalNormal: altHpAfter <= 0,
         requiresMove: !skDirect,
         attackArc: m.attackArc,
         active: armedIdx === i
@@ -4225,6 +4261,7 @@ export function computeCombatForecast(state: GameState, col: number, row: number
     }
   }
 
+  const comboBonusDmg = elementalCombo?.bonusDamage ?? 0
   return {
     mode: armedSkill ? 'skill' : 'strike',
     actionName: armedSkill ? armedSkill.name : 'Strike',
@@ -4272,8 +4309,9 @@ export function computeCombatForecast(state: GameState, col: number, row: number
     targetShieldBefore: primary.shield,
     targetHpAfterNormal: hpAfterNormal,
     targetHpAfterCrit: hpAfterCrit,
-    lethalNormal: normalDmg > 0 && hpAfterNormal <= 0,
-    lethalCrit: critDmg > 0 && hpAfterCrit <= 0,
+    lethalNormal: (normalDmg + comboBonusDmg) > 0 && hpAfterNormal <= 0,
+    lethalCrit: (critDmg + comboBonusDmg) > 0 && hpAfterCrit <= 0,
+    ...(elementalCombo ? { elementalCombo } : {}),
     alternatives
   }
 }
@@ -4995,6 +5033,7 @@ function executeHeroSkill(
     if (skill.healAmount > 0 && skill.pattern === 'single') {
       applyHealAndShield(state, caster, skill.healAmount, 0)
     }
+    const skillElement = skill.powerMul > 0 ? classifyElement(skill) : null
     for (const c of affected) {
       if (isDawnsJudgmentSafe && skill.canRevive) {
         const downed = downedHeroAt(battle, c.col, c.row)
@@ -5010,6 +5049,9 @@ function executeHeroSkill(
           const raw = caster.atk * skill.powerMul + skill.flatBonus
           damageBarricade(state, caster, c.col, c.row, raw)
           hitAny = true
+        } else if (skillElement) {
+          const terrainCombo = triggerElementalCombo(state, caster, skillElement, null, c.col, c.row, handleUnitDefeat)
+          if (terrainCombo) hitAny = true
         }
         continue
       }
@@ -5023,6 +5065,9 @@ function executeHeroSkill(
       if (skill.powerMul > 0) {
         const raw = caster.atk * skill.powerMul + skill.flatBonus
         applyDamage(state, caster, target, raw, skill.ignoreArmor, true)
+        if (skillElement) {
+          triggerElementalCombo(state, caster, skillElement, target.alive ? target : null, c.col, c.row, handleUnitDefeat)
+        }
         if (target.alive) {
           if (skill.status && !isBeneficialStatus(skill.status)) {
             applyStatus(battle, target, skill.status, skill.statusStacks)
@@ -5097,6 +5142,7 @@ function executeTacticCard(state: GameState, tacticUid: string, col: number, row
       cells: cellCentres(battle, cells),
       casterUid: tacticCasterUid(battle)
     })
+    const tacticElement = spec.damage > 0 ? classifyElement(spec) : null
     for (const c of cells) {
       if (spec.canRevive) {
         const downed = downedHeroAt(battle, c.col, c.row)
@@ -5110,12 +5156,17 @@ function executeTacticCard(state: GameState, tacticUid: string, col: number, row
       if (!target) {
         if (spec.damage > 0 && isIntactBarricade(battle.cells[c.row][c.col])) {
           damageBarricade(state, null, c.col, c.row, spec.damage)
+        } else if (tacticElement) {
+          triggerElementalCombo(state, null, tacticElement, null, c.col, c.row, handleUnitDefeat)
         }
         continue
       }
       if (target.team === 'enemy') {
         if (spec.damage > 0) {
           applyDamage(state, null, target, spec.damage, 0.6, false)
+        }
+        if (tacticElement) {
+          triggerElementalCombo(state, null, tacticElement, target.alive ? target : null, c.col, c.row, handleUnitDefeat)
         }
         if (spec.status && !isBeneficialStatus(spec.status) && target.alive) {
           applyStatus(battle, target, spec.status, spec.statusStacks)
@@ -5458,6 +5509,9 @@ function applyLavaGeyserHazard(state: GameState, unit: BattleUnit, cell: GridCel
   state.vfx.push({ kind: 'burst', style: 'fire', at: [tx, ty + 0.4, tz], radius: 0.95 })
   addFloat(battle, unit.x, unit.y + 0.45, unit.z, 'GEYSER!', '#ff7a38')
   applyDamage(state, null, unit, LAVA_GEYSER_DAMAGE, 0.5, false)
+  if (unit.alive) {
+    triggerElementalCombo(state, null, classifyHazardElement(cell.terrain), unit, cell.col, cell.row, handleUnitDefeat)
+  }
   if (unit.alive) {
     applyStatus(battle, unit, 'burn')
   } else {

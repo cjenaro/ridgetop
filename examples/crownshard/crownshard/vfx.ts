@@ -8,6 +8,7 @@ import { box, color, crescentMesh, cylinder, mesh, quaternionFromEuler, revolved
 import type { Color, Mesh, MeshPool, Quaternion, Vec3, createParticles } from 'ridgetop'
 import { crystalMesh, flatRing, roundPebble } from './art.ts'
 import { TILE_SIZE } from './types.ts'
+import type { ElementalComboId } from './types.ts'
 
 type Particles = ReturnType<typeof createParticles>
 export type VfxStyle = 'slash' | 'arrow' | 'arcane' | 'fire' | 'frost' | 'holy' | 'shadow' | 'gold'
@@ -149,6 +150,13 @@ export interface TacticVfxInput {
   readonly style: VfxStyle
   readonly at: Vec3
   readonly cells: readonly Vec3[]
+}
+
+export interface ComboVfxInput {
+  readonly combo: ElementalComboId
+  readonly at: Vec3
+  readonly cells: readonly Vec3[]
+  readonly bonusDamage: number
 }
 
 /** Shape of a basic-attack strike trail, keyed off the attacker's clip. */
@@ -1061,6 +1069,87 @@ export function createBattleVfx(pool: MeshPool, particles: Particles, onShake: (
     if (kind === 'flank') later(delay, () => sparks(chest, color('ffd166'), 6, 1.8))
   }
 
+  // ---------------------------------------------------------------- elemental combos
+  /** Distinct reactive elemental combo bursts: Shatter, Freeze, Wildfire spread, and Combust. */
+  function combo(ev: ComboVfxInput, d: number): void {
+    const { at, cells } = ev
+    const chest: Vec3 = [at[0], at[1] + 0.85, at[2]]
+    const C = VFX_COLORS
+
+    if (ev.combo === 'shatter') {
+      later(d, () => {
+        onShake(0.30)
+        sparks(chest, C.ice, 12, 2.7, 0, 1.9)
+        sparks(chest, C.fireTip, 12, 2.5, 0.03, 2.1)
+      })
+      groundRing(at, C.ice, d, 0.50, 0.25, TILE_SIZE * 1.55, 2.4)
+      groundRing(at, C.fire, d + 0.04, 0.56, 0.30, TILE_SIZE * 1.90, -2.0)
+      groundRing(at, C.white, d, 0.30, 0.15, TILE_SIZE * 1.15)
+      radialShards(at, C.ice, d, 10, 2.2, 0.44)
+      add(d, 0.38, (u, t) => {
+        const s = 0.65 * (1 - easeIn(u))
+        pool.add(crystalMesh, chest, [pos(s), pos(s * 1.3), pos(s)], t * 18, withAlpha(C.fireTip, 1 - u), 1, 'additive')
+        pool.add(crystalMesh, chest, [pos(s * 1.4), pos(s * 0.9), pos(s * 1.4)], -t * 14, withAlpha(C.ice, 0.85 * (1 - u)), 1, 'additive')
+      })
+      return
+    }
+
+    if (ev.combo === 'freeze') {
+      later(d, () => {
+        onShake(0.24)
+        sparks(chest, C.frost, 10, 2.0, 0, 1.4)
+      })
+      spires(at, C.ice, d, { count: 7, radius: 0.48, height: 1.35, life: 1.15, tilt: 0.28 })
+      groundRing(at, C.frost, d, 0.65, 0.20, TILE_SIZE * 1.45, 1.6)
+      groundRing(at, C.white, d + 0.05, 0.48, 0.16, TILE_SIZE * 1.05, -1.8)
+      motes(at, C.frost, 12, 0.55, 1.15, d + 0.04, 0.92)
+      add(d + 0.04, 1.10, u => {
+        const g = easeOut(Math.min(1, u * 4.5))
+        const f = u > 0.72 ? 1 - (u - 0.72) / 0.28 : 1
+        pool.add(crystalMesh, [at[0], at[1] + 0.85, at[2]], [pos(0.76 * g), pos(1.85 * g), pos(0.76 * g)], at[0] * 0.7, withAlpha(C.ice, 0.48 * f), 0.9, 'alpha')
+      })
+      return
+    }
+
+    if (ev.combo === 'wildfire') {
+      const targets = cells.length > 0 ? cells : [at]
+      later(d, () => onShake(0.26))
+      targets.forEach((c, i) => {
+        const cd = d + i * 0.07
+        if (i > 0) {
+          streak([at[0], at[1] + 0.28, at[2]], [c[0], c[1] + 0.28, c[2]], C.fire, d + i * 0.05, 0.30, 0.08)
+        }
+        groundRing(c, C.fire, cd, 0.58, 0.20, TILE_SIZE * 0.95, 1.8)
+        groundRing(c, C.fireTip, cd + 0.05, 0.45, 0.14, TILE_SIZE * 0.68, -2.1)
+        add(cd, 0.92, (u, t) => {
+          const h = 1.95 * pulse(Math.min(1, u * 1.35))
+          for (let j = 0; j < 3; j++) {
+            const fl = 1 + Math.sin(t * 28 + j * 2.1 + i) * 0.14
+            const w = pos(0.36 * (1 - j * 0.22) * fl)
+            pool.add(crystalMesh, [c[0], c[1] + h * (0.24 + j * 0.24), c[2]], [w, pos(h * 0.44), w], t * (6 + j * 3), j === 2 ? C.fireTip : j === 1 ? C.fire : C.ember, 1, 'additive')
+          }
+        })
+        embers(c, 10, 0.55, cd, C.ember)
+        scorch(c, 2.0, 0.68)
+      })
+      return
+    }
+
+    // combust: emerald-orange toxic explosion
+    later(d, () => {
+      onShake(0.34)
+      sparks(chest, C.poison, 14, 2.7, 0, 2.0)
+      sparks(chest, C.fire, 12, 2.3, 0.04, 1.8)
+    })
+    dome(at, C.poison, d, TILE_SIZE * 0.95, 0.68)
+    groundRing(at, C.poison, d, 0.62, 0.22, TILE_SIZE * 1.75, 2.6)
+    groundRing(at, C.fire, d + 0.05, 0.56, 0.26, TILE_SIZE * 1.45, -2.2)
+    groundRing(at, C.fireTip, d + 0.09, 0.40, 0.18, TILE_SIZE * 1.05)
+    smoke(at, d, [0.22, 0.44, 0.12, 0.72], 12)
+    embers(at, 14, 0.85, d, C.poison)
+    scorch(at, 1.8, 0.75)
+  }
+
   return {
     get active() { return effects.length },
     clear() { effects.length = 0 },
@@ -1093,6 +1182,7 @@ export function createBattleVfx(pool: MeshPool, particles: Particles, onShake: (
     tactic,
     special,
     impact,
+    combo,
     lance
   }
 }
