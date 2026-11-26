@@ -13,8 +13,11 @@ import { courses } from '../examples/beacon-run/game/level.ts'
 import { createPlayer, stepPlayer } from '../examples/beacon-run/game/simulation.ts'
 import { createRace, standings, stepRace } from '../examples/signal-drift/racing/race.ts'
 import { circuits } from '../examples/signal-drift/racing/track.ts'
+import ts from 'typescript'
 import { courseRoute } from '../tools/course-route.ts'
-import { compileTsProjectToGodot } from '../packages/ridgetop/tools/ts-to-gd.ts'
+import { analyzeModule, containsOwnThis, findBoxedVars, safeIdent, switchHasOuterContinue } from '../packages/ridgetop/tools/gd-analysis.ts'
+import { createEmitContext, emitExpr, emitModuleGd } from '../packages/ridgetop/tools/gd-emit.ts'
+import { compileTsProjectToGodot, compileTsToGd, renderRtGd } from '../packages/ridgetop/tools/ts-to-gd.ts'
 
 const execFileAsync = promisify(execFile)
 const repoRoot = fileURLToPath(new URL('../', import.meta.url))
@@ -807,4 +810,87 @@ func _init() -> void:
   assert.equal(gd.finalSeed, expectedRng.seed)
   assert.equal(gd.unsubType, 'function')
   assert.equal(gd.recognized, null)
+})
+
+test('gd-analysis findBoxedVars and analyzeModule accurately classify closures, recursion, imports, and aliases in-process', () => {
+  const source = `
+import { helper as importedHelper } from './dep.ts'
+export { secret as aliasedSecret }
+const secret = 10
+export function run(seed: number) {
+  let capturedMut = seed
+  const capturedImmutable = 5
+  let localOnlyMut = 0
+  localOnlyMut += 1
+  const readMut = () => capturedMut + capturedImmutable
+  capturedMut = 42
+  function rec(n: number): number { return n <= 0 ? 0 : rec(n - 1) }
+  const arrowRec = (n: number): number => n <= 0 ? 0 : arrowRec(n - 1)
+  return importedHelper(readMut() + rec(2) + arrowRec(2) + localOnlyMut)
+}
+`
+  const sf = ts.createSourceFile('sample.ts', source, ts.ScriptTarget.ES2023, true, ts.ScriptKind.TS)
+  const boxed = findBoxedVars(sf)
+  assert.ok(boxed.has('capturedMut'), 'mutated captured var must be boxed')
+  assert.ok(boxed.has('rec'), 'recursive local function must be boxed')
+  assert.ok(boxed.has('arrowRec'), 'recursive local arrow must be boxed')
+  assert.ok(!boxed.has('capturedImmutable'), 'immutable captured var should not be boxed')
+  assert.ok(!boxed.has('localOnlyMut'), 'non-captured mutated var should not be boxed')
+  assert.ok(!boxed.has('secret'), 'module-level var should not be boxed')
+
+  const analysis = analyzeModule(sf, (spec, name) => ({ resPath: `res://compiled/${spec.replace(/^\.\//, '').replace(/\.ts$/, '.gd')}`, exportName: name }))
+  assert.deepEqual([...analysis.topFuncs], ['run'])
+  assert.ok(analysis.topVars.has('secret'))
+  assert.ok(analysis.topVars.has('importedHelper'))
+  assert.ok(analysis.topVars.has('aliasedSecret'))
+  assert.deepEqual(analysis.exportAliases, [{ local: 'secret', alias: 'aliasedSecret' }])
+  assert.deepEqual(analysis.importedBindings.get('importedHelper'), {
+    resPath: 'res://compiled/dep.gd',
+    exportName: 'helper'
+  })
+
+  // Helper predicates & keyword escaping
+  assert.equal(safeIdent('match'), '_v_match')
+  assert.equal(safeIdent('player'), 'player')
+
+  const thisSf = ts.createSourceFile('this.ts', 'const a = { m() { return this.x }, n() { return () => this.x }, k() { return { inner() { return this.y } } } }', ts.ScriptTarget.ES2023, true, ts.ScriptKind.TS)
+  const objLit = (thisSf.statements[0] as ts.VariableStatement).declarationList.declarations[0].initializer as ts.ObjectLiteralExpression
+  assert.equal(containsOwnThis((objLit.properties[0] as ts.MethodDeclaration).body!), true)
+  assert.equal(containsOwnThis((objLit.properties[1] as ts.MethodDeclaration).body!), true)
+  assert.equal(containsOwnThis((objLit.properties[2] as ts.MethodDeclaration).body!), false)
+
+  const swSf = ts.createSourceFile('sw.ts', 'for (let i = 0; i < 2; i++) { switch (i) { case 0: continue; case 1: for (let j = 0; j < 1; j++) continue; } }', ts.ScriptTarget.ES2023, true, ts.ScriptKind.TS)
+  const swStmt = ((swSf.statements[0] as ts.ForStatement).statement as ts.Block).statements[0] as ts.SwitchStatement
+  assert.equal(switchHasOuterContinue(swStmt.caseBlock.clauses[0]), true)
+  assert.equal(switchHasOuterContinue(swStmt.caseBlock.clauses[1]), false)
+})
+
+test('gd-emit emitModuleGd / emitExpr uses explicit GdEmitContext cleanly and matches compileTsToGd', () => {
+  const source = `
+export function inc(a: number, b = 2) {
+  let total = a
+  const add = () => { total += b }
+  add()
+  return total
+}
+`
+  const sf = ts.createSourceFile('emit.ts', source, ts.ScriptTarget.ES2023, true, ts.ScriptKind.TS)
+  const analysis = analyzeModule(sf)
+  const directGd = emitModuleGd(sf, 'emit.ts', 'res://scripts/compiled/rt.gd', analysis)
+  const compiledGd = compileTsToGd(source, 'emit.ts')
+  assert.equal(directGd, compiledGd)
+  assert.ok(compiledGd.includes('var total = [a]'), 'boxed local var should initialize as 1-element array')
+  assert.ok(compiledGd.includes('total[0] = RT.add(total[0], b)'), 'boxed local mutation should target slot [0]')
+
+  // Standalone expression emission via explicit GdEmitContext
+  const exprSf = ts.createSourceFile('expr.ts', 'const x = Math.max(1, 2) + (a ?? 3)', ts.ScriptTarget.ES2023, true, ts.ScriptKind.TS)
+  const initExpr = (exprSf.statements[0] as ts.VariableStatement).declarationList.declarations[0].initializer!
+  const ctx = createEmitContext(analyzeModule(exprSf))
+  const emittedExpr = emitExpr(ctx, initExpr, '\t')
+  assert.equal(emittedExpr, 'RT.add(RT.max_two(1, 2), (((3) if (a) == null else (a))))')
+
+  // renderRtGd returns extracted rt.gd template
+  const rt = renderRtGd()
+  assert.ok(rt.startsWith('extends RefCounted\n'))
+  assert.ok(rt.includes('static func mod(res_path: String) -> Object:'))
 })

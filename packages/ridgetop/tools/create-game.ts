@@ -61,10 +61,21 @@ export async function createGame(destination: string) {
     ])
     if (overlayCss) await cp(overlayCss, join(temporary, 'framework', 'testing-overlay.css'))
 
-    const tsToGdDist = join(distDir, 'tools', 'ts-to-gd.js')
-    if (await firstExisting([tsToGdDist])) {
+    const godotRuntimeTemplates = join(packageRoot, 'templates', 'godot-runtime')
+    if (await firstExisting([godotRuntimeTemplates])) {
+      await mkdir(join(temporary, 'templates'), { recursive: true })
+      await cp(godotRuntimeTemplates, join(temporary, 'templates', 'godot-runtime'), { recursive: true })
+    }
+
+    const godotCompilerFiles = ['ts-to-gd.js', 'gd-analysis.js', 'gd-emit.js']
+    if (await firstExisting([join(distDir, 'tools', 'ts-to-gd.js')])) {
       await mkdir(join(temporary, 'tools'), { recursive: true })
-      await copyModule(tsToGdDist, join(temporary, 'tools', 'ts-to-gd.js'))
+      for (const file of godotCompilerFiles) {
+        const src = join(distDir, 'tools', file)
+        if (await firstExisting([src])) {
+          await copyModule(src, join(temporary, 'tools', file))
+        }
+      }
     }
 
     // Optional offline studio companions when available in the workspace or package dist.
