@@ -25,7 +25,7 @@ import {
   salvageHeroCard, selectHeroByUid, selectTile, serializeBattleState, shouldAutoSaveOnTurnBoundary,
   startChapterBattle, stepGame, syncTurnBoundaryTracker, toggleSquadMember, undoMove, unequipItem, unitAt
 } from './simulation.ts'
-import { FACING_DIRS, cellHeightLevel } from './types.ts'
+import { FACING_DIRS, cellHeightLevel, isUnitDowned } from './types.ts'
 import type {
   BattleSaveSnapshot, BattleUnit, ChapterSpec, CombatForecast, EnemyArchetypeId, FacingDir, GameState, OwnedEquipCard,
   OwnedHeroCard, PackId, PackRevealItem, Rarity, TurnActionKind, TurnOrderActionPreview
@@ -2750,7 +2750,7 @@ async function start() {
       const fcCompact = isPhone
       const fcW = mobilePortrait ? w - 12 : mobileLandscape ? 316 : 332
       const attUnit = fc.attackerUid ? getUnitByUid(battle, fc.attackerUid) : undefined
-      const tgtUnit = fc.targetUid ? getUnitByUid(battle, fc.targetUid) : undefined
+      const tgtUnit = fc.targetUid ? battle.units.find(u => u.uid === fc.targetUid) : undefined
       const attPortrait = attUnit
         ? battleUnitPortrait(attUnit)
         : (fc.attackerHeroId ? portraits[fc.attackerHeroId] : undefined)
@@ -2788,16 +2788,18 @@ async function start() {
         }
       }
 
-      const isHelpful = !fc.isOffensive && fc.targetTeam === 'ally'
+      const isHelpful = fc.isRevive || (!fc.isOffensive && fc.targetTeam === 'ally')
       const confirmLabel = fc.friendlyFire
         ? 'Friendly Fire!'
-        : fc.emptyTileTarget
-          ? 'Cast on Space'
-          : isHelpful
-            ? (fc.mode === 'tactic' ? 'Use Card' : 'Cast')
-            : fc.requiresMove
-              ? (fc.mode === 'skill' ? 'Move & Cast!' : 'Move & Strike!')
-              : (fc.mode === 'skill' ? 'Cast Skill!' : fc.mode === 'tactic' ? 'Cast Card!' : 'Strike!')
+        : fc.isRevive
+          ? (fc.mode === 'tactic' ? 'Revive Hero!' : fc.requiresMove ? 'Move & Revive!' : 'Revive Hero!')
+          : fc.emptyTileTarget
+            ? 'Cast on Space'
+            : isHelpful
+              ? (fc.mode === 'tactic' ? 'Use Card' : 'Cast')
+              : fc.requiresMove
+                ? (fc.mode === 'skill' ? 'Move & Cast!' : 'Move & Strike!')
+                : (fc.mode === 'skill' ? 'Cast Skill!' : fc.mode === 'tactic' ? 'Cast Card!' : 'Strike!')
 
       const fcChildren: LayoutNode[] = [
         boxNode({
@@ -4549,7 +4551,60 @@ async function start() {
       }
     }
 
+    const activeForOverlay = getUnitByUid(battle, battle.activeUnitUid)
+    const armedSkillForOverlay = activeForOverlay && battle.armedSkillIndex !== null && battle.armedSkillIndex >= 0
+      ? getHeroSkill(activeForOverlay, battle.armedSkillIndex)
+      : null
+    const armedTacticForOverlay = battle.armedTacticUid
+      ? (() => {
+          const owned = getTacticByUid(state.campaign, battle.armedTacticUid)
+          return owned ? TACTIC_BY_ID[owned.tacticId] : null
+        })()
+      : null
+    const canReviveArmedOverlay = Boolean(armedSkillForOverlay?.canRevive || armedTacticForOverlay?.canRevive)
+
     for (const u of battle.units) {
+      if (isUnitDowned(u)) {
+        const projected = scene.project(u.x, u.y + 1.38, u.z, g.width, g.height)
+        if (!projected) continue
+        const cd = Math.max(1, Math.min(3, u.koCountdown))
+        const shortName = u.name.split(' ').pop() ?? u.name
+        const badgeFill = cd === 1 ? '#5e1422e8' : cd === 2 ? '#59260ae8' : '#4a3109e8'
+        const badgeStroke = cd === 1 ? '#ff4d63' : cd === 2 ? '#ff943b' : '#ffd24d'
+        const badgeText = cd === 1 ? '#ffd0d6' : cd === 2 ? '#ffe0bd' : '#fff0b3'
+        const koLabel = `☠ KO ${cd}`
+        const pw = 66
+        const ph = 22
+        const px = Math.round(projected.x - pw / 2)
+        const py = Math.round(projected.y - ph / 2)
+
+        g.text(shortName, projected.x, py - 12.5, { fill: '#080c18', size: 10, weight: 900, align: 'center' })
+        g.text(shortName, projected.x, py - 14, { fill: badgeText, size: 10, weight: 900, align: 'center' })
+
+        g.panel(px, py, pw, ph, { fill: badgeFill, stroke: badgeStroke, radius: 10 })
+        g.text(koLabel, projected.x, py + 4.5, { fill: badgeText, size: 11, weight: 900, align: 'center' })
+
+        // 3 countdown pip dots under the pill
+        const pipGap = 9
+        const pipStartX = projected.x - pipGap
+        for (let i = 0; i < 3; i++) {
+          const lit = i < cd
+          g.panel(Math.round(pipStartX + i * pipGap - 3), py + ph + 3, 6, 4, {
+            fill: lit ? badgeStroke : '#1b243b',
+            radius: 2
+          })
+        }
+        if (canReviveArmedOverlay) {
+          const rw = 54
+          g.panel(Math.round(projected.x - rw / 2), py + ph + 10, rw, 15, {
+            fill: '#144a38e8',
+            stroke: '#ffe378',
+            radius: 7
+          })
+          g.text('REVIVE', projected.x, py + ph + 12.5, { fill: '#ffe88a', size: 8.5, weight: 900, align: 'center' })
+        }
+        continue
+      }
       if (!u.alive) continue
       const projected = scene.project(u.x, u.y + (u.isBoss ? 2.25 : 1.88), u.z, g.width, g.height)
       if (!projected) continue
@@ -4803,6 +4858,7 @@ async function start() {
       hoveredTurnUnitUid,
       turnOrder: state.battle?.turnOrder.map(t => t.name) ?? [],
       battleAlliesAlive: state.battle ? state.battle.units.filter(u => u.alive && u.team === 'ally').length : 0,
+      battleAlliesDowned: state.battle ? state.battle.units.filter(u => isUnitDowned(u)).length : 0,
       battleEnemiesAlive: state.battle ? state.battle.units.filter(u => u.alive && u.team === 'enemy').length : 0,
       hasResumableBattle: Boolean(resumableBattle),
       resumableBattleTurn: resumableBattle?.turn ?? 0,

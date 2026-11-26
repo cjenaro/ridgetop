@@ -5,12 +5,12 @@ import {
   MERGE_COPIES_REQUIRED, PACK_BY_ID, PLAYABLE_CHAPTERS, RARITY_META, RARITY_ORDER, TACTIC_BY_ID, TACTIC_LIST
 } from './data.ts'
 import {
-  BARRICADE_DEFAULT_HP, CURSED_ALTAR_HP_COST, FACING_DIRS, GRID_COLS, GRID_ROWS,
+  BARRICADE_DEFAULT_HP, CURSED_ALTAR_HP_COST, FACING_DIRS, GRID_COLS, GRID_ROWS, KO_COUNTDOWN_TURNS,
   LAVA_GEYSER_DAMAGE, LAVA_GEYSER_PERIOD, MAX_HEIGHT_LEVEL, MAX_POISON_STACKS,
   TALL_GRASS_RANGED_COVER, TALL_GRASS_RANGED_CRIT_REDUCTION, TAUNT_RADIUS,
   cellHeightAt, cellHeightLevel, defaultTerrainHeightLevel,
-  facingToYaw, facingVector, gridToWorld, terrainDefBonus, terrainElevation, terrainMoveCost,
-  terrainWalkable, vectorToFacing
+  facingToYaw, facingVector, gridToWorld, isUnitActive, isUnitDowned, terrainDefBonus,
+  terrainElevation, terrainMoveCost, terrainWalkable, vectorToFacing
 } from './types.ts'
 import type {
   AttackArc, BattleCellSnapshot, BattleReward, BattleSaveSnapshot, BattleState, BattleUnit,
@@ -755,7 +755,7 @@ export function serializeBattleState(
 
   const occupied = new Set<string>()
   for (const u of battle.units) {
-    if (u.alive && u.path.length === 0) occupied.add(`${u.col},${u.row}`)
+    if ((u.alive || isUnitDowned(u)) && u.path.length === 0) occupied.add(`${u.col},${u.row}`)
   }
 
   let enemyMidMoveReset = false
@@ -805,6 +805,8 @@ export function serializeBattleState(
       moved: u.moved,
       acted: u.acted,
       alive: u.alive,
+      downed: isUnitDowned(u),
+      koCountdown: isUnitDowned(u) ? u.koCountdown : 0,
       burnTurns: u.burnTurns,
       slowTurns: u.slowTurns,
       stunTurns: u.stunTurns,
@@ -1001,6 +1003,8 @@ export function validateBattleSnapshot(raw: unknown): BattleSaveSnapshot | null 
     if (typeof item.alive !== 'boolean' || typeof item.moved !== 'boolean' || typeof item.acted !== 'boolean') {
       return null
     }
+    if (item.downed !== undefined && typeof item.downed !== 'boolean') return null
+    if (item.koCountdown !== undefined && !isFiniteNum(item.koCountdown)) return null
     if (!Array.isArray(item.cooldowns) || item.cooldowns.length !== 3) return null
     const cd0 = item.cooldowns[0]
     const cd1 = item.cooldowns[1]
@@ -1010,12 +1014,17 @@ export function validateBattleSnapshot(raw: unknown): BattleSaveSnapshot | null 
     const maxHp = Math.max(1, Math.round(item.maxHp))
     const alive = item.alive && item.hp > 0
     const hp = alive ? clamp(Math.round(item.hp), 1, maxHp) : 0
+    const rawCountdown = isFiniteNum(item.koCountdown) ? clamp(Math.floor(item.koCountdown), 0, KO_COUNTDOWN_TURNS) : 0
+    const downed = !alive && team === 'ally' && item.downed === true && rawCountdown > 0
+    const koCountdown = downed ? rawCountdown : 0
 
-    if (alive) {
+    if (alive || downed) {
       if (cells[row][col].terrain === 'void') return null
       const posKey = `${col},${row}`
       if (occupied.has(posKey)) return null
       occupied.add(posKey)
+    }
+    if (alive) {
       if (team === 'ally') aliveAllies++
       else aliveEnemies++
     }
@@ -1053,6 +1062,8 @@ export function validateBattleSnapshot(raw: unknown): BattleSaveSnapshot | null 
       moved: item.moved,
       acted: item.acted,
       alive,
+      downed,
+      koCountdown,
       burnTurns: Math.max(0, Math.floor(item.burnTurns)),
       slowTurns: Math.max(0, Math.floor(item.slowTurns)),
       stunTurns: Math.max(0, Math.floor(item.stunTurns)),
@@ -1181,6 +1192,8 @@ export function restoreBattleState(state: GameState, snapshot: unknown): boolean
       moved: u.moved,
       acted: u.acted,
       alive: u.alive,
+      downed: Boolean(!u.alive && u.downed && (u.koCountdown ?? 0) > 0),
+      koCountdown: !u.alive && u.downed ? Math.max(0, u.koCountdown ?? 0) : 0,
       burnTurns: u.burnTurns,
       slowTurns: u.slowTurns,
       stunTurns: u.stunTurns,
@@ -1483,8 +1496,18 @@ function buildCells(
   return cells
 }
 
+export { KO_COUNTDOWN_TURNS, isUnitActive, isUnitDowned }
+
 export function unitAt(battle: BattleState, col: number, row: number): BattleUnit | undefined {
   return battle.units.find(u => u.alive && u.col === col && u.row === row)
+}
+
+export function downedHeroAt(battle: BattleState, col: number, row: number): BattleUnit | undefined {
+  return battle.units.find(u => isUnitDowned(u) && u.col === col && u.row === row)
+}
+
+export function unitOrDownedAt(battle: BattleState, col: number, row: number): BattleUnit | undefined {
+  return battle.units.find(u => (u.alive || isUnitDowned(u)) && u.col === col && u.row === row)
 }
 
 export function getUnitByUid(battle: BattleState, uid: string | null): BattleUnit | undefined {
@@ -1599,6 +1622,8 @@ export function startChapterBattle(state: GameState, chapterIndex: number, endle
       moved: false,
       acted: false,
       alive: true,
+      downed: false,
+      koCountdown: 0,
       burnTurns: 0,
       slowTurns: 0,
       stunTurns: 0,
@@ -1653,6 +1678,8 @@ export function startChapterBattle(state: GameState, chapterIndex: number, endle
       moved: false,
       acted: false,
       alive: true,
+      downed: false,
+      koCountdown: 0,
       burnTurns: 0,
       slowTurns: 0,
       stunTurns: 0,
@@ -2190,7 +2217,7 @@ function computeReachableMoveTiles(
       const posKey = `${cur.col},${cur.row}`
       if (!reached.has(posKey)) {
         reached.add(posKey)
-        const occ = unitAt(battle, cur.col, cur.row)
+        const occ = unitOrDownedAt(battle, cur.col, cur.row)
         if (!occ) result.push({ col: cur.col, row: cur.row })
       }
     }
@@ -2201,7 +2228,7 @@ function computeReachableMoveTiles(
       if (!isCellInBounds(nc, nr, battle.cols, battle.rows)) continue
       const cell = battle.cells[nr][nc]
       if (!canTraverseStep(fromCell, cell, unit.jump)) continue
-      const occ = unitAt(battle, nc, nr)
+      const occ = unitOrDownedAt(battle, nc, nr)
       if (occ && occ.team !== unit.team) continue
       const baseCost = terrainMoveCost(cell.terrain)
       const canGlide = cur.glided === 0 && (cell.terrain === 'ice' || fromCell.terrain === 'ice')
@@ -2434,7 +2461,7 @@ export function findGridPath(
       if (!isCellInBounds(nc, nr, battle.cols, battle.rows)) continue
       const cell = battle.cells[nr][nc]
       if (!canTraverseStep(fromCell, cell, unit.jump)) continue
-      const occ = unitAt(battle, nc, nr)
+      const occ = unitOrDownedAt(battle, nc, nr)
       if (occ && occ.team !== unit.team) continue
       const baseCost = terrainMoveCost(cell.terrain)
       const canGlide = cur.glided === 0 && (cell.terrain === 'ice' || fromCell.terrain === 'ice')
@@ -2864,11 +2891,19 @@ export function computeTacticTargetTiles(
   const out: { col: number; row: number }[] = []
 
   if (spec.target === 'any') {
-    for (const u of battle.units) if (u.alive && u.team === 'ally') out.push({ col: u.col, row: u.row })
+    for (const u of battle.units) {
+      if (u.team === 'ally' && (u.alive || (Boolean(spec.canRevive) && isUnitDowned(u)))) {
+        out.push({ col: u.col, row: u.row })
+      }
+    }
     return out
   }
   if (spec.target === 'ally') {
-    for (const u of battle.units) if (u.alive && u.team === 'ally') out.push({ col: u.col, row: u.row })
+    for (const u of battle.units) {
+      if (u.team === 'ally' && (u.alive || (Boolean(spec.canRevive) && isUnitDowned(u)))) {
+        out.push({ col: u.col, row: u.row })
+      }
+    }
     return out
   }
   if (spec.target === 'enemy') {
@@ -2981,6 +3016,7 @@ export function computeMoveAttackTiles(
   let range = unit.range
   let targetKind: SkillSpec['target'] = 'enemy'
   let indirect = false
+  let canRevive = false
   if (skillIndex >= 0) {
     const skill = getHeroSkill(unit, skillIndex)
     if (!skill || unit.cooldowns[skillIndex] > 0) return []
@@ -2988,11 +3024,13 @@ export function computeMoveAttackTiles(
     range = skill.range
     targetKind = skill.target
     indirect = isIndirectSkill(skill)
+    canRevive = Boolean(skill.canRevive)
   }
 
   const out: MoveAttackTile[] = []
   for (const u of battle.units) {
-    if (!u.alive) continue
+    const downedAlly = canRevive && targetKind === 'ally' && u.team === unit.team && isUnitDowned(u)
+    if (!u.alive && !downedAlly) continue
     if (targetKind === 'ally' && u.team !== unit.team) continue
     if ((targetKind === 'enemy' || targetKind === 'tile') && u.team === unit.team) continue
     if (directTargets.some(t => t.col === u.col && t.row === u.row)) continue
@@ -3112,9 +3150,17 @@ function previewDamageMath(
   }
 }
 
+export function computeReviveHp(
+  target: Pick<BattleUnit, 'maxHp'>,
+  reviveHpRatio?: number
+): number {
+  const ratio = reviveHpRatio ?? 0.5
+  return clamp(Math.max(1, Math.round(target.maxHp * ratio)), 1, target.maxHp)
+}
+
 /**
  * Pure deterministic Combat Forecast for hovering or tapping a target tile.
- * Computes projected damage/crit/heal/shield/KO, flanking/backstab arcs, friendly fire warnings,
+ * Computes projected damage/crit/heal/shield/revive/KO, flanking/backstab arcs, friendly fire warnings,
  * empty-tile skill casts, and compares Strike vs every usable Skill.
  */
 export function computeCombatForecast(state: GameState, col: number, row: number): CombatForecast | null {
@@ -3131,7 +3177,12 @@ export function computeCombatForecast(state: GameState, col: number, row: number
     const spec = owned ? TACTIC_BY_ID[owned.tacticId] : undefined
     if (!spec) return null
     const affected = getPatternCells(col, row, spec.pattern, battle.cols, battle.rows)
-    const primary = unitAt(battle, col, row) ?? affected.map(c => unitAt(battle, c.col, c.row)).find((u): u is BattleUnit => Boolean(u))
+    const lookup = (c: number, r: number): BattleUnit | undefined => {
+      const live = unitAt(battle, c, r)
+      if (live) return live
+      return spec.canRevive ? downedHeroAt(battle, c, r) : undefined
+    }
+    const primary = lookup(col, row) ?? affected.map(c => lookup(c.col, c.row)).find((u): u is BattleUnit => Boolean(u))
     if (!primary) {
       const barCell = battle.cells[row][col]
       if (spec.damage > 0 && isIntactBarricade(barCell)) {
@@ -3188,14 +3239,19 @@ export function computeCombatForecast(state: GameState, col: number, row: number
       return null
     }
     const aoeTargets = affected.filter(c => {
-      const u = unitAt(battle, c.col, c.row)
+      const u = lookup(c.col, c.row)
       if (!u) return false
       return spec.damage > 0 ? u.team === 'enemy' : u.team === 'ally'
     }).length
 
     let normalDmg = 0
+    let healAmount = primary.team === 'ally' ? spec.heal : 0
     let hpAfterNormal = primary.hp
-    if (spec.damage > 0 && primary.team === 'enemy') {
+    const isRevive = Boolean(spec.canRevive && primary.team === 'ally' && isUnitDowned(primary))
+    if (isRevive) {
+      healAmount = computeReviveHp(primary, spec.reviveHpRatio)
+      hpAfterNormal = healAmount
+    } else if (spec.damage > 0 && primary.team === 'enemy') {
       const m = previewDamageMath(battle, null, primary, col, row, spec.damage, 0.6, false)
       normalDmg = m.normalDmg
       hpAfterNormal = m.hpAfterNormal
@@ -3225,7 +3281,7 @@ export function computeCombatForecast(state: GameState, col: number, row: number
       normalDmg,
       critDmg: normalDmg,
       critChance: 0,
-      healAmount: primary.team === 'ally' ? spec.heal : 0,
+      healAmount,
       shieldAmount: primary.team === 'ally' ? spec.shield : 0,
       selfShield: 0,
       status: spec.status,
@@ -3237,6 +3293,8 @@ export function computeCombatForecast(state: GameState, col: number, row: number
       empowered: false,
       attackArc: 'front',
       isOffensive: spec.damage > 0,
+      isRevive,
+      ...(isRevive ? { reviveKoCountdown: primary.koCountdown } : {}),
       friendlyFire: false,
       friendlyFireCount: 0,
       emptyTileTarget: false,
@@ -3265,25 +3323,30 @@ export function computeCombatForecast(state: GameState, col: number, row: number
   const path = requiresMove ? findGridPath(battle, active, approachCol, approachRow) : []
   const armedIdx = battle.armedSkillIndex !== null && battle.armedSkillIndex >= 0 ? battle.armedSkillIndex : null
   const armedSkill = armedIdx !== null ? getHeroSkill(active, armedIdx) : null
+  const canSkillRevive = Boolean(armedSkill?.canRevive)
 
   const affected = armedSkill ? getPatternCells(col, row, armedSkill.pattern, battle.cols, battle.rows) : [{ col, row }]
-  const directUnit = unitAt(battle, col, row)
+  const directLive = unitAt(battle, col, row)
+  const directDowned = !directLive && canSkillRevive ? downedHeroAt(battle, col, row) : undefined
+  const directUnit = directLive ?? (directDowned && directDowned.team === active.team ? directDowned : undefined)
   const isOffensive = armedSkill ? armedSkill.powerMul > 0 : true
   const isSupportOnly = Boolean(armedSkill && armedSkill.powerMul === 0)
   const isDawnsJudgmentSafe = Boolean(
-    armedSkill && armedSkill.id === 'dawns_judgment' && (!directUnit || directUnit.team !== active.team)
+    armedSkill && armedSkill.id === 'dawns_judgment' && (!directUnit || directUnit.team !== active.team || isUnitDowned(directUnit))
   )
 
   const affectedUnits: BattleUnit[] = []
   for (const c of affected) {
-    const u = unitAt(battle, c.col, c.row)
+    const live = unitAt(battle, c.col, c.row)
+    const u = live ?? (canSkillRevive ? downedHeroAt(battle, c.col, c.row) : undefined)
     if (!u) continue
+    if (isUnitDowned(u) && u.team !== active.team) continue
     if (isOffensive && u.uid === active.uid && !(col === active.col && row === active.row)) continue
     affectedUnits.push(u)
   }
 
   const friendlyFireUnits = isOffensive && !isDawnsJudgmentSafe
-    ? affectedUnits.filter(u => u.team === active.team)
+    ? affectedUnits.filter(u => u.team === active.team && u.alive)
     : []
   const friendlyFireCount = friendlyFireUnits.length
   const friendlyFire = friendlyFireCount > 0
@@ -3383,6 +3446,7 @@ export function computeCombatForecast(state: GameState, col: number, row: number
       empowered: active.empowerTurns > 0,
       attackArc: 'front',
       isOffensive,
+      isRevive: false,
       friendlyFire: false,
       friendlyFireCount: 0,
       emptyTileTarget: true,
@@ -3417,12 +3481,20 @@ export function computeCombatForecast(state: GameState, col: number, row: number
   let selfStatus: StatusKind | undefined
   let hpAfterNormal = primary.hp
   let hpAfterCrit = primary.hp
+  const primaryDowned = isUnitDowned(primary)
+  const isRevive = Boolean(armedSkill?.canRevive && primaryDowned && primary.team === active.team)
+  const effectiveIsOffensive = isRevive ? false : isOffensive
 
   if (armedSkill) {
     ignoreArmor = armedSkill.ignoreArmor
     status = armedSkill.status
     selfStatus = armedSkill.selfStatus
-    if (armedSkill.target === 'ally' || armedSkill.target === 'self') {
+    if (isRevive) {
+      healAmount = computeReviveHp(primary, armedSkill.reviveHpRatio)
+      shieldAmount = armedSkill.shieldAmount
+      hpAfterNormal = healAmount
+      hpAfterCrit = healAmount
+    } else if (armedSkill.target === 'ally' || armedSkill.target === 'self') {
       healAmount = armedSkill.healAmount
       shieldAmount = armedSkill.shieldAmount
       hpAfterNormal = Math.min(primary.maxHp, primary.hp + healAmount)
@@ -3467,7 +3539,7 @@ export function computeCombatForecast(state: GameState, col: number, row: number
   }
 
   const aoeTargets = affectedUnits.filter(u => {
-    if (isSupportOnly) return true
+    if (isSupportOnly || isRevive) return u.team === active.team
     if (isDawnsJudgmentSafe) return u.team !== active.team
     return true
   }).length
@@ -3477,8 +3549,8 @@ export function computeCombatForecast(state: GameState, col: number, row: number
   const keycaps: readonly string[] = ['2', '3', '4']
   const distNow = manhattan(active.col, active.row, primary.col, primary.row)
 
-  // Basic Strike option (for enemy targets)
-  if (primary.team !== active.team) {
+  // Basic Strike option (for living enemy targets)
+  if (!primaryDowned && primary.team !== active.team) {
     const strikeEffRange = effectiveAttackRange(battle, active.col, active.row, primary.col, primary.row, active.range)
     const strikeDirect = distNow >= 1 && distNow <= strikeEffRange && hasLineOfSight(battle, active.col, active.row, primary.col, primary.row, false)
     const strikeApproach = strikeDirect
@@ -3507,8 +3579,12 @@ export function computeCombatForecast(state: GameState, col: number, row: number
   for (let i = 0; i < 3; i++) {
     const sk = getHeroSkill(active, i)
     if (!sk || active.cooldowns[i] > 0 || sk.target === 'self') continue
-    if (sk.target === 'ally' && primary.team !== active.team) continue
-    if ((sk.target === 'enemy' || sk.target === 'tile') && primary.team === active.team) continue
+    if (primaryDowned) {
+      if (!sk.canRevive || primary.team !== active.team) continue
+    } else {
+      if (sk.target === 'ally' && primary.team !== active.team) continue
+      if ((sk.target === 'enemy' || sk.target === 'tile') && primary.team === active.team) continue
+    }
     const skIndirect = isIndirectSkill(sk)
     const skEffRange = effectiveAttackRange(battle, active.col, active.row, primary.col, primary.row, sk.range)
     const skDirect = distNow >= 1 && distNow <= skEffRange && hasLineOfSight(battle, active.col, active.row, primary.col, primary.row, skIndirect)
@@ -3516,7 +3592,24 @@ export function computeCombatForecast(state: GameState, col: number, row: number
       ? { col: active.col, row: active.row }
       : (!active.moved ? pickBestApproachTile(battle, active, battle.moveTiles, primary.col, primary.row, sk.range, skIndirect) : null)
     if (!skApproach) continue
-    if (sk.target === 'ally') {
+    if (primaryDowned && sk.canRevive) {
+      alternatives.push({
+        skillIndex: i,
+        keycap: keycaps[i] ?? '2',
+        name: sk.name,
+        normalDmg: 0,
+        critDmg: 0,
+        critChance: 0,
+        healAmount: computeReviveHp(primary, sk.reviveHpRatio),
+        selfShield: sk.shieldAmount,
+        isRevive: true,
+        status: sk.status,
+        lethalNormal: false,
+        requiresMove: !skDirect,
+        attackArc: 'front',
+        active: armedIdx === i
+      })
+    } else if (sk.target === 'ally') {
       alternatives.push({
         skillIndex: i,
         keycap: keycaps[i] ?? '2',
@@ -3589,7 +3682,9 @@ export function computeCombatForecast(state: GameState, col: number, row: number
     terrainDefBonus: terrainDef,
     empowered,
     attackArc,
-    isOffensive,
+    isOffensive: effectiveIsOffensive,
+    isRevive,
+    ...(isRevive ? { reviveKoCountdown: primary.koCountdown } : {}),
     friendlyFire,
     friendlyFireCount,
     emptyTileTarget: false,
@@ -3713,11 +3808,71 @@ function applyDamage(
   }
 
   if (defender.hp <= 0) {
-    defender.alive = false
-    state.sounds.push({ kind: 'ko' })
-    state.vfx.push({ kind: 'ko', at: [defender.x, defender.y + 0.6, defender.z], isBoss: defender.isBoss })
+    handleUnitDefeat(state, defender)
   }
   return finalDmg
+}
+
+function handleUnitDefeat(state: GameState, unit: BattleUnit): void {
+  const battle = state.battle
+  if (!battle) return
+  unit.hp = 0
+  unit.alive = false
+  unit.shield = 0
+  unit.path = []
+  unit.moveProgress = 0
+  unit.moved = false
+  unit.acted = false
+  unit.burnTurns = 0
+  unit.slowTurns = 0
+  unit.stunTurns = 0
+  unit.empowerTurns = 0
+  if (unit.team === 'ally') {
+    unit.downed = true
+    unit.koCountdown = KO_COUNTDOWN_TURNS
+    unit.ct = 0
+    addFloat(battle, unit.x, unit.y + 0.35, unit.z, `DOWNED (${KO_COUNTDOWN_TURNS})`, '#ffb84d')
+    state.sounds.push({ kind: 'ko' })
+    state.vfx.push({ kind: 'ko', at: [unit.x, unit.y + 0.6, unit.z], isBoss: false, downed: true })
+  } else {
+    unit.downed = false
+    unit.koCountdown = 0
+    state.sounds.push({ kind: 'ko' })
+    state.vfx.push({ kind: 'ko', at: [unit.x, unit.y + 0.6, unit.z], isBoss: unit.isBoss })
+  }
+}
+
+function reviveHero(
+  state: GameState,
+  target: BattleUnit,
+  reviveHp: number,
+  shieldAmount = 0
+): boolean {
+  const battle = state.battle
+  if (!battle || !isUnitDowned(target)) return false
+  target.alive = true
+  target.downed = false
+  target.koCountdown = 0
+  target.hp = clamp(Math.max(1, Math.round(reviveHp)), 1, target.maxHp)
+  target.shield = Math.max(0, shieldAmount)
+  target.ct = 0
+  target.moved = false
+  target.acted = false
+  target.burnTurns = 0
+  target.slowTurns = 0
+  target.stunTurns = 0
+  target.empowerTurns = 0
+  target.animState = 'idle'
+  target.animTimer = 0
+  addFloat(battle, target.x, target.y + 0.45, target.z, 'REVIVED!', '#ffe378')
+  addFloat(battle, target.x, target.y, target.z, `+${target.hp} HP`, '#6effa8')
+  if (shieldAmount > 0) {
+    addFloat(battle, target.x, target.y + 0.22, target.z, `+${shieldAmount} SHD`, '#7ed9ff')
+  }
+  state.vfx.push({ kind: 'revive', at: [target.x, target.y, target.z], uid: target.uid })
+  state.vfx.push({ kind: 'heal', at: [target.x, target.y + 0.5, target.z] })
+  state.sounds.push({ kind: 'heal', pitch: 1.2 })
+  return true
 }
 
 function applyHealAndShield(
@@ -4170,6 +4325,13 @@ function executeHeroSkill(
 
   if (skill.target === 'self') {
     for (const c of affected) {
+      const downed = skill.canRevive ? downedHeroAt(battle, c.col, c.row) : undefined
+      if (downed && downed.team === caster.team) {
+        reviveHero(state, downed, computeReviveHp(downed, skill.reviveHpRatio), skill.shieldAmount)
+        if (skill.status === 'empower') applyStatus(battle, downed, 'empower')
+        hitAny = true
+        continue
+      }
       const ally = unitAt(battle, c.col, c.row)
       if (!ally || ally.team !== caster.team) continue
       applyHealAndShield(state, ally, skill.healAmount, skill.shieldAmount)
@@ -4178,8 +4340,15 @@ function executeHeroSkill(
     }
     if (skill.selfStatus) applyStatus(battle, caster, skill.selfStatus, skill.statusStacks)
   } else if (skill.target === 'ally') {
-    // Support skill can be cast on any tile in range (heals/shields whoever sits there, or whiffs on empty space!)
+    // Support skill can be cast on any tile in range (revives downed allies if capable, heals/shields living units, or whiffs on empty space!)
     for (const c of affected) {
+      const downed = skill.canRevive ? downedHeroAt(battle, c.col, c.row) : undefined
+      if (downed && downed.team === caster.team) {
+        reviveHero(state, downed, computeReviveHp(downed, skill.reviveHpRatio), skill.shieldAmount)
+        if (skill.status === 'empower') applyStatus(battle, downed, 'empower')
+        hitAny = true
+        continue
+      }
       const unit = unitAt(battle, c.col, c.row)
       if (!unit) continue
       applyHealAndShield(state, unit, skill.healAmount, skill.shieldAmount)
@@ -4189,8 +4358,8 @@ function executeHeroSkill(
     if (skill.selfStatus) applyStatus(battle, caster, skill.selfStatus, skill.statusStacks)
   } else {
     // Offensive skill: can target empty spaces AND allies (friendly fire!)
-    const directTarget = unitAt(battle, col, row)
-    const isDawnsJudgmentSafe = skill.id === 'dawns_judgment' && (!directTarget || directTarget.team !== caster.team)
+    const directTarget = skill.canRevive ? unitOrDownedAt(battle, col, row) : unitAt(battle, col, row)
+    const isDawnsJudgmentSafe = skill.id === 'dawns_judgment' && (!directTarget || directTarget.team !== caster.team || isUnitDowned(directTarget))
     if (skill.shieldAmount > 0 && skill.pattern !== 'aura') {
       applyHealAndShield(state, caster, 0, skill.shieldAmount)
     }
@@ -4198,6 +4367,14 @@ function executeHeroSkill(
       applyHealAndShield(state, caster, skill.healAmount, 0)
     }
     for (const c of affected) {
+      if (isDawnsJudgmentSafe && skill.canRevive) {
+        const downed = downedHeroAt(battle, c.col, c.row)
+        if (downed && downed.team === caster.team) {
+          reviveHero(state, downed, computeReviveHp(downed, skill.reviveHpRatio), skill.shieldAmount)
+          hitAny = true
+          continue
+        }
+      }
       const target = unitAt(battle, c.col, c.row)
       if (!target) {
         if (skill.powerMul > 0 && isIntactBarricade(battle.cells[c.row][c.col])) {
@@ -4266,7 +4443,13 @@ function executeTacticCard(state: GameState, tacticUid: string, col: number, row
 
   if (spec.pattern === 'all_allies') {
     for (const u of battle.units) {
-      if (!u.alive || u.team !== 'ally') continue
+      if (u.team !== 'ally') continue
+      if (spec.canRevive && isUnitDowned(u)) {
+        reviveHero(state, u, computeReviveHp(u, spec.reviveHpRatio), spec.shield)
+        if (spec.status) applyStatus(battle, u, spec.status)
+        continue
+      }
+      if (!u.alive) continue
       applyHealAndShield(state, u, spec.heal, spec.shield)
       if (spec.status) applyStatus(battle, u, spec.status, spec.statusStacks)
     }
@@ -4286,6 +4469,14 @@ function executeTacticCard(state: GameState, tacticUid: string, col: number, row
       casterUid: tacticCasterUid(battle)
     })
     for (const c of cells) {
+      if (spec.canRevive) {
+        const downed = downedHeroAt(battle, c.col, c.row)
+        if (downed && downed.team === 'ally') {
+          reviveHero(state, downed, computeReviveHp(downed, spec.reviveHpRatio), spec.shield)
+          if (spec.status === 'empower') applyStatus(battle, downed, 'empower')
+          continue
+        }
+      }
       const target = unitAt(battle, c.col, c.row)
       if (!target) {
         if (spec.damage > 0 && isIntactBarricade(battle.cells[c.row][c.col])) {
@@ -4529,7 +4720,7 @@ export function canUndoMove(battle: BattleState | null | undefined): boolean {
   const active = getUnitByUid(battle, battle.activeUnitUid)
   if (!active || active.team !== 'ally' || !active.alive) return false
   if (active.uid !== undo.uid || !active.moved || active.acted) return false
-  const occ = unitAt(battle, undo.col, undo.row)
+  const occ = unitOrDownedAt(battle, undo.col, undo.row)
   if (occ && occ.uid !== active.uid) return false
   const standingCell = battle.cells[active.row]?.[active.col]
   if (
@@ -4655,16 +4846,39 @@ function advanceToNextUnitTurn(state: GameState, initial = false): void {
   if (!battle || isBattleEnded(battle)) return
 
   let guard = 0
-  while (guard++ < 300) {
+  while (guard++ < 400) {
     checkBattleOutcome(state)
     if (isBattleEnded(battle)) return
 
-    const alive = battle.units.filter(u => u.alive)
-    if (!alive.length) return
+    const clockUnits = battle.units.filter(u => u.alive || isUnitDowned(u))
+    if (!clockUnits.some(u => u.alive)) return
+
+    // Classic FFT KO countdown: whenever a downed hero's CT reaches 100, tick 3 -> 2 -> 1 -> 0 (fade out)
+    const readyDowned = clockUnits.find(u => isUnitDowned(u) && u.ct >= 100)
+    if (readyDowned) {
+      readyDowned.ct = Math.max(0, readyDowned.ct - 100)
+      readyDowned.koCountdown = Math.max(0, readyDowned.koCountdown - 1)
+      if (readyDowned.koCountdown > 0) {
+        addFloat(
+          battle,
+          readyDowned.x,
+          readyDowned.y + 0.35,
+          readyDowned.z,
+          `KO IN ${readyDowned.koCountdown}...`,
+          readyDowned.koCountdown === 1 ? '#ff5768' : '#ff9f43'
+        )
+      } else {
+        readyDowned.downed = false
+        addFloat(battle, readyDowned.x, readyDowned.y + 0.35, readyDowned.z, 'FALLEN!', '#ff5768')
+        state.sounds.push({ kind: 'ko', pitch: 0.78 })
+        state.vfx.push({ kind: 'ko', at: [readyDowned.x, readyDowned.y + 0.6, readyDowned.z], isBoss: false, downed: false })
+      }
+      continue
+    }
 
     let next: BattleUnit | null = null
-    for (const u of alive) {
-      if (u.ct < 100) continue
+    for (const u of clockUnits) {
+      if (!u.alive || u.ct < 100) continue
       if (!next) { next = u; continue }
       const uSpd = effectiveSpeed(u)
       const nSpd = effectiveSpeed(next)
@@ -4674,7 +4888,7 @@ function advanceToNextUnitTurn(state: GameState, initial = false): void {
     }
 
     if (!next) {
-      for (const u of alive) u.ct += effectiveSpeed(u)
+      for (const u of clockUnits) u.ct += effectiveSpeed(u)
       continue
     }
 

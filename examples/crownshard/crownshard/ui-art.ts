@@ -2643,17 +2643,20 @@ export function drawCombatForecast(
     locked?: boolean
   } = {}
 ) {
-  const isHeal = !fc.isOffensive && fc.targetTeam === 'ally'
+  const isRevive = Boolean(fc.isRevive)
+  const isHeal = isRevive || (!fc.isOffensive && fc.targetTeam === 'ally')
   const isEmpty = fc.emptyTileTarget || fc.targetTeam === 'none'
   const accent = fc.friendlyFire
     ? '#ff4588'
-    : fc.lethalNormal
-      ? '#ff5768'
-      : isHeal
-        ? COLOR.good
-        : isEmpty
-          ? COLOR.muted
-          : fc.requiresMove ? '#ff9f38' : COLOR.accent
+    : isRevive
+      ? COLOR.accent
+      : fc.lethalNormal
+        ? '#ff5768'
+        : isHeal
+          ? COLOR.good
+          : isEmpty
+            ? COLOR.muted
+            : fc.requiresMove ? '#ff9f38' : COLOR.accent
   drawSurface(ctx, rect, {
     r: RADIUS.lg,
     lipH: 4,
@@ -2711,8 +2714,15 @@ export function drawCombatForecast(
     strokeWidth: 2.2
   })
 
-  // Action + tactical modifier chips (priority: Friendly Fire / Backstab / Flank first!)
+  // Action + tactical modifier chips (priority: Revive / Friendly Fire / Backstab / Flank first!)
   const tags: { text: string; bg: string; color: string }[] = []
+  if (isRevive) {
+    tags.push({
+      text: fc.reviveKoCountdown ? `REVIVE · KO ${fc.reviveKoCountdown}` : 'REVIVE!',
+      bg: '#6e4d08',
+      color: '#ffe88a'
+    })
+  }
   if (fc.friendlyFire) {
     tags.push({
       text: fc.friendlyFireCount > 1 ? `ALLY HIT x${fc.friendlyFireCount}!` : 'FRIENDLY FIRE!',
@@ -2809,23 +2819,24 @@ export function drawCombatForecast(
 
   if (isHeal) {
     const parts: string[] = []
-    if (fc.healAmount > 0) parts.push(`+${fc.healAmount} HP`)
+    if (isRevive) parts.push(`REVIVE +${fc.healAmount} HP`)
+    else if (fc.healAmount > 0) parts.push(`+${fc.healAmount} HP`)
     if (fc.shieldAmount > 0) parts.push(`+${fc.shieldAmount} SHD`)
     drawText(ctx, parts.join('  ') || 'SUPPORT', innerX, wellY + 14, {
-      size: o.compact ? 14 : 16,
+      size: o.compact ? 13.5 : 15.5,
       weight: 900,
-      color: COLOR.good,
-      maxW: innerW * 0.56,
+      color: isRevive ? '#ffe88a' : COLOR.good,
+      maxW: innerW * 0.62,
       display: true,
       stroke: true,
       strokeWidth: 2.6
     })
-    drawText(ctx, `HP ${fc.targetHpBefore} -> ${fc.targetHpAfterNormal}`, innerX + innerW, wellY + 14, {
+    drawText(ctx, isRevive ? `KO -> ${fc.targetHpAfterNormal} HP` : `HP ${fc.targetHpBefore} -> ${fc.targetHpAfterNormal}`, innerX + innerW, wellY + 14, {
       size: 11,
       weight: 900,
-      color: '#b8ffda',
+      color: isRevive ? '#ffe88a' : '#b8ffda',
       align: 'right',
-      maxW: innerW * 0.44,
+      maxW: innerW * 0.38,
       display: true
     })
   } else {
@@ -2975,14 +2986,16 @@ export function drawForecastAltChip(
   const cy = y + faceH / 2
   drawKeycap(ctx, x + 5, cy - 7.5, alt.keycap, 15)
 
-  const valStr = alt.healAmount > 0
-    ? `+${alt.healAmount} HP`
-    : alt.lethalNormal
-      ? `${alt.normalDmg} KO!`
-      : alt.critDmg > alt.normalDmg
-        ? `${alt.normalDmg}-${alt.critDmg}`
-        : `${alt.normalDmg}`
-  const valCol = alt.healAmount > 0 ? COLOR.good : alt.lethalNormal ? '#ff7c89' : COLOR.accentHi
+  const valStr = alt.isRevive
+    ? `REV +${alt.healAmount}`
+    : alt.healAmount > 0
+      ? `+${alt.healAmount} HP`
+      : alt.lethalNormal
+        ? `${alt.normalDmg} KO!`
+        : alt.critDmg > alt.normalDmg
+          ? `${alt.normalDmg}-${alt.critDmg}`
+          : `${alt.normalDmg}`
+  const valCol = alt.isRevive ? '#ffe88a' : alt.healAmount > 0 ? COLOR.good : alt.lethalNormal ? '#ff7c89' : COLOR.accentHi
   const valW = Math.min(w * 0.44, measureText(ctx, valStr, 10.5, 900, true) + 6)
 
   drawText(ctx, alt.name, x + 24, cy + 0.5, {
@@ -3726,6 +3739,9 @@ function drawTacticIllustration(
   if (tacticId === 'healing_draught') {
     bg.addColorStop(0, '#2a6e54')
     bg.addColorStop(1, '#0d221c')
+  } else if (tacticId === 'phoenix_sigil') {
+    bg.addColorStop(0, '#a64d14')
+    bg.addColorStop(1, '#2b100c')
   } else if (tacticId === 'rally_banner') {
     bg.addColorStop(0, '#783324')
     bg.addColorStop(1, '#240f12')
@@ -4091,6 +4107,21 @@ function drawTacticIllustration(
     ctx.fill()
     ctx.strokeStyle = '#6e3d0a'
     ctx.lineWidth = 1.3
+    ctx.stroke()
+  }
+  if (tacticId === 'phoenix_sigil') {
+    // Rising phoenix feather wings framing the radiant sun core
+    ctx.beginPath()
+    ctx.moveTo(cx, cy + s * 0.35)
+    ctx.quadraticCurveTo(cx - s * 0.85, cy + s * 0.05, cx - s * 0.72, cy - s * 0.62)
+    ctx.quadraticCurveTo(cx - s * 0.25, cy - s * 0.22, cx, cy - s * 0.68)
+    ctx.quadraticCurveTo(cx + s * 0.25, cy - s * 0.22, cx + s * 0.72, cy - s * 0.62)
+    ctx.quadraticCurveTo(cx + s * 0.85, cy + s * 0.05, cx, cy + s * 0.35)
+    ctx.closePath()
+    ctx.fillStyle = 'rgba(255, 196, 72, 0.86)'
+    ctx.fill()
+    ctx.strokeStyle = '#fff4c2'
+    ctx.lineWidth = 1.5
     ctx.stroke()
   }
 

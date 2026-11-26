@@ -19,10 +19,10 @@ import { VFX_COLORS, arrowMesh, createBattleVfx } from './vfx.ts'
 import type { StrikeShape } from './vfx.ts'
 import {
   computeDangerZone, computeEnemyThreat, evaluateAllFacingExposures, getEquipmentByUid,
-  getHeroByUid, getHeroSkill, getPatternCells, getTacticByUid, getUnitByUid, isIntactBarricade, unitAt
+  getHeroByUid, getHeroSkill, getPatternCells, getTacticByUid, getUnitByUid, isIntactBarricade, unitAt, unitOrDownedAt
 } from './simulation.ts'
 import { TACTIC_BY_ID } from './data.ts'
-import { BARRICADE_DEFAULT_HP, FACING_DIRS, TILE_SIZE, facingToYaw, facingVector, gridToWorld, vectorToFacing } from './types.ts'
+import { BARRICADE_DEFAULT_HP, FACING_DIRS, TILE_SIZE, facingToYaw, facingVector, gridToWorld, isUnitDowned, vectorToFacing } from './types.ts'
 import type {
   AttackArc, BattleState, BattleUnit, CombatForecast, DangerZoneMap, EnemyThreatMap,
   EquipSlot, FacingDir, FacingExposureLevel, FlankThreatTile, GameState, OwnedHeroCard
@@ -111,6 +111,11 @@ const C_ICE_SHEEN: Color = [0.82, 0.97, 1.0, 0.42]
 const C_GEYSER_RING: Color = [1.0, 0.44, 0.16, 0.85]
 const C_GEYSER_WARN: Color = [1.0, 0.52, 0.18, 0.45]
 const C_ALTAR_RING: Color = [0.80, 0.36, 1.0, 0.78]
+const C_KO_3: Color = [1.0, 0.78, 0.24, 0.94]
+const C_KO_2: Color = [1.0, 0.48, 0.16, 0.96]
+const C_KO_1: Color = [1.0, 0.22, 0.24, 0.98]
+const C_REVIVE_TILE: Color = [1.0, 0.82, 0.28, 0.44]
+const C_REVIVE_MARK: Color = [1.0, 0.96, 0.78, 0.98]
 
 /** Death timing: topple clip, then sink + shrink into a soul-mote burst. */
 const DEATH_SINK_START = 1.0
@@ -423,6 +428,7 @@ interface UnitFx {
   actionT: number
   actionDur: number
   wasAlive: boolean
+  wasDowned: boolean
   deathT: number
   kbX: number
   kbZ: number
@@ -599,6 +605,11 @@ export function createCrownshardScene(renderer: LowPolyRenderer) {
       anim.step(seed * 2.4) // desync breathing across the squad
       const additive: Record<string, { rotation: [number, number, number] }> = {}
       for (const j of ADD_JOINTS) additive[j] = { rotation: [0, 0, 0] }
+      const initialDowned = unit ? isUnitDowned(unit) : false
+      if (initialDowned) {
+        anim.play('death_kneel', 0)
+        anim.step(0.95)
+      }
       fx = {
         anim,
         seed,
@@ -610,7 +621,8 @@ export function createCrownshardScene(renderer: LowPolyRenderer) {
         actionT: 0,
         actionDur: 0,
         wasAlive: unit?.alive ?? true,
-        deathT: -1,
+        wasDowned: initialDowned,
+        deathT: initialDowned ? DEATH_SINK_START - 0.08 : -1,
         kbX: 0,
         kbZ: 0,
         lastCol: unit?.col ?? 0,
@@ -636,7 +648,7 @@ export function createCrownshardScene(renderer: LowPolyRenderer) {
         prevHaste: unit?.hasteTurns ?? 0,
         prevPoison: unit?.poisonStacks ?? 0,
         auraTimer: seed,
-        deathClip: 'death',
+        deathClip: initialDowned ? 'death_kneel' : 'death',
         pos: [0, 0, 0],
         scl: [1, 1, 1],
         additive
@@ -911,6 +923,14 @@ export function createCrownshardScene(renderer: LowPolyRenderer) {
             })
           }
         })
+      } else if (ev.kind === 'revive') {
+        const at = ev.at
+        vfx.beam(at, VFX_COLORS.gold, landDelay, { radius: 0.46, height: 6.0, life: 0.88 })
+        vfx.groundRing(at, VFX_COLORS.holy, landDelay + 0.05, 0.75, 0.25, 1.5, 2.2)
+        vfx.motes(at, VFX_COLORS.gold, 14, 0.48, 2.2, landDelay + 0.08, 1.0)
+        vfx.later(landDelay, () => {
+          spawnSparks([at[0], at[1] + 0.5, at[2]], C_HOLY, 12, 2.1)
+        })
       } else if (ev.kind === 'shield') {
         const at = ev.at
         vfx.later(landDelay, () => {
@@ -931,8 +951,9 @@ export function createCrownshardScene(renderer: LowPolyRenderer) {
       } else if (ev.kind === 'ko') {
         const at = ev.at
         const isBoss = Boolean(ev.isBoss)
+        const isDownedKo = Boolean(ev.downed)
         vfx.later(landDelay, () => {
-          hitStop = Math.max(hitStop, isBoss ? 0.22 : 0.12)
+          hitStop = Math.max(hitStop, isBoss ? 0.22 : isDownedKo ? 0.09 : 0.12)
           const count = isBoss ? 22 : 12
           for (let i = 0; i < count; i++) {
             const a = (i / count) * Math.PI * 2
@@ -943,7 +964,7 @@ export function createCrownshardScene(renderer: LowPolyRenderer) {
               gravity: 6.4,
               spin: 11,
               scale: [0.20, 0.24, 0.20],
-              color: isBoss ? C_SHADOW : C_FIRE_TIP,
+              color: isBoss ? C_SHADOW : isDownedKo ? C_KO_3 : C_FIRE_TIP,
               unlit: 0.95,
               life: 0.72
             })
@@ -1239,10 +1260,77 @@ export function createCrownshardScene(renderer: LowPolyRenderer) {
       }
     }
 
-    // ---------------------------------------------------------------- death: archetype topple, sink, soul burst
+    // ---------------------------------------------------------------- downed (3-turn KO revive window) & permanent death
     // A unit killed by a blow still in flight stays standing until that blow visually connects.
     if (!unit.alive && !fx.hitQueue) {
-      if (fx.wasAlive) {
+      if (isUnitDowned(unit)) {
+        if (fx.wasAlive || !fx.wasDowned) {
+          fx.wasAlive = false
+          fx.wasDowned = true
+          fx.deathT = 0
+          fx.action = null
+          fx.statusQueue = null
+          fx.deathClip = 'death_kneel'
+          fx.flashT = Math.max(fx.flashT, 0.12)
+          anim.trigger(fx.deathClip, 0.04)
+          const killer = getUnitByUid(battle, battle.activeUnitUid)
+          if (killer && killer !== unit) {
+            const kdx = killer.x - unit.x, kdz = killer.z - unit.z
+            if (Math.hypot(kdx, kdz) > 0.05) fx.yaw = Math.atan2(kdx, kdz)
+          }
+        }
+        const before = fx.deathT
+        fx.deathT = Math.min(DEATH_SINK_START - 0.05, Math.max(0, fx.deathT) + dt)
+        deathFlourish(unit, fx, before, fx.deathT, scale)
+        anim.step(dt)
+        const pose = anim.evaluate()
+        const kbDecay = Math.pow(0.002, dt)
+        fx.kbX *= kbDecay
+        fx.kbZ *= kbDecay
+        fx.pos[0] = unit.x + fx.kbX
+        fx.pos[1] = unit.y
+        fx.pos[2] = unit.z + fx.kbZ
+        const flash = fx.flashT > 0
+        renderRig(
+          rig,
+          { position: fx.pos, yaw: fx.yaw, scale },
+          pose,
+          pool,
+          flash
+            ? () => C_HIT_FLASH
+            : (_joint, part) => [
+                part.color[0] * 0.65 + 0.14,
+                part.color[1] * 0.58 + 0.08,
+                part.color[2] * 0.52 + 0.04,
+                (part.color[3] ?? 1) * 0.72
+              ]
+        )
+        shadows.add([unit.x, unit.y + 0.02, unit.z], { groundY: unit.y, radius: 0.62 * scale, opacity: 0.24 })
+
+        // Pulsing KO countdown halo + floating crystal (amber 3 -> orange 2 -> red 1)
+        const cd = Math.max(1, Math.min(3, unit.koCountdown))
+        const koCol = cd === 1 ? C_KO_1 : cd === 2 ? C_KO_2 : C_KO_3
+        const pulseSpeed = cd === 1 ? 8.5 : cd === 2 ? 6.0 : 4.2
+        const pulseR = (0.72 + Math.sin(time * pulseSpeed) * 0.075) * scale
+        const haloY = unit.y + 0.055
+        pool.add(flatRing, [unit.x, haloY, unit.z], [pulseR, 1, pulseR], time * (cd === 1 ? 2.6 : 1.5), koCol, 1.0, 'additive')
+        pool.add(flatRing, [unit.x, haloY + 0.02, unit.z], [pulseR * 0.68, 1, pulseR * 0.68], -time * 2.1, C_HOLY, 0.95, 'additive')
+        const crystalY = unit.y + 1.18 * scale + Math.sin(time * pulseSpeed * 0.8) * 0.09
+        pool.add(crystalMesh, [unit.x, crystalY, unit.z], [0.16 * scale, 0.28 * scale, 0.16 * scale], time * 3.0, koCol, 1.0, 'additive')
+        for (let i = 0; i < cd; i++) {
+          const a = time * 2.2 + (i / cd) * Math.PI * 2
+          const ox = unit.x + Math.cos(a) * 0.44 * scale
+          const oz = unit.z + Math.sin(a) * 0.44 * scale
+          pool.add(crystalMesh, [ox, crystalY - 0.16, oz], [0.08 * scale, 0.12 * scale, 0.08 * scale], -time * 3.6 + i, koCol, 1.0, 'additive')
+        }
+        return
+      }
+
+      if (fx.wasDowned) {
+        // Countdown hit 0: transition cleanly from collapsed pose into soul-mote fade-out
+        fx.wasDowned = false
+        fx.deathT = DEATH_SINK_START - 0.01
+      } else if (fx.wasAlive) {
         fx.wasAlive = false
         fx.deathT = 0
         fx.action = null
@@ -1298,7 +1386,12 @@ export function createCrownshardScene(renderer: LowPolyRenderer) {
       shadows.add([unit.x, unit.y + 0.02, unit.z], { groundY: unit.y, radius: 0.62 * ds, opacity: 0.30 * (1 - sink) })
       return
     }
+    if (!fx.wasAlive && unit.alive) {
+      // Hero was revived: spring back onto their feet!
+      startAction(fx, 'ready', 0.06)
+    }
     fx.wasAlive = true
+    fx.wasDowned = false
     fx.deathT = -1
 
     // ---------------------------------------------------------------- action triggers (edge-detected from sim state)
@@ -1833,16 +1926,18 @@ export function createCrownshardScene(renderer: LowPolyRenderer) {
       (armedTactic && (armedTactic.target === 'ally' || armedTactic.target === 'any'))
     )
 
-    // 2. Direct target tiles: distinct geometric icons (+ for Support/Heal, bold X + brackets for Attack, faint corners for free space)
+    // 2. Direct target tiles: distinct geometric icons (+ for Support/Heal/Revive, bold X + brackets for Attack, faint corners for free space)
+    const canReviveArmed = Boolean(armedSkill?.canRevive || armedTactic?.canRevive)
     const bracketPulse = 1 + Math.sin(state.time * 6.0) * 0.045
     for (const tile of battle.targetTiles) {
       const cell = battle.cells[tile.row][tile.col]
       const [wx, wy, wz] = gridToWorld(tile.col, tile.row, cell.elevation, battle.cols, battle.rows)
-      const occupant = unitAt(battle, tile.col, tile.row)
+      const occupant = canReviveArmed ? unitOrDownedAt(battle, tile.col, tile.row) : unitAt(battle, tile.col, tile.row)
+      const isDownedRevive = Boolean(canReviveArmed && occupant && occupant.team === 'ally' && isUnitDowned(occupant))
       if (armedSkill) {
-        const recommended = isAllyTarget
+        const recommended = isDownedRevive || (isAllyTarget
           ? Boolean(occupant && occupant.team === 'ally')
-          : Boolean((occupant && occupant.team === 'enemy') || isIntactBarricade(cell))
+          : Boolean((occupant && occupant.team === 'enemy') || isIntactBarricade(cell)))
         if (!recommended) {
           // Quiet free-space skill range footprint (subtle corner ticks so we never encourage clicking empty air or allies)
           pool.add(tileQuad, [wx, wy + 0.028, wz], [TILE_SIZE * 0.86, 1, TILE_SIZE * 0.86], 0, C_FREE_RANGE_TILE, 0.92, 'alpha')
@@ -1850,7 +1945,11 @@ export function createCrownshardScene(renderer: LowPolyRenderer) {
           continue
         }
       }
-      if (isAllyTarget) {
+      if (isDownedRevive) {
+        pool.add(tileQuad, [wx, wy + 0.034, wz], [TILE_SIZE * 0.88, 1, TILE_SIZE * 0.88], 0, C_REVIVE_TILE, 0.96, 'alpha')
+        pool.add(tilePlusMesh, [wx, wy + 0.044, wz], [TILE_SIZE * 0.88 * bracketPulse, 1, TILE_SIZE * 0.88 * bracketPulse], 0, C_REVIVE_MARK, 0.99, 'alpha')
+        pool.add(tileCornersMesh, [wx, wy + 0.042, wz], [TILE_SIZE * 0.90 * bracketPulse, 1, TILE_SIZE * 0.90 * bracketPulse], 0, C_REVIVE_MARK, 0.98, 'alpha')
+      } else if (isAllyTarget) {
         pool.add(tileQuad, [wx, wy + 0.032, wz], [TILE_SIZE * 0.86, 1, TILE_SIZE * 0.86], 0, C_ALLY_TARGET, 0.95, 'alpha')
         pool.add(tilePlusMesh, [wx, wy + 0.042, wz], [TILE_SIZE * 0.86, 1, TILE_SIZE * 0.86], 0, C_ALLY_MARK, 0.98, 'alpha')
         pool.add(tileCornersMesh, [wx, wy + 0.040, wz], [TILE_SIZE * 0.88, 1, TILE_SIZE * 0.88], 0, C_ALLY_MARK, 0.96, 'alpha')
@@ -2022,9 +2121,9 @@ export function createCrownshardScene(renderer: LowPolyRenderer) {
     // Pre-attack 3D tactical preview: Move+Attack path, landing ring, pulsing lock-on reticle & targeting arc
     if (activeForecast && battle.phase === 'player' && !battle.units.some(u => u.path.length > 0)) {
       const fc = activeForecast
-      const isHelpful = !fc.isOffensive && fc.targetTeam === 'ally'
-      const arcCol = fc.friendlyFire ? C_FORECAST_FF_ARC : isHelpful ? C_FORECAST_ALLY_ARC : fc.emptyTileTarget ? C_EMPTY_RETICLE : C_FORECAST_ARC
-      const reticleCol = fc.friendlyFire ? C_FRIENDLY_FIRE_TILE : isHelpful ? C_ALLY_TARGET : fc.emptyTileTarget ? C_EMPTY_RETICLE : C_TARGET_RETICLE
+      const isHelpful = fc.isRevive || (!fc.isOffensive && fc.targetTeam === 'ally')
+      const arcCol = fc.friendlyFire ? C_FORECAST_FF_ARC : fc.isRevive ? C_SPOTLIGHT_GOLD : isHelpful ? C_FORECAST_ALLY_ARC : fc.emptyTileTarget ? C_EMPTY_RETICLE : C_FORECAST_ARC
+      const reticleCol = fc.friendlyFire ? C_FRIENDLY_FIRE_TILE : fc.isRevive ? C_SPOTLIGHT_GOLD : isHelpful ? C_ALLY_TARGET : fc.emptyTileTarget ? C_EMPTY_RETICLE : C_TARGET_RETICLE
       const tCell = battle.cells[fc.targetRow][fc.targetCol]
       const [tx, ty, tz] = gridToWorld(fc.targetCol, fc.targetRow, tCell.elevation, battle.cols, battle.rows)
 
