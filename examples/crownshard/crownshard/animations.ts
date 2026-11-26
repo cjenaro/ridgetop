@@ -9,7 +9,7 @@
 //   armR roll > 0 / armL roll < 0 abducts the arm outward. armR = main hand, armL = off hand.
 import { mirrorClip } from 'ridgetop'
 import type { AnimationClip, Easing, JointPose, Keyframe } from 'ridgetop'
-import type { EnemyArchetypeId, HeroClassId } from './types.ts'
+import type { EnemyArchetypeId, HeroClassId, StatusKind } from './types.ts'
 
 type V3 = [number, number, number]
 
@@ -1715,10 +1715,11 @@ export function turnClipFor(dir: 'left' | 'right' | 'about'): UnitClipName {
 }
 
 /** One-shot reaction when a status effect lands. */
-export function statusClipFor(status: 'burn' | 'slow' | 'stun' | 'empower'): UnitClipName {
-  if (status === 'burn') return 'status_burn'
+export function statusClipFor(status: StatusKind): UnitClipName {
+  if (status === 'burn' || status === 'poison') return 'status_burn'
   if (status === 'slow') return 'status_freeze'
   if (status === 'stun') return 'status_stun'
+  if (status === 'taunt') return 'taunt'
   return 'status_empower'
 }
 

@@ -5,6 +5,10 @@ export const GRID_ROWS = 6
 export const TILE_SIZE = 1.65
 export const HEIGHT_STEP = 0.45
 export const MAX_HEIGHT_LEVEL = 4
+export const MAX_POISON_STACKS = 5
+export const TAUNT_RADIUS = 4
+
+export type StatusKind = 'burn' | 'slow' | 'stun' | 'empower' | 'taunt' | 'haste' | 'poison'
 
 export type Rarity = 'common' | 'uncommon' | 'rare' | 'epic' | 'legendary'
 
@@ -67,7 +71,9 @@ export interface SkillSpec {
   readonly healAmount: number
   readonly shieldAmount: number
   readonly ignoreArmor: number
-  readonly status?: 'burn' | 'slow' | 'stun' | 'empower'
+  readonly status?: StatusKind
+  readonly selfStatus?: StatusKind
+  readonly statusStacks?: number
   readonly vfx: 'slash' | 'arrow' | 'arcane' | 'fire' | 'frost' | 'holy' | 'shadow'
 }
 
@@ -104,6 +110,8 @@ export interface EquipmentSpec {
   readonly crit: number
   readonly lifesteal: number
   readonly shieldStart: number
+  readonly startStatus?: StatusKind
+  readonly onHitStatus?: StatusKind
   readonly accentHex: string
 }
 
@@ -119,7 +127,8 @@ export interface TacticCardSpec {
   readonly heal: number
   readonly shield: number
   readonly apGain: number
-  readonly status?: 'burn' | 'slow' | 'stun' | 'empower'
+  readonly status?: StatusKind
+  readonly statusStacks?: number
   readonly refreshMove?: boolean
   readonly vfx: 'fire' | 'frost' | 'holy' | 'arcane' | 'slash' | 'shadow'
 }
@@ -341,6 +350,9 @@ export interface BattleUnit {
   slowTurns: number
   stunTurns: number
   empowerTurns: number
+  tauntTurns: number
+  hasteTurns: number
+  poisonStacks: number
   cooldowns: [number, number, number]
   animState: 'idle' | 'run' | 'attack' | 'hit' | 'cast' | 'celebrate'
   animTimer: number
@@ -508,7 +520,8 @@ export interface CombatForecastAlt {
   readonly critChance: number
   readonly healAmount: number
   readonly selfShield: number
-  readonly status?: 'burn' | 'slow' | 'stun' | 'empower'
+  readonly status?: StatusKind
+  readonly selfStatus?: StatusKind
   readonly lethalNormal: boolean
   readonly requiresMove: boolean
   readonly attackArc: AttackArc
@@ -540,7 +553,9 @@ export interface CombatForecast {
   readonly healAmount: number
   readonly shieldAmount: number
   readonly selfShield: number
-  readonly status?: 'burn' | 'slow' | 'stun' | 'empower'
+  readonly status?: StatusKind
+  readonly selfStatus?: StatusKind
+  readonly targetTaunting?: boolean
   readonly highGround: boolean
   readonly elevationDiff: number
   readonly coverBonus: number
@@ -641,6 +656,9 @@ export interface BattleUnitSnapshot {
   readonly slowTurns: number
   readonly stunTurns: number
   readonly empowerTurns: number
+  readonly tauntTurns?: number
+  readonly hasteTurns?: number
+  readonly poisonStacks?: number
   readonly cooldowns: readonly [number, number, number]
 }
 

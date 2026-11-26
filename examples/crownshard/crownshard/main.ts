@@ -4604,6 +4604,9 @@ async function start() {
       }
 
       const statuses: string[] = []
+      if (u.tauntTurns > 0) statuses.push('TAUNT')
+      if (u.hasteTurns > 0) statuses.push('HASTE')
+      if (u.poisonStacks > 0) statuses.push(`PSN x${u.poisonStacks}`)
       if (u.burnTurns > 0) statuses.push('BURN')
       if (u.slowTurns > 0) statuses.push('SLOW')
       if (u.stunTurns > 0) statuses.push('STUN')
