@@ -22,6 +22,7 @@
     "staticFiles": ["game-ui.css"],
     "assetsModule": "dist/crownshard/package-assets.js",
     "godotEntries": [
+      "crownshard/armory-diff.ts",
       "crownshard/simulation.ts",
       "crownshard/forge.ts",
       "crownshard/passives.ts",

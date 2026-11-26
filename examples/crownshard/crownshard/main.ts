@@ -5,6 +5,8 @@ import type { HudPainter } from 'ridgetop'
 import { boxNode, column, createCanvasUi, createUiTheme, overlay, row, spacerNode } from 'ridgetop/ui'
 import type { CanvasWidgetDrawState, LayoutNode, LayoutRect } from 'ridgetop/ui'
 import { isTestingPaused } from 'ridgetop/testing'
+import { computeEquipmentStatDiff, formatCompactStatDelta } from './armory-diff.ts'
+import type { EquipmentStatDiff } from './armory-diff.ts'
 import { createPortraitStore } from './art.ts'
 import { createCrownshardAudio } from './audio.ts'
 import {
@@ -38,7 +40,7 @@ import type {
 } from './types.ts'
 import {
   COLOR, RADIUS, TIER_COLOR, TYPE, UI_THEME_PALETTE, WORLD_MAP_H, WORLD_MAP_W,
-  drawAnimatedRevealCard, drawApMeter, drawBattleInfo, drawBoosterPack, drawButton, drawCameraCompassButton, drawCampHeader,
+  drawAnimatedRevealCard, drawApMeter, drawArmoryStatDiffPanel, drawBattleInfo, drawBoosterPack, drawButton, drawCameraCompassButton, drawCampHeader,
   drawChapterPicker, drawChip, drawCombatForecast, drawControlHints, drawDefeatBackdrop, drawDeployHeroChip,
   drawDifficultyBadge, drawEmptyNote, drawEndTurnButton, drawEquipCard, drawForecastAltChip,
   drawForgeBalanceBanner, drawForgeRecipeCard, drawHeroHeader, drawHeroRosterCard, drawHeroXpSummaryAnimated, drawHintPill, drawIconButton, drawLabel, drawLetterbox,
@@ -51,8 +53,7 @@ import {
   drawVictoryBackdrop, drawWell, drawWorldMapCanvas, drawWorldMapNode, worldMapScale, worldMapToScreen,
   FANFARE_DURATION, drawFanfare
 } from './ui-art.ts'
-import type { FanfareDrawOpts } from './ui-art.ts'
-import type { IconName, WorldMapViewport } from './ui-art.ts'
+import type { FanfareDrawOpts, IconName, StatStripItem, WorldMapViewport } from './ui-art.ts'
 
 type Screen = 'title' | 'world' | 'camp' | 'story' | 'battle' | 'victory' | 'defeat' | 'paused'
 type CampTab = 'squad' | 'armory' | 'deck' | 'forge' | 'decks'
@@ -212,6 +213,10 @@ async function start() {
   let hoveredTurnUnitUid: string | null = null
   let hoveredTurnSlotIdx = -1
   let hoveredActionKind: TurnActionKind | null = null
+  let hoveredArmoryEquipUid: string | null = null
+  let inspectedArmoryEquipUid: string | null = null
+  let lastPointerType = 'mouse'
+  const armoryEquipIdByWidget = new Map<string, string>()
   let mobileHandOpen = false
   let mobileCampCollapsed = false
   let lastForecastSig = ''
@@ -501,8 +506,14 @@ async function start() {
     uiDirty = true
   }
 
+  function clearArmoryHover(clearInspected = false) {
+    hoveredArmoryEquipUid = null
+    if (clearInspected) inspectedArmoryEquipUid = null
+  }
+
   function setCampTab(next: CampTab) {
     campTab = next
+    clearArmoryHover(true)
     if (screen === 'camp') {
       scene.setCampFraming(next === 'armory' ? 'armory' : 'camp')
     }
@@ -541,6 +552,7 @@ async function start() {
     lockedForecastCell = null
     mobileHandOpen = false
     clearBattleHoverFeedback()
+    clearArmoryHover(true)
     if (next !== 'camp') { packAnim = null; fanfare = null }
     if (next === 'victory' || next === 'defeat') resultAnimTime = 0
     if (next === 'title' || next === 'camp' || next === 'story' || next === 'world') {
@@ -791,7 +803,24 @@ async function start() {
 
   uiCanvas.addEventListener('pointermove', event => {
     if (isTestingPaused()) return
+    lastPointerType = event.pointerType || 'mouse'
     const { x, y, w, h } = pointerToCss(event)
+    if (screen === 'camp' && campTab === 'armory' && !packAnim) {
+      if (event.pointerType !== 'touch') {
+        const uiHit = ui.hitTest(x, y)
+        const nextEquipUid = uiHit ? (armoryEquipIdByWidget.get(uiHit.id) ?? null) : null
+        if (nextEquipUid !== hoveredArmoryEquipUid) {
+          hoveredArmoryEquipUid = nextEquipUid
+          uiDirty = true
+        }
+      }
+      scene.setHoveredCell(null)
+      return
+    }
+    if (hoveredArmoryEquipUid !== null) {
+      hoveredArmoryEquipUid = null
+      uiDirty = true
+    }
     if (screen === 'world') {
       if (worldMapDrag && worldMapDrag.pointerId === event.pointerId) {
         const dx = x - worldMapDrag.lastX
@@ -921,8 +950,14 @@ async function start() {
   }, sig)
 
   uiCanvas.addEventListener('pointerleave', () => {
-    if (hoveredTurnUnitUid !== null || hoveredActionKind !== null || scene.getHoveredCell() !== null) {
+    if (
+      hoveredTurnUnitUid !== null ||
+      hoveredActionKind !== null ||
+      hoveredArmoryEquipUid !== null ||
+      scene.getHoveredCell() !== null
+    ) {
       clearBattleHoverFeedback()
+      clearArmoryHover(false)
       scene.setHoveredCell(null)
       uiDirty = true
       hudRev++
@@ -931,6 +966,7 @@ async function start() {
 
   uiCanvas.addEventListener('pointerdown', event => {
     if (isTestingPaused()) return
+    lastPointerType = event.pointerType || 'mouse'
     const { x, y, w, h } = pointerToCss(event)
     if (screen === 'world') {
       if (event.button !== 0 && event.pointerType === 'mouse') return
@@ -3418,6 +3454,12 @@ async function start() {
           : Math.min(Math.max(326, Math.round(h * 0.49)), 376)
 
     let bodyNode: LayoutNode
+    let activeArmoryDiff: EquipmentStatDiff | null = null
+    let armorySelectedHero: OwnedHeroCard | undefined
+    let confirmInspectedArmoryEquip: (() => void) | null = null
+    if (campTab !== 'armory') {
+      armoryEquipIdByWidget.clear()
+    }
 
     if (campTab === 'squad') {
       const selHero: OwnedHeroCard | undefined =
@@ -3823,6 +3865,46 @@ async function start() {
       }
     } else if (campTab === 'armory') {
       const selHero = getHeroByUid(camp, camp.selectedCampHeroUid) ?? camp.heroes[0]
+      armorySelectedHero = selHero
+      if (hoveredArmoryEquipUid && !getEquipmentByUid(camp, hoveredArmoryEquipUid)) {
+        hoveredArmoryEquipUid = null
+      }
+      if (inspectedArmoryEquipUid && !getEquipmentByUid(camp, inspectedArmoryEquipUid)) {
+        inspectedArmoryEquipUid = null
+      }
+      const previewArmoryEquipUid = hoveredArmoryEquipUid ?? inspectedArmoryEquipUid
+      activeArmoryDiff = selHero && previewArmoryEquipUid
+        ? computeEquipmentStatDiff(camp, selHero.uid, previewArmoryEquipUid)
+        : null
+
+      const equipArmoryItem = (item: OwnedEquipCard) => {
+        if (!selHero) return
+        const spec = EQUIPMENT_BY_ID[item.equipId]
+        const wasOnSel = findEquipOwner(camp, item.uid)?.uid === selHero.uid
+        if (equipItem(state, selHero.uid, item.uid)) {
+          inspectedArmoryEquipUid = null
+          saveNow()
+          scene.triggerCampEquipFlourish(selHero.uid, item.slot, spec?.accentHex)
+          const eqEff = spec ? getEquipEffect(spec.id) : null
+          showToast(
+            eqEff
+              ? `Equipped ${spec?.name ?? 'item'} (${eqEff.name}: ${eqEff.shortLabel}) on ${HERO_SPECS[selHero.heroId].name}.`
+              : `Equipped ${spec?.name ?? 'item'} on ${HERO_SPECS[selHero.heroId].name}.`
+          )
+          if (!wasOnSel) startEquipFanfare(selHero, item.equipId)
+        }
+      }
+
+      if (inspectedArmoryEquipUid && selHero) {
+        const inspectedItem = getEquipmentByUid(camp, inspectedArmoryEquipUid)
+        if (inspectedItem) {
+          confirmInspectedArmoryEquip = () => {
+            audio.unlock()
+            equipArmoryItem(inspectedItem)
+          }
+        }
+      }
+
       const squadHeroes = camp.squadUids
         .map(uid => getHeroByUid(camp, uid))
         .filter((hero): hero is OwnedHeroCard => Boolean(hero))
@@ -3836,39 +3918,36 @@ async function start() {
       armoryPage = Math.min(armoryPage, maxPage)
       const shown = filtered.slice(armoryPage * perPage, armoryPage * perPage + perPage)
 
+      armoryEquipIdByWidget.clear()
       const itemRows: LayoutNode[] = []
-      const cardH = shortH ? 46 : 52
+      const cardH = shortH ? 42 : mobile ? 46 : 44
       for (let i = 0; i < shown.length; i += cols) {
         const slice = shown.slice(i, i + cols)
         const cards: LayoutNode[] = slice.map((item, j) => {
+          const widgetId = `arm-equip-${i + j}`
+          armoryEquipIdByWidget.set(widgetId, item.uid)
           const spec = EQUIPMENT_BY_ID[item.equipId]
           const meta = spec ? RARITY_META[spec.rarity] : RARITY_META.common
           const owner = findEquipOwner(camp, item.uid)
           const equippedOnSel = owner?.uid === selHero?.uid
+          const isInspected = inspectedArmoryEquipUid === item.uid
           const ownerLabel = owner ? HERO_SPECS[owner.heroId].name : 'Bag'
           return row({ id: `arm-card-${i + j}`, style: { grow: 1, gap: 6 } }, [
             boxNode({
-              id: `arm-equip-${i + j}`, style: { grow: 1, height: cardH },
+              id: widgetId, style: { grow: 1, height: cardH },
               widget: {
                 type: 'button',
                 label: spec?.name ?? item.equipId,
-                selected: equippedOnSel,
+                selected: equippedOnSel || isInspected,
                 onPress: () => {
                   audio.unlock()
-                  if (selHero) {
-                    const wasOnSel = findEquipOwner(camp, item.uid)?.uid === selHero.uid
-                    if (equipItem(state, selHero.uid, item.uid)) {
-                      saveNow()
-                      scene.triggerCampEquipFlourish(selHero.uid, item.slot, spec?.accentHex)
-                      const eqEff = spec ? getEquipEffect(spec.id) : null
-                      showToast(
-                        eqEff
-                          ? `Equipped ${spec?.name ?? 'item'} (${eqEff.name}: ${eqEff.shortLabel}) on ${HERO_SPECS[selHero.heroId].name}.`
-                          : `Equipped ${spec?.name ?? 'item'} on ${HERO_SPECS[selHero.heroId].name}.`
-                      )
-                      if (!wasOnSel) startEquipFanfare(selHero, item.equipId)
-                    }
+                  if (!selHero) return
+                  if (lastPointerType === 'touch' && !equippedOnSel && !isInspected) {
+                    inspectedArmoryEquipUid = item.uid
+                    uiDirty = true
+                    return
                   }
+                  equipArmoryItem(item)
                 },
                 draw: (ctx: CanvasRenderingContext2D, rect: LayoutRect, st: CanvasWidgetDrawState) => drawEquipCard(ctx, rect, {
                   slot: item.slot,
@@ -3889,6 +3968,8 @@ async function start() {
                   const dustYield = spec ? getEquipSalvageDust(spec.rarity) : 0
                   const g = salvageEquipCard(state, item.uid)
                   if (g > 0) {
+                    if (hoveredArmoryEquipUid === item.uid) hoveredArmoryEquipUid = null
+                    if (inspectedArmoryEquipUid === item.uid) inspectedArmoryEquipUid = null
                     saveNow()
                     showToast(`Salvaged ${spec?.name ?? 'item'} for +${g}g & +${dustYield} Arcane Dust.`)
                   }
@@ -3964,7 +4045,7 @@ async function start() {
             type: 'button',
             label,
             selected: armorySlotFilter === slot,
-            onPress: () => { armorySlotFilter = slot; armoryPage = 0; uiDirty = true },
+            onPress: () => { armorySlotFilter = slot; armoryPage = 0; clearArmoryHover(true); uiDirty = true },
             draw: (ctx: CanvasRenderingContext2D, rect: LayoutRect, st: CanvasWidgetDrawState) => drawTab(ctx, rect, label, st)
           }
         })
@@ -3977,7 +4058,10 @@ async function start() {
           disabled: !selHero || armBestCount === 0,
           onPress: () => {
             audio.unlock()
-            if (selHero) runBestFit(selHero.uid)
+            if (selHero) {
+              clearArmoryHover(true)
+              runBestFit(selHero.uid)
+            }
           },
           draw: (ctx: CanvasRenderingContext2D, rect: LayoutRect, st: CanvasWidgetDrawState) => drawButton(
             ctx, rect, armBestLabel, st, { variant: armBestCount > 0 ? 'success' : 'secondary', icon: 'sparkle', size: 11 }
@@ -3985,7 +4069,59 @@ async function start() {
         }
       })
 
-      bodyNode = column({ id: 'camp-armory-body', style: { grow: 1, gap: 8 } }, [
+      const armHeroStats = selHero ? computeHeroStats(camp, selHero) : null
+      const liveDiff = activeArmoryDiff && !activeArmoryDiff.isAlreadyEquipped ? activeArmoryDiff : null
+      const armStatItems: StatStripItem[] = armHeroStats
+        ? [
+            {
+              icon: 'heart', label: 'HP', value: `${armHeroStats.maxHp}`, color: COLOR.good,
+              delta: liveDiff?.stats.maxHp.delta,
+              deltaText: liveDiff && liveDiff.stats.maxHp.delta !== 0 ? formatCompactStatDelta(liveDiff.stats.maxHp.delta) : undefined
+            },
+            {
+              icon: 'sword', label: 'ATK', value: `${armHeroStats.atk}`, color: '#ffb36b',
+              delta: liveDiff?.stats.atk.delta,
+              deltaText: liveDiff && liveDiff.stats.atk.delta !== 0 ? formatCompactStatDelta(liveDiff.stats.atk.delta) : undefined
+            },
+            {
+              icon: 'shield', label: 'DEF', value: `${armHeroStats.def}`, color: '#8fc8ff',
+              delta: liveDiff?.stats.def.delta,
+              deltaText: liveDiff && liveDiff.stats.def.delta !== 0 ? formatCompactStatDelta(liveDiff.stats.def.delta) : undefined
+            },
+            {
+              icon: 'bolt', label: 'SPD', value: `${armHeroStats.speed}`, color: '#ffe27a',
+              delta: liveDiff?.stats.speed.delta,
+              deltaText: liveDiff && liveDiff.stats.speed.delta !== 0 ? formatCompactStatDelta(liveDiff.stats.speed.delta) : undefined
+            },
+            {
+              icon: 'boot', label: 'MOV', value: `${armHeroStats.move}`, color: '#c4b5ff',
+              delta: liveDiff?.stats.move.delta,
+              deltaText: liveDiff && liveDiff.stats.move.delta !== 0 ? formatCompactStatDelta(liveDiff.stats.move.delta) : undefined
+            },
+            {
+              icon: 'target', label: 'RNG', value: `${armHeroStats.range}`, color: '#6dd9ff',
+              delta: liveDiff?.stats.range.delta,
+              deltaText: liveDiff && liveDiff.stats.range.delta !== 0 ? formatCompactStatDelta(liveDiff.stats.range.delta) : undefined
+            },
+            {
+              icon: 'crit', label: 'CRIT', value: `${Math.round(armHeroStats.crit * 100)}%`, color: '#ff8da1',
+              delta: liveDiff?.stats.crit.delta,
+              deltaText: liveDiff && liveDiff.stats.crit.delta !== 0 ? formatCompactStatDelta(liveDiff.stats.crit.delta, true) : undefined
+            }
+          ]
+        : []
+      const armHeroStatsNode = armStatItems.length > 0
+        ? [boxNode({
+            id: 'arm-hero-stats',
+            style: { height: shortH ? 28 : mobile ? 32 : 34 },
+            widget: {
+              type: 'panel',
+              draw: (ctx: CanvasRenderingContext2D, rect: LayoutRect) => drawStatStrip(ctx, rect, armStatItems)
+            }
+          })]
+        : []
+
+      bodyNode = column({ id: 'camp-armory-body', style: { grow: 1, gap: shortH ? 5 : 6 } }, [
         ...(mobile
           ? [
               row({ id: 'arm-top-m1', style: { height: 34, gap: 6, align: 'center' } }, [armHeroPortraitNode, armHeroStrip, armBestBtn]),
@@ -3994,6 +4130,7 @@ async function start() {
           : [
               row({ id: 'arm-top-controls', style: { height: 34, gap: 8, align: 'center' } }, [armHeroPortraitNode, armHeroStrip, armFilterStrip, armBestBtn])
             ]),
+        ...armHeroStatsNode,
         ...itemRows,
         spacerNode(1),
         row({ id: 'arm-pager', hidden: maxPage === 0, style: { height: 28, gap: 8, align: 'center' } }, [
@@ -4001,7 +4138,7 @@ async function start() {
             id: 'arm-prev', style: { width: 88, height: 28 },
             widget: {
               type: 'button', label: 'Prev', disabled: armoryPage <= 0,
-              onPress: () => { armoryPage--; uiDirty = true },
+              onPress: () => { armoryPage--; clearArmoryHover(true); uiDirty = true },
               draw: (ctx: CanvasRenderingContext2D, rect: LayoutRect, st: CanvasWidgetDrawState) => drawButton(ctx, rect, 'Prev', st, { variant: 'secondary', size: 11 })
             }
           }),
@@ -4016,7 +4153,7 @@ async function start() {
             id: 'arm-next', style: { width: 88, height: 28 },
             widget: {
               type: 'button', label: 'Next', disabled: armoryPage >= maxPage,
-              onPress: () => { armoryPage++; uiDirty = true },
+              onPress: () => { armoryPage++; clearArmoryHover(true); uiDirty = true },
               draw: (ctx: CanvasRenderingContext2D, rect: LayoutRect, st: CanvasWidgetDrawState) => drawButton(ctx, rect, 'Next', st, { variant: 'secondary', size: 11 })
             }
           }),
@@ -4558,10 +4695,89 @@ async function start() {
         ])
       ]),
 
-      // Floating Toast above the bottom sheet
+      // Floating Armory Live Stat-Diff Dock above the bottom sheet
+      ...(() => {
+        const diff = activeArmoryDiff
+        if (campTab !== 'armory' || !diff || collapsed || packAnim) return []
+        const diffH = shortH ? 58 : mobile ? 78 : 64
+        const dockW = Math.min(sheetW, mobile ? sheetW : 780)
+        const showTouchConfirm = Boolean(
+          inspectedArmoryEquipUid && !diff.isAlreadyEquipped && armorySelectedHero && confirmInspectedArmoryEquip
+        )
+        const confirmAction = confirmInspectedArmoryEquip
+        const confirmLabel = diff.currentOwnerName ? 'Swap' : 'Equip'
+        const dockInsetBottom = sheetH + (isPhone ? 12 : 18)
+        if (showTouchConfirm && confirmAction) {
+          return [
+            row({
+              id: 'arm-diff-dock',
+              style: { anchor: 'bottom', width: dockW, height: diffH, inset: [isPhone ? 6 : 12, dockInsetBottom], gap: 6, align: 'stretch', respectSafeArea: true }
+            }, [
+              boxNode({
+                id: 'arm-diff-panel',
+                style: { grow: 1, height: diffH },
+                widget: {
+                  type: 'panel',
+                  blocksPointer: true,
+                  draw: (ctx: CanvasRenderingContext2D, rect: LayoutRect) => drawArmoryStatDiffPanel(ctx, rect, diff)
+                }
+              }),
+              column({ id: 'arm-diff-actions', style: { width: mobile ? 76 : 92, height: diffH, gap: 4 } }, [
+                boxNode({
+                  id: 'arm-confirm-equip',
+                  style: { grow: 1 },
+                  widget: {
+                    type: 'button',
+                    label: confirmLabel,
+                    primary: true,
+                    onPress: () => confirmAction(),
+                    draw: (ctx: CanvasRenderingContext2D, rect: LayoutRect, st: CanvasWidgetDrawState) => drawButton(
+                      ctx, rect, confirmLabel, st, { variant: 'success', icon: 'check', size: 11.5 }
+                    )
+                  }
+                }),
+                boxNode({
+                  id: 'arm-dismiss-diff',
+                  style: { height: 22 },
+                  widget: {
+                    type: 'button',
+                    label: 'Cancel',
+                    onPress: () => { clearArmoryHover(true); uiDirty = true },
+                    draw: (ctx: CanvasRenderingContext2D, rect: LayoutRect, st: CanvasWidgetDrawState) => drawButton(
+                      ctx, rect, 'Cancel', st, { variant: 'secondary', size: 9.5 }
+                    )
+                  }
+                })
+              ])
+            ])
+          ]
+        }
+        return [
+          boxNode({
+            id: 'arm-diff-panel',
+            style: { anchor: 'bottom', width: dockW, height: diffH, inset: [isPhone ? 6 : 12, dockInsetBottom], respectSafeArea: true },
+            widget: {
+              type: 'panel',
+              blocksPointer: false,
+              draw: (ctx: CanvasRenderingContext2D, rect: LayoutRect) => drawArmoryStatDiffPanel(ctx, rect, diff)
+            }
+          })
+        ]
+      })(),
+
+      // Floating Toast above the bottom sheet (and above Armory diff dock if visible)
       ...(campToast ? [boxNode({
         id: 'camp-toast',
-        style: { anchor: 'bottom', width: Math.min(sheetW - 24, 520), height: 32, inset: [8, sheetH + 18], respectSafeArea: true },
+        style: {
+          anchor: 'bottom',
+          width: Math.min(sheetW - 24, 520),
+          height: 32,
+          inset: [
+            8,
+            sheetH + 18 + (campTab === 'armory' && activeArmoryDiff && !collapsed && !packAnim ? (shortH ? 66 : mobile ? 86 : 72) : 0)
+          ],
+          respectSafeArea: true
+        },
         widget: {
           type: 'panel',
           draw: (ctx: CanvasRenderingContext2D, rect: LayoutRect) => drawToast(ctx, rect, campToast)
@@ -5609,6 +5825,8 @@ async function start() {
       activeUnitUid: state.battle?.activeUnitUid ?? null,
       facingPicker: state.battle?.facingPicker ? { ...state.battle.facingPicker } : null,
       hoveredTurnUnitUid,
+      hoveredArmoryEquipUid,
+      inspectedArmoryEquipUid,
       turnOrder: state.battle?.turnOrder.map(t => t.name) ?? [],
       battleAlliesAlive: state.battle ? state.battle.units.filter(u => u.alive && u.team === 'ally').length : 0,
       battleAlliesDowned: state.battle ? state.battle.units.filter(u => isUnitDowned(u)).length : 0,
