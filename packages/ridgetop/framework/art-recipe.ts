@@ -1,4 +1,4 @@
-import { multiplyQuat } from './animation.ts'
+import { evaluateJointFK, multiplyQuat, sortJointHierarchy } from './animation.ts'
 import type { Easing } from './animation.ts'
 import { archMesh, box, chamferedPrism, cylinder, gableMesh, octahedron, quaternionFromEuler, revolvedMesh, rotateVec3, rotationMatrix, tubeMesh, wedgeMesh } from './geometry.ts'
 import { spriteDirections } from './low-poly.ts'
@@ -27,6 +27,11 @@ export type ArtTone = BaseArtTone | (string & {})
 export type ArtShape = keyof typeof artShapes
 type Palette = Record<string, string | undefined>
 
+const shapeNames = new Map<Mesh, ArtShape>()
+for (const key of Object.keys(artShapes)) {
+  if (isArtShape(key)) shapeNames.set(artShapes[key], key)
+}
+
 export interface ArtRecipeJoint {
   id: string
   parent?: string
@@ -48,7 +53,11 @@ export interface ArtRecipeClip {
   easing?: Easing
   frames: ArtRecipeClipFrame[]
 }
-
+export interface ArtTubeSpec {
+  readonly points: readonly Vec3[]
+  readonly radii: number | readonly number[]
+  readonly sides: number
+}
 export interface ArtPart {
   name?: string
   mesh: Mesh
@@ -68,6 +77,8 @@ export interface ArtPart {
   shade?: number
   /** Optional joint id binding this part to an articulated rig joint. */
   joint?: string
+  /** Preserved tube specification when authored from `shape: 'tube'`, enabling lossless recipe round-trips. */
+  tube?: ArtTubeSpec
 }
 export interface ArtModel {
   /** Square camera span and vertical center. Model origins are at ground level. */
@@ -80,7 +91,7 @@ export interface ArtModel {
   joints?: readonly ArtRecipeJoint[]
   clips?: Readonly<Record<string, ArtRecipeClip>>
 }
-export interface ArtRecipePart extends Omit<ArtPart, 'mesh' | 'name'> {
+export interface ArtRecipePart extends Omit<ArtPart, 'mesh' | 'name' | 'tube'> {
   name: string
   shape: ArtShape | 'tube'
   /** For `shape: 'tube'`, local 3D polyline points swept into one seamless low-poly tube mesh. */
@@ -103,19 +114,22 @@ export interface ArtRecipe {
   joints?: ArtRecipeJoint[]
   clips?: Record<string, ArtRecipeClip>
 }
+export interface ArtBounds {
+  min: [number, number, number]
+  max: [number, number, number]
+}
+export type PlacedArtMesh = Pick<ArtPart, 'mesh' | 'position' | 'scale' | 'pitch' | 'yaw' | 'roll'>
 
 const FORBIDDEN_KEYS = new Set(['__proto__', 'constructor', 'prototype'])
 const VALID_EASINGS = new Set<string>(['linear', 'smooth', 'easeIn', 'easeOut', 'easeInOut', 'backOut', 'step'])
-const VALID_BLENDS = new Set<string>(['opaque', 'alpha', 'additive'])
-const clips = new Set<string>(['turntable', ...spriteDirections])
+const VALID_TIMING_CLIPS = new Set<string>(['turntable', ...spriteDirections])
+const HEX_COLOR_RE = /^#?[\da-f]{6}$/i
+const ASSET_NAME_RE = /^[a-z0-9][a-z0-9_-]*$/i
 
-function isPlainObject(value: unknown): boolean {
+function isPlainRecord(value: unknown): value is Record<string, unknown> {
   if (value === null || typeof value !== 'object' || Array.isArray(value)) return false
   const proto = Object.getPrototypeOf(value)
   return proto === Object.prototype || proto === null
-}
-function isPlainRecord(value: unknown): value is Record<string, unknown> {
-  return isPlainObject(value)
 }
 function isArtShape(value: unknown): value is ArtShape {
   return typeof value === 'string' && Object.hasOwn(artShapes, value)
@@ -126,20 +140,11 @@ function isArtTone(value: unknown): value is ArtTone {
 function isEasing(value: unknown): value is Easing {
   return typeof value === 'string' && VALID_EASINGS.has(value)
 }
+function isBlendMode(value: unknown): value is BlendMode {
+  return value === 'opaque' || value === 'alpha' || value === 'additive'
+}
 export function isSafeArtKey(value: unknown): value is string {
   return typeof value === 'string' && value.trim().length > 0 && value === value.trim() && !FORBIDDEN_KEYS.has(value)
-}
-
-export function checkArtPalette(palette: Palette, standardRoles = false) {
-  if (!isPlainRecord(palette)) throw new RangeError('Expected an art palette object')
-  for (const [role, hex] of Object.entries(palette)) {
-    if (!isSafeArtKey(role)) throw new RangeError('Invalid palette role ' + role)
-    if (standardRoles && !Object.hasOwn(artPalette, role)) throw new RangeError('Unknown palette role ' + role)
-    if (typeof hex !== 'string' || !/^#?[\da-f]{6}$/i.test(hex)) throw new RangeError('Expected a six-digit RGB color for ' + role)
-  }
-}
-export function checkFrameSize(size: number) {
-  if (!Number.isInteger(size) || size < 1 || size > 1024) throw new RangeError('Frame size must be 1–1024 pixels')
 }
 
 function isVec3(value: unknown, positive = false): value is Vec3 {
@@ -150,30 +155,192 @@ function isVec3(value: unknown, positive = false): value is Vec3 {
   }
   return true
 }
+function cloneVec3(v: Vec3): [number, number, number] {
+  return [v[0], v[1], v[2]]
+}
 function isOptionalFinite(value: unknown): value is number | undefined {
   return value === undefined || (typeof value === 'number' && Number.isFinite(value))
 }
 
-export function checkArtClip(clip: ArtRecipeClip, clipName: string, jointIds: ReadonlySet<string>, label: string) {
+export function checkArtName(value: unknown, message = 'Use letters, digits, hyphens or underscores for the model filename.'): string {
+  if (typeof value !== 'string' || !ASSET_NAME_RE.test(value)) throw new Error(message)
+  return value
+}
+
+export function checkArtVec3(value: unknown, label: string, positive = false): [number, number, number] {
+  if (!isVec3(value, positive)) {
+    throw new RangeError('Expected three ' + (positive ? 'positive ' : '') + 'finite dimensions for ' + label)
+  }
+  return [value[0], value[1], value[2]]
+}
+
+export function checkArtPaletteColor(role: string, hex: unknown, standardRoles = false): string {
+  if (!isSafeArtKey(role)) throw new RangeError('Invalid palette role ' + role)
+  if (standardRoles && !Object.hasOwn(artPalette, role)) throw new RangeError('Unknown palette role ' + role)
+  if (typeof hex !== 'string' || !HEX_COLOR_RE.test(hex)) throw new RangeError('Expected a six-digit RGB color for ' + role)
+  return hex
+}
+
+function parseArtPalette(palette: unknown, standardRoles = false): Palette {
+  if (!isPlainRecord(palette)) throw new RangeError('Expected an art palette object')
+  const out: Palette = {}
+  for (const [role, hex] of Object.entries(palette)) {
+    out[role] = checkArtPaletteColor(role, hex, standardRoles)
+  }
+  return out
+}
+
+export function checkArtPalette(palette: Palette, standardRoles = false) {
+  parseArtPalette(palette, standardRoles)
+}
+
+export function checkFrameSize(size: number) {
+  if (!Number.isInteger(size) || size < 1 || size > 1024) throw new RangeError('Frame size must be 1–1024 pixels')
+}
+
+function parseArtTimings(raw: unknown, label: string): Record<string, number> {
+  if (!isPlainRecord(raw)) throw new RangeError('Invalid direction or frame time in ' + label)
+  const out: Record<string, number> = {}
+  for (const [clipName, ms] of Object.entries(raw)) {
+    if (!isSafeArtKey(clipName) || !VALID_TIMING_CLIPS.has(clipName) || typeof ms !== 'number' || !Number.isSafeInteger(ms) || ms < 1) {
+      throw new RangeError('Invalid direction or frame time in ' + label)
+    }
+    out[clipName] = ms
+  }
+  return out
+}
+
+export interface CheckedArtPartStyle {
+  unlit?: number
+  alpha?: number
+  blend?: BlendMode
+  shade?: number
+}
+
+export function checkArtPartStyle(
+  style: { unlit?: unknown; alpha?: unknown; blend?: unknown; shade?: unknown },
+  label: string
+): CheckedArtPartStyle {
+  const out: CheckedArtPartStyle = {}
+  if (style.unlit !== undefined) {
+    if (typeof style.unlit !== 'number' || !Number.isFinite(style.unlit) || style.unlit < 0 || style.unlit > 1) {
+      throw new RangeError('Unlit must be in 0–1 for ' + label)
+    }
+    out.unlit = style.unlit
+  }
+  if (style.alpha !== undefined) {
+    if (typeof style.alpha !== 'number' || !Number.isFinite(style.alpha) || style.alpha < 0 || style.alpha > 1) {
+      throw new RangeError('Alpha must be in 0–1 for ' + label)
+    }
+    out.alpha = style.alpha
+  }
+  if (style.blend !== undefined) {
+    if (!isBlendMode(style.blend)) throw new RangeError('Unknown blend mode for ' + label)
+    out.blend = style.blend
+  }
+  if (style.shade !== undefined) {
+    if (typeof style.shade !== 'number' || !Number.isFinite(style.shade) || style.shade < -0.5 || style.shade > 0.5) {
+      throw new RangeError('Shade must be in -0.5–0.5 for ' + label)
+    }
+    out.shade = style.shade
+  }
+  return out
+}
+
+export function parseArtTube(
+  points: unknown,
+  radii: unknown,
+  sides: unknown,
+  label: string
+): { points: [number, number, number][]; radii: number | number[]; sides: number } {
+  if (!Array.isArray(points) || points.length < 2) {
+    throw new RangeError('Tube shape requires >= 2 valid XYZ points in ' + label)
+  }
+  const clonedPoints: [number, number, number][] = []
+  for (let i = 0; i < points.length; i++) {
+    const pt = points[i]
+    if (!isVec3(pt)) throw new RangeError('Tube shape requires >= 2 valid XYZ points in ' + label)
+    clonedPoints.push([pt[0], pt[1], pt[2]])
+  }
+  let clonedRadii: number | number[]
+  if (typeof radii === 'number' && Number.isFinite(radii) && radii > 0) {
+    clonedRadii = radii
+  } else if (Array.isArray(radii) && radii.length >= 1) {
+    const arr: number[] = []
+    for (let i = 0; i < radii.length; i++) {
+      const r = radii[i]
+      if (typeof r !== 'number' || !Number.isFinite(r) || r <= 0) {
+        throw new RangeError('Tube shape requires positive finite radii in ' + label)
+      }
+      arr.push(r)
+    }
+    clonedRadii = arr
+  } else {
+    throw new RangeError('Tube shape requires positive finite radii in ' + label)
+  }
+  const resolvedSides = sides === undefined ? 7 : sides
+  if (typeof resolvedSides !== 'number' || !Number.isSafeInteger(resolvedSides) || resolvedSides < 3 || resolvedSides > 24) {
+    throw new RangeError('Tube sides must be an integer in 3–24 in ' + label)
+  }
+  return { points: clonedPoints, radii: clonedRadii, sides: resolvedSides }
+}
+
+function parseArtJoints(raw: unknown, label: string): { joints: ArtRecipeJoint[]; jointIds: Set<string> } {
+  if (!Array.isArray(raw)) throw new RangeError('Expected joints array in ' + label)
+  const joints: ArtRecipeJoint[] = []
+  const jointIds = new Set<string>()
+  for (let i = 0; i < raw.length; i++) {
+    const j = raw[i]
+    if (!isPlainRecord(j) || !isSafeArtKey(j.id) || jointIds.has(j.id)) {
+      throw new RangeError('Each joint needs a unique valid id in ' + label)
+    }
+    if (j.pivot !== undefined && !isVec3(j.pivot)) {
+      throw new RangeError('Invalid pivot for joint "' + j.id + '" in ' + label)
+    }
+    if (j.parent !== undefined && !isSafeArtKey(j.parent)) {
+      throw new RangeError('Invalid parent joint for "' + j.id + '" in ' + label)
+    }
+    jointIds.add(j.id)
+    const entry: ArtRecipeJoint = { id: j.id }
+    if (j.parent !== undefined) entry.parent = j.parent
+    if (j.pivot !== undefined) entry.pivot = [j.pivot[0], j.pivot[1], j.pivot[2]]
+    joints.push(entry)
+  }
+  sortJointHierarchy(joints, {
+    duplicate: () => new RangeError('Each joint needs a unique valid id in ' + label),
+    missingParent: (id, parent) => new RangeError('Unknown parent joint "' + parent + '" for "' + id + '" in ' + label),
+    cycle: id => new RangeError('Cyclic joint hierarchy detected at "' + id + '" in ' + label)
+  })
+  return { joints, jointIds }
+}
+
+/** Validate and deep-clone one animation clip against a known set of joint IDs. */
+export function parseArtClip(clip: unknown, clipName: string, jointIds: ReadonlySet<string>, label: string): ArtRecipeClip {
   if (!isSafeArtKey(clipName)) throw new RangeError('Invalid animation clip name in ' + label)
   if (!isPlainRecord(clip)) throw new RangeError('Invalid animation clip ' + clipName + ' in ' + label)
   if (typeof clip.duration !== 'number' || !Number.isFinite(clip.duration) || clip.duration <= 0) {
     throw new RangeError('Animation clip ' + clipName + ' must have a positive finite duration in ' + label)
   }
+  const duration = clip.duration
   if (clip.loop !== undefined && typeof clip.loop !== 'boolean') {
     throw new RangeError('Animation clip ' + clipName + ' loop must be a boolean in ' + label)
   }
-  if (clip.easing !== undefined && (typeof clip.easing !== 'string' || !VALID_EASINGS.has(clip.easing))) {
-    throw new RangeError('Unknown easing in animation clip ' + clipName + ' in ' + label)
+  let easing: Easing | undefined
+  if (clip.easing !== undefined) {
+    if (!isEasing(clip.easing)) {
+      throw new RangeError('Unknown easing in animation clip ' + clipName + ' in ' + label)
+    }
+    easing = clip.easing
   }
   if (!Array.isArray(clip.frames) || !clip.frames.length) {
     throw new RangeError('Animation clip ' + clipName + ' needs at least one keyframe in ' + label)
   }
+  const frames: ArtRecipeClipFrame[] = []
   let prevTime = -Infinity
   for (let i = 0; i < clip.frames.length; i++) {
     const frame = clip.frames[i]
     if (!isPlainRecord(frame) || typeof frame.time !== 'number' || !Number.isFinite(frame.time) ||
-        frame.time < 0 || frame.time > clip.duration) {
+        frame.time < 0 || frame.time > duration) {
       throw new RangeError('Invalid keyframe time in clip ' + clipName + ' in ' + label)
     }
     if (frame.time < prevTime) {
@@ -183,24 +350,56 @@ export function checkArtClip(clip: ArtRecipeClip, clipName: string, jointIds: Re
     if (!isPlainRecord(frame.poses)) {
       throw new RangeError('Expected keyframe poses map in clip ' + clipName + ' in ' + label)
     }
-    for (const [jointId, pose] of Object.entries(frame.poses)) {
+    const poses: Record<string, ArtRecipeJointPose> = {}
+    for (const [jointId, rawPose] of Object.entries(frame.poses)) {
       if (!isSafeArtKey(jointId) || !jointIds.has(jointId)) {
         throw new RangeError('Unknown joint "' + jointId + '" in clip ' + clipName + ' in ' + label)
       }
-      if (!isPlainRecord(pose)) {
+      if (!isPlainRecord(rawPose)) {
         throw new RangeError('Invalid pose for joint "' + jointId + '" in clip ' + clipName + ' in ' + label)
       }
-      if (pose.position !== undefined && !isVec3(pose.position)) {
-        throw new RangeError('Invalid pose position for joint "' + jointId + '" in clip ' + clipName + ' in ' + label)
+      const pose: ArtRecipeJointPose = {}
+      if (rawPose.position !== undefined) {
+        if (!isVec3(rawPose.position)) {
+          throw new RangeError('Invalid pose position for joint "' + jointId + '" in clip ' + clipName + ' in ' + label)
+        }
+        pose.position = cloneVec3(rawPose.position)
       }
-      if (pose.rotation !== undefined && !isVec3(pose.rotation)) {
-        throw new RangeError('Invalid pose rotation for joint "' + jointId + '" in clip ' + clipName + ' in ' + label)
+      if (rawPose.rotation !== undefined) {
+        if (!isVec3(rawPose.rotation)) {
+          throw new RangeError('Invalid pose rotation for joint "' + jointId + '" in clip ' + clipName + ' in ' + label)
+        }
+        pose.rotation = cloneVec3(rawPose.rotation)
       }
-      if (pose.scale !== undefined && !isVec3(pose.scale, true)) {
-        throw new RangeError('Invalid pose scale for joint "' + jointId + '" in clip ' + clipName + ' in ' + label)
+      if (rawPose.scale !== undefined) {
+        if (!isVec3(rawPose.scale, true)) {
+          throw new RangeError('Invalid pose scale for joint "' + jointId + '" in clip ' + clipName + ' in ' + label)
+        }
+        pose.scale = cloneVec3(rawPose.scale)
       }
+      poses[jointId] = pose
     }
+    frames.push({ time: frame.time, poses })
   }
+  return {
+    duration,
+    ...(clip.loop !== undefined ? { loop: clip.loop } : {}),
+    ...(easing !== undefined ? { easing } : {}),
+    frames
+  }
+}
+
+export function checkArtClip(clip: ArtRecipeClip, clipName: string, jointIds: ReadonlySet<string>, label: string) {
+  parseArtClip(clip, clipName, jointIds, label)
+}
+
+function parseArtClips(raw: unknown, jointIds: ReadonlySet<string>, label: string): Record<string, ArtRecipeClip> {
+  if (!isPlainRecord(raw)) throw new RangeError('Expected clips map in ' + label)
+  const parsed: Record<string, ArtRecipeClip> = {}
+  for (const [clipName, rawClip] of Object.entries(raw)) {
+    parsed[clipName] = parseArtClip(rawClip, clipName, jointIds, label)
+  }
+  return parsed
 }
 
 export function checkArtModel(model: ArtModel, name: string, palette: Palette = artPalette) {
@@ -209,260 +408,197 @@ export function checkArtModel(model: ArtModel, name: string, palette: Palette = 
   }
   if (model.palette !== undefined) checkArtPalette(model.palette)
   if (model.frameSize !== undefined) checkFrameSize(model.frameSize)
-  if (model.timings !== undefined && (!isPlainRecord(model.timings) || Object.entries(model.timings).some(([clip, ms]) =>
-    !isSafeArtKey(clip) || !clips.has(clip) || !Number.isSafeInteger(ms) || ms < 1))) {
-    throw new RangeError('Invalid direction or frame time in ' + name)
-  }
-  const jointIds = new Set<string>()
-  const parentMap = new Map<string, string>()
-  if (model.joints !== undefined) {
-    if (!Array.isArray(model.joints)) throw new RangeError('Expected joints array in ' + name)
-    for (const joint of model.joints) {
-      if (!isPlainRecord(joint)) throw new RangeError('Each joint needs a unique valid id in ' + name)
-      const id = joint.id
-      const parent = joint.parent
-      const pivot = joint.pivot
-      if (!isSafeArtKey(id) || jointIds.has(id)) {
-        throw new RangeError('Each joint needs a unique valid id in ' + name)
-      }
-      if (pivot !== undefined && !isVec3(pivot)) {
-        throw new RangeError('Invalid pivot for joint "' + id + '" in ' + name)
-      }
-      jointIds.add(id)
-      if (parent !== undefined) {
-        if (!isSafeArtKey(parent)) throw new RangeError('Invalid parent joint for "' + id + '" in ' + name)
-        parentMap.set(id, parent)
-      }
-    }
-    for (const [id, parent] of parentMap) {
-      if (!jointIds.has(parent)) throw new RangeError('Unknown parent joint "' + parent + '" for "' + id + '" in ' + name)
-    }
-    const state = new Map<string, number>()
-    const visit = (id: string) => {
-      const s = state.get(id)
-      if (s === 2) return
-      if (s === 1) throw new RangeError('Cyclic joint hierarchy detected at "' + id + '" in ' + name)
-      state.set(id, 1)
-      const parent = parentMap.get(id)
-      if (parent !== undefined) visit(parent)
-      state.set(id, 2)
-    }
-    for (const id of jointIds) visit(id)
-  }
-  for (const p of model.parts) {
+  if (model.timings !== undefined) parseArtTimings(model.timings, name)
+  const jointIds = model.joints !== undefined
+    ? parseArtJoints(model.joints, name).jointIds
+    : new Set<string>()
+  for (let i = 0; i < model.parts.length; i++) {
+    const p = model.parts[i]
+    const partLabel = name + (p?.name ? ' / ' + p.name : '')
     const validMesh = Boolean(p?.mesh && Number.isSafeInteger(p.mesh.vertexCount) && p.mesh.vertexCount > 0 &&
       p.mesh.data && p.mesh.data.length === p.mesh.vertexCount * 6)
     if (!validMesh || !(Object.hasOwn(palette, p.tone) || Object.hasOwn(model.palette ?? {}, p.tone)) ||
         !isVec3(p.position) || !isVec3(p.scale, true) ||
-        !isOptionalFinite(p.pitch) || !isOptionalFinite(p.yaw) || !isOptionalFinite(p.roll) ||
-        !isOptionalFinite(p.unlit) || (p.unlit !== undefined && (p.unlit < 0 || p.unlit > 1)) ||
-        !isOptionalFinite(p.alpha) || (p.alpha !== undefined && (p.alpha < 0 || p.alpha > 1)) ||
-        !isOptionalFinite(p.shade) || (p.shade !== undefined && (p.shade < -0.5 || p.shade > 0.5)) ||
-        (p.blend !== undefined && !VALID_BLENDS.has(p.blend))) {
-      throw new RangeError('Invalid mesh, palette tone or transform in ' + name + (p?.name ? ' / ' + p.name : ''))
+        !isOptionalFinite(p.pitch) || !isOptionalFinite(p.yaw) || !isOptionalFinite(p.roll)) {
+      throw new RangeError('Invalid mesh, palette tone or transform in ' + partLabel)
+    }
+    checkArtPartStyle(p, partLabel)
+    if (p.tube !== undefined) {
+      if (!isPlainRecord(p.tube)) throw new RangeError('Invalid tube metadata in ' + partLabel)
+      parseArtTube(p.tube.points, p.tube.radii, p.tube.sides, partLabel)
     }
     if (p.joint !== undefined && (!isSafeArtKey(p.joint) || !jointIds.has(p.joint))) {
       throw new RangeError('Unknown joint "' + String(p.joint) + '" on part ' + (p.name ?? '') + ' in ' + name)
     }
   }
-  if (model.clips !== undefined) {
-    if (!isPlainObject(model.clips)) throw new RangeError('Expected clips map in ' + name)
-    for (const [clipName, clip] of Object.entries(model.clips)) {
-      checkArtClip(clip, clipName, jointIds, name)
-    }
-  }
+  if (model.clips !== undefined) parseArtClips(model.clips, jointIds, name)
 }
 
-function isBlendMode(value: unknown): value is BlendMode {
-  return value === 'opaque' || value === 'alpha' || value === 'additive'
-}
-
-/** Reject prototype-polluted records before structuredClone strips non-standard prototypes. */
-function checkRawRecipePrototypes(input: unknown): asserts input is Record<string, unknown> {
-  if (!isPlainRecord(input)) throw new Error('Expected a Ridgetop art recipe, version 1 or 2.')
-  if (input.palette !== undefined && !isPlainRecord(input.palette)) throw new RangeError('Expected an art palette object')
-  if (input.parts !== undefined) {
-    if (!Array.isArray(input.parts)) throw new Error('A recipe needs at least one named part.')
-    for (const p of input.parts) if (!isPlainRecord(p)) throw new Error('Each model part needs a unique name.')
-  }
-  if (input.timings !== undefined && !isPlainRecord(input.timings)) throw new RangeError('Invalid direction or frame time')
-  if (input.joints !== undefined) {
-    if (!Array.isArray(input.joints)) throw new RangeError('Expected joints array')
-    for (const j of input.joints) if (!isPlainRecord(j)) throw new RangeError('Invalid joint entry')
-  }
-  if (input.clips !== undefined) {
-    if (!isPlainRecord(input.clips)) throw new RangeError('Expected clips map')
-    for (const [clipName, clip] of Object.entries(input.clips)) {
-      if (!isSafeArtKey(clipName) || !isPlainRecord(clip)) throw new RangeError('Invalid animation clip ' + clipName)
-      if (Array.isArray(clip.frames)) {
-        for (const frame of clip.frames) {
-          if (!isPlainRecord(frame) || !isPlainRecord(frame.poses)) throw new RangeError('Invalid keyframe in clip ' + clipName)
-          for (const [jointId, pose] of Object.entries(frame.poses)) {
-            if (!isSafeArtKey(jointId) || !isPlainRecord(pose)) throw new RangeError('Invalid pose in clip ' + clipName)
-          }
-        }
-      }
-    }
-  }
-}
-
-/** Read editable JSON into the same geometry used by live meshes and directional sprites. */
+/** Read editable JSON into the same geometry used by live meshes and directional sprites, validating once in a single pass. */
 export function modelFromArtRecipe(value: unknown): ArtModel {
-  checkRawRecipePrototypes(value)
-  if (value.format !== 'ridgetop-art' || (value.version !== 1 && value.version !== 2)) {
+  if (!isPlainRecord(value) || value.format !== 'ridgetop-art' || (value.version !== 1 && value.version !== 2)) {
     throw new Error('Expected a Ridgetop art recipe, version 1 or 2.')
   }
-  // Keep the live model and its cached sprites in sync if a caller continues editing the source.
-  const source = structuredClone(value)
-  if (typeof source.name !== 'string' || !/^[a-z0-9][a-z0-9_-]*$/i.test(source.name)) throw new Error('Use letters, digits, hyphens or underscores for the model filename.')
-  const name = source.name
-  const frameSize = typeof source.frameSize === 'number' ? source.frameSize : NaN
+  const name = checkArtName(value.name)
+  const frameSize = typeof value.frameSize === 'number' ? value.frameSize : NaN
   checkFrameSize(frameSize)
-  if (!isPlainRecord(source.palette)) throw new RangeError('Expected an art palette object')
-  const palette: Palette = {}
-  for (const [role, hex] of Object.entries(source.palette)) {
-    if (!isSafeArtKey(role)) throw new RangeError('Invalid palette role ' + role)
-    if (typeof hex !== 'string' || !/^#?[\da-f]{6}$/i.test(hex)) throw new RangeError('Expected a six-digit RGB color for ' + role)
-    palette[role] = hex
+  const palette = parseArtPalette(value.palette)
+  if (!Array.isArray(value.parts) || !value.parts.length) {
+    throw new Error('A recipe needs at least one named part.')
   }
-  if (!Array.isArray(source.parts) || !source.parts.length) throw new Error('A recipe needs at least one named part.')
+  const span = typeof value.span === 'number' ? value.span : NaN
+  const centerY = typeof value.centerY === 'number' ? value.centerY : NaN
+  if (!(span > 0 && Number.isFinite(span) && Number.isFinite(centerY))) {
+    throw new RangeError('Expected a camera span, centerY and model parts for ' + name)
+  }
+  const timings = value.timings !== undefined ? parseArtTimings(value.timings, name) : undefined
+  const parsedJoints = value.joints !== undefined ? parseArtJoints(value.joints, name) : undefined
+  const jointIds = parsedJoints ? parsedJoints.jointIds : new Set<string>()
+
   const names = new Set<string>()
-  const parts: ArtPart[] = source.parts.map(p => {
-    if (!isPlainRecord(p) || typeof p.name !== 'string' || !p.name.trim() || names.has(p.name)) throw new Error('Each model part needs a unique name.')
+  const parts: ArtPart[] = []
+  for (let i = 0; i < value.parts.length; i++) {
+    const p = value.parts[i]
+    if (!isPlainRecord(p) || typeof p.name !== 'string' || !p.name.trim() || names.has(p.name)) {
+      throw new Error('Each model part needs a unique name.')
+    }
+    const partName = p.name
+    const partLabel = name + ' / ' + partName
     let resolvedMesh: Mesh
+    let tubeSpec: ArtTubeSpec | undefined
     if (p.shape === 'tube') {
-      if (!Array.isArray(p.points) || p.points.length < 2 || !p.points.every(pt => isVec3(pt))) {
-        throw new RangeError('Tube shape requires >= 2 valid XYZ points in ' + p.name)
-      }
-      let radiiVal: number | number[]
-      if (typeof p.radii === 'number' && Number.isFinite(p.radii) && p.radii > 0) {
-        radiiVal = p.radii
-      } else if (Array.isArray(p.radii) && p.radii.length >= 1 && p.radii.every((r): r is number => typeof r === 'number' && Number.isFinite(r) && r > 0)) {
-        radiiVal = p.radii
-      } else {
-        throw new RangeError('Tube shape requires positive finite radii in ' + p.name)
-      }
-      const sides = p.sides === undefined ? 7 : p.sides
-      if (typeof sides !== 'number' || !Number.isSafeInteger(sides) || sides < 3 || sides > 24) {
-        throw new RangeError('Tube sides must be an integer in 3–24 in ' + p.name)
-      }
-      resolvedMesh = tubeMesh(p.points, radiiVal, sides)
+      const checked = parseArtTube(p.points, p.radii, p.sides, partName)
+      resolvedMesh = tubeMesh(checked.points, checked.radii, checked.sides)
+      tubeSpec = checked
     } else {
-      if (!isArtShape(p.shape)) throw new Error('Unknown shape in ' + p.name)
+      if (!isArtShape(p.shape)) throw new Error('Unknown shape in ' + partName)
       resolvedMesh = artShapes[p.shape]
     }
-    names.add(p.name)
-    if (!isSafeArtKey(p.tone) || !(isArtTone(p.tone) || Object.hasOwn(palette, p.tone)) || !isVec3(p.position) || !isVec3(p.scale, true) ||
-        !isOptionalFinite(p.pitch) || !isOptionalFinite(p.yaw) || !isOptionalFinite(p.roll) ||
-        !isOptionalFinite(p.unlit) || (p.unlit !== undefined && (p.unlit < 0 || p.unlit > 1)) ||
-        !isOptionalFinite(p.alpha) || (p.alpha !== undefined && (p.alpha < 0 || p.alpha > 1)) ||
-        !isOptionalFinite(p.shade) || (p.shade !== undefined && (p.shade < -0.5 || p.shade > 0.5)) ||
-        (p.blend !== undefined && !isBlendMode(p.blend))) {
-      throw new RangeError('Invalid mesh, palette tone or transform in ' + name + ' / ' + p.name)
+    names.add(partName)
+    if (!isSafeArtKey(p.tone) || !(isArtTone(p.tone) || Object.hasOwn(palette, p.tone)) ||
+        !isVec3(p.position) || !isVec3(p.scale, true) ||
+        !isOptionalFinite(p.pitch) || !isOptionalFinite(p.yaw) || !isOptionalFinite(p.roll)) {
+      throw new RangeError('Invalid mesh, palette tone or transform in ' + partLabel)
     }
-    const blendVal: BlendMode | undefined = isBlendMode(p.blend) ? p.blend : undefined
-    const part: ArtPart = {
-      name: p.name, mesh: resolvedMesh, position: p.position, scale: p.scale, tone: p.tone,
-      pitch: p.pitch, yaw: p.yaw, roll: p.roll, unlit: p.unlit,
-      ...(p.alpha !== undefined ? { alpha: p.alpha } : {}),
-      ...(blendVal !== undefined ? { blend: blendVal } : {}),
-      ...(p.shade !== undefined ? { shade: p.shade } : {})
-    }
+    const style = checkArtPartStyle(p, partLabel)
+    let joint: string | undefined
     if (p.joint !== undefined) {
-      if (typeof p.joint !== 'string') {
-        throw new RangeError('Unknown joint "' + String(p.joint) + '" on part ' + p.name + ' in ' + name)
+      if (!isSafeArtKey(p.joint) || !jointIds.has(p.joint)) {
+        throw new RangeError('Unknown joint "' + String(p.joint) + '" on part ' + partName + ' in ' + name)
       }
-      part.joint = p.joint
+      joint = p.joint
     }
-    return part
-  })
-  const span = typeof source.span === 'number' ? source.span : NaN
-  const centerY = typeof source.centerY === 'number' ? source.centerY : NaN
-  let timings: Record<string, number> | undefined
-  if (source.timings !== undefined) {
-    if (!isPlainRecord(source.timings)) throw new RangeError('Invalid direction or frame time in ' + name)
-    timings = {}
-    for (const [clipName, ms] of Object.entries(source.timings)) {
-      if (!isSafeArtKey(clipName) || !clips.has(clipName) || typeof ms !== 'number' || !Number.isSafeInteger(ms) || ms < 1) {
-        throw new RangeError('Invalid direction or frame time in ' + name)
-      }
-      timings[clipName] = ms
-    }
-  }
-  const model: ArtModel = { span, centerY, frameSize, palette, parts, timings }
-  if (source.joints !== undefined) {
-    if (!Array.isArray(source.joints)) throw new RangeError('Expected joints array in ' + name)
-    model.joints = source.joints.map(j => {
-      if (!isPlainRecord(j) || !isSafeArtKey(j.id)) throw new RangeError('Each joint needs a unique valid id in ' + name)
-      if (j.pivot !== undefined && !isVec3(j.pivot)) throw new RangeError('Invalid pivot for joint "' + j.id + '" in ' + name)
-      if (j.parent !== undefined && !isSafeArtKey(j.parent)) throw new RangeError('Invalid parent joint for "' + j.id + '" in ' + name)
-      const entry: ArtRecipeJoint = { id: j.id }
-      if (j.parent !== undefined) entry.parent = j.parent
-      if (j.pivot !== undefined) entry.pivot = j.pivot
-      return entry
+    parts.push({
+      name: partName,
+      mesh: resolvedMesh,
+      position: cloneVec3(p.position),
+      scale: cloneVec3(p.scale),
+      tone: p.tone,
+      pitch: p.pitch,
+      yaw: p.yaw,
+      roll: p.roll,
+      unlit: style.unlit,
+      ...(style.alpha !== undefined ? { alpha: style.alpha } : {}),
+      ...(style.blend !== undefined ? { blend: style.blend } : {}),
+      ...(style.shade !== undefined ? { shade: style.shade } : {}),
+      ...(joint !== undefined ? { joint } : {}),
+      ...(tubeSpec !== undefined ? { tube: tubeSpec } : {})
     })
   }
-  if (source.clips !== undefined) {
-    if (!isPlainRecord(source.clips)) throw new RangeError('Expected clips map in ' + name)
-    const parsedClips: Record<string, ArtRecipeClip> = {}
-    for (const [clipName, rawClip] of Object.entries(source.clips)) {
-      if (!isSafeArtKey(clipName)) throw new RangeError('Invalid animation clip name in ' + name)
-      if (!isPlainRecord(rawClip)) throw new RangeError('Invalid animation clip ' + clipName + ' in ' + name)
-      if (typeof rawClip.duration !== 'number' || !Number.isFinite(rawClip.duration) || rawClip.duration <= 0) {
-        throw new RangeError('Animation clip ' + clipName + ' must have a positive finite duration in ' + name)
-      }
-      const duration = rawClip.duration
-      if (rawClip.loop !== undefined && typeof rawClip.loop !== 'boolean') {
-        throw new RangeError('Animation clip ' + clipName + ' loop must be a boolean in ' + name)
-      }
-      let easing: Easing | undefined
-      if (rawClip.easing !== undefined) {
-        if (!isEasing(rawClip.easing)) throw new RangeError('Unknown easing in animation clip ' + clipName + ' in ' + name)
-        easing = rawClip.easing
-      }
-      if (!Array.isArray(rawClip.frames) || !rawClip.frames.length) {
-        throw new RangeError('Animation clip ' + clipName + ' needs at least one keyframe in ' + name)
-      }
-      const frames: ArtRecipeClipFrame[] = rawClip.frames.map(rawFrame => {
-        if (!isPlainRecord(rawFrame) || typeof rawFrame.time !== 'number' || !Number.isFinite(rawFrame.time) ||
-            rawFrame.time < 0 || rawFrame.time > duration) {
-          throw new RangeError('Invalid keyframe time in clip ' + clipName + ' in ' + name)
-        }
-        if (!isPlainRecord(rawFrame.poses)) {
-          throw new RangeError('Expected keyframe poses map in clip ' + clipName + ' in ' + name)
-        }
-        const poses: Record<string, ArtRecipeJointPose> = {}
-        for (const [jointId, rawPose] of Object.entries(rawFrame.poses)) {
-          if (!isSafeArtKey(jointId)) throw new RangeError('Unknown joint "' + jointId + '" in clip ' + clipName + ' in ' + name)
-          if (!isPlainRecord(rawPose)) throw new RangeError('Invalid pose for joint "' + jointId + '" in clip ' + clipName + ' in ' + name)
-          const pose: ArtRecipeJointPose = {}
-          if (rawPose.position !== undefined) {
-            if (!isVec3(rawPose.position)) throw new RangeError('Invalid pose position for joint "' + jointId + '" in clip ' + clipName + ' in ' + name)
-            pose.position = rawPose.position
-          }
-          if (rawPose.rotation !== undefined) {
-            if (!isVec3(rawPose.rotation)) throw new RangeError('Invalid pose rotation for joint "' + jointId + '" in clip ' + clipName + ' in ' + name)
-            pose.rotation = rawPose.rotation
-          }
-          if (rawPose.scale !== undefined) {
-            if (!isVec3(rawPose.scale, true)) throw new RangeError('Invalid pose scale for joint "' + jointId + '" in clip ' + clipName + ' in ' + name)
-            pose.scale = rawPose.scale
-          }
-          poses[jointId] = pose
-        }
-        return { time: rawFrame.time, poses }
-      })
-      parsedClips[clipName] = {
-        duration: rawClip.duration,
-        ...(rawClip.loop !== undefined ? { loop: rawClip.loop } : {}),
-        ...(easing !== undefined ? { easing } : {}),
-        frames
-      }
-    }
-    model.clips = parsedClips
+
+  const clips = value.clips !== undefined ? parseArtClips(value.clips, jointIds, name) : undefined
+  const model: ArtModel = {
+    span,
+    centerY,
+    frameSize,
+    palette,
+    parts,
+    timings,
+    ...(parsedJoints !== undefined ? { joints: parsedJoints.joints } : {}),
+    ...(clips !== undefined ? { clips } : {})
   }
-  checkArtModel(model, name)
   return model
+}
+
+/**
+ * Serialize any `ArtModel` whose parts use standard `artShapes` or `tube` metadata into an editable
+ * v1/v2 `ArtRecipe`. Returns `undefined` if any part uses a custom procedural mesh without recipe metadata.
+ */
+export function recipeFromArtModel(
+  name: string,
+  model: ArtModel,
+  options: { palette?: Palette; frameSize?: number } = {}
+): ArtRecipe | undefined {
+  let isV2 = Boolean(model.joints?.length || model.clips)
+  const usedNames = new Set<string>()
+  const recipeParts: ArtRecipePart[] = []
+
+  for (let i = 0; i < model.parts.length; i++) {
+    const p = model.parts[i]
+    let shape: ArtShape | 'tube'
+    let tubeFields: Pick<ArtRecipePart, 'points' | 'radii' | 'sides'> | undefined
+    if (p.tube) {
+      shape = 'tube'
+      isV2 = true
+      tubeFields = {
+        points: p.tube.points.map(pt => [pt[0], pt[1], pt[2]] as const),
+        radii: typeof p.tube.radii === 'number' ? p.tube.radii : p.tube.radii.slice(),
+        sides: p.tube.sides
+      }
+    } else {
+      const known = shapeNames.get(p.mesh)
+      if (!known) return undefined
+      shape = known
+    }
+    if (p.alpha !== undefined || p.blend !== undefined || p.shade !== undefined || p.joint !== undefined || !Object.hasOwn(artPalette, p.tone)) {
+      isV2 = true
+    }
+    const baseName = p.name?.trim() || ('part-' + (i + 1))
+    let uniqueName = baseName
+    let suffix = 2
+    while (usedNames.has(uniqueName)) uniqueName = `${baseName}-${suffix++}`
+    usedNames.add(uniqueName)
+    recipeParts.push({
+      name: uniqueName,
+      shape,
+      ...tubeFields,
+      position: [p.position[0], p.position[1], p.position[2]] as const,
+      scale: [p.scale[0], p.scale[1], p.scale[2]] as const,
+      tone: p.tone,
+      ...(p.pitch ? { pitch: p.pitch } : {}),
+      ...(p.yaw ? { yaw: p.yaw } : {}),
+      ...(p.roll ? { roll: p.roll } : {}),
+      ...(p.unlit ? { unlit: p.unlit } : {}),
+      ...(p.alpha !== undefined ? { alpha: p.alpha } : {}),
+      ...(p.blend !== undefined ? { blend: p.blend } : {}),
+      ...(p.shade !== undefined ? { shade: p.shade } : {}),
+      ...(p.joint !== undefined ? { joint: p.joint } : {})
+    })
+  }
+
+  const mergedPalette: Palette = { ...artPalette, ...options.palette, ...model.palette }
+  const usedPalette = Object.fromEntries(recipeParts.map(p => [p.tone, mergedPalette[p.tone] ?? artPalette.accent]))
+  return {
+    format: 'ridgetop-art',
+    version: isV2 ? 2 : 1,
+    name,
+    span: model.span,
+    centerY: model.centerY,
+    frameSize: model.frameSize ?? options.frameSize ?? 64,
+    palette: usedPalette,
+    parts: recipeParts,
+    ...(model.joints ? {
+      joints: model.joints.map(j => ({
+        id: j.id,
+        ...(j.parent !== undefined ? { parent: j.parent } : {}),
+        ...(j.pivot ? { pivot: [j.pivot[0], j.pivot[1], j.pivot[2]] as const } : {})
+      }))
+    } : {}),
+    ...(model.clips ? {
+      clips: Object.fromEntries(Object.entries(model.clips).map(([k, v]) => [k, structuredClone(v)]))
+    } : {}),
+    ...(model.timings ? { timings: { ...model.timings } } : {})
+  }
 }
 
 const ZERO3: Vec3 = [0, 0, 0]
@@ -471,27 +607,13 @@ const IDENTITY_Q: Quaternion = [0, 0, 0, 1]
 
 /** Topologically sort ArtRecipeJoints and resolve each joint's model-space rest position. */
 export function compileArtJoints(joints: readonly ArtRecipeJoint[]) {
-  const indexById = new Map<string, number>()
-  for (let i = 0; i < joints.length; i++) indexById.set(joints[i].id, i)
-  const parentIndex = joints.map(j => {
-    if (j.parent === undefined) return -1
-    const idx = indexById.get(j.parent)
-    if (idx === undefined) throw new RangeError('Unknown joint parent: ' + j.parent)
-    return idx
+  const { order, parentIndex, indexById } = sortJointHierarchy(joints, {
+    missingParent: (_id, parent) => new RangeError('Unknown joint parent: ' + parent),
+    cycle: id => new RangeError('Cyclic joint parent: ' + id)
   })
-  const visited = new Uint8Array(joints.length)
-  const order: number[] = []
-  function visit(i: number) {
-    if (visited[i] === 2) return
-    if (visited[i] === 1) throw new RangeError('Cyclic joint parent: ' + joints[i].id)
-    visited[i] = 1
-    if (parentIndex[i] >= 0) visit(parentIndex[i])
-    visited[i] = 2
-    order.push(i)
-  }
-  for (let i = 0; i < joints.length; i++) visit(i)
   const restPos: Vec3[] = Array.from({ length: joints.length }, () => ZERO3)
-  for (const idx of order) {
+  for (let i = 0; i < order.length; i++) {
+    const idx = order[i]
     const j = joints[idx]
     const pIdx = parentIndex[idx]
     restPos[idx] = j.pivot ? [j.pivot[0], j.pivot[1], j.pivot[2]] : (pIdx >= 0 ? restPos[pIdx] : ZERO3)
@@ -499,43 +621,76 @@ export function compileArtJoints(joints: readonly ArtRecipeJoint[]) {
   return { order, parentIndex, restPos, indexById }
 }
 
+/** Visit every vertex of a mesh after applying scale, quaternion rotation, and translation. */
+export function visitTransformedVertices(
+  mesh: Mesh,
+  position: Vec3,
+  scale: Vec3,
+  rotation: Quaternion,
+  visit: (x: number, y: number, z: number) => void
+) {
+  const m = rotationMatrix(rotation)
+  const data = mesh.data
+  const sx = scale[0], sy = scale[1], sz = scale[2]
+  const ox = position[0], oy = position[1], oz = position[2]
+  for (let i = 0; i < data.length; i += 6) {
+    const vx = data[i] * sx, vy = data[i + 1] * sy, vz = data[i + 2] * sz
+    visit(
+      ox + m[0] * vx + m[1] * vy + m[2] * vz,
+      oy + m[3] * vx + m[4] * vy + m[5] * vz,
+      oz + m[6] * vx + m[7] * vy + m[8] * vz
+    )
+  }
+}
+
+function expandBounds(bounds: ArtBounds, x: number, y: number, z: number) {
+  if (x < bounds.min[0]) bounds.min[0] = x
+  if (x > bounds.max[0]) bounds.max[0] = x
+  if (y < bounds.min[1]) bounds.min[1] = y
+  if (y > bounds.max[1]) bounds.max[1] = y
+  if (z < bounds.min[2]) bounds.min[2] = z
+  if (z > bounds.max[2]) bounds.max[2] = z
+}
+
+/** Exact axis-aligned bounds after the authored scale and rotation. */
+export function artPartBounds(part: PlacedArtMesh): ArtBounds {
+  const bounds: ArtBounds = { min: [Infinity, Infinity, Infinity], max: [-Infinity, -Infinity, -Infinity] }
+  visitTransformedVertices(
+    part.mesh,
+    part.position,
+    part.scale,
+    quaternionFromEuler(part.pitch, part.yaw, part.roll),
+    (x, y, z) => expandBounds(bounds, x, y, z)
+  )
+  return bounds
+}
+
 /** Exact axis-aligned bounds of a model evaluated under the given joint poses (matching renderRig FK). */
 export function artPoseBounds(
   model: ArtModel,
   poses: Readonly<Record<string, ArtRecipeJointPose | undefined>> = {}
-): { min: [number, number, number]; max: [number, number, number] } {
-  const min: [number, number, number] = [Infinity, Infinity, Infinity]
-  const max: [number, number, number] = [-Infinity, -Infinity, -Infinity]
+): ArtBounds {
+  const bounds: ArtBounds = { min: [Infinity, Infinity, Infinity], max: [-Infinity, -Infinity, -Infinity] }
   const joints = model.joints ?? []
   const { order, parentIndex, restPos, indexById } = compileArtJoints(joints)
-  const worldPos: Vec3[] = Array.from({ length: joints.length }, () => ZERO3)
-  const worldRot: Quaternion[] = Array.from({ length: joints.length }, () => IDENTITY_Q)
-  const worldScale: Vec3[] = Array.from({ length: joints.length }, () => ONE3)
+  const { worldPos, worldRot, worldScale } = evaluateJointFK(
+    joints,
+    order,
+    parentIndex,
+    poses,
+    ZERO3,
+    IDENTITY_Q,
+    ONE3,
+    (idx, pIdx) => {
+      const rp = restPos[idx]
+      const prp = pIdx >= 0 ? restPos[pIdx] : ZERO3
+      return [rp[0] - prp[0], rp[1] - prp[1], rp[2] - prp[2]]
+    }
+  )
 
-  for (const idx of order) {
-    const joint = joints[idx]
-    const pose = poses[joint.id]
-    const pIdx = parentIndex[idx]
-    const pPos = pIdx >= 0 ? worldPos[pIdx] : ZERO3
-    const pRot = pIdx >= 0 ? worldRot[pIdx] : IDENTITY_Q
-    const pScl = pIdx >= 0 ? worldScale[pIdx] : ONE3
-    const rp = restPos[idx]
-    const prp = pIdx >= 0 ? restPos[pIdx] : ZERO3
-    const off = pose?.position ?? ZERO3
-    const localPos: Vec3 = [
-      (rp[0] - prp[0] + off[0]) * pScl[0],
-      (rp[1] - prp[1] + off[1]) * pScl[1],
-      (rp[2] - prp[2] + off[2]) * pScl[2]
-    ]
-    const rOff = rotateVec3(pRot, localPos)
-    worldPos[idx] = [pPos[0] + rOff[0], pPos[1] + rOff[1], pPos[2] + rOff[2]]
-    const rotEuler = pose?.rotation
-    worldRot[idx] = rotEuler ? multiplyQuat(pRot, quaternionFromEuler(rotEuler[0], rotEuler[1], rotEuler[2])) : pRot
-    const ls = pose?.scale ?? ONE3
-    worldScale[idx] = [pScl[0] * ls[0], pScl[1] * ls[1], pScl[2] * ls[2]]
-  }
-
-  for (const part of model.parts) {
+  const record = (wx: number, wy: number, wz: number) => expandBounds(bounds, wx, wy, wz)
+  for (let i = 0; i < model.parts.length; i++) {
+    const part = model.parts[i]
     const jIdx = part.joint !== undefined ? indexById.get(part.joint) : undefined
     let finalPos: Vec3
     let finalScale: Vec3
@@ -543,7 +698,11 @@ export function artPoseBounds(
     if (jIdx !== undefined) {
       const rp = restPos[jIdx]
       const jPos = worldPos[jIdx], jRot = worldRot[jIdx], jScl = worldScale[jIdx]
-      const lp: Vec3 = [(part.position[0] - rp[0]) * jScl[0], (part.position[1] - rp[1]) * jScl[1], (part.position[2] - rp[2]) * jScl[2]]
+      const lp: Vec3 = [
+        (part.position[0] - rp[0]) * jScl[0],
+        (part.position[1] - rp[1]) * jScl[1],
+        (part.position[2] - rp[2]) * jScl[2]
+      ]
       const rotOff = rotateVec3(jRot, lp)
       finalPos = [jPos[0] + rotOff[0], jPos[1] + rotOff[1], jPos[2] + rotOff[2]]
       finalScale = [
@@ -559,22 +718,84 @@ export function artPoseBounds(
       finalScale = part.scale
       finalRot = quaternionFromEuler(part.pitch, part.yaw, part.roll)
     }
-    const m = rotationMatrix(finalRot)
-    const data = part.mesh.data
-    const sx = finalScale[0], sy = finalScale[1], sz = finalScale[2]
-    const ox = finalPos[0], oy = finalPos[1], oz = finalPos[2]
-    for (let i = 0; i < data.length; i += 6) {
-      const vx = data[i] * sx, vy = data[i + 1] * sy, vz = data[i + 2] * sz
-      const wx = ox + m[0] * vx + m[1] * vy + m[2] * vz
-      const wy = oy + m[3] * vx + m[4] * vy + m[5] * vz
-      const wz = oz + m[6] * vx + m[7] * vy + m[8] * vz
-      if (wx < min[0]) min[0] = wx
-      if (wx > max[0]) max[0] = wx
-      if (wy < min[1]) min[1] = wy
-      if (wy > max[1]) max[1] = wy
-      if (wz < min[2]) min[2] = wz
-      if (wz > max[2]) max[2] = wz
+    visitTransformedVertices(part.mesh, finalPos, finalScale, finalRot, record)
+  }
+  return bounds
+}
+
+export const SPRITE_ELEVATION = Math.PI / 6
+export const SPRITE_DIRECTION_ANGLES: readonly number[] = spriteDirections.map(
+  (_, i) => (i * 2 * Math.PI) / spriteDirections.length
+)
+
+export interface OrthoFrameAccumulator {
+  addPoint(px: number, py: number, pz: number): void
+  addBounds(bounds: ArtBounds, offsetY?: number): void
+  /** Compute centered `{ centerY, span }` covering all added points across the configured directions. */
+  fit(frameSize: number): { centerY: number; span: number }
+  /** Compute the minimum square span around the fixed `centerY` covering all added points. */
+  spanAroundCenter(frameSize: number): number
+}
+
+/** Accumulate 3D points or AABBs across orthographic sprite camera angles to compute tight gutter-padded framing. */
+export function createOrthoFrameAccumulator(
+  options: { elevation?: number; angles?: readonly number[]; centerY?: number } = {}
+): OrthoFrameAccumulator {
+  const elevation = options.elevation ?? SPRITE_ELEVATION
+  const cosEl = Math.cos(elevation)
+  const sinEl = Math.sin(elevation)
+  const refY = options.centerY ?? 0
+  const rawAngles = options.angles ?? SPRITE_DIRECTION_ANGLES
+  const trig = rawAngles.map(a => [Math.sin(a), Math.cos(a)] as const)
+  let halfWidth = 0
+  let low = Infinity
+  let high = -Infinity
+  let maxHalfSpan = 0
+
+  function innerFraction(frameSize: number): number {
+    const padding = Math.min(2, frameSize * 0.1)
+    return Math.max(0.2, 1 - (2 * padding) / frameSize)
+  }
+
+  function addPoint(px: number, py: number, pz: number) {
+    const cyTerm = cosEl * (py - refY)
+    for (let d = 0; d < trig.length; d++) {
+      const sin = trig[d][0]
+      const cos = trig[d][1]
+      const u = Math.abs(cos * px - sin * pz)
+      if (u > halfWidth) halfWidth = u
+      if (u > maxHalfSpan) maxHalfSpan = u
+      const v = cyTerm - sinEl * (sin * px + cos * pz)
+      if (v < low) low = v
+      if (v > high) high = v
+      const av = Math.abs(v)
+      if (av > maxHalfSpan) maxHalfSpan = av
     }
   }
-  return { min, max }
+
+  function addBounds(bounds: ArtBounds, offsetY = 0) {
+    const xs = [bounds.min[0], bounds.max[0]]
+    const ys = [bounds.min[1] + offsetY, bounds.max[1] + offsetY]
+    const zs = [bounds.min[2], bounds.max[2]]
+    for (let ix = 0; ix < 2; ix++) {
+      for (let iy = 0; iy < 2; iy++) {
+        for (let iz = 0; iz < 2; iz++) {
+          addPoint(xs[ix], ys[iy], zs[iz])
+        }
+      }
+    }
+  }
+
+  return {
+    addPoint,
+    addBounds,
+    fit(frameSize: number) {
+      const centerY = refY + (low + high) / (2 * cosEl)
+      const span = Math.max(2 * halfWidth, high - low) / innerFraction(frameSize)
+      return { centerY, span }
+    },
+    spanAroundCenter(frameSize: number) {
+      return (2 * maxHalfSpan) / innerFraction(frameSize)
+    }
+  }
 }

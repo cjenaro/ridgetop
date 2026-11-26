@@ -1,21 +1,10 @@
 import { createArtKit, modelFromArtRecipe } from './art.ts'
-import { multiply, orthographic, view } from './geometry.ts'
+import { multiply, orthographic, uncoloredMesh, view } from './geometry.ts'
 import { INSTANCE_SIZE, frustum, instances, visible } from './instances.ts'
 import { bakeSpritePixels, renderMeshFrame, renderMeshPixels, spriteDirections } from './low-poly.ts'
 import type { ArtModel, ArtPart, ArtRecipe } from './art-recipe.ts'
 import type { Picked3DInstance, SpriteDrawRecord } from './testing-runtime.ts'
-import type { Color, InstanceBatch, Matrix, Mesh, Quaternion, Vec3 } from './types.ts'
-
-const idMeshCache = new WeakMap<Mesh, Mesh>()
-function uncoloredMesh(mesh: Mesh): Mesh {
-  if (!mesh.colors) return mesh
-  let cached = idMeshCache.get(mesh)
-  if (!cached) {
-    cached = { data: mesh.data, vertexCount: mesh.vertexCount, radius: mesh.radius }
-    idMeshCache.set(mesh, cached)
-  }
-  return cached
-}
+import type { Color, InstanceBatch, Matrix, Quaternion, Vec3 } from './types.ts'
 
 function canonicalPartNames(parts: readonly ArtPart[]): string[] {
   const seen = new Set<string>()
@@ -30,7 +19,6 @@ function canonicalPartNames(parts: readonly ArtPart[]): string[] {
 }
 
 export type ReviewKit = ReturnType<typeof createArtKit<string>>
-export interface ReviewObject { id: string; name: string; x: number; z: number; y?: number; yaw?: number }
 export type ReviewSurface = 'model' | 'rig' | 'mesh' | 'sprite' | 'hud'
 export type ReviewScope = 'asset' | 'instance' | 'sprite' | 'hud'
 export type ReviewStatus = 'open' | 'ready' | 'resolved'
@@ -87,46 +75,11 @@ export function spritePartVisibility<Name extends string>(kit: {
   }
   return { frameSize, directions: spriteDirections, parts: named }
 }
-export function pickId(image: HTMLCanvasElement, u: number, v: number) {
-  if (!(u >= 0 && u <= 1 && v >= 0 && v <= 1) || image.width <= 0 || image.height <= 0) return 0
-  const px = Math.min(image.width - 1, Math.floor(u * image.width))
-  const py = Math.min(image.height - 1, Math.floor(v * image.height))
-  const ctx = image.getContext('2d')
-  if (!ctx) return 0
-  const [r, g, b, a] = ctx.getImageData(px, py, 1, 1).data
-  return a ? r + (g << 8) + (b << 16) : 0
-}
 export function reviewCanvas(width: number, height = width) {
   const canvas = document.createElement('canvas')
   canvas.width = Math.max(1, Math.round(width))
   canvas.height = Math.max(1, Math.round(height))
   return canvas
-}
-
-/** Uses the same transforms and depth test as the playfield, so the frontmost visible part wins. */
-export function pickArtScene(kit: ReviewKit, objects: ReviewObject[], camera: Matrix, width: number, height: number, u: number, v: number) {
-  if (!(width > 0 && height > 0 && Number.isFinite(width + height) && u >= 0 && u <= 1 && v >= 0 && v <= 1)) return undefined
-  const group = kit.group()
-  const parts: { object: ReviewObject; part: string }[] = []
-  for (const object of objects) {
-    group.add(object.name, [object.x, object.y ?? 0, object.z], { yaw: object.yaw, partTint(part, i) {
-      parts.push({ object, part: partName(part, i) })
-      return tint(parts.length)
-    } })
-  }
-  // Crop the orthographic camera to the clicked pixel. Depth and winding stay identical.
-  const px = Math.min(width - 1, Math.floor(u * width))
-  const py = Math.min(height - 1, Math.floor(v * height))
-  const x = (px + .5) * 2 / width - 1
-  const y = 1 - (py + .5) * 2 / height
-  const crop = new Float32Array([width,0,0,0, 0,height,0,0, 0,0,1,0, -width*x,-height*y,0,1])
-  const cropped = multiply(crop, camera)
-  const planes = frustum(cropped)
-  const culled = group.batches.filter(batch => visible(batch, planes))
-  if (!culled.length) return undefined
-  const { pixels } = renderMeshPixels(cropped, culled, 1, { ambient: 1 })
-  const id = pixels[3] ? pixels[0] + (pixels[1] << 8) + (pixels[2] << 16) : 0
-  return parts[id - 1]
 }
 
 function instanceVisible(x: number, y: number, z: number, reach: number, planes: Float32Array): boolean {

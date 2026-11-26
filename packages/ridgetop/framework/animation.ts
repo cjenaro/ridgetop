@@ -58,6 +58,59 @@ export interface MeshPool {
 
 const ZERO3: Vec3 = [0, 0, 0]
 const ONE3: Vec3 = [1, 1, 1]
+const IDENTITY_Q: Quaternion = [0, 0, 0, 1]
+
+export interface CompiledHierarchy {
+  readonly order: readonly number[]
+  readonly parentIndex: readonly number[]
+  readonly indexById: ReadonlyMap<string, number>
+}
+
+/**
+ * Topologically sort parent-referenced joints (parent before child) while validating
+ * unique IDs, parent existence, and acyclicity.
+ */
+export function sortJointHierarchy(
+  joints: readonly { readonly id: string; readonly parent?: string }[],
+  errors: {
+    duplicate?: (id: string) => Error
+    missingParent?: (id: string, parent: string) => Error
+    cycle?: (id: string) => Error
+  } = {}
+): CompiledHierarchy {
+  const indexById = new Map<string, number>()
+  for (let i = 0; i < joints.length; i++) {
+    const id = joints[i].id
+    if (!id || indexById.has(id)) {
+      throw errors.duplicate ? errors.duplicate(id) : new Error('Duplicate or empty rig joint id: ' + id)
+    }
+    indexById.set(id, i)
+  }
+  const parentIndex = joints.map(j => {
+    if (!j.parent) return -1
+    const idx = indexById.get(j.parent)
+    if (idx === undefined) {
+      throw errors.missingParent
+        ? errors.missingParent(j.id, j.parent)
+        : new Error(`Unknown parent joint "${j.parent}" for "${j.id}"`)
+    }
+    return idx
+  })
+  const visited = new Uint8Array(joints.length)
+  const order: number[] = []
+  function visit(i: number) {
+    if (visited[i] === 2) return
+    if (visited[i] === 1) {
+      throw errors.cycle ? errors.cycle(joints[i].id) : new Error('Cyclic joint hierarchy detected at ' + joints[i].id)
+    }
+    visited[i] = 1
+    if (parentIndex[i] >= 0) visit(parentIndex[i])
+    visited[i] = 2
+    order.push(i)
+  }
+  for (let i = 0; i < joints.length; i++) visit(i)
+  return { order, parentIndex, indexById }
+}
 
 /** Multiply two XYZW quaternions (apply b first, then a). */
 export function multiplyQuat(a: Quaternion, b: Quaternion): Quaternion {
@@ -117,29 +170,7 @@ export function createMeshPool(initialCapacity = 32): MeshPool {
 
 /** Compile a hierarchical skeleton of named joints in topological parent-first order. */
 export function createRig(joints: readonly RigJoint[], label?: string): Rig {
-  const indexById = new Map<string, number>()
-  for (let i = 0; i < joints.length; i++) {
-    const id = joints[i].id
-    if (!id || indexById.has(id)) throw new Error('Duplicate or empty rig joint id: ' + id)
-    indexById.set(id, i)
-  }
-  const parentIndex = joints.map(j => {
-    if (!j.parent) return -1
-    const idx = indexById.get(j.parent)
-    if (idx === undefined) throw new Error(`Unknown parent joint "${j.parent}" for "${j.id}"`)
-    return idx
-  })
-  const visited = new Uint8Array(joints.length)
-  const order: number[] = []
-  function visit(i: number) {
-    if (visited[i] === 2) return
-    if (visited[i] === 1) throw new Error('Cyclic joint hierarchy detected at ' + joints[i].id)
-    visited[i] = 1
-    if (parentIndex[i] >= 0) visit(parentIndex[i])
-    visited[i] = 2
-    order.push(i)
-  }
-  for (let i = 0; i < joints.length; i++) visit(i)
+  const { order, parentIndex } = sortJointHierarchy(joints)
   const rig: Rig = { joints, order, parentIndex }
   if (isTestingActive()) recordRigMeta(rig, label)
   return rig
@@ -195,39 +226,33 @@ function rotatePointAddInto(
 }
 
 /**
- * Evaluate forward kinematics for a Rig and emit all joint parts into a MeshPool.
- * Returns world transforms per joint id so callers can attach props or spawn particles at exact bones.
+ * Evaluate parent-relative forward kinematics for a topologically sorted joint hierarchy.
+ * When `getPivot` is omitted, each joint's `pivot ?? [0, 0, 0]` is used directly as its local offset from its parent.
  */
-export function renderRig(
-  rig: Rig,
-  root: { position: Vec3; yaw?: number; rotation?: Quaternion; scale?: number | Vec3 },
+export function evaluateJointFK(
+  joints: readonly { readonly id: string; readonly pivot?: Vec3 }[],
+  order: readonly number[],
+  parentIndex: readonly number[],
   poses: Readonly<Record<string, JointPose | undefined>>,
-  pool: MeshPool,
-  partColor?: (jointId: string, part: RigPart) => Color
-): Record<string, WorldJoint> {
-  const rootRot: Quaternion = root.rotation ?? quaternionFromEuler(0, root.yaw ?? 0, 0)
-  const rootScale: Vec3 = typeof root.scale === 'number'
-    ? [root.scale, root.scale, root.scale]
-    : (root.scale ?? ONE3)
+  rootPosition: Vec3 = ZERO3,
+  rootRotation: Quaternion = IDENTITY_Q,
+  rootScale: Vec3 = ONE3,
+  getPivot?: (idx: number, parentIdx: number) => Vec3
+): { worldPos: Vec3[]; worldRot: Quaternion[]; worldScale: Vec3[] } {
+  const worldPos: Vec3[] = Array.from({ length: joints.length }, () => ZERO3)
+  const worldRot: Quaternion[] = Array.from({ length: joints.length }, () => rootRotation)
+  const worldScale: Vec3[] = Array.from({ length: joints.length }, () => ONE3)
 
-  const worldPos: Vec3[] = Array.from({ length: rig.joints.length }, () => ZERO3)
-  const worldRot: Quaternion[] = Array.from({ length: rig.joints.length }, () => rootRot)
-  const worldScale: Vec3[] = Array.from({ length: rig.joints.length }, () => ONE3)
-  const out: Record<string, WorldJoint> = {}
-  const testing = isTestingActive()
-  const rigMeta = testing ? getRigMeta(rig) : undefined
-  const rigGroupId = testing ? nextTestingGroupId('rig') : undefined
-  const rigLabel = rigMeta?.label ?? (rig.joints[0]?.id ? `rig:${rig.joints[0].id}` : 'rig')
-
-  for (const idx of rig.order) {
-    const joint = rig.joints[idx]
+  for (let i = 0; i < order.length; i++) {
+    const idx = order[i]
+    const joint = joints[idx]
     const pose = poses[joint.id]
-    const pIdx = rig.parentIndex[idx]
-    const pPos = pIdx >= 0 ? worldPos[pIdx] : root.position
-    const pRot = pIdx >= 0 ? worldRot[pIdx] : rootRot
+    const pIdx = parentIndex[idx]
+    const pPos = pIdx >= 0 ? worldPos[pIdx] : rootPosition
+    const pRot = pIdx >= 0 ? worldRot[pIdx] : rootRotation
     const pScl = pIdx >= 0 ? worldScale[pIdx] : rootScale
 
-    const piv = joint.pivot ?? ZERO3
+    const piv = getPivot ? getPivot(idx, pIdx) : (joint.pivot ?? ZERO3)
     const off = pose?.position ?? ZERO3
     const lx = (piv[0] + off[0]) * pScl[0]
     const ly = (piv[1] + off[1]) * pScl[1]
@@ -245,11 +270,44 @@ export function renderRig(
     }
 
     const ls = pose?.scale ?? ONE3
-    const jScl: Vec3 = [pScl[0] * ls[0], pScl[1] * ls[1], pScl[2] * ls[2]]
-
     worldPos[idx] = jPos
     worldRot[idx] = jRot
-    worldScale[idx] = jScl
+    worldScale[idx] = [pScl[0] * ls[0], pScl[1] * ls[1], pScl[2] * ls[2]]
+  }
+  return { worldPos, worldRot, worldScale }
+}
+
+/**
+ * Evaluate forward kinematics for a Rig and emit all joint parts into a MeshPool.
+ * Returns world transforms per joint id so callers can attach props or spawn particles at exact bones.
+ */
+export function renderRig(
+  rig: Rig,
+  root: { position: Vec3; yaw?: number; rotation?: Quaternion; scale?: number | Vec3 },
+  poses: Readonly<Record<string, JointPose | undefined>>,
+  pool: MeshPool,
+  partColor?: (jointId: string, part: RigPart) => Color
+): Record<string, WorldJoint> {
+  const rootRot: Quaternion = root.rotation ?? quaternionFromEuler(0, root.yaw ?? 0, 0)
+  const rootScale: Vec3 = typeof root.scale === 'number'
+    ? [root.scale, root.scale, root.scale]
+    : (root.scale ?? ONE3)
+
+  const { worldPos, worldRot, worldScale } = evaluateJointFK(
+    rig.joints, rig.order, rig.parentIndex, poses, root.position, rootRot, rootScale
+  )
+  const out: Record<string, WorldJoint> = {}
+  const testing = isTestingActive()
+  const rigMeta = testing ? getRigMeta(rig) : undefined
+  const rigGroupId = testing ? nextTestingGroupId('rig') : undefined
+  const rigLabel = rigMeta?.label ?? (rig.joints[0]?.id ? `rig:${rig.joints[0].id}` : 'rig')
+
+  for (let i = 0; i < rig.order.length; i++) {
+    const idx = rig.order[i]
+    const joint = rig.joints[idx]
+    const jPos = worldPos[idx]
+    const jRot = worldRot[idx]
+    const jScl = worldScale[idx]
     out[joint.id] = { position: jPos, rotation: jRot, scale: jScl }
 
     if (joint.parts) {

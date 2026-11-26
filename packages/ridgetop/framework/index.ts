@@ -25,18 +25,24 @@ export { auditSpriteSheet, createSpriteSheet, hueShiftRamp } from './sprite-shee
 export type { HueRamp, SpriteAuditReport, SpriteFrame } from './sprite-sheet.ts'
 export { createPixelRig, pixelClips, renderPixelRig } from './pixel-rig.ts'
 export type { PixelJoint, PixelJointPose, PixelRig, PixelStampSpec, WorldPixelJoint } from './pixel-rig.ts'
-export { archMesh, bakeVertexAO, bevelBox, capsuleMesh, chamferedPrism, crescentMesh, extrudeMesh, gableMesh, intersectRayPlane, invertMatrix, normalTiltQuaternion, projectPoint, quaternionFromEuler, revolvedMesh, rotateVec3, scallopedCone, screenToRay, smoothMesh, tubeMesh, wedgeMesh, worldToScreen } from './geometry.ts'
+export {
+  archMesh, bakeVertexAO, bakeZoneColors, bevelBox, capsuleMesh, chamferedPrism, crescentMesh,
+  extrudeMesh, gableMesh, intersectRayPlane, invertMatrix, mergeMeshes, normalTiltQuaternion,
+  projectPoint, quaternionFromEuler, revolvedMesh, rotateVec3, scallopedCone, screenToRay,
+  sculptLoft, smoothMesh, tubeMesh, wedgeMesh, worldToScreen
+} from './geometry.ts'
+export type {
+  MergeMeshInput, SculptLoftOptions, SculptLoftParamRing, SculptLoftPolygonRing, SculptLoftRing
+} from './geometry.ts'
 export { blendPoses, createAnimator, createMeshPool, createParticles, createRig, mirrorClip, multiplyQuat, renderRig, retimeClip, sampleClip } from './animation.ts'
 export type { AnimationClip, Easing, JointPose, Keyframe, MeshPool, Rig, RigJoint, RigPart, WorldJoint } from './animation.ts'
 export {
-  bakeZoneColors, CHARACTER_JOINT_PIVOTS, CHARACTER_SOCKETS, createCharacterBuilder,
-  createCharacterPalette, DEFAULT_CHARACTER_PALETTE, mixColor, renderCharacterTurntablePixels,
-  sculptLoft, shadeColor
+  CHARACTER_JOINT_PIVOTS, CHARACTER_SOCKETS, createCharacterBuilder, createCharacterPalette,
+  DEFAULT_CHARACTER_PALETTE, mixColor, renderCharacterTurntablePixels, shadeColor
 } from './character-builder.ts'
 export type {
   CharacterBodyFactory, CharacterBuilder, CharacterJointId, CharacterPalette, CharacterPaletteRole,
-  CharacterPartFactory, CharacterSocket, CharacterSocketInfo, CharacterSpec, CharacterTurntableOptions,
-  SculptLoftOptions, SculptLoftParamRing, SculptLoftPolygonRing, SculptLoftRing
+  CharacterPartFactory, CharacterSocket, CharacterSocketInfo, CharacterSpec, CharacterTurntableOptions
 } from './character-builder.ts'
 export { createPlatformer } from './platformer.ts'
 export type * from './types.ts'
@@ -48,12 +54,12 @@ export { createPerfLogger, createPerfMonitor } from './perf.ts'
 export type { PerfLogEntry, PerfLogger, PerfLoggerOptions, PerfMonitor, PerfSnapshot } from './perf.ts'
 export {
   artModels, artPalette, artShapes, bakeAnimatedSpriteDirections, bakeAnimatedSpritePixels, createArtKit,
-  createArtRecipe, modelFromArtRecipe, rigFromArtModel, rigFromArtRecipe
+  createArtRecipe, modelFromArtRecipe, recipeFromArtModel, rigFromArtModel, rigFromArtRecipe
 } from './art.ts'
 export type {
-  AnimatedSpriteOptions, ArtModel, ArtPart, ArtRecipe, ArtRecipeClip, ArtRecipeClipFrame, ArtRecipeJoint,
-  ArtRecipeJointPose, ArtRecipePart, ArtRig, ArtShape, ArtTone, BakedSpriteManifest, BakedSpritePixels,
-  BakedSpriteSheet, SpriteDirection
+  AnimatedSpriteOptions, ArtBounds, ArtModel, ArtPart, ArtRecipe, ArtRecipeClip, ArtRecipeClipFrame,
+  ArtRecipeJoint, ArtRecipeJointPose, ArtRecipePart, ArtRig, ArtShape, ArtTone, ArtTubeSpec,
+  BakedSpriteManifest, BakedSpritePixels, BakedSpriteSheet, SpriteDirection
 } from './art.ts'
 export { artBases, artPartBounds, artPoseBounds, createArtBuilder, fitArtRecipe } from './art-builder.ts'
 export type { ArtBase, ArtBuilderOptions, ArtFace, ArtPartStyle } from './art-builder.ts'

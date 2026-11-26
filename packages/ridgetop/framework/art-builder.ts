@@ -1,7 +1,11 @@
-import { artPalette, artPoseBounds, artShapes, checkArtClip, checkFrameSize, isSafeArtKey, modelFromArtRecipe } from './art-recipe.ts'
-export { artPoseBounds } from './art-recipe.ts'
-import type { ArtPart, ArtRecipe, ArtRecipeClip, ArtRecipeJoint, ArtRecipeJointPose, ArtRecipePart, ArtShape, ArtTone } from './art-recipe.ts'
-import { quaternionFromEuler, rotateVec3, rotationMatrix, tubeMesh } from './geometry.ts'
+import {
+  artPalette, artPartBounds, artPoseBounds, artShapes, checkArtName, checkArtPaletteColor,
+  checkArtPartStyle, checkArtVec3, checkFrameSize, createOrthoFrameAccumulator, isSafeArtKey,
+  modelFromArtRecipe, parseArtClip, parseArtTube, visitTransformedVertices
+} from './art-recipe.ts'
+export { artPartBounds, artPoseBounds } from './art-recipe.ts'
+import type { ArtBounds, ArtRecipe, ArtRecipeClip, ArtRecipeJoint, ArtRecipeJointPose, ArtRecipePart, ArtShape, ArtTone } from './art-recipe.ts'
+import { quaternionFromEuler, rotateVec3, tubeMesh } from './geometry.ts'
 import type { BlendMode, Vec3 } from './types.ts'
 
 export interface ArtPartStyle {
@@ -19,55 +23,16 @@ const normals = {
 } as const
 export type ArtFace = keyof typeof normals
 type Surface = Exclude<ArtFace, 'center'>
-type Bounds = { min: number[]; max: number[] }
-type PlacedMesh = Pick<ArtPart, 'mesh' | 'position' | 'scale' | 'pitch' | 'yaw' | 'roll'>
-const emptyBounds = (): Bounds => ({ min: [Infinity,Infinity,Infinity], max: [-Infinity,-Infinity,-Infinity] })
-
-function visitVertices(part: PlacedMesh, visit: (x: number, y: number, z: number) => void) {
-  const m = rotationMatrix(quaternionFromEuler(part.pitch, part.yaw, part.roll))
-  const data = part.mesh.data
-  for (let i = 0; i < data.length; i += 6) {
-    const x = data[i] * part.scale[0], y = data[i+1] * part.scale[1], z = data[i+2] * part.scale[2]
-    visit(part.position[0]+m[0]*x+m[1]*y+m[2]*z, part.position[1]+m[3]*x+m[4]*y+m[5]*z,
-      part.position[2]+m[6]*x+m[7]*y+m[8]*z)
-  }
-}
-
-/** Exact axis-aligned bounds after the authored scale and rotation. */
-export function artPartBounds(part: PlacedMesh): Bounds {
-  const bounds = emptyBounds()
-  visitVertices(part, (x, y, z) => {
-    bounds.min[0] = Math.min(bounds.min[0],x); bounds.max[0] = Math.max(bounds.max[0],x)
-    bounds.min[1] = Math.min(bounds.min[1],y); bounds.max[1] = Math.max(bounds.max[1],y)
-    bounds.min[2] = Math.min(bounds.min[2],z); bounds.max[2] = Math.max(bounds.max[2],z)
-  })
-  return bounds
-}
 
 function vec(fn: (axis: number) => number): Vec3 { return [fn(0), fn(1), fn(2)] }
-function checkVector(v: Vec3, label: string, positive = false) {
-  if (!Array.isArray(v) || v.length !== 3) {
-    throw new RangeError('Expected three ' + (positive ? 'positive ' : '') + 'finite dimensions for ' + label)
-  }
-  for (let i = 0; i < 3; i++) {
-    const n = v[i]
-    if (typeof n !== 'number' || !Number.isFinite(n) || (positive && n <= 0)) {
-      throw new RangeError('Expected three ' + (positive ? 'positive ' : '') + 'finite dimensions for ' + label)
-    }
-  }
-}
-function extent(b: Bounds, i: number) { return b.max[i] - b.min[i] }
-const shapeBounds = new Map<ArtShape, Bounds>()
-const angles = Array.from({ length: 8 }, (_, i) => [Math.sin(i * Math.PI / 4), Math.cos(i * Math.PI / 4)] as const)
-const elevation = Math.PI / 6
-const cosElevation = Math.cos(elevation)
-const sinElevation = Math.sin(elevation)
+function extent(b: ArtBounds, i: number) { return b.max[i] - b.min[i] }
+const shapeBounds = new Map<ArtShape, ArtBounds>()
 
 /** Center the footprint, ground the lowest vertex, adjust joint pivots, and frame all eight sprite directions. */
 export function fitArtRecipe(input: ArtRecipe): ArtRecipe {
   const source = structuredClone(input)
   const model = modelFromArtRecipe(source)
-  const bounds = emptyBounds()
+  const bounds: ArtBounds = { min: [Infinity, Infinity, Infinity], max: [-Infinity, -Infinity, -Infinity] }
   for (let i = 0; i < model.parts.length; i++) {
     const b = artPartBounds(model.parts[i])
     for (let axis = 0; axis < 3; axis++) {
@@ -86,35 +51,23 @@ export function fitArtRecipe(input: ArtRecipe): ArtRecipe {
       else if (j.parent === undefined && shiftedRoot) j.pivot = [snapZero(-cx), snapZero(-floor), snapZero(-cz)]
     }
   }
-  let halfWidth = 0, low = Infinity, high = -Infinity
+  const framer = createOrthoFrameAccumulator()
   for (let i = 0; i < model.parts.length; i++) {
     const part = model.parts[i]
     const [x, y, z] = part.position
     const shifted: Vec3 = [x - cx, y - floor, z - cz]
     source.parts[i].position = shifted
-    const m = rotationMatrix(quaternionFromEuler(part.pitch, part.yaw, part.roll))
-    const data = part.mesh.data
-    const sx = part.scale[0], sy = part.scale[1], sz = part.scale[2]
-    const ox = shifted[0], oy = shifted[1], oz = shifted[2]
-    for (let k = 0; k < data.length; k += 6) {
-      const vx = data[k] * sx, vy = data[k + 1] * sy, vz = data[k + 2] * sz
-      const px = ox + m[0] * vx + m[1] * vy + m[2] * vz
-      const py = oy + m[3] * vx + m[4] * vy + m[5] * vz
-      const pz = oz + m[6] * vx + m[7] * vy + m[8] * vz
-      const cyTerm = cosElevation * py
-      for (let d = 0; d < 8; d++) {
-        const sin = angles[d][0], cos = angles[d][1]
-        const u = Math.abs(cos * px - sin * pz)
-        if (u > halfWidth) halfWidth = u
-        const vertical = cyTerm - sinElevation * (sin * px + cos * pz)
-        if (vertical < low) low = vertical
-        if (vertical > high) high = vertical
-      }
-    }
+    visitTransformedVertices(
+      part.mesh,
+      shifted,
+      part.scale,
+      quaternionFromEuler(part.pitch, part.yaw, part.roll),
+      framer.addPoint
+    )
   }
-  source.centerY = (low + high) / (2 * cosElevation)
-  const padding = Math.min(2, source.frameSize * .1)
-  source.span = Math.max(2 * halfWidth, high - low) / (1 - 2 * padding / source.frameSize)
+  const { centerY, span } = framer.fit(source.frameSize)
+  source.centerY = centerY
+  source.span = span
   return source
 }
 
@@ -133,13 +86,13 @@ export interface ArtBuilderOptions {
 /** Compose reusable forms and attachments, then finish as an editable, palette-inheriting recipe. */
 export function createArtBuilder(name: string, { base = 'empty', reference, frameSize = reference?.frameSize ?? 32, primary = 'leaf', trim = 'wood',
   proportions = [1,1,1] }: ArtBuilderOptions = {}) {
-  if (typeof name !== 'string' || !/^[a-z0-9][a-z0-9_-]*$/i.test(name)) throw new Error('Invalid asset name')
+  checkArtName(name, 'Invalid asset name')
   if (!artBases.includes(base)) throw new Error('Unknown art base ' + base)
   checkFrameSize(frameSize)
-  checkVector(proportions, 'base proportions', true)
+  checkArtVec3(proportions, 'base proportions', true)
   if (!Object.hasOwn(artPalette, primary) || !Object.hasOwn(artPalette, trim)) throw new Error('Unknown base palette role')
   const parts: ArtRecipePart[] = []
-  const placed = new Map<string, Bounds>()
+  const placed = new Map<string, ArtBounds>()
   const customPalette: Record<string, string> = {}
   const joints: ArtRecipeJoint[] = []
   const jointIds = new Set<string>()
@@ -169,41 +122,29 @@ export function createArtBuilder(name: string, { base = 'empty', reference, fram
 
   /** Register a custom named palette role (e.g. `brass`, `fur`, `glass`) on this recipe while keeping base tones inheritable. */
   function palette(role: string, hex: string) {
-    if (!isSafeArtKey(role)) throw new RangeError('Invalid palette role ' + role)
-    if (typeof hex !== 'string' || !/^#?[\da-f]{6}$/i.test(hex)) throw new RangeError('Expected a six-digit RGB color for ' + role)
-    customPalette[role] = hex.startsWith('#') ? hex : '#' + hex
+    const validHex = checkArtPaletteColor(role, hex)
+    customPalette[role] = validHex.startsWith('#') ? validHex : '#' + validHex
     return role
   }
 
   function applyStyle(target: ArtRecipePart, id: string, style?: number | ArtPartStyle) {
     if (style === undefined) return
     const opts: ArtPartStyle = typeof style === 'number' ? { unlit: style } : style
-    if (opts.unlit !== undefined) {
-      if (typeof opts.unlit !== 'number' || !Number.isFinite(opts.unlit) || opts.unlit < 0 || opts.unlit > 1) {
-        throw new RangeError('Unlit must be in 0–1 for ' + id)
-      }
-      if (opts.unlit > 0) target.unlit = opts.unlit
+    const checked = checkArtPartStyle(opts, id)
+    if (checked.unlit !== undefined) {
+      if (checked.unlit > 0) target.unlit = checked.unlit
       else delete target.unlit
     }
-    if (opts.alpha !== undefined) {
-      if (typeof opts.alpha !== 'number' || !Number.isFinite(opts.alpha) || opts.alpha < 0 || opts.alpha > 1) {
-        throw new RangeError('Alpha must be in 0–1 for ' + id)
-      }
-      if (opts.alpha < 1) target.alpha = opts.alpha
+    if (checked.alpha !== undefined) {
+      if (checked.alpha < 1) target.alpha = checked.alpha
       else delete target.alpha
     }
-    if (opts.blend !== undefined) {
-      if (opts.blend !== 'opaque' && opts.blend !== 'alpha' && opts.blend !== 'additive') {
-        throw new RangeError('Unknown blend mode for ' + id)
-      }
-      if (opts.blend !== 'opaque' || (target.alpha !== undefined && target.alpha < 1)) target.blend = opts.blend
+    if (checked.blend !== undefined) {
+      if (checked.blend !== 'opaque' || (target.alpha !== undefined && target.alpha < 1)) target.blend = checked.blend
       else delete target.blend
     }
-    if (opts.shade !== undefined) {
-      if (typeof opts.shade !== 'number' || !Number.isFinite(opts.shade) || opts.shade < -0.5 || opts.shade > 0.5) {
-        throw new RangeError('Shade must be in -0.5–0.5 for ' + id)
-      }
-      if (opts.shade !== 0) target.shade = opts.shade
+    if (checked.shade !== undefined) {
+      if (checked.shade !== 0) target.shade = checked.shade
       else delete target.shade
     }
     if (opts.joint !== undefined) {
@@ -231,24 +172,24 @@ export function createArtBuilder(name: string, { base = 'empty', reference, fram
       if (!hasTone(tone)) throw new Error('Unknown tone for ' + id)
       next.tone = tone
     }
-    if (scaleBy) { checkVector(scaleBy, id, true); next.scale = vec(i => next.scale[i]*scaleBy[i]) }
-    if (moveBy) { checkVector(moveBy, id); next.position = vec(i => next.position[i]+moveBy[i]) }
+    if (scaleBy) { checkArtVec3(scaleBy, id, true); next.scale = vec(i => next.scale[i]*scaleBy[i]) }
+    if (moveBy) { checkArtVec3(moveBy, id); next.position = vec(i => next.position[i]+moveBy[i]) }
     if (rotation) {
-      checkVector(rotation, id)
+      checkArtVec3(rotation, id)
       if (rotation[0]) next.pitch = rotation[0]; else delete next.pitch
       if (rotation[1]) next.yaw = rotation[1]; else delete next.yaw
       if (rotation[2]) next.roll = rotation[2]; else delete next.roll
     }
     if (rotateBy) {
-      checkVector(rotateBy, id)
+      checkArtVec3(rotateBy, id)
       const p = (next.pitch ?? 0) + rotateBy[0], y = (next.yaw ?? 0) + rotateBy[1], r = (next.roll ?? 0) + rotateBy[2]
       if (p) next.pitch = p; else delete next.pitch
       if (y) next.yaw = y; else delete next.yaw
       if (r) next.roll = r; else delete next.roll
     }
     applyStyle(next, id, { unlit, alpha, blend, shade, joint: jointId })
-    checkVector(next.scale, id, true)
-    checkVector(next.position, id)
+    checkArtVec3(next.scale, id, true)
+    checkArtVec3(next.position, id)
     const adjMesh = next.shape === 'tube'
       ? (() => {
           if (!next.points || next.radii === undefined) throw new Error('Invalid tube part ' + id)
@@ -267,7 +208,7 @@ export function createArtBuilder(name: string, { base = 'empty', reference, fram
   function solid(id: string, shape: ArtShape, size: Vec3, tone: ArtTone, center: Vec3 = origin, rotation: Vec3 = origin, style: number | ArtPartStyle = 0) {
     if (typeof id !== 'string' || !id.trim() || placed.has(id)) throw new Error('Each part needs a unique name: ' + id)
     if (!Object.hasOwn(artShapes, shape) || !hasTone(tone)) throw new Error('Unknown shape or tone for ' + id)
-    checkVector(size, id, true); checkVector(center, id); checkVector(rotation, id)
+    checkArtVec3(size, id, true); checkArtVec3(center, id); checkArtVec3(rotation, id)
     const mesh = artShapes[shape]
     let b = shapeBounds.get(shape)
     if (!b) {
@@ -290,20 +231,20 @@ export function createArtBuilder(name: string, { base = 'empty', reference, fram
     const b = placed.get(parent)
     if (!b) throw new Error('Unknown parent part ' + parent)
     if (!Object.hasOwn(normals, face)) throw new Error('Unknown attachment face ' + face)
-    checkVector(offset, parent)
+    checkArtVec3(offset, parent)
     return vec(i => (b.min[i]+b.max[i]+normals[face][i]*extent(b,i))/2+offset[i])
   }
   function attach(id: string, parent: string, face: Surface, shape: ArtShape, size: Vec3, tone: ArtTone, offset: Vec3 = origin, style: number | ArtPartStyle = 0) {
     const faceName: string = face
     if (faceName === 'center') throw new Error('Attach requires a surface face, not center')
-    checkVector(size, id, true)
+    checkArtVec3(size, id, true)
     const anchor = point(parent, face, offset)
     const created = solid(id, shape, size, tone, vec(i => anchor[i]+normals[face][i]*size[i]*.42), origin, style)
     inheritJoint(created, parent)
     return created
   }
   function between(id: string, from: Vec3, to: Vec3, width: number | readonly [number,number], tone: ArtTone, shape: ArtShape = 'cylinder', style?: number | ArtPartStyle) {
-    checkVector(from, id); checkVector(to, id)
+    checkArtVec3(from, id); checkArtVec3(to, id)
     const [dx,dy,dz] = vec(i => to[i]-from[i])
     const length = Math.hypot(dx,dy,dz)
     if (!length || !Number.isFinite(length)) throw new Error('Use distinct finite endpoints for ' + id)
@@ -316,7 +257,7 @@ export function createArtBuilder(name: string, { base = 'empty', reference, fram
     shape?: ArtShape; overlap?: number; style?: ArtPartStyle; tipTone?: ArtTone
   } = {}) {
     if (pts.length < 2) throw new Error('curve requires at least two points for ' + id)
-    for (let i = 0; i < pts.length; i++) checkVector(pts[i], id)
+    for (let i = 0; i < pts.length; i++) checkArtVec3(pts[i], id)
     if (typeof widths === 'number') {
       if (!Number.isFinite(widths) || widths <= 0) throw new RangeError('curve width must be positive and finite for ' + id)
     } else if (!widths.length || !widths.every(w => typeof w === 'number' && Number.isFinite(w) && w > 0)) {
@@ -346,28 +287,15 @@ export function createArtBuilder(name: string, { base = 'empty', reference, fram
   function tube(id: string, pts: readonly Vec3[], radii: number | readonly number[], tone: ArtTone, options: { sides?: number; style?: number | ArtPartStyle } = {}) {
     if (typeof id !== 'string' || !id.trim() || placed.has(id)) throw new Error('Each part needs a unique name: ' + id)
     if (!hasTone(tone)) throw new Error('Unknown tone for ' + id)
-    if (!Array.isArray(pts) || pts.length < 2) throw new Error('tube requires >= 2 points for ' + id)
-    pts.forEach(p => checkVector(p, id))
-    const sides = options.sides ?? 7
-    if (!Number.isSafeInteger(sides) || sides < 3 || sides > 24) {
-      throw new RangeError('Tube sides must be an integer in 3–24 for ' + id)
-    }
-    const rList = typeof radii === 'number' ? radii : radii.slice()
-    if (typeof rList === 'number') {
-      if (!Number.isFinite(rList) || rList <= 0) throw new RangeError('Tube radius must be positive and finite for ' + id)
-    } else {
-      if (!rList.length || !rList.every(r => typeof r === 'number' && Number.isFinite(r) && r > 0)) {
-        throw new RangeError('Tube radii must be a non-empty array of positive finite numbers for ' + id)
-      }
-    }
+    const checked = parseArtTube(pts, radii, options.sides, id)
     // Center local tube geometry around its centroid so position shifts cleanly during fitArtRecipe.
     let cx = 0, cy = 0, cz = 0
-    for (const p of pts) { cx += p[0]; cy += p[1]; cz += p[2] }
-    cx /= pts.length; cy /= pts.length; cz /= pts.length
-    const localPts: Vec3[] = pts.map(p => [p[0] - cx, p[1] - cy, p[2] - cz])
-    const built = tubeMesh(localPts, rList, sides)
+    for (const p of checked.points) { cx += p[0]; cy += p[1]; cz += p[2] }
+    cx /= checked.points.length; cy /= checked.points.length; cz /= checked.points.length
+    const localPts: Vec3[] = checked.points.map(p => [p[0] - cx, p[1] - cy, p[2] - cz])
+    const built = tubeMesh(localPts, checked.radii, checked.sides)
     const part: ArtRecipePart = {
-      name: id, shape: 'tube', points: localPts, radii: rList, sides,
+      name: id, shape: 'tube', points: localPts, radii: checked.radii, sides: checked.sides,
       position: [cx, cy, cz], scale: [1, 1, 1], tone
     }
     applyStyle(part, id, options.style)
@@ -527,10 +455,9 @@ export function createArtBuilder(name: string, { base = 'empty', reference, fram
     if (parent !== undefined && (!isSafeArtKey(parent) || !jointIds.has(parent))) {
       throw new Error('Unknown parent joint ' + parent)
     }
-    if (pivot !== undefined) checkVector(pivot, id)
     const entry: ArtRecipeJoint = { id }
     if (parent !== undefined) entry.parent = parent
-    if (pivot !== undefined) entry.pivot = [pivot[0], pivot[1], pivot[2]]
+    if (pivot !== undefined) entry.pivot = checkArtVec3(pivot, id)
     joints.push(entry)
     jointIds.add(id)
     return id
@@ -545,8 +472,7 @@ export function createArtBuilder(name: string, { base = 'empty', reference, fram
   }
   /** Define or replace a named animation clip on the rig. Pass `{ autoGround: true }` to keep the lowest vertex at y=0 on every keyframe. */
   function clip(clipName: string, clipDef: ArtRecipeClip, options?: { autoGround?: boolean }) {
-    checkArtClip(clipDef, clipName, jointIds, name)
-    clips[clipName] = structuredClone(clipDef)
+    clips[clipName] = parseArtClip(clipDef, clipName, jointIds, name)
     if (options?.autoGround) autoGroundClips.add(clipName)
     else autoGroundClips.delete(clipName)
     return clipName
