@@ -74,6 +74,8 @@ const C_EMPTY_RETICLE: Color = [0.76, 0.84, 0.98, 0.78]
 const C_FORECAST_ARC: Color = [1.0, 0.80, 0.26, 0.94]
 const C_FORECAST_ALLY_ARC: Color = [0.44, 0.98, 0.68, 0.94]
 const C_FORECAST_FF_ARC: Color = [1.0, 0.34, 0.68, 0.96]
+const C_PINCER_GOLD: Color = [1.0, 0.86, 0.32, 0.98]
+const C_PINCER_CYAN: Color = [0.34, 0.96, 0.94, 0.96]
 const C_FACING_ALLY: Color = [0.64, 0.95, 1.0, 0.96]
 const C_FACING_ENEMY: Color = [1.0, 0.48, 0.22, 0.96]
 const C_PICKER_SAFE: Color = [0.30, 0.96, 0.74, 0.96]
@@ -945,6 +947,15 @@ export function createCrownshardScene(renderer: LowPolyRenderer) {
         const d = ev.attackerUid ? (attackLand.get(ev.attackerUid) ?? landDelay) : landDelay
         queueHit(battle, ev, d)
         landDelay = d
+      } else if (ev.kind === 'pincer') {
+        const assister = battle ? getUnitByUid(battle, ev.assisterUid) : null
+        const followDelay = landDelay + 0.10
+        if (assister && assister.alive) {
+          const clip = attackClipFor(assister.heroId, assister.enemyId, assister.weaponId)
+          getFx(assister.uid, assister).pendingClip = clip
+        }
+        vfx.pincer(ev.attackerPos, ev.assisterPos, ev.targetPos, followDelay)
+        landDelay = followDelay + 0.08
       } else if (ev.kind === 'heal') {
         const at = ev.at
         vfx.later(landDelay, () => {
@@ -1499,7 +1510,7 @@ export function createCrownshardScene(renderer: LowPolyRenderer) {
     const isForecastAttacker = Boolean(
       activeForecast &&
       battle.phase === 'player' &&
-      activeForecast.attackerUid === unit.uid &&
+      (activeForecast.attackerUid === unit.uid || activeForecast.pincerAssisterUid === unit.uid) &&
       unit.path.length === 0 &&
       st !== 'run' &&
       !fx.action
@@ -2306,6 +2317,49 @@ export function createCrownshardScene(renderer: LowPolyRenderer) {
           const by = (fy + 0.92) + ((ty + 0.85) - (fy + 0.92)) * u + Math.sin(u * Math.PI) * peak
           const sz = 0.09 + Math.sin(u * Math.PI) * 0.06
           pool.add(crystalMesh, [bx, by, bz], [sz, sz, sz], state.time * 4 + i, arcCol, 1.0, 'additive')
+        }
+      }
+
+      // Live Pincer / Follow-Up 3D visual assist arc + highlight ring under assister
+      if (
+        fc.pincerAssisterUid &&
+        fc.pincerFromCol !== undefined &&
+        fc.pincerFromRow !== undefined
+      ) {
+        const pCell = battle.cells[fc.pincerFromRow]?.[fc.pincerFromCol]
+        if (pCell) {
+          const [px, py, pz] = gridToWorld(fc.pincerFromCol, fc.pincerFromRow, pCell.elevation, battle.cols, battle.rows)
+          const pPulse = 0.70 + Math.sin(state.time * 7.2) * 0.07
+          pool.add(flatRing, [px, py + 0.056, pz], [pPulse, 1, pPulse], state.time * 2.6, C_PINCER_GOLD, 0.98, 'additive')
+          pool.add(flatRing, [px, py + 0.062, pz], [pPulse * 0.74, 1, pPulse * 0.74], -state.time * 3.4, C_PINCER_CYAN, 0.96, 'additive')
+          pool.add(
+            crystalMesh,
+            [px, py + 1.98 + Math.sin(state.time * 6.8 + 1.2) * 0.10, pz],
+            [0.14, 0.22, 0.14],
+            -state.time * 3.6,
+            C_PINCER_GOLD,
+            1.0,
+            'additive'
+          )
+
+          const pdx = tx - px
+          const pdz = tz - pz
+          const pDist = Math.hypot(pdx, pdz)
+          if (pDist > 0.2) {
+            const pPeak = Math.min(1.65, 0.62 + pDist * 0.22)
+            const pBeads = 8
+            const pFlow = (state.time * 1.6) % 1
+            for (let i = 0; i < pBeads; i++) {
+              const u = (i + pFlow) / pBeads
+              if (u < 0.06 || u > 0.96) continue
+              const bx = px + pdx * u
+              const bz = pz + pdz * u
+              const by = (py + 0.94) + ((ty + 0.85) - (py + 0.94)) * u + Math.sin(u * Math.PI) * pPeak
+              const sz = 0.10 + Math.sin(u * Math.PI) * 0.06
+              const bCol = i % 2 === 0 ? C_PINCER_GOLD : C_PINCER_CYAN
+              pool.add(crystalMesh, [bx, by, bz], [sz, sz, sz], -state.time * 4.6 + i, bCol, 1.0, 'additive')
+            }
+          }
         }
       }
     }

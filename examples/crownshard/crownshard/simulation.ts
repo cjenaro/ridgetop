@@ -4,6 +4,8 @@ import {
   CHAPTERS, CHAPTER_BY_ID, ENEMY_SPECS, EQUIPMENT_BY_ID, EQUIPMENT_LIST, HERO_LIST, HERO_SPECS,
   MERGE_COPIES_REQUIRED, PACK_BY_ID, PLAYABLE_CHAPTERS, RARITY_META, RARITY_ORDER, TACTIC_BY_ID, TACTIC_LIST
 } from './data.ts'
+import { computePincerAssistDamage, findPincerAssisters, isPincerMeleeSkill } from './pincer.ts'
+export { computePincerAssistDamage, findPincerAssisters, isPincerMeleeSkill } from './pincer.ts'
 import {
   BARRICADE_DEFAULT_HP, CURSED_ALTAR_HP_COST, FACING_DIRS, GRID_COLS, GRID_ROWS, KO_COUNTDOWN_TURNS,
   LAVA_GEYSER_DAMAGE, LAVA_GEYSER_PERIOD, MAX_HEIGHT_LEVEL, MAX_POISON_STACKS,
@@ -3562,6 +3564,9 @@ function pickBestApproachTile(
       const arc = computeAttackArc(m.col, m.row, targetCol, targetRow, targetUnit.facing)
       if (arc === 'back') score += 850
       else if (arc === 'flank') score += 420
+      if (d === 1 && range <= 1 && findPincerAssisters(battle, unit, m.col, m.row, targetUnit).length > 0) {
+        score += 500
+      }
       score -= computeCoverBonus(battle, m.col, m.row, targetCol, targetRow) * 45
     }
     const walkDist = manhattan(unit.col, unit.row, m.col, m.row)
@@ -4115,6 +4120,25 @@ export function computeCombatForecast(state: GameState, col: number, row: number
     hpAfterCrit = m.hpAfterCrit
   }
 
+  // Pincer / Follow-Up assist preview for adjacent melee strikes & single-target melee skills
+  let pincerAssister: BattleUnit | null = null
+  let pincerDmg = 0
+  if (
+    primary.alive &&
+    primary.team !== active.team &&
+    (!armedSkill || isPincerMeleeSkill(armedSkill))
+  ) {
+    const assisters = findPincerAssisters(battle, active, approachCol, approachRow, primary)
+    if (assisters.length > 0) {
+      pincerAssister = assisters[0]
+      pincerDmg = computePincerAssistDamage(battle, pincerAssister, primary)
+      const normalTotalAfterShield = Math.max(0, normalDmg + pincerDmg - primary.shield)
+      const critTotalAfterShield = Math.max(0, critDmg + pincerDmg - primary.shield)
+      hpAfterNormal = Math.max(0, primary.hp - normalTotalAfterShield)
+      hpAfterCrit = Math.max(0, primary.hp - critTotalAfterShield)
+    }
+  }
+
   const aoeTargets = affectedUnits.filter(u => {
     if (isSupportOnly || isRevive) return u.team === active.team
     if (isDawnsJudgmentSafe) return u.team !== active.team
@@ -4135,6 +4159,11 @@ export function computeCombatForecast(state: GameState, col: number, row: number
       : (!active.moved ? pickBestApproachTile(battle, active, battle.moveTiles, primary.col, primary.row, active.range, false) : null)
     if (strikeApproach) {
       const m = previewDamageMath(battle, active, primary, strikeApproach.col, strikeApproach.row, active.atk, 0, true)
+      const strikeAssisters = findPincerAssisters(battle, active, strikeApproach.col, strikeApproach.row, primary)
+      const strikePincerDmg = strikeAssisters.length > 0
+        ? computePincerAssistDamage(battle, strikeAssisters[0], primary)
+        : 0
+      const strikeHpAfter = Math.max(0, primary.hp - Math.max(0, m.normalDmg + strikePincerDmg - primary.shield))
       alternatives.push({
         skillIndex: null,
         keycap: '1',
@@ -4144,7 +4173,8 @@ export function computeCombatForecast(state: GameState, col: number, row: number
         critChance: m.critChance,
         healAmount: 0,
         selfShield: 0,
-        lethalNormal: m.hpAfterNormal <= 0,
+        ...(strikePincerDmg > 0 ? { pincerDmg: strikePincerDmg } : {}),
+        lethalNormal: strikeHpAfter <= 0,
         requiresMove: !strikeDirect,
         attackArc: m.attackArc,
         active: armedIdx === null
@@ -4206,6 +4236,13 @@ export function computeCombatForecast(state: GameState, col: number, row: number
     } else {
       const raw = active.atk * sk.powerMul + sk.flatBonus
       const m = previewDamageMath(battle, active, primary, skApproach.col, skApproach.row, raw, sk.ignoreArmor, true)
+      const skAssisters = isPincerMeleeSkill(sk)
+        ? findPincerAssisters(battle, active, skApproach.col, skApproach.row, primary)
+        : []
+      const skPincerDmg = skAssisters.length > 0
+        ? computePincerAssistDamage(battle, skAssisters[0], primary)
+        : 0
+      const skHpAfter = Math.max(0, primary.hp - Math.max(0, m.normalDmg + skPincerDmg - primary.shield))
       alternatives.push({
         skillIndex: i,
         keycap: keycaps[i] ?? '2',
@@ -4217,7 +4254,8 @@ export function computeCombatForecast(state: GameState, col: number, row: number
         selfShield: sk.shieldAmount,
         status: sk.status,
         selfStatus: sk.selfStatus,
-        lethalNormal: m.hpAfterNormal <= 0,
+        ...(skPincerDmg > 0 ? { pincerDmg: skPincerDmg } : {}),
+        lethalNormal: skHpAfter <= 0,
         requiresMove: !skDirect,
         attackArc: m.attackArc,
         active: armedIdx === i
@@ -4272,8 +4310,15 @@ export function computeCombatForecast(state: GameState, col: number, row: number
     targetShieldBefore: primary.shield,
     targetHpAfterNormal: hpAfterNormal,
     targetHpAfterCrit: hpAfterCrit,
-    lethalNormal: normalDmg > 0 && hpAfterNormal <= 0,
-    lethalCrit: critDmg > 0 && hpAfterCrit <= 0,
+    lethalNormal: (normalDmg + pincerDmg) > 0 && hpAfterNormal <= 0,
+    lethalCrit: (critDmg + pincerDmg) > 0 && hpAfterCrit <= 0,
+    ...(pincerAssister ? {
+      pincerAssisterUid: pincerAssister.uid,
+      pincerAssisterName: pincerAssister.name,
+      pincerDmg,
+      pincerFromCol: pincerAssister.col,
+      pincerFromRow: pincerAssister.row
+    } : {}),
     alternatives
   }
 }
@@ -4869,6 +4914,67 @@ function executeBasicAttackOnBarricade(state: GameState, attacker: BattleUnit, c
   damageBarricade(state, attacker, col, row, attacker.atk)
 }
 
+function executePincerFollowUp(state: GameState, attacker: BattleUnit, target: BattleUnit): number {
+  const battle = state.battle
+  if (!battle || !attacker.alive || !target.alive) return 0
+  const assisters = findPincerAssisters(battle, attacker, attacker.col, attacker.row, target)
+  if (assisters.length === 0) return 0
+
+  let totalDealt = 0
+  for (const assister of assisters) {
+    if (!target.alive) break
+    const rawDmg = computePincerAssistDamage(battle, assister, target)
+    faceToward(assister, target.x, target.z)
+    assister.animState = 'attack'
+    assister.animTimer = 0.34
+    const dx = target.x - assister.x
+    const dz = target.z - assister.z
+    const dist = Math.hypot(dx, dz) || 1
+    assister.lungeX = (dx / dist) * 0.42
+    assister.lungeZ = (dz / dist) * 0.42
+
+    let finalDmg = rawDmg
+    let absorbed = 0
+    if (target.shield > 0) {
+      absorbed = Math.min(target.shield, finalDmg)
+      target.shield -= absorbed
+      finalDmg -= absorbed
+    }
+    target.hp = Math.max(0, target.hp - finalDmg)
+    target.hitFlash = 0.28
+    target.animState = 'hit'
+    target.animTimer = 0.30
+    battle.shake = Math.max(battle.shake, 0.26)
+    totalDealt += finalDmg
+
+    addFloat(battle, target.x, target.y + 0.64, target.z, 'PINCER!', '#5ce1ff')
+    if (finalDmg > 0) {
+      addFloat(battle, target.x, target.y + 0.26, target.z, `-${finalDmg}`, '#ffe16b')
+      state.sounds.push({ kind: 'slash', pitch: 1.25 })
+      state.sounds.push({ kind: 'hit', pitch: 1.15 })
+    } else if (absorbed > 0) {
+      addFloat(battle, target.x, target.y + 0.26, target.z, `BLOCK ${absorbed}`, '#7ed9ff')
+      state.sounds.push({ kind: 'shield' })
+    }
+
+    state.vfx.push({
+      kind: 'pincer',
+      attackerUid: attacker.uid,
+      assisterUid: assister.uid,
+      targetUid: target.uid,
+      attackerPos: [attacker.x, attacker.y, attacker.z],
+      assisterPos: [assister.x, assister.y, assister.z],
+      targetPos: [target.x, target.y, target.z],
+      damage: rawDmg
+    })
+
+    if (target.hp <= 0) {
+      handleUnitDefeat(state, target)
+    }
+  }
+  return totalDealt
+}
+
 function executeBasicAttack(state: GameState, attacker: BattleUnit, target: BattleUnit): void {
   const battle = state.battle
   if (!battle) return
@@ -4910,6 +5016,7 @@ function executeBasicAttack(state: GameState, attacker: BattleUnit, target: Batt
     } else if (attacker.enemyId === 'bog_shaman') {
       applyStatus(battle, target, 'poison', 2)
     }
+    executePincerFollowUp(state, attacker, target)
   }
   checkBattleOutcome(state)
 }
@@ -5029,6 +5136,9 @@ function executeHeroSkill(
           }
           if (caster.team === 'ally') {
             applyEquipmentOnHitStatus(battle, caster, target)
+          }
+          if (target.team !== caster.team && isPincerMeleeSkill(skill)) {
+            executePincerFollowUp(state, caster, target)
           }
         }
         hitAny = true
