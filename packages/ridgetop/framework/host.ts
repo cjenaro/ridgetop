@@ -8,31 +8,11 @@ import { appendFile, lstat, mkdir, readFile, stat, writeFile } from 'node:fs/pro
 import { dirname } from 'node:path'
 import process from 'node:process'
 import { fileURLToPath, pathToFileURL } from 'node:url'
+import { HOSTED_BROWSER_MODULES, RIDGETOP_BROWSER_IMPORT_MAP } from './manifest.ts'
 
-const browserModules = [
-  'index.js', 'verification.js', 'loop.js', 'renderer.js', 'room-client.js',
-  'geometry.js', 'instances.js', 'low-poly.js', 'mesh-gpu.js', 'mesh-gl.js', 'mesh-canvas.js',
-  'input.js', 'vehicle.js', 'page.js', 'platform.js', 'backup.js', 'audio.js', 'audio-assets.js', 'import-mesh.js',
-  'hud.js', 'perf.js', 'sprites.js', 'sprite-sheet.js', 'pixel-rig.js',
-  'art.js', 'art-recipe.js', 'art-review.js', 'art-builder.js', 'character-builder.js', 'platformer.js', 'animation.js', 'physics3d.js',
-  'testing-runtime.js', 'testing-boot.js', 'testing-studio.js',
-  'ui.js', 'ui-machine.js', 'ui-layout.js', 'ui-button.js', 'ui-toggle.js', 'ui-select.js', 'ui-slider.js', 'ui-menu.js', 'ui-canvas.js'
-]
+const browserModules = HOSTED_BROWSER_MODULES
 
-export const ridgetopBrowserSpecifiers: Readonly<Record<string, string>> = {
-  ridgetop: '/framework/index.js',
-  'ridgetop/ui': '/framework/ui.js',
-  'ridgetop/ui-layout': '/framework/ui-layout.js',
-  'ridgetop/ui-button': '/framework/ui-button.js',
-  'ridgetop/ui-toggle': '/framework/ui-toggle.js',
-  'ridgetop/ui-select': '/framework/ui-select.js',
-  'ridgetop/ui-slider': '/framework/ui-slider.js',
-  'ridgetop/ui-menu': '/framework/ui-menu.js',
-  'ridgetop/ui-canvas': '/framework/ui-canvas.js',
-  'ridgetop/ui-machine': '/framework/ui-machine.js',
-  'ridgetop/art-review': '/framework/art-review.js',
-  'ridgetop/testing': '/framework/testing-runtime.js'
-}
+export const ridgetopBrowserSpecifiers: Readonly<Record<string, string>> = RIDGETOP_BROWSER_IMPORT_MAP
 
 const importMapJson = JSON.stringify({ imports: ridgetopBrowserSpecifiers })
 const importMapHash = createHash('sha256').update(importMapJson).digest('base64')

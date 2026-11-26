@@ -12,6 +12,13 @@ import { createArtKit, modelFromArtRecipe } from './art.ts'
 import { exportGodotProject } from './export-godot.ts'
 import { multiply, orthographic, view } from './geometry.ts'
 import { renderMeshPixels } from './low-poly.ts'
+import {
+  BLOCKED_STUDIO_DIRS,
+  BLOCKED_STUDIO_FILES,
+  RIDGETOP_BROWSER_SPECIFIER_FILES,
+  TESTING_RUNTIME_JS_NOOPS,
+  renderTestingNoopNamespaceJs
+} from './manifest.ts'
 import { encodePng } from './png.ts'
 import { color } from './renderer.ts'
 import { boxNode, column, overlay, row } from './ui-layout.ts'
@@ -86,16 +93,9 @@ export interface PackageResult {
   outputs: PackagedOutput[]
 }
 
-const blockedStudioFiles = new Set([
-  'serve.js', 'testing.js', 'testing-scene.js', 'testing.html', 'testing.css',
-  'testing-runtime.js', 'testing-boot.js', 'testing-studio.js', 'testing-overlay.css',
-  'preview-art.js', 'art-library.js', 'package.js',
-  'art-review.js', 'review-store.js', 'verification.js',
-  'decision-api.js', 'decision-providers.js',
-  'host.js', 'room-server.js', 'records.js', 'server.js', 'packager.js', 'export-godot.js'
-])
+const blockedStudioFiles = BLOCKED_STUDIO_FILES
 
-const blockedStudioDirs = new Set(['library', 'reviews', 'benchmarks', 'test', 'tools', 'node_modules', 'dist'])
+const blockedStudioDirs = BLOCKED_STUDIO_DIRS
 
 function slugify(name: string) {
   return name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'ridgetop-game'
@@ -505,20 +505,7 @@ function scanStaticModuleStatements(code: string): ModuleStatement[] {
   return results
 }
 
-const RIDGETOP_SPECIFIER_FILES: Readonly<Record<string, string>> = {
-  ridgetop: 'index.js',
-  'ridgetop/ui': 'ui.js',
-  'ridgetop/ui-layout': 'ui-layout.js',
-  'ridgetop/ui-button': 'ui-button.js',
-  'ridgetop/ui-toggle': 'ui-toggle.js',
-  'ridgetop/ui-select': 'ui-select.js',
-  'ridgetop/ui-slider': 'ui-slider.js',
-  'ridgetop/ui-menu': 'ui-menu.js',
-  'ridgetop/ui-canvas': 'ui-canvas.js',
-  'ridgetop/ui-machine': 'ui-machine.js',
-  'ridgetop/art-review': 'art-review.js',
-  'ridgetop/testing': 'testing-runtime.js'
-}
+const RIDGETOP_SPECIFIER_FILES = RIDGETOP_BROWSER_SPECIFIER_FILES
 
 function resolvePackageFrameworkDir(): string {
   if (import.meta.url.endsWith('.ts')) {
@@ -547,62 +534,6 @@ function parseStaticImports(code: string) {
     .map(s => ({ specifier: s.specifier, names: s.names }))
 }
 
-const INLINE_RUNTIME_RNG = {
-  nextRandom: `export function nextRandom(seed) {
-  const next = (seed + 0x6d2b79f5) | 0;
-  let t = Math.imul(next ^ (next >>> 15), 1 | next);
-  t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
-  return { value: ((t ^ (t >>> 14)) >>> 0) / 4294967296, seed: next };
-}`,
-  createRng: `export function createRng(initialSeed = 1337) {
-  let state = initialSeed | 0;
-  return {
-    get seed() { return state; },
-    next() {
-      const step = nextRandom(state);
-      state = step.seed;
-      return step.value;
-    }
-  };
-}`
-}
-
-const INLINE_TESTING_NOOPS: Record<string, string> = {
-  isTestingActive: '() => false',
-  isTestingPaused: '() => false',
-  setTestingActive: '() => {}',
-  setTestingPaused: '() => {}',
-  onTestingPause: '() => () => {}',
-  captureSourceSite: '() => undefined',
-  registerKnownShapes: '() => {}',
-  getKnownShapeName: '() => undefined',
-  recordMeshMeta: '() => {}',
-  getMeshMeta: '() => undefined',
-  recordRigMeta: '() => {}',
-  getRigMeta: '() => undefined',
-  nextTestingGroupId: '() => ""',
-  nextSpriteAtlasId: '() => ""',
-  registerArtKitRuntime: '() => () => {}',
-  getRegisteredArtKits: '() => []',
-  findRegisteredArtModel: '() => undefined',
-  recordFrame: '() => {}',
-  getLastFrame: '() => undefined',
-  recordSpriteBegin: '() => {}',
-  recordSpriteDraw: '() => {}',
-  getLastSpriteDraws: '() => []',
-  registerHudRegion: '() => () => {}',
-  recordCanvasUiRegions: '() => {}',
-  getHudRegions: '() => []',
-  registerTestingHooks: '() => () => {}',
-  getTestingHooks: '() => []',
-  resetTestingRuntime: '() => {}'
-}
-
-function renderTestingNoopNamespaceObject(): string {
-  const entries = Object.entries(INLINE_TESTING_NOOPS).map(([k, v]) => `${k}: ${v}`).join(', ')
-  return `Object.freeze({ ${entries} })`
-}
-
 function stripTestingRuntimeImports(code: string) {
   const stmts = scanStaticModuleStatements(code).filter(
     s => basename(s.specifier) === 'testing-runtime.js'
@@ -615,20 +546,20 @@ function stripTestingRuntimeImports(code: string) {
     cursor = stmt.end
     if (stmt.kind === 'import') {
       if (stmt.pairs?.length) {
-        const decls = stmt.pairs.map(([orig, local]) => `${local} = ${INLINE_TESTING_NOOPS[orig] ?? '() => {}'}`)
+        const decls = stmt.pairs.map(([orig, local]) => `${local} = ${TESTING_RUNTIME_JS_NOOPS[orig] ?? '() => {}'}`)
         out += `const ${decls.join(', ')};`
       } else if (stmt.namespace) {
-        out += `const ${stmt.namespace} = ${renderTestingNoopNamespaceObject()};`
+        out += `const ${stmt.namespace} = ${renderTestingNoopNamespaceJs()};`
       }
     } else if (stmt.kind === 'export') {
       if (stmt.pairs?.length) {
         for (const [orig, exported] of stmt.pairs) {
-          out += `export const ${exported} = ${INLINE_TESTING_NOOPS[orig] ?? '() => {}'};\n`
+          out += `export const ${exported} = ${TESTING_RUNTIME_JS_NOOPS[orig] ?? '() => {}'};\n`
         }
       } else if (stmt.namespace) {
-        out += `export const ${stmt.namespace} = ${renderTestingNoopNamespaceObject()};\n`
+        out += `export const ${stmt.namespace} = ${renderTestingNoopNamespaceJs()};\n`
       } else if (stmt.names === '*') {
-        for (const [orig, body] of Object.entries(INLINE_TESTING_NOOPS)) {
+        for (const [orig, body] of Object.entries(TESTING_RUNTIME_JS_NOOPS)) {
           out += `export const ${orig} = ${body};\n`
         }
       }
@@ -648,15 +579,10 @@ function pruneBarrelSource(code: string, usedNames: Set<string> | '*') {
     cursor = stmt.end
     const targetFile = basename(stmt.specifier)
     if (blockedStudioFiles.has(targetFile)) {
-      if (targetFile === 'verification.js') {
-        const needCreateRng = usedNames === '*' || usedNames.has('createRng')
-        const needNextRandom = usedNames === '*' || usedNames.has('nextRandom') || needCreateRng
-        if (needNextRandom) out += INLINE_RUNTIME_RNG.nextRandom + '\n'
-        if (needCreateRng) out += INLINE_RUNTIME_RNG.createRng + '\n'
-      } else if (targetFile === 'testing-runtime.js' && stmt.pairs?.length) {
+      if (targetFile === 'testing-runtime.js' && stmt.pairs?.length) {
         for (const [orig, exported] of stmt.pairs) {
           if (usedNames === '*' || usedNames.has(exported)) {
-            out += `export const ${exported} = ${INLINE_TESTING_NOOPS[orig] ?? '() => {}'};\n`
+            out += `export const ${exported} = ${TESTING_RUNTIME_JS_NOOPS[orig] ?? '() => {}'};\n`
           }
         }
       } else if (targetFile === 'art-review.js' && stmt.pairs?.length) {
@@ -1679,39 +1605,6 @@ npm run open:android
 `
 }
 
-const GODOT_RUNTIME_RNG_GD = `extends RefCounted
-# Pure deterministic Mulberry32 PRNG runtime shim for Godot 4 (studio verification code stripped).
-
-static func _i32(v: int) -> int:
-\tv = v & 0xFFFFFFFF
-\treturn v - 0x100000000 if v >= 0x80000000 else v
-
-static func _u32(v: int) -> int:
-\treturn v & 0xFFFFFFFF
-
-static func _imul(a: int, b: int) -> int:
-\treturn _i32((a & 0xFFFFFFFF) * (b & 0xFFFFFFFF))
-
-func nextRandom(seed_val = 0) -> Dictionary:
-\tvar next_seed := _i32(int(seed_val) + 0x6d2b79f5)
-\tvar t := _imul(next_seed ^ (_u32(next_seed) >> 15), 1 | next_seed)
-\tt = _i32(t + _imul(t ^ (_u32(t) >> 7), 61 | t)) ^ t
-\treturn { "value": float(_u32(t ^ (_u32(t) >> 14))) / 4294967296.0, "seed": next_seed }
-
-func createRng(initial_seed = 1337) -> Dictionary:
-\tvar box := [_i32(int(initial_seed))]
-\treturn {
-\t\t"seed": { "__rt_getter": func(): return box[0] },
-\t\t"next": func():
-\t\t\tvar step := nextRandom(box[0])
-\t\t\tbox[0] = int(step["seed"])
-\t\t\treturn step["value"]
-\t}
-
-func __init_module() -> void:
-\tpass
-`
-
 async function tryCompileGodotScripts(projectDir: string, config: RidgetopProjectConfig, godotDir: string): Promise<number> {
   const pkgRoot = resolvePackageRootDir()
   const candidates = [
@@ -1746,11 +1639,6 @@ async function tryCompileGodotScripts(projectDir: string, config: RidgetopProjec
       rootDir: projectDir,
       outDir: compiledDir
     })
-    // Strip studio verification helpers if pulled transitively for pure runtime PRNG (nextRandom/createRng).
-    const verificationGd = join(compiledDir, 'framework', 'verification.gd')
-    if (await access(verificationGd).then(() => true, () => false)) {
-      await writeFile(verificationGd, GODOT_RUNTIME_RNG_GD)
-    }
     return Array.isArray(compiled?.files) ? compiled.files.length : 0
   } catch {
     await rm(compiledDir, { recursive: true, force: true }).catch(() => {})

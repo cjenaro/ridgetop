@@ -765,3 +765,73 @@ func _init() -> void:
   assert.equal(r.chainSetSize, 2)
   assert.equal(r.chainSetHas6, true)
 })
+
+test('TS -> GDScript compiler compiles pure framework/rng.ts and stripped testing-runtime.gd with bit-exact Godot 4 parity', async t => {
+  const projectDir = await mkdtemp(join(tmpdir(), 'ridgetop-gd-rng-'))
+  t.after(() => rm(projectDir, { recursive: true, force: true }))
+
+  const probeTs = join(projectDir, 'probe.ts')
+  await writeFile(probeTs, `import { createRng, nextRandom } from 'ridgetop'
+import { onTestingHooksRegistered, recognizeAssetFromPick } from 'ridgetop/testing'
+
+export function runProbe() {
+  const steps: { value: number; seed: number }[] = []
+  let s = 1337
+  for (let i = 0; i < 8; i++) {
+    const r = nextRandom(s)
+    steps.push(r)
+    s = r.seed
+  }
+  const rng = createRng(-987654321)
+  const seq = [rng.next(), rng.next(), rng.next(), rng.next()]
+  const unsub = onTestingHooksRegistered(() => {})
+  unsub()
+  const recognized = recognizeAssetFromPick([], [], {})
+  return { steps, seq, finalSeed: rng.seed, unsubType: typeof unsub, recognized }
+}
+`)
+
+  const compiled = await compileTsProjectToGodot({
+    entries: [probeTs],
+    rootDir: projectDir,
+    outDir: join(projectDir, 'scripts', 'compiled')
+  })
+  assert.ok(compiled.files.some(f => f.endsWith('framework/rng.gd')), 'Expected compiled framework/rng.gd')
+  assert.ok(!compiled.files.some(f => f.endsWith('framework/verification.gd')), 'verification.gd must not be compiled for PRNG')
+  assert.ok(compiled.files.some(f => f.endsWith('framework/testing-runtime.gd')), 'Expected stripped framework/testing-runtime.gd')
+
+  const godot = await findGodot()
+  if (!godot) return
+
+  const { createRng, nextRandom } = await import('../packages/ridgetop/framework/rng.ts')
+  const expectedSteps: { value: number; seed: number }[] = []
+  let s = 1337
+  for (let i = 0; i < 8; i++) {
+    const r = nextRandom(s)
+    expectedSteps.push(r)
+    s = r.seed
+  }
+  const expectedRng = createRng(-987654321)
+  const expectedSeq = [expectedRng.next(), expectedRng.next(), expectedRng.next(), expectedRng.next()]
+
+  const gd = await runGodotHarness(godot, projectDir, `extends SceneTree
+const RT = preload("res://scripts/compiled/rt.gd")
+func _init() -> void:
+\tvar probe = RT.mod("res://scripts/compiled/probe.gd")
+\tprint("PARITY_JSON:" + JSON.stringify(probe.runProbe()))
+\tRT.clear_modules()
+\tquit()
+`)
+
+  assert.equal(gd.steps.length, expectedSteps.length)
+  for (let i = 0; i < expectedSteps.length; i++) {
+    assert.equal(gd.steps[i].seed, expectedSteps[i].seed, `step[${i}].seed`)
+    assert.ok(Math.abs(gd.steps[i].value - expectedSteps[i].value) < 1e-12, `step[${i}].value (${gd.steps[i].value} vs ${expectedSteps[i].value})`)
+  }
+  for (let i = 0; i < expectedSeq.length; i++) {
+    assert.ok(Math.abs(gd.seq[i] - expectedSeq[i]) < 1e-12, `seq[${i}] (${gd.seq[i]} vs ${expectedSeq[i]})`)
+  }
+  assert.equal(gd.finalSeed, expectedRng.seed)
+  assert.equal(gd.unsubType, 'function')
+  assert.equal(gd.recognized, null)
+})

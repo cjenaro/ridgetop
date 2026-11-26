@@ -2,6 +2,7 @@ import { access, mkdir, readFile, writeFile } from 'node:fs/promises'
 import { dirname, join, relative, resolve, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import ts from 'typescript'
+import { RIDGETOP_ALL_SPECIFIER_FILES, renderTestingNoopGd } from '../framework/manifest.ts'
 import { isMain } from '../framework/server.ts'
 
 const GD_KEYWORDS = new Set([
@@ -156,6 +157,19 @@ static func js_trunc(v: Variant) -> float:
 \tif is_nan(f) or is_inf(f):
 \t\treturn f
 \treturn floor(f) if f >= 0.0 else ceil(f)
+
+static func i32(v: Variant) -> int:
+\tif typeof(v) == TYPE_INT:
+\t\tvar ni := (v as int) & 0xFFFFFFFF
+\t\treturn ni - 0x100000000 if ni >= 0x80000000 else ni
+\tvar f := num(v)
+\tif not is_finite(f):
+\t\treturn 0
+\tvar n := int(fmod(js_trunc(f), 4294967296.0)) & 0xFFFFFFFF
+\treturn n - 0x100000000 if n >= 0x80000000 else n
+
+static func imul(a: Variant, b: Variant) -> int:
+\treturn i32(i32(a) * i32(b))
 
 static func max_two(a: Variant, b: Variant) -> float:
 \tvar fa := num(a)
@@ -1563,12 +1577,12 @@ export function compileTsToGd(sourceText: string, fileName = 'module.ts', option
     if (op === ts.SyntaxKind.LessThanEqualsToken) return `(RT.num(${L}) <= RT.num(${R}))`
     if (op === ts.SyntaxKind.GreaterThanToken) return `(RT.num(${L}) > RT.num(${R}))`
     if (op === ts.SyntaxKind.GreaterThanEqualsToken) return `(RT.num(${L}) >= RT.num(${R}))`
-    if (op === ts.SyntaxKind.AmpersandToken) return `(int(${L}) & int(${R}))`
-    if (op === ts.SyntaxKind.BarToken) return `(int(${L}) | int(${R}))`
-    if (op === ts.SyntaxKind.CaretToken) return `(int(${L}) ^ int(${R}))`
-    if (op === ts.SyntaxKind.LessThanLessThanToken) return `(int(${L}) << int(${R}))`
-    if (op === ts.SyntaxKind.GreaterThanGreaterThanToken) return `(int(${L}) >> int(${R}))`
-    if (op === ts.SyntaxKind.GreaterThanGreaterThanGreaterThanToken) return `((int(${L}) & 0xffffffff) >> (int(${R}) & 31))`
+    if (op === ts.SyntaxKind.AmpersandToken) return `(RT.i32(${L}) & RT.i32(${R}))`
+    if (op === ts.SyntaxKind.BarToken) return `(RT.i32(${L}) | RT.i32(${R}))`
+    if (op === ts.SyntaxKind.CaretToken) return `(RT.i32(${L}) ^ RT.i32(${R}))`
+    if (op === ts.SyntaxKind.LessThanLessThanToken) return `RT.i32(RT.i32(${L}) << (RT.i32(${R}) & 31))`
+    if (op === ts.SyntaxKind.GreaterThanGreaterThanToken) return `(RT.i32(${L}) >> (RT.i32(${R}) & 31))`
+    if (op === ts.SyntaxKind.GreaterThanGreaterThanGreaterThanToken) return `((RT.i32(${L}) & 0xffffffff) >> (RT.i32(${R}) & 31))`
     if (op === ts.SyntaxKind.InKeyword) return `RT.has_prop(${R}, ${L})`
     return `(${L})`
   }
@@ -1686,6 +1700,7 @@ export function compileTsToGd(sourceText: string, fileName = 'module.ts', option
         if (method === 'sign') return `sign(RT.num(${args[0]}))`
         if (method === 'random') return `randf()`
         if (method === 'hypot') return `RT.hypot(${argsArr})`
+        if (method === 'imul') return `RT.imul(${args[0]}, ${args[1]})`
       }
 
       // Number.*
@@ -1878,12 +1893,12 @@ export function compileTsToGd(sourceText: string, fileName = 'module.ts', option
     if (op === ts.SyntaxKind.AsteriskAsteriskEqualsToken) return `pow(RT.num(${cur}), RT.num(${val}))`
     if (op === ts.SyntaxKind.SlashEqualsToken) return `(RT.num(${cur}) / RT.num(${val}))`
     if (op === ts.SyntaxKind.PercentEqualsToken) return `RT.rem(${cur}, ${val})`
-    if (op === ts.SyntaxKind.BarEqualsToken) return `(int(${cur}) | int(${val}))`
-    if (op === ts.SyntaxKind.AmpersandEqualsToken) return `(int(${cur}) & int(${val}))`
-    if (op === ts.SyntaxKind.CaretEqualsToken) return `(int(${cur}) ^ int(${val}))`
-    if (op === ts.SyntaxKind.LessThanLessThanEqualsToken) return `(int(${cur}) << int(${val}))`
-    if (op === ts.SyntaxKind.GreaterThanGreaterThanEqualsToken) return `(int(${cur}) >> int(${val}))`
-    if (op === ts.SyntaxKind.GreaterThanGreaterThanGreaterThanEqualsToken) return `((int(${cur}) & 0xffffffff) >> (int(${val}) & 31))`
+    if (op === ts.SyntaxKind.BarEqualsToken) return `(RT.i32(${cur}) | RT.i32(${val}))`
+    if (op === ts.SyntaxKind.AmpersandEqualsToken) return `(RT.i32(${cur}) & RT.i32(${val}))`
+    if (op === ts.SyntaxKind.CaretEqualsToken) return `(RT.i32(${cur}) ^ RT.i32(${val}))`
+    if (op === ts.SyntaxKind.LessThanLessThanEqualsToken) return `RT.i32(RT.i32(${cur}) << (RT.i32(${val}) & 31))`
+    if (op === ts.SyntaxKind.GreaterThanGreaterThanEqualsToken) return `(RT.i32(${cur}) >> (RT.i32(${val}) & 31))`
+    if (op === ts.SyntaxKind.GreaterThanGreaterThanGreaterThanEqualsToken) return `((RT.i32(${cur}) & 0xffffffff) >> (RT.i32(${val}) & 31))`
     if (op === ts.SyntaxKind.AmpersandAmpersandEqualsToken) return `(${val} if RT.truthy(${cur}) else (${cur}))`
     if (op === ts.SyntaxKind.BarBarEqualsToken) return `((${cur}) if RT.truthy(${cur}) else (${val}))`
     if (op === ts.SyntaxKind.QuestionQuestionEqualsToken) return `(${val} if (${cur}) == null else (${cur}))`
@@ -2461,23 +2476,6 @@ const packageRootDir = resolve(fileURLToPath(new URL(import.meta.url.endsWith('.
 const packageFrameworkSrcDir = join(packageRootDir, 'framework')
 const packageFrameworkDistDir = join(packageRootDir, 'dist', 'framework')
 
-const RIDGETOP_GD_SPECIFIERS: Readonly<Record<string, string>> = {
-  ridgetop: 'index',
-  'ridgetop/server': 'server',
-  'ridgetop/ui': 'ui',
-  'ridgetop/ui-layout': 'ui-layout',
-  'ridgetop/ui-button': 'ui-button',
-  'ridgetop/ui-toggle': 'ui-toggle',
-  'ridgetop/ui-select': 'ui-select',
-  'ridgetop/ui-slider': 'ui-slider',
-  'ridgetop/ui-menu': 'ui-menu',
-  'ridgetop/ui-canvas': 'ui-canvas',
-  'ridgetop/ui-machine': 'ui-machine',
-  'ridgetop/art-review': 'art-review',
-  'ridgetop/art-review/server': 'review-store',
-  'ridgetop/testing': 'testing-runtime'
-}
-
 function isWithinDir(filePath: string, dirPath: string): boolean {
   return filePath === dirPath || filePath.startsWith(dirPath + sep)
 }
@@ -2498,8 +2496,8 @@ function computeRelOutputPath(absFile: string, rootDir: string): string {
 }
 
 async function resolveRidgetopSpecifier(specifier: string): Promise<string | null> {
-  if (!Object.hasOwn(RIDGETOP_GD_SPECIFIERS, specifier)) return null
-  const stem = RIDGETOP_GD_SPECIFIERS[specifier]
+  if (!Object.hasOwn(RIDGETOP_ALL_SPECIFIER_FILES, specifier)) return null
+  const stem = RIDGETOP_ALL_SPECIFIER_FILES[specifier].replace(/\.js$/, '')
   const tsCandidate = join(packageFrameworkSrcDir, stem + '.ts')
   try { await access(tsCandidate); return tsCandidate } catch { /* TypeScript source not present; try compiled JS next. */ }
   const jsCandidate = join(packageFrameworkDistDir, stem + '.js')
@@ -2598,96 +2596,7 @@ async function resolveThroughBarrel(
   return { file: filePath, symbol }
 }
 
-const GODOT_TESTING_NOOP_GD = `extends RefCounted
-# No-op testing runtime shim for Godot 4 release builds (studio/testing tools stripped).
-
-func __init_module() -> void:
-	pass
-
-func isTestingActive() -> bool:
-	return false
-
-func isTestingPaused() -> bool:
-	return false
-
-func setTestingActive(_v = false) -> void:
-	pass
-
-func setTestingPaused(_v = false) -> void:
-	pass
-
-func onTestingPause(_fn = null) -> Callable:
-	return func(): pass
-
-func captureSourceSite() -> Variant:
-	return null
-
-func registerKnownShapes(_shapes = null) -> void:
-	pass
-
-func getKnownShapeName(_mesh = null) -> Variant:
-	return null
-
-func recordMeshMeta(_mesh = null, _meta = null) -> void:
-	pass
-
-func getMeshMeta(_mesh = null) -> Variant:
-	return null
-
-func recordRigMeta(_rig = null, _meta = null) -> void:
-	pass
-
-func getRigMeta(_rig = null) -> Variant:
-	return null
-
-func nextTestingGroupId() -> String:
-	return ""
-
-func nextSpriteAtlasId() -> String:
-	return ""
-
-func registerArtKitRuntime(_kit = null) -> Callable:
-	return func(): pass
-
-func getRegisteredArtKits() -> Array:
-	return []
-
-func findRegisteredArtModel(_name = null) -> Variant:
-	return null
-
-func recordFrame(_frame = null) -> void:
-	pass
-
-func getLastFrame() -> Variant:
-	return null
-
-func recordSpriteBegin(_canvas = null) -> void:
-	pass
-
-func recordSpriteDraw(_draw = null) -> void:
-	pass
-
-func getLastSpriteDraws() -> Array:
-	return []
-
-func registerHudRegion(_region = null) -> Callable:
-	return func(): pass
-
-func recordCanvasUiRegions(_regions = null) -> void:
-	pass
-
-func getHudRegions() -> Array:
-	return []
-
-func registerTestingHooks(_hooks = null) -> Callable:
-	return func(): pass
-
-func getTestingHooks() -> Array:
-	return []
-
-func resetTestingRuntime() -> void:
-	pass
-`
+const GODOT_TESTING_NOOP_GD = renderTestingNoopGd()
 
 /** Compile a TypeScript module graph into a self-contained set of Godot 4 `.gd` files + `rt.gd`. */
 export async function compileTsProjectToGodot(options: CompileProjectOptions): Promise<{ files: string[]; rtPath: string }> {

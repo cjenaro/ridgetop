@@ -485,6 +485,7 @@ test('packageGame builds tree-shaken Web, Steam, Mobile, and Godot outputs for T
     await access(join(webDir, 'lighthouse', mod))
   }
   await access(join(webDir, 'framework', 'index.js'))
+  await access(join(webDir, 'framework', 'rng.js'))
   await access(join(webDir, 'framework', 'animation.js'))
   await access(join(webDir, 'framework', 'ui-layout.js'))
   await access(join(webDir, 'framework', 'ui-button.js'))
@@ -550,6 +551,8 @@ test('packageGame builds tree-shaken Web, Steam, Mobile, and Godot outputs for T
   await access(join(godotDir, 'scripts', 'compiled', 'rt.gd'))
   await access(join(godotDir, 'scripts', 'compiled', 'lighthouse', 'simulation.gd'))
   await access(join(godotDir, 'scripts', 'compiled', 'lighthouse', 'types.gd'))
+  await access(join(godotDir, 'scripts', 'compiled', 'framework', 'rng.gd'))
+  await assert.rejects(access(join(godotDir, 'scripts', 'compiled', 'framework', 'verification.gd')), 'verification.gd must not be emitted when only PRNG is used')
   await access(join(godotDir, 'scripts', 'compiled', 'framework', 'ui-layout.gd'))
   await access(join(godotDir, 'scripts', 'compiled', 'framework', 'ui-button.gd'))
 })
@@ -649,4 +652,73 @@ registerTestingHooks({ snapshot: () => ({ ok: true }) })
   assert.equal(playerRes.outputs[0].files, 1)
   const playerHtml = await readFile(playerRes.outputs[0].playerPath!, 'utf8')
   assert.ok(playerHtml.includes('ridgetop-offline/framework/index.js'))
+})
+
+test('release builds preserve pure runtime rng.js/rng.gd and strip onTestingHooksRegistered & recognizeAssetFromPick safely', async t => {
+  const work = await mkdtemp(join(tmpdir(), 'ridgetop-rng-strip-'))
+  t.after(() => rm(work, { recursive: true, force: true }))
+
+  const projectDir = join(work, 'rng-strip-game')
+  await mkdir(join(projectDir, 'src'), { recursive: true })
+  await writeFile(join(projectDir, 'package.json'), JSON.stringify({
+    name: 'rng-strip-game',
+    version: '1.0.0',
+    private: true,
+    type: 'module',
+    ridgetop: {
+      name: 'RNG Strip Test',
+      godotEntries: ['src/sim.ts']
+    }
+  }, null, 2))
+  await writeFile(join(projectDir, 'index.html'), `<!doctype html>
+<html><head><script type="module" src="./main.js"></script></head><body><canvas id="stage"></canvas></body></html>
+`)
+  await writeFile(join(projectDir, 'src', 'sim.ts'), `import { createRng, nextRandom } from 'ridgetop'
+import { onTestingHooksRegistered, recognizeAssetFromPick } from 'ridgetop/testing'
+export function sampleRng() {
+  const step = nextRandom(1337)
+  const rng = createRng(42)
+  return { step, vals: [rng.next(), rng.next(), rng.next()], seed: rng.seed }
+}
+export function callTestingStubs() {
+  const unsub = onTestingHooksRegistered(() => {})
+  const picked = recognizeAssetFromPick([], [], {})
+  unsub()
+  return { unsubType: typeof unsub, picked }
+}
+`)
+  await writeFile(join(projectDir, 'main.js'), `import { createRng, nextRandom } from 'ridgetop'
+import { onTestingHooksRegistered, recognizeAssetFromPick } from 'ridgetop/testing'
+export const firstStep = nextRandom(1337)
+const rng = createRng(42)
+export const seq = [rng.next(), rng.next(), rng.next()]
+export const finalSeed = rng.seed
+export const unsub = onTestingHooksRegistered(() => {})
+export const recognized = recognizeAssetFromPick([], [], {})
+`)
+
+  const outDir = join(work, 'out')
+  await packageGame({ target: 'all', projectDir, outDir })
+
+  // Web bundle ships framework/rng.js and strips verification.js + testing-runtime.js
+  await access(join(outDir, 'web', 'framework', 'rng.js'))
+  await assert.rejects(access(join(outDir, 'web', 'framework', 'verification.js')))
+  await assert.rejects(access(join(outDir, 'web', 'framework', 'testing-runtime.js')))
+
+  const { createRng, nextRandom } = await import('../packages/ridgetop/framework/rng.ts')
+  const bundled = await import(pathToFileURL(join(outDir, 'web', 'main.js')).href)
+  assert.deepEqual(bundled.firstStep, nextRandom(1337))
+  const expectedRng = createRng(42)
+  assert.deepEqual(bundled.seq, [expectedRng.next(), expectedRng.next(), expectedRng.next()])
+  assert.equal(bundled.finalSeed, expectedRng.seed)
+  assert.equal(typeof bundled.unsub, 'function', 'stripped onTestingHooksRegistered must return callable unsubscribe')
+  bundled.unsub()
+  assert.equal(bundled.recognized, null, 'stripped recognizeAssetFromPick must return null')
+
+  // Godot bundle compiles framework/rng.gd directly and strips testing-runtime.gd with all 30 noops (no verification.gd)
+  await access(join(outDir, 'godot', 'scripts', 'compiled', 'framework', 'rng.gd'))
+  await assert.rejects(access(join(outDir, 'godot', 'scripts', 'compiled', 'framework', 'verification.gd')))
+  const testingGd = await readFile(join(outDir, 'godot', 'scripts', 'compiled', 'framework', 'testing-runtime.gd'), 'utf8')
+  assert.ok(testingGd.includes('func onTestingHooksRegistered('))
+  assert.ok(testingGd.includes('func recognizeAssetFromPick('))
 })
