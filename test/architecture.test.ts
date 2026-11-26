@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { execFile } from 'node:child_process'
-import { readdir, readFile } from 'node:fs/promises'
+import { access, readdir, readFile } from 'node:fs/promises'
 import test from 'node:test'
 import { fileURLToPath } from 'node:url'
 import { promisify } from 'node:util'
@@ -290,4 +290,87 @@ test('packages/ridgetop packed tarball contains ZERO example-game files', async 
   assert.ok(paths.includes('templates/godot-runtime/rt.gd'), 'Tarball must include templates/godot-runtime/rt.gd')
   assert.ok(paths.includes('package.json'))
   assert.ok(paths.includes('README.md'))
+})
+
+test('starter template and examples/starter stay in parity and CLI scripts delegate to framework/tooling.ts', async () => {
+  const templateStarter = new URL('templates/starter/', ridgetopPkgRoot)
+  const exampleStarter = new URL('examples/starter/', root)
+
+  // Shared non-TS files must stay byte-for-byte identical between template and example starter
+  const exactSharedFiles = [
+    'index.html',
+    'style.css',
+    'godot-main.gd',
+    'README.md',
+    'AGENTS.md',
+    'ART.md',
+    'art/rain-ranger.art.json',
+    'art/overrides.json'
+  ]
+  for (const rel of exactSharedFiles) {
+    const [tpl, ex] = await Promise.all([
+      readFile(new URL(rel, templateStarter)),
+      readFile(new URL(rel, exampleStarter))
+    ])
+    assert.ok(tpl.equals(ex), `Starter file drifted between templates/starter/${rel} and examples/starter/${rel}`)
+  }
+
+  // Shared TS source files must match once template relative framework imports are normalized to bare ridgetop specifiers
+  const normalizeTemplateImports = (source: string) =>
+    source
+      .replaceAll("'../../framework/index.ts'", "'ridgetop'")
+      .replaceAll("'../../framework/ui.ts'", "'ridgetop/ui'")
+      .replaceAll("'../../framework/server.ts'", "'ridgetop/server'")
+
+  for (const rel of ['game.ts', 'main.ts', 'preview-art.ts']) {
+    const [tpl, ex] = await Promise.all([
+      readFile(new URL(rel, templateStarter), 'utf8'),
+      readFile(new URL(rel, exampleStarter), 'utf8')
+    ])
+    assert.equal(
+      normalizeTemplateImports(tpl),
+      ex,
+      `Starter TS module drifted between templates/starter/${rel} and examples/starter/${rel}`
+    )
+  }
+
+  // Both starter serve.ts modules must export createStarterServer and guard direct execution with isMain
+  for (const [label, url] of [
+    ['templates/starter/serve.ts', new URL('serve.ts', templateStarter)],
+    ['examples/starter/serve.ts', new URL('serve.ts', exampleStarter)]
+  ] as const) {
+    const src = await readFile(url, 'utf8')
+    assert.match(src, /export function createStarterServer\(/, `${label} must export createStarterServer`)
+    assert.match(src, /if \(isMain\(import\.meta\.url\)\)/, `${label} must guard startup with isMain`)
+  }
+
+  // All CLI wrapper scripts across tools/, templates/starter/, and examples/starter/ must be thin delegates
+  const thinDelegates = [
+    ['packages/ridgetop/tools/preview-art.ts', new URL('tools/preview-art.ts', ridgetopPkgRoot), 'runPreviewArtCli'],
+    ['packages/ridgetop/tools/art-library.ts', new URL('tools/art-library.ts', ridgetopPkgRoot), 'runArtLibraryCli'],
+    ['packages/ridgetop/tools/package-game.ts', new URL('tools/package-game.ts', ridgetopPkgRoot), 'runPackageGameCli'],
+    ['packages/ridgetop/templates/starter/preview-art.ts', new URL('preview-art.ts', templateStarter), 'runPreviewArtCli'],
+    ['packages/ridgetop/templates/starter/art-library.ts', new URL('art-library.ts', templateStarter), 'runArtLibraryCli'],
+    ['packages/ridgetop/templates/starter/package.ts', new URL('package.ts', templateStarter), 'runPackageGameCli'],
+    ['examples/starter/preview-art.ts', new URL('preview-art.ts', exampleStarter), 'runPreviewArtCli'],
+    ['examples/starter/art-library.ts', new URL('art-library.ts', exampleStarter), 'runArtLibraryCli'],
+    ['examples/starter/package.ts', new URL('package.ts', exampleStarter), 'runPackageGameCli']
+  ] as const
+  for (const [label, url, fnName] of thinDelegates) {
+    const src = await readFile(url, 'utf8')
+    const lineCount = src.trim().split('\n').length
+    assert.ok(src.includes(fnName), `${label} must delegate to ${fnName}`)
+    assert.ok(lineCount <= 20, `${label} should remain a thin delegate (got ${lineCount} lines)`)
+  }
+
+  // Canonical art library lives only in packages/ridgetop/templates/starter/art/library (no duplicated copy in examples/starter)
+  const canonicalCatalog = JSON.parse(await readFile(new URL('art/library/catalog.json', templateStarter), 'utf8')) as unknown[]
+  assert.ok(canonicalCatalog.length >= 10, 'canonical art library catalog must exist in templates/starter/art/library/')
+  await assert.rejects(
+    access(new URL('art/library', exampleStarter)),
+    'examples/starter/art/library must not duplicate packages/ridgetop/templates/starter/art/library'
+  )
+
+  // Server-only tooling module must be blocked from release bundles
+  assert.ok(BLOCKED_STUDIO_FILES.has('tooling.js'), 'tooling.js must be in BLOCKED_STUDIO_FILES')
 })

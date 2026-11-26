@@ -2,10 +2,8 @@
 import { readFile } from 'node:fs/promises'
 import { resolve } from 'node:path'
 import { loadGodotCompiler } from '../framework/export-godot.ts'
+import { runArtLibraryCli, runPackageGameCli, runPreviewArtCli } from '../framework/server.ts'
 import { createGame } from './create-game.ts'
-import { runPackageCli } from './package-game.ts'
-import { runPreviewArtCli } from './preview-art.ts'
-import { runArtLibraryCli } from './art-library.ts'
 
 function printHelp() {
   console.log([
@@ -58,7 +56,7 @@ async function main(argv: readonly string[]) {
     return
   }
   if (command === 'package') {
-    await runPackageCli(rest)
+    await runPackageGameCli(rest)
     return
   }
   if (command === 'compile-godot') {

@@ -34,7 +34,7 @@ function buildExampleMounts(root: URL): Record<string, GameHostMount> {
     '/racing/': { dir: new URL('examples/signal-drift/dist/racing/', root), extensions: ['js'] },
     '/lighthouse/': { dir: new URL('examples/lighthouse/dist/lighthouse/', root), extensions: ['js'] },
     '/crownshard/': { dir: new URL('examples/crownshard/dist/crownshard/', root), extensions: ['js'] },
-    '/starter/': { dir: new URL('examples/starter/dist/', root), extensions: ['js'], exclude: ['serve.js'] }
+    '/starter/': { dir: new URL('examples/starter/dist/', root), extensions: ['js'], exclude: ['serve.js', 'preview-art.js', 'art-library.js', 'package.js'] }
   }
 }
 

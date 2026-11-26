@@ -1,8 +1,7 @@
-import { artModels, bindActionControls, color, createArtKit, createArtRecipe, createLowPolyRenderer, createPlatform,
+import { artModels, bindActionControls, color, createArtKit, createArtRecipe, createGamePage, createLowPolyRenderer,
   createSpriteAtlas, fixedLoop, modelFromArtRecipe, multiply, orthographic, projectPoint, registerTestingHooks, view } from '../../framework/index.ts'
-import type { ArtRecipe, Backend, LowPolyRenderer, Matrix, Vec3 } from '../../framework/index.ts'
+import type { ArtRecipe, LowPolyRenderer, Matrix, Vec3 } from '../../framework/index.ts'
 import { boxNode, column, createCanvasUi, createUiTheme, overlay, row, spacerNode } from '../../framework/ui.ts'
-import type { CanvasUiQuery } from '../../framework/ui.ts'
 import { game, modelFiles, models, sprites } from './game.ts'
 
 const moves = { left: [-1, 0], up: [0, -1], down: [0, 1], right: [1, 0] } as const
@@ -10,15 +9,6 @@ type Direction = keyof typeof moves
 const directions: readonly Direction[] = ['left', 'up', 'down', 'right']
 const keys: Record<string, Direction> = { KeyA: 'left', ArrowLeft: 'left', KeyW: 'up', ArrowUp: 'up',
   KeyD: 'right', ArrowRight: 'right', KeyS: 'down', ArrowDown: 'down' }
-function requireCanvas(id: string): HTMLCanvasElement {
-  const el = document.getElementById(id)
-  if (!(el instanceof HTMLCanvasElement)) throw new Error('Missing canvas #' + id)
-  return el
-}
-function parseBackend(value: string | null, forceCanvas: boolean): Backend {
-  if (value === 'webgpu' || value === 'webgl2' || value === 'canvas' || value === 'auto') return value
-  return forceCanvas ? 'canvas' : 'auto'
-}
 function isArtModelName(name: string): name is keyof typeof artModels {
   return Object.hasOwn(artModels, name)
 }
@@ -30,7 +20,8 @@ function isNumberArray(value: unknown): value is number[] {
 }
 
 async function start() {
-  const platform = createPlatform()
+  const page = createGamePage()
+  const { platform, reducedMotion: reduced } = page
   const recipes = new Map<string, ArtRecipe>()
   const overrideResponse = await fetch('art/overrides.json')
   if (!overrideResponse.ok && overrideResponse.status !== 404) throw new Error('Could not load art/overrides.json.')
@@ -52,15 +43,15 @@ async function start() {
   if (!width) throw new Error('Add at least one row of tiles to the map.')
   const cell = (x: number, z: number) => z * width + x
   const legend: Record<string, Name> = game.scenery
-  let foundSpawn: ObjectInGame | undefined, foundGoal: ObjectInGame | undefined
+  let spawnTile: ObjectInGame | undefined, goalTile: ObjectInGame | undefined
   for (const [z, rowTiles] of game.map.entries()) {
     if (rowTiles.length !== width) throw new Error('Each map row must have the same width.')
     for (const [x, mark] of Array.from(rowTiles).entries()) {
       ground.push({ id: 'ground-' + x + '-' + z, name: game.ground, x, z })
-      if (mark === '@' && !foundSpawn) foundSpawn = { id: 'player', name: game.player, x, z }
-      else if (mark === 'L' && !foundGoal) {
-        foundGoal = { id: 'goal', name: game.goal, x, z }
-        scenery.push(foundGoal)
+      if (mark === '@' && !spawnTile) spawnTile = { id: 'player', name: game.player, x, z }
+      else if (mark === 'L' && !goalTile) {
+        goalTile = { id: 'goal', name: game.goal, x, z }
+        scenery.push(goalTile)
       } else if (mark === '*') pickups.push({ id: 'pickup-' + x + '-' + z, name: game.pickup, x, z })
       else if (Object.hasOwn(legend, mark)) {
         scenery.push({ id: 'prop-' + x + '-' + z, name: legend[mark], x, z })
@@ -68,20 +59,18 @@ async function start() {
       } else if (mark !== '.') throw new Error('Unexpected map character ' + mark + ' at row ' + (z + 1))
     }
   }
-  if (!foundSpawn || !foundGoal) throw new Error('Place one @ for the player and one L for the goal.')
-  const spawn = foundSpawn, goal = foundGoal
+  if (!spawnTile || !goalTile) throw new Error('Place one @ for the player and one L for the goal.')
+  const spawn = spawnTile, goal = goalTile
   if (!(game.stepSeconds > 0 && Number.isFinite(game.stepSeconds))) throw new Error('stepSeconds must be positive.')
 
-  const params = new URLSearchParams(location.search)
-  const backend: Backend = parseBackend(params.get('renderer'), params.has('canvas'))
-  const stage = requireCanvas('world')
-  const layer = requireCanvas('sprites')
-  const uiCanvas = requireCanvas('ui')
+  const backend = page.requestedBackend()
+  const stage = page.element<HTMLCanvasElement>('world')
+  const layer = page.element<HTMLCanvasElement>('sprites')
+  const uiCanvas = page.element<HTMLCanvasElement>('ui')
   const board = layer.parentElement ?? document.documentElement
   let renderer: LowPolyRenderer
   let rendererPromise: Promise<LowPolyRenderer> | undefined
   let viewRequest = 0
-  const reduced = matchMedia('(prefers-reduced-motion: reduce)')
   const atlases = new Map<Name, Awaited<ReturnType<typeof createSpriteAtlas>>>()
   const atlasPromises = new Map<Name, Promise<Awaited<ReturnType<typeof createSpriteAtlas>>>>()
   const names = new Set<Name>([game.ground, game.player, game.goal, game.pickup, game.effect, ...scenery.map(p => p.name)])
@@ -117,7 +106,7 @@ async function start() {
   const remaining = new Map<number, ObjectInGame>()
   let player: ObjectInGame, fromX = 0, fromZ = 0, travel = 0
   let flash: ObjectInGame | undefined, flashTime = 0, won = false, queued: Direction | undefined
-  let lastPaintTime = 0, spriteView = false, dirty = true, uiDirty = true
+  let lastPaintTime = 0, spriteView = false, dirty = true
   let errorBanner = ''
   document.title = game.title
 
@@ -125,12 +114,12 @@ async function start() {
   function setMenuOpen(open: boolean) {
     if (menuOpen === open) return
     menuOpen = open
-    uiDirty = true
+    ui.invalidate()
   }
   function toggleViewMode(checked: boolean) {
     void setViewMode(checked ? '2d' : '3d').catch(err => {
       errorBanner = err instanceof Error ? err.message : String(err)
-      uiDirty = true
+      ui.invalidate()
     })
   }
 
@@ -142,32 +131,19 @@ async function start() {
     keyboardEnabled: () => isMenuOpen(),
     onBack: () => setMenuOpen(false)
   })
-  function renderUiNow() {
-    const w = Math.max(1, board.clientWidth), h = Math.max(1, board.clientHeight)
-    const ratio = Math.min(devicePixelRatio || 1, 2)
-    ui.render(buildUiTree(w), { width: w, height: h, pixelRatio: ratio })
-    uiDirty = false
-  }
-  Object.defineProperty(globalThis, '__ridgetopUi', {
-    configurable: true,
-    writable: true,
-    value: {
-      snapshot: () => ui.snapshot(),
-      query: (filter?: CanvasUiQuery) => ui.query(filter),
-      act: (id: string, action: string, payload?: unknown) => {
-        if (uiDirty) renderUiNow()
-        const ok = ui.act(id, action, payload)
-        renderUiNow()
-        return ok
-      },
-      rects: () => Object.fromEntries(ui.rects),
-      state: () => ({
-        count: `${pickups.length - remaining.size} / ${pickups.length}`,
-        view: spriteView ? '2d' : '3d',
-        won,
-        paused: menuOpen
-      })
-    }
+  const syncUi = (force = false) => ui.sync(w => buildUiTree(w), {
+    width: board.clientWidth,
+    height: board.clientHeight,
+    force
+  })
+  ui.exposeGlobal({
+    renderNow: phase => syncUi(phase === 'after'),
+    getState: () => ({
+      count: `${pickups.length - remaining.size} / ${pickups.length}`,
+      view: spriteView ? '2d' : '3d',
+      won,
+      paused: menuOpen
+    })
   })
 
   const controls = bindActionControls({
@@ -179,7 +155,7 @@ async function start() {
 
   function updateItems() {
     dirty = true
-    uiDirty = true
+    ui.invalidate()
     items.clear()
     for (const obj of remaining.values()) items.add(obj.name, [obj.x, 0, obj.z])
   }
@@ -231,11 +207,11 @@ async function start() {
     world.hidden = spriteView
     layer.hidden = !spriteView
     dirty = true
-    uiDirty = true
+    ui.invalidate()
   }
 
   restart()
-  await setViewMode(params.get('view') === '2d' ? '2d' : '3d')
+  await setViewMode(page.query('view') === '2d' ? '2d' : '3d')
 
   const cx = (width - 1) / 2, cz = (depth - 1) / 2
   const target: Vec3 = [cx, .5, cz]
@@ -359,10 +335,7 @@ async function start() {
     const surface = spriteView ? layer : renderer.canvas
     const ratio = Math.min(devicePixelRatio || 1, 2)
     const resized = surface !== lastSurface || w !== lastWidth || h !== lastHeight || ratio !== lastRatio
-    if (uiDirty || ui.dirty || resized || force) {
-      ui.render(buildUiTree(w), { width: w, height: h, pixelRatio: ratio })
-      uiDirty = false
-    }
+    syncUi(force || resized)
     if (!force && !dirty && !(spriteView && usesClips && !reduced.matches) && !resized) return
     dirty = false
     lastPaintTime = now
@@ -479,6 +452,7 @@ async function start() {
       unregisterTestingHooks()
       stop()
       stopLifecycle()
+      page.dispose()
       ui.dispose()
       controls.dispose()
       renderer?.dispose()

@@ -9,7 +9,7 @@ export function createStarterServer({ testing }: { testing?: boolean } = {}) {
     moduleRoot,
     files: ['index.html', 'style.css'],
     mounts: {
-      '/': { dir: moduleRoot, extensions: ['js'], exclude: ['serve.js'] }
+      '/': { dir: moduleRoot, extensions: ['js'], exclude: ['serve.js', 'preview-art.js', 'art-library.js', 'package.js'] }
     },
     artDirectories: ['art'],
     aliases: { '/': 'index.html' },

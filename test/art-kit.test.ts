@@ -236,11 +236,11 @@ test('rigFromArtRecipe and kit.rig integrate with createAnimator and renderRig w
 })
 
 test('all existing v1 starter and library .art.json recipes remain 100% compatible', async () => {
-  const root = new URL('../examples/starter/art/', import.meta.url)
-  const libraryDir = new URL('library/', root)
+  const starterArtRoot = new URL('../examples/starter/art/', import.meta.url)
+  const libraryDir = new URL('../packages/ridgetop/templates/starter/art/library/', import.meta.url)
   const libraryFiles = (await readdir(libraryDir)).filter(f => f.endsWith('.art.json'))
   assert.ok(libraryFiles.length >= 10, 'expected library art recipes')
-  const urls = [new URL('rain-ranger.art.json', root), ...libraryFiles.map(f => new URL(f, libraryDir))]
+  const urls = [new URL('rain-ranger.art.json', starterArtRoot), ...libraryFiles.map(f => new URL(f, libraryDir))]
   for (const url of urls) {
     const raw: ArtRecipe = JSON.parse(await readFile(url, 'utf8'))
     const model = modelFromArtRecipe(raw)
@@ -251,7 +251,7 @@ test('all existing v1 starter and library .art.json recipes remain 100% compatib
     assert.equal(pool.batches.reduce((n, b) => n + b.count, 0), model.parts.length, url.pathname)
   }
   // Headless animated baker handles static v1 recipes cleanly via fallback rest clip.
-  const rainRanger = JSON.parse(await readFile(new URL('rain-ranger.art.json', root), 'utf8'))
+  const rainRanger = JSON.parse(await readFile(new URL('rain-ranger.art.json', starterArtRoot), 'utf8'))
   const restSheet = bakeAnimatedSpritePixels(rainRanger, { frameSize: 16, directions: ['front', 'right'] })
   assert.equal(restSheet.width, 16)
   assert.equal(restSheet.height, 32)

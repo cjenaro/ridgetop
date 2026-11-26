@@ -30,6 +30,8 @@ export {
   resolveGodotRuntimeTemplatePath
 } from './export-godot.ts'
 export { encodePng } from './png.ts'
+export { runArtLibraryCli, runPackageGameCli, runPreviewArtCli } from './tooling.ts'
+export type { ArtLibraryCliOptions, PackageGameCliOptions, PreviewArtCliOptions } from './tooling.ts'
 export type {
   GodotCompileProjectOptions,
   GodotCompilerModule,
