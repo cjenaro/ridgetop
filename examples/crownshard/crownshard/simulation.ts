@@ -5,7 +5,9 @@ import {
   MERGE_COPIES_REQUIRED, PACK_BY_ID, PLAYABLE_CHAPTERS, RARITY_META, RARITY_ORDER, TACTIC_BY_ID, TACTIC_LIST
 } from './data.ts'
 import {
-  FACING_DIRS, GRID_COLS, GRID_ROWS, MAX_HEIGHT_LEVEL, MAX_POISON_STACKS, TAUNT_RADIUS,
+  BARRICADE_DEFAULT_HP, CURSED_ALTAR_HP_COST, FACING_DIRS, GRID_COLS, GRID_ROWS,
+  LAVA_GEYSER_DAMAGE, LAVA_GEYSER_PERIOD, MAX_HEIGHT_LEVEL, MAX_POISON_STACKS,
+  TALL_GRASS_RANGED_COVER, TALL_GRASS_RANGED_CRIT_REDUCTION, TAUNT_RADIUS,
   cellHeightAt, cellHeightLevel, defaultTerrainHeightLevel,
   facingToYaw, facingVector, gridToWorld, terrainDefBonus, terrainElevation, terrainMoveCost,
   terrainWalkable, vectorToFacing
@@ -645,7 +647,12 @@ const TERRAIN_LOOKUP: ReadonlyMap<string, TileTerrain> = new Map<string, TileTer
   ['snow', 'snow'],
   ['darkstone', 'darkstone'],
   ['stairs', 'stairs'],
-  ['void', 'void']
+  ['void', 'void'],
+  ['lava_geyser', 'lava_geyser'],
+  ['ice', 'ice'],
+  ['cursed_altar', 'cursed_altar'],
+  ['tall_grass', 'tall_grass'],
+  ['barricade', 'barricade']
 ])
 
 const BIOME_LOOKUP: ReadonlyMap<string, BiomeId> = new Map<string, BiomeId>([
@@ -814,7 +821,11 @@ export function serializeBattleState(
     row.map(cell => ({
       terrain: cell.terrain,
       heightLevel: cellHeightLevel(cell),
-      ...(cell.shrineUsed ? { shrineUsed: true } : {})
+      ...(cell.shrineUsed ? { shrineUsed: true } : {}),
+      ...(cell.barricadeHp !== undefined ? { barricadeHp: cell.barricadeHp } : {}),
+      ...(cell.barricadeMaxHp !== undefined ? { barricadeMaxHp: cell.barricadeMaxHp } : {}),
+      ...(cell.geyserActive !== undefined ? { geyserActive: cell.geyserActive } : {}),
+      ...(cell.altarUsed !== undefined ? { altarUsed: cell.altarUsed } : {})
     }))
   )
 
@@ -888,10 +899,26 @@ export function validateBattleSnapshot(raw: unknown): BattleSaveSnapshot | null 
         : rawH !== undefined
           ? clamp(Math.round(rawH), 0, MAX_HEIGHT_LEVEL)
           : defaultTerrainHeightLevel(terrain)
+      const barricadeMaxHp = isFiniteNum(rawCell.barricadeMaxHp) && rawCell.barricadeMaxHp > 0
+        ? Math.max(1, Math.round(rawCell.barricadeMaxHp))
+        : (terrain === 'barricade' ? BARRICADE_DEFAULT_HP : undefined)
+      const barricadeHp = isFiniteNum(rawCell.barricadeHp)
+        ? clamp(Math.round(rawCell.barricadeHp), 0, barricadeMaxHp ?? BARRICADE_DEFAULT_HP)
+        : (terrain === 'barricade' ? BARRICADE_DEFAULT_HP : undefined)
+      const geyserActive = typeof rawCell.geyserActive === 'boolean'
+        ? rawCell.geyserActive
+        : (terrain === 'lava_geyser' ? false : undefined)
+      const altarUsed = typeof rawCell.altarUsed === 'boolean'
+        ? rawCell.altarUsed
+        : (terrain === 'cursed_altar' ? false : undefined)
       line.push({
         terrain,
         heightLevel,
-        ...(rawCell.shrineUsed === true ? { shrineUsed: true } : {})
+        ...(rawCell.shrineUsed === true ? { shrineUsed: true } : {}),
+        ...(barricadeHp !== undefined ? { barricadeHp } : {}),
+        ...(barricadeMaxHp !== undefined ? { barricadeMaxHp } : {}),
+        ...(geyserActive !== undefined ? { geyserActive } : {}),
+        ...(altarUsed !== undefined ? { altarUsed } : {})
       })
     }
     cells.push(line)
@@ -1108,7 +1135,11 @@ export function restoreBattleState(state: GameState, snapshot: unknown): boolean
       elevation: terrainElevation(c.terrain, c.heightLevel),
       walkable: terrainWalkable(c.terrain),
       heightLevel: c.heightLevel,
-      ...(c.shrineUsed ? { shrineUsed: true } : {})
+      ...(c.shrineUsed ? { shrineUsed: true } : {}),
+      ...(c.barricadeHp !== undefined ? { barricadeHp: c.barricadeHp } : c.terrain === 'barricade' ? { barricadeHp: BARRICADE_DEFAULT_HP } : {}),
+      ...(c.barricadeMaxHp !== undefined ? { barricadeMaxHp: c.barricadeMaxHp } : c.terrain === 'barricade' ? { barricadeMaxHp: BARRICADE_DEFAULT_HP } : {}),
+      ...(c.geyserActive !== undefined ? { geyserActive: c.geyserActive } : c.terrain === 'lava_geyser' ? { geyserActive: isGeyserEruptingOnTurn(valid.turn) } : {}),
+      ...(c.altarUsed !== undefined ? { altarUsed: c.altarUsed } : c.terrain === 'cursed_altar' ? { altarUsed: false } : {})
     }))
   )
 
@@ -1398,6 +1429,26 @@ export function clearSave(storage: StorageLike | null | undefined): void {
 // TACTICAL GRID BATTLE ENGINE
 // =========================================================================
 
+export function isIntactBarricade(cell: GridCell | undefined): boolean {
+  return Boolean(cell && cell.terrain === 'barricade' && (cell.barricadeHp ?? BARRICADE_DEFAULT_HP) > 0)
+}
+
+export function isGeyserEruptingOnTurn(turn: number): boolean {
+  return turn > 0 && turn % LAVA_GEYSER_PERIOD === 0
+}
+
+export function syncLavaGeysers(battle: BattleState): void {
+  const active = isGeyserEruptingOnTurn(battle.turn)
+  for (let row = 0; row < battle.rows; row++) {
+    for (let col = 0; col < battle.cols; col++) {
+      const cell = battle.cells[row][col]
+      if (cell.terrain === 'lava_geyser') {
+        cell.geyserActive = active
+      }
+    }
+  }
+}
+
 function buildCells(
   grid: readonly (readonly TileTerrain[])[],
   heights?: readonly (readonly number[])[]
@@ -1421,7 +1472,10 @@ function buildCells(
         terrain,
         elevation: terrainElevation(terrain, heightLevel),
         walkable: terrainWalkable(terrain),
-        heightLevel
+        heightLevel,
+        ...(terrain === 'barricade' ? { barricadeHp: BARRICADE_DEFAULT_HP, barricadeMaxHp: BARRICADE_DEFAULT_HP } : {}),
+        ...(terrain === 'lava_geyser' ? { geyserActive: false } : {}),
+        ...(terrain === 'cursed_altar' ? { altarUsed: false } : {})
       })
     }
     cells.push(line)
@@ -2023,6 +2077,7 @@ export function hasLineOfSight(
     const sightH = eyeH * (1 - t) + targetH * t
     const lvl = cellHeightLevel(cell)
     if (cell.terrain === 'pillar') return lvl + 2.5 > sightH
+    if (isIntactBarricade(cell)) return lvl + 1.8 > sightH
     if (lvl > sightH + 0.05) return true
     return false
   }
@@ -2077,22 +2132,23 @@ export function computeCoverBonus(
   if (dist < 2) return 0
   const ac = fromCol - toCol
   const ar = fromRow - toRow
+  const defCell = isCellInBounds(toCol, toRow, battle.cols, battle.rows) ? battle.cells[toRow][toCol] : undefined
   const defLvl = cellHeightAt(battle, toCol, toRow)
   const dirs = [[1, 0], [-1, 0], [0, 1], [0, -1]] as const
-  let best = 0
+  let best = defCell?.terrain === 'tall_grass' ? TALL_GRASS_RANGED_COVER : 0
   for (const [dc, dr] of dirs) {
     const nc = toCol + dc
     const nr = toRow + dr
     if (!isCellInBounds(nc, nr, battle.cols, battle.rows)) continue
     const neighbor = battle.cells[nr][nc]
     if (!neighbor || neighbor.terrain === 'void') continue
-    const isPillar = neighbor.terrain === 'pillar'
-    const isCliffWall = !isPillar && cellHeightLevel(neighbor) >= defLvl + 2
-    if (!isPillar && !isCliffWall) continue
+    const isCoverWall = neighbor.terrain === 'pillar' || isIntactBarricade(neighbor)
+    const isCliffWall = !isCoverWall && cellHeightLevel(neighbor) >= defLvl + 2
+    if (!isCoverWall && !isCliffWall) continue
     const facingAttacker = ac * dc + ar * dr > 0
     if (facingAttacker) {
       best = Math.max(best, 4)
-    } else if (isPillar) {
+    } else if (isCoverWall) {
       best = Math.max(best, 2)
     }
   }
@@ -2106,26 +2162,38 @@ function computeReachableMoveTiles(
 ): GridCoord[] {
   if (!unit.alive || (!ignoreMoved && unit.moved) || unit.stunTurns > 0) return []
   const maxMove = Math.max(1, unit.move - (unit.slowTurns > 0 ? 1 : 0))
+  // State includes whether the unit has already spent its +1 Ice Sheet slick-glide momentum step
   const visited = new Map<string, number>()
-  const queue: { col: number; row: number; dist: number }[] = [{ col: unit.col, row: unit.row, dist: 0 }]
-  visited.set(`${unit.col},${unit.row}`, 0)
+  const queue: { col: number; row: number; dist: number; steps: number; glided: 0 | 1 }[] = [
+    { col: unit.col, row: unit.row, dist: 0, steps: 0, glided: 0 }
+  ]
+  visited.set(`${unit.col},${unit.row},0`, 0)
+  const reached = new Set<string>()
   const result: GridCoord[] = []
   const dirs = [[1, 0], [-1, 0], [0, 1], [0, -1]] as const
 
   while (queue.length > 0) {
     let bestIdx = 0
     for (let i = 1; i < queue.length; i++) {
-      if (queue[i].dist < queue[bestIdx].dist) bestIdx = i
+      if (
+        queue[i].dist < queue[bestIdx].dist ||
+        (queue[i].dist === queue[bestIdx].dist && queue[i].steps < queue[bestIdx].steps)
+      ) {
+        bestIdx = i
+      }
     }
     const cur = queue.splice(bestIdx, 1)[0]
     if (!cur) break
-    const curBest = visited.get(`${cur.col},${cur.row}`)
+    const curBest = visited.get(`${cur.col},${cur.row},${cur.glided}`)
     if (curBest !== undefined && cur.dist > curBest) continue
-    if (cur.dist > 0) {
-      const occ = unitAt(battle, cur.col, cur.row)
-      if (!occ) result.push({ col: cur.col, row: cur.row })
+    if (cur.steps > 0) {
+      const posKey = `${cur.col},${cur.row}`
+      if (!reached.has(posKey)) {
+        reached.add(posKey)
+        const occ = unitAt(battle, cur.col, cur.row)
+        if (!occ) result.push({ col: cur.col, row: cur.row })
+      }
     }
-    if (cur.dist >= maxMove) continue
     const fromCell = battle.cells[cur.row][cur.col]
     for (const [dc, dr] of dirs) {
       const nc = cur.col + dc
@@ -2135,14 +2203,17 @@ function computeReachableMoveTiles(
       if (!canTraverseStep(fromCell, cell, unit.jump)) continue
       const occ = unitAt(battle, nc, nr)
       if (occ && occ.team !== unit.team) continue
-      const stepCost = terrainMoveCost(cell.terrain)
+      const baseCost = terrainMoveCost(cell.terrain)
+      const canGlide = cur.glided === 0 && (cell.terrain === 'ice' || fromCell.terrain === 'ice')
+      const stepCost = canGlide ? Math.max(0, baseCost - 1) : baseCost
+      const nextGlided: 0 | 1 = canGlide ? 1 : cur.glided
       const nextDist = cur.dist + stepCost
       if (nextDist > maxMove) continue
-      const key = `${nc},${nr}`
+      const key = `${nc},${nr},${nextGlided}`
       const prev = visited.get(key)
       if (prev === undefined || nextDist < prev) {
         visited.set(key, nextDist)
-        queue.push({ col: nc, row: nr, dist: nextDist })
+        queue.push({ col: nc, row: nr, dist: nextDist, steps: cur.steps + 1, glided: nextGlided })
       }
     }
   }
@@ -2326,26 +2397,36 @@ export function findGridPath(
   goalRow: number
 ): { col: number; row: number }[] {
   const maxMove = Math.max(1, unit.move - (unit.slowTurns > 0 ? 1 : 0))
-  const startKey = `${unit.col},${unit.row}`
-  const goalKey = `${goalCol},${goalRow}`
-  const parent = new Map<string, { col: number; row: number } | null>()
-  const distMap = new Map<string, number>()
-  const queue: { col: number; row: number; dist: number }[] = [{ col: unit.col, row: unit.row, dist: 0 }]
-  parent.set(startKey, null)
-  distMap.set(startKey, 0)
+  const startStateKey = `${unit.col},${unit.row},0`
+  const parent = new Map<string, { col: number; row: number; prevKey: string } | null>()
+  const distMap = new Map<string, { dist: number; steps: number }>()
+  const queue: { col: number; row: number; dist: number; steps: number; glided: 0 | 1 }[] = [
+    { col: unit.col, row: unit.row, dist: 0, steps: 0, glided: 0 }
+  ]
+  parent.set(startStateKey, null)
+  distMap.set(startStateKey, { dist: 0, steps: 0 })
   const dirs = [[1, 0], [-1, 0], [0, 1], [0, -1]] as const
+  let goalStateKey: string | null = null
 
   while (queue.length > 0) {
     let bestIdx = 0
     for (let i = 1; i < queue.length; i++) {
-      if (queue[i].dist < queue[bestIdx].dist) bestIdx = i
+      if (
+        queue[i].dist < queue[bestIdx].dist ||
+        (queue[i].dist === queue[bestIdx].dist && queue[i].steps < queue[bestIdx].steps)
+      ) {
+        bestIdx = i
+      }
     }
     const cur = queue.splice(bestIdx, 1)[0]
     if (!cur) break
-    const curBest = distMap.get(`${cur.col},${cur.row}`)
-    if (curBest !== undefined && cur.dist > curBest) continue
-    if (cur.col === goalCol && cur.row === goalRow) break
-    if (cur.dist >= maxMove) continue
+    const curKey = `${cur.col},${cur.row},${cur.glided}`
+    const curBest = distMap.get(curKey)
+    if (curBest && (cur.dist > curBest.dist || (cur.dist === curBest.dist && cur.steps > curBest.steps))) continue
+    if (cur.col === goalCol && cur.row === goalRow) {
+      goalStateKey = curKey
+      break
+    }
     const fromCell = battle.cells[cur.row][cur.col]
     for (const [dc, dr] of dirs) {
       const nc = cur.col + dc
@@ -2355,26 +2436,36 @@ export function findGridPath(
       if (!canTraverseStep(fromCell, cell, unit.jump)) continue
       const occ = unitAt(battle, nc, nr)
       if (occ && occ.team !== unit.team) continue
-      const stepCost = terrainMoveCost(cell.terrain)
+      const baseCost = terrainMoveCost(cell.terrain)
+      const canGlide = cur.glided === 0 && (cell.terrain === 'ice' || fromCell.terrain === 'ice')
+      const stepCost = canGlide ? Math.max(0, baseCost - 1) : baseCost
+      const nextGlided: 0 | 1 = canGlide ? 1 : cur.glided
       const nextDist = cur.dist + stepCost
+      const nextSteps = cur.steps + 1
       if (nextDist > maxMove) continue
-      const key = `${nc},${nr}`
+      const key = `${nc},${nr},${nextGlided}`
       const prev = distMap.get(key)
-      if (prev === undefined || nextDist < prev) {
-        parent.set(key, { col: cur.col, row: cur.row })
-        distMap.set(key, nextDist)
-        queue.push({ col: nc, row: nr, dist: nextDist })
+      if (!prev || nextDist < prev.dist || (nextDist === prev.dist && nextSteps < prev.steps)) {
+        parent.set(key, { col: cur.col, row: cur.row, prevKey: curKey })
+        distMap.set(key, { dist: nextDist, steps: nextSteps })
+        queue.push({ col: nc, row: nr, dist: nextDist, steps: nextSteps, glided: nextGlided })
       }
     }
   }
 
-  if (!parent.has(goalKey)) return []
+  if (!goalStateKey) return []
   const path: { col: number; row: number }[] = []
-  let curr: { col: number; row: number } | null = { col: goalCol, row: goalRow }
-  while (curr) {
-    if (curr.col === unit.col && curr.row === unit.row) break
-    path.push(curr)
-    curr = parent.get(`${curr.col},${curr.row}`) ?? null
+  let currKey: string | null = goalStateKey
+  let currCol = goalCol
+  let currRow = goalRow
+  while (currKey) {
+    if (currCol === unit.col && currRow === unit.row) break
+    path.push({ col: currCol, row: currRow })
+    const p: { col: number; row: number; prevKey: string } | null = parent.get(currKey) ?? null
+    if (!p) break
+    currCol = p.col
+    currRow = p.row
+    currKey = p.prevKey
   }
   path.reverse()
   return path
@@ -2433,49 +2524,7 @@ export function rotateActiveUnitFacing(state: GameState, dir?: FacingDir): boole
 }
 
 function computeReachableTilesForThreat(battle: BattleState, unit: BattleUnit): { col: number; row: number }[] {
-  if (!unit.alive || unit.stunTurns > 0) return []
-  const maxMove = Math.max(1, unit.move - (unit.slowTurns > 0 ? 1 : 0))
-  const visited = new Map<string, number>()
-  const queue: { col: number; row: number; dist: number }[] = [{ col: unit.col, row: unit.row, dist: 0 }]
-  visited.set(`${unit.col},${unit.row}`, 0)
-  const result: { col: number; row: number }[] = []
-  const dirs = [[1, 0], [-1, 0], [0, 1], [0, -1]] as const
-
-  while (queue.length > 0) {
-    let bestIdx = 0
-    for (let i = 1; i < queue.length; i++) {
-      if (queue[i].dist < queue[bestIdx].dist) bestIdx = i
-    }
-    const cur = queue.splice(bestIdx, 1)[0]
-    if (!cur) break
-    const curBest = visited.get(`${cur.col},${cur.row}`)
-    if (curBest !== undefined && cur.dist > curBest) continue
-    if (cur.dist > 0) {
-      const occ = unitAt(battle, cur.col, cur.row)
-      if (!occ) result.push({ col: cur.col, row: cur.row })
-    }
-    if (cur.dist >= maxMove) continue
-    const fromCell = battle.cells[cur.row][cur.col]
-    for (const [dc, dr] of dirs) {
-      const nc = cur.col + dc
-      const nr = cur.row + dr
-      if (!isCellInBounds(nc, nr, battle.cols, battle.rows)) continue
-      const cell = battle.cells[nr][nc]
-      if (!canTraverseStep(fromCell, cell, unit.jump)) continue
-      const occ = unitAt(battle, nc, nr)
-      if (occ && occ.team !== unit.team) continue
-      const stepCost = terrainMoveCost(cell.terrain)
-      const nextDist = cur.dist + stepCost
-      if (nextDist > maxMove) continue
-      const key = `${nc},${nr}`
-      const prev = visited.get(key)
-      if (prev === undefined || nextDist < prev) {
-        visited.set(key, nextDist)
-        queue.push({ col: nc, row: nr, dist: nextDist })
-      }
-    }
-  }
-  return result
+  return computeReachableMoveTiles(battle, unit, true)
 }
 
 function opponentThreatStatus(
@@ -2753,7 +2802,7 @@ export function computeTargetTiles(
   const targets: { col: number; row: number }[] = []
 
   if (skillIndex === null || skillIndex === -1) {
-    // Basic attack targets all enemies within effective elevation-adjusted range & direct LoS
+    // Basic attack targets all enemies & intact destructible barricades within elevation-adjusted range & direct LoS
     for (const other of battle.units) {
       if (!other.alive || other.team === unit.team) continue
       const effRange = effectiveAttackRange(battle, unit.col, unit.row, other.col, other.row, unit.range)
@@ -2762,6 +2811,16 @@ export function computeTargetTiles(
         hasLineOfSight(battle, unit.col, unit.row, other.col, other.row, false)
       ) {
         targets.push({ col: other.col, row: other.row })
+      }
+    }
+    for (let row = 0; row < battle.rows; row++) {
+      for (let col = 0; col < battle.cols; col++) {
+        if (!isIntactBarricade(battle.cells[row][col])) continue
+        const d = manhattan(unit.col, unit.row, col, row)
+        const effRange = effectiveAttackRange(battle, unit.col, unit.row, col, row, unit.range)
+        if (d >= 1 && d <= effRange && hasLineOfSight(battle, unit.col, unit.row, col, row, false)) {
+          targets.push({ col, row })
+        }
       }
     }
     return targets
@@ -2814,6 +2873,13 @@ export function computeTacticTargetTiles(
   }
   if (spec.target === 'enemy') {
     for (const u of battle.units) if (u.alive && u.team === 'enemy') out.push({ col: u.col, row: u.row })
+    if (spec.damage > 0) {
+      for (let row = 0; row < battle.rows; row++) {
+        for (let col = 0; col < battle.cols; col++) {
+          if (isIntactBarricade(battle.cells[row][col])) out.push({ col, row })
+        }
+      }
+    }
     return out
   }
   for (let row = 0; row < battle.rows; row++) {
@@ -2880,6 +2946,8 @@ function pickBestApproachTile(
     let score = elevDiff * 480
     if (elevDiff > 0) score += 600
     if (cell.terrain === 'shrine') score += 250
+    if (cell.terrain === 'tall_grass') score += 45
+    if (cell.terrain === 'lava_geyser' && cell.geyserActive) score -= 500
     score += terrainDefBonus(cell.terrain) * 60
     if (offensive && targetUnit) {
       const arc = computeAttackArc(m.col, m.row, targetCol, targetRow, targetUnit.facing)
@@ -2931,6 +2999,18 @@ export function computeMoveAttackTiles(
     const approach = pickBestApproachTile(battle, unit, moveTiles, u.col, u.row, range, indirect)
     if (approach) {
       out.push({ col: u.col, row: u.row, fromCol: approach.col, fromRow: approach.row })
+    }
+  }
+  if (targetKind === 'enemy' || targetKind === 'tile') {
+    for (let row = 0; row < battle.rows; row++) {
+      for (let col = 0; col < battle.cols; col++) {
+        if (!isIntactBarricade(battle.cells[row][col])) continue
+        if (directTargets.some(t => t.col === col && t.row === row)) continue
+        const approach = pickBestApproachTile(battle, unit, moveTiles, col, row, range, indirect)
+        if (approach) {
+          out.push({ col, row, fromCol: approach.col, fromRow: approach.row })
+        }
+      }
     }
   }
   return out
@@ -3009,7 +3089,11 @@ function previewDamageMath(
   }
   const effDef = Math.max(0, defender.def * (1 - clamp(ignoreArmor, 0, 1)) + terrainDef + coverBonus)
   const baseDmg = Math.max(4, Math.round(dmg - effDef * 0.72))
-  const critChance = canCrit && attacker ? clamp(attacker.crit + arcCritBonus, 0, 0.95) : 0
+  const rangedTallGrass = attacker !== null &&
+    manhattan(fromCol, fromRow, defender.col, defender.row) >= 2 &&
+    battle.cells[defender.row][defender.col].terrain === 'tall_grass'
+  const grassCritPenalty = rangedTallGrass ? TALL_GRASS_RANGED_CRIT_REDUCTION : 0
+  const critChance = canCrit && attacker ? clamp(attacker.crit + arcCritBonus - grassCritPenalty, 0, 0.95) : 0
   const critRaw = critChance > 0 ? Math.round(baseDmg * 1.55) : baseDmg
   const normalAfterShield = Math.max(0, baseDmg - defender.shield)
   const critAfterShield = Math.max(0, critRaw - defender.shield)
@@ -3048,7 +3132,61 @@ export function computeCombatForecast(state: GameState, col: number, row: number
     if (!spec) return null
     const affected = getPatternCells(col, row, spec.pattern, battle.cols, battle.rows)
     const primary = unitAt(battle, col, row) ?? affected.map(c => unitAt(battle, c.col, c.row)).find((u): u is BattleUnit => Boolean(u))
-    if (!primary) return null
+    if (!primary) {
+      const barCell = battle.cells[row][col]
+      if (spec.damage > 0 && isIntactBarricade(barCell)) {
+        const hpBefore = barCell.barricadeHp ?? BARRICADE_DEFAULT_HP
+        const maxHp = barCell.barricadeMaxHp ?? BARRICADE_DEFAULT_HP
+        const barDmg = Math.max(4, Math.round(spec.damage))
+        const hpAfter = Math.max(0, hpBefore - barDmg)
+        return {
+          mode: 'tactic',
+          actionName: spec.name,
+          skillIndex: null,
+          attackerUid: active?.uid ?? null,
+          attackerName: active?.name ?? 'Tactic Card',
+          attackerHeroId: active?.heroId,
+          attackerStars: active?.stars ?? 1,
+          targetUid: null,
+          targetName: 'Timber Barricade',
+          targetTeam: 'enemy',
+          targetCol: col,
+          targetRow: row,
+          approachCol: active?.col ?? col,
+          approachRow: active?.row ?? row,
+          requiresMove: false,
+          path: [],
+          normalDmg: barDmg,
+          critDmg: barDmg,
+          critChance: 0,
+          healAmount: 0,
+          shieldAmount: 0,
+          selfShield: 0,
+          status: spec.status,
+          highGround: false,
+          elevationDiff: 0,
+          coverBonus: 0,
+          terrainDefBonus: 0,
+          empowered: false,
+          attackArc: 'front',
+          isOffensive: true,
+          friendlyFire: false,
+          friendlyFireCount: 0,
+          emptyTileTarget: false,
+          ignoreArmor: 1,
+          aoeTargets: 1,
+          targetHpBefore: hpBefore,
+          targetMaxHp: maxHp,
+          targetShieldBefore: 0,
+          targetHpAfterNormal: hpAfter,
+          targetHpAfterCrit: hpAfter,
+          lethalNormal: hpAfter <= 0,
+          lethalCrit: hpAfter <= 0,
+          alternatives: []
+        }
+      }
+      return null
+    }
     const aoeTargets = affected.filter(c => {
       const u = unitAt(battle, c.col, c.row)
       if (!u) return false
@@ -3156,8 +3294,62 @@ export function computeCombatForecast(state: GameState, col: number, row: number
     ?? affectedUnits[0]
     ?? null
 
-  // If hovering an empty ground space with an armed skill and no units in the pattern:
+  // If targeting an intact Barricade or hovering an empty ground space:
   if (!primary) {
+    const targetCell = battle.cells[row][col]
+    if (isOffensive && isIntactBarricade(targetCell)) {
+      const hpBefore = targetCell.barricadeHp ?? BARRICADE_DEFAULT_HP
+      const maxHp = targetCell.barricadeMaxHp ?? BARRICADE_DEFAULT_HP
+      const raw = armedSkill ? active.atk * armedSkill.powerMul + armedSkill.flatBonus : active.atk
+      const empowered = active.empowerTurns > 0
+      const barDmg = Math.max(4, Math.round(raw * (empowered ? 1.35 : 1)))
+      const hpAfter = Math.max(0, hpBefore - barDmg)
+      return {
+        mode: armedSkill ? 'skill' : 'strike',
+        actionName: armedSkill ? armedSkill.name : 'Strike',
+        skillIndex: armedIdx,
+        attackerUid: active.uid,
+        attackerName: active.name,
+        attackerHeroId: active.heroId,
+        attackerStars: active.stars,
+        targetUid: null,
+        targetName: 'Timber Barricade',
+        targetTeam: 'enemy',
+        targetCol: col,
+        targetRow: row,
+        approachCol,
+        approachRow,
+        requiresMove,
+        path,
+        normalDmg: barDmg,
+        critDmg: barDmg,
+        critChance: 0,
+        healAmount: 0,
+        shieldAmount: 0,
+        selfShield: armedSkill && armedSkill.shieldAmount > 0 && armedSkill.pattern !== 'aura' ? armedSkill.shieldAmount : 0,
+        status: armedSkill?.status,
+        highGround: false,
+        elevationDiff: 0,
+        coverBonus: 0,
+        terrainDefBonus: 0,
+        empowered,
+        attackArc: 'front',
+        isOffensive: true,
+        friendlyFire: false,
+        friendlyFireCount: 0,
+        emptyTileTarget: false,
+        ignoreArmor: 1,
+        aoeTargets: 1,
+        targetHpBefore: hpBefore,
+        targetMaxHp: maxHp,
+        targetShieldBefore: 0,
+        targetHpAfterNormal: hpAfter,
+        targetHpAfterCrit: hpAfter,
+        lethalNormal: hpAfter <= 0,
+        lethalCrit: hpAfter <= 0,
+        alternatives: []
+      }
+    }
     if (!armedSkill) return null
     return {
       mode: 'skill',
@@ -3459,7 +3651,11 @@ function applyDamage(
   let finalDmg = Math.max(4, Math.round(dmg - effDef * 0.72))
 
   let isCrit = false
-  if (canCrit && attacker && randFloat(state.campaign) < clamp(attacker.crit + arcCritBonus, 0, 0.95)) {
+  const rangedTallGrass = attacker !== null &&
+    manhattan(attacker.col, attacker.row, defender.col, defender.row) >= 2 &&
+    battle.cells[defender.row][defender.col].terrain === 'tall_grass'
+  const grassCritPenalty = rangedTallGrass ? TALL_GRASS_RANGED_CRIT_REDUCTION : 0
+  if (canCrit && attacker && randFloat(state.campaign) < clamp(attacker.crit + arcCritBonus - grassCritPenalty, 0, 0.95)) {
     isCrit = true
     finalDmg = Math.round(finalDmg * 1.55)
   }
@@ -3809,6 +4005,86 @@ function tacticCasterUid(battle: BattleState): string | null {
   return active && active.alive && active.team === 'ally' ? active.uid : null
 }
 
+function damageBarricade(
+  state: GameState,
+  attacker: BattleUnit | null,
+  col: number,
+  row: number,
+  rawDamage: number
+): number {
+  const battle = state.battle
+  if (!battle || !isCellInBounds(col, row, battle.cols, battle.rows)) return 0
+  const cell = battle.cells[row][col]
+  if (!isIntactBarricade(cell)) return 0
+
+  const empoweredMul = attacker && attacker.empowerTurns > 0 ? 1.35 : 1
+  const dmg = Math.max(4, Math.round(rawDamage * empoweredMul))
+  const hpBefore = cell.barricadeHp ?? BARRICADE_DEFAULT_HP
+  const hpAfter = Math.max(0, hpBefore - dmg)
+  cell.barricadeHp = hpAfter
+
+  const [tx, ty, tz] = gridToWorld(col, row, cell.elevation, battle.cols, battle.rows)
+  addFloat(battle, tx, ty + 0.15, tz, `-${dmg}`, '#f5c678')
+  state.vfx.push({ kind: 'burst', style: 'slash', at: [tx, ty + 0.55, tz], radius: 0.85 })
+  state.sounds.push({ kind: 'hit', pitch: 0.78 })
+  battle.shake = Math.max(battle.shake, 0.2)
+
+  if (hpAfter <= 0) {
+    const hLvl = cellHeightLevel(cell)
+    cell.terrain = 'stone'
+    cell.walkable = true
+    cell.elevation = terrainElevation('stone', hLvl)
+    cell.barricadeHp = 0
+    cell.barricadeMaxHp = undefined
+    addFloat(battle, tx, ty + 0.58, tz, 'SHATTERED!', '#ffd980')
+    state.vfx.push({ kind: 'burst', style: 'gold', at: [tx, ty + 0.5, tz], radius: 1.35 })
+    state.sounds.push({ kind: 'ko', pitch: 1.15 })
+    battle.shake = Math.max(battle.shake, 0.34)
+  }
+  return dmg
+}
+
+function executeBasicAttackOnBarricade(state: GameState, attacker: BattleUnit, col: number, row: number): void {
+  const battle = state.battle
+  if (!battle || !isCellInBounds(col, row, battle.cols, battle.rows)) return
+  const cell = battle.cells[row][col]
+  if (!isIntactBarricade(cell)) return
+
+  battle.moveUndo = null
+  const [tx, ty, tz] = gridToWorld(col, row, cell.elevation, battle.cols, battle.rows)
+  faceToward(attacker, tx, tz)
+  attacker.animState = 'attack'
+  attacker.animTimer = 0.36
+  attacker.acted = true
+
+  const dx = tx - attacker.x
+  const dz = tz - attacker.z
+  const dist = Math.hypot(dx, dz) || 1
+  if (attacker.range <= 1) {
+    attacker.lungeX = (dx / dist) * 0.44
+    attacker.lungeZ = (dz / dist) * 0.44
+    state.sounds.push({ kind: 'slash' })
+    state.vfx.push({ kind: 'burst', style: 'slash', at: [tx, ty + 0.65, tz], uid: attacker.uid })
+  } else {
+    const style = attacker.heroId === 'archer' || attacker.enemyId === 'bone_archer'
+      ? 'arrow'
+      : attacker.heroId === 'cryomancer' ? 'frost'
+      : attacker.heroId === 'cleric' ? 'holy'
+      : attacker.enemyId === 'eclipse_archon' || attacker.enemyId === 'bog_shaman' ? 'shadow'
+      : 'arcane'
+    state.sounds.push({ kind: style === 'arrow' ? 'arrow' : 'magic' })
+    state.vfx.push({
+      kind: 'projectile',
+      style,
+      from: [attacker.x, attacker.y + 0.95, attacker.z],
+      to: [tx, ty + 0.65, tz],
+      uid: attacker.uid
+    })
+  }
+
+  damageBarricade(state, attacker, col, row, attacker.atk)
+}
+
 function executeBasicAttack(state: GameState, attacker: BattleUnit, target: BattleUnit): void {
   const battle = state.battle
   if (!battle) return
@@ -3923,7 +4199,14 @@ function executeHeroSkill(
     }
     for (const c of affected) {
       const target = unitAt(battle, c.col, c.row)
-      if (!target) continue
+      if (!target) {
+        if (skill.powerMul > 0 && isIntactBarricade(battle.cells[c.row][c.col])) {
+          const raw = caster.atk * skill.powerMul + skill.flatBonus
+          damageBarricade(state, caster, c.col, c.row, raw)
+          hitAny = true
+        }
+        continue
+      }
       // Don't self-hit from splash around an adjacent tile unless caster directly targeted own space
       if (target.uid === caster.uid && !(col === caster.col && row === caster.row)) continue
       if (isDawnsJudgmentSafe && target.team === caster.team) {
@@ -4004,7 +4287,12 @@ function executeTacticCard(state: GameState, tacticUid: string, col: number, row
     })
     for (const c of cells) {
       const target = unitAt(battle, c.col, c.row)
-      if (!target) continue
+      if (!target) {
+        if (spec.damage > 0 && isIntactBarricade(battle.cells[c.row][c.col])) {
+          damageBarricade(state, null, c.col, c.row, spec.damage)
+        }
+        continue
+      }
       if (target.team === 'enemy') {
         if (spec.damage > 0) {
           applyDamage(state, null, target, spec.damage, 0.6, false)
@@ -4156,12 +4444,14 @@ export function selectTile(state: GameState, col: number, row: number): boolean 
     refreshHighlights(battle, state.campaign)
   }
 
-  // 3. Click on a highlighted target enemy -> Basic Attack or Move+Attack by active hero!
+  // 3. Click on a highlighted target enemy or intact barricade -> Basic Attack or Move+Attack by active hero!
   const clickedUnit = unitAt(battle, col, row)
-  if (active && clickedUnit && clickedUnit.team === 'enemy') {
+  const clickedBarricade = !clickedUnit && isIntactBarricade(battle.cells[row][col])
+  if (active && ((clickedUnit && clickedUnit.team === 'enemy') || clickedBarricade)) {
     const inRange = battle.targetTiles.some(t => t.col === col && t.row === row)
     if (inRange) {
-      executeBasicAttack(state, active, clickedUnit)
+      if (clickedUnit) executeBasicAttack(state, active, clickedUnit)
+      else executeBasicAttackOnBarricade(state, active, col, row)
       refreshHighlights(battle, state.campaign)
       return true
     }
@@ -4241,9 +4531,15 @@ export function canUndoMove(battle: BattleState | null | undefined): boolean {
   if (active.uid !== undo.uid || !active.moved || active.acted) return false
   const occ = unitAt(battle, undo.col, undo.row)
   if (occ && occ.uid !== active.uid) return false
+  const standingCell = battle.cells[active.row]?.[active.col]
   if (
     (active.col !== undo.col || active.row !== undo.row) &&
-    battle.cells[active.row]?.[active.col]?.terrain === 'shrine'
+    standingCell &&
+    (
+      standingCell.terrain === 'shrine' ||
+      (standingCell.terrain === 'lava_geyser' && standingCell.geyserActive) ||
+      (standingCell.terrain === 'cursed_altar' && standingCell.altarUsed)
+    )
   ) {
     return false
   }
@@ -4291,6 +4587,69 @@ function isBattleEnded(battle: BattleState): boolean {
   return battle.phase === 'victory' || battle.phase === 'defeat'
 }
 
+function applyLavaGeyserHazard(state: GameState, unit: BattleUnit, cell: GridCell): void {
+  const battle = state.battle
+  if (!battle || !unit.alive || cell.terrain !== 'lava_geyser' || !cell.geyserActive) return
+  if (unit.team === 'ally' && battle.phase === 'player') {
+    battle.moveUndo = null
+  }
+  const [tx, ty, tz] = gridToWorld(cell.col, cell.row, cell.elevation, battle.cols, battle.rows)
+  state.vfx.push({ kind: 'burst', style: 'fire', at: [tx, ty + 0.4, tz], radius: 0.95 })
+  addFloat(battle, unit.x, unit.y + 0.45, unit.z, 'GEYSER!', '#ff7a38')
+  applyDamage(state, null, unit, LAVA_GEYSER_DAMAGE, 0.5, false)
+  if (unit.alive) {
+    applyStatus(battle, unit, 'burn')
+  } else {
+    unit.path = []
+    battle.pendingAction = null
+    checkBattleOutcome(state)
+  }
+}
+
+function triggerStepOnHazard(state: GameState, unit: BattleUnit, cell: GridCell): void {
+  const battle = state.battle
+  if (!battle || !unit.alive) return
+  if (unit.team === 'ally' && battle.phase === 'player' && cell.terrain === 'shrine') {
+    battle.moveUndo = null
+  }
+  if (cell.terrain === 'lava_geyser' && cell.geyserActive) {
+    applyLavaGeyserHazard(state, unit, cell)
+    return
+  }
+  if (cell.terrain === 'cursed_altar' && !cell.altarUsed) {
+    cell.altarUsed = true
+    if (unit.team === 'ally' && battle.phase === 'player') {
+      battle.moveUndo = null
+    }
+    const hpDrain = Math.min(CURSED_ALTAR_HP_COST, Math.max(0, unit.hp - 1))
+    if (hpDrain > 0) {
+      unit.hp -= hpDrain
+      addFloat(battle, unit.x, unit.y, unit.z, `-${hpDrain} HP`, '#d45eff')
+    }
+    unit.empowerTurns += 2
+    if (unit.team === 'ally') {
+      battle.ap = Math.min(battle.maxAp, battle.ap + 1)
+    }
+    const [tx, ty, tz] = gridToWorld(cell.col, cell.row, cell.elevation, battle.cols, battle.rows)
+    state.vfx.push({ kind: 'burst', style: 'shadow', at: [tx, ty + 0.65, tz], radius: 1.15 })
+    state.sounds.push({ kind: 'magic', pitch: 0.78 })
+    addFloat(
+      battle,
+      unit.x,
+      unit.y + 0.55,
+      unit.z,
+      unit.team === 'ally' ? 'DARK PACT! +EMPOWER +1 AP' : 'DARK PACT! +EMPOWER',
+      '#e28cff'
+    )
+    battle.shake = Math.max(battle.shake, 0.22)
+    return
+  }
+  if (cell.terrain === 'ice') {
+    const [tx, ty, tz] = gridToWorld(cell.col, cell.row, cell.elevation, battle.cols, battle.rows)
+    state.vfx.push({ kind: 'burst', style: 'frost', at: [tx, ty + 0.16, tz], radius: 0.45 })
+  }
+}
+
 function advanceToNextUnitTurn(state: GameState, initial = false): void {
   const battle = state.battle
   if (!battle || isBattleEnded(battle)) return
@@ -4320,6 +4679,7 @@ function advanceToNextUnitTurn(state: GameState, initial = false): void {
     }
 
     battle.turn += 1
+    syncLavaGeysers(battle)
     battle.activeUnitUid = next.uid
     battle.selectedUnitUid = next.uid
     battle.armedSkillIndex = null
@@ -4330,7 +4690,7 @@ function advanceToNextUnitTurn(state: GameState, initial = false): void {
     next.moved = false
     next.acted = false
 
-    // Start-of-unit-turn ticks (cooldowns, burn, poison, slow, haste, empower, taunt, shrine heal)
+    // Start-of-unit-turn ticks (cooldowns, burn, poison, active lava geyser, slow, haste, empower, taunt, shrine heal)
     for (let i = 0; i < 3; i++) {
       if (next.cooldowns[i] > 0) next.cooldowns[i] -= 1
     }
@@ -4351,11 +4711,18 @@ function advanceToNextUnitTurn(state: GameState, initial = false): void {
         continue
       }
     }
+    const startCell = battle.cells[next.row][next.col]
+    if (startCell.terrain === 'lava_geyser' && startCell.geyserActive) {
+      applyLavaGeyserHazard(state, next, startCell)
+      if (!next.alive) {
+        continue
+      }
+    }
     if (next.slowTurns > 0) next.slowTurns -= 1
     if (next.hasteTurns > 0) next.hasteTurns -= 1
     if (next.empowerTurns > 0) next.empowerTurns -= 1
     if (next.tauntTurns > 0) next.tauntTurns -= 1
-    if (next.team === 'ally' && battle.cells[next.row][next.col].terrain === 'shrine' && next.hp < next.maxHp) {
+    if (next.team === 'ally' && startCell.terrain === 'shrine' && next.hp < next.maxHp) {
       applyHealAndShield(state, next, 14, 0)
     }
 
@@ -4511,7 +4878,10 @@ function executeEnemyUnitTurn(state: GameState, enemy: BattleUnit): void {
       const tileEffRange = effectiveAttackRange(battle, tile.col, tile.row, target.col, target.row, enemy.range)
       const tileLoS = hasLineOfSight(battle, tile.col, tile.row, target.col, target.row, false)
       const canHit = d <= tileEffRange && tileLoS
-      let score = -d * 10 + elev * 5 + terrainDefBonus(battle.cells[tile.row][tile.col].terrain) * 3
+      const tileCell = battle.cells[tile.row][tile.col]
+      let score = -d * 10 + elev * 5 + terrainDefBonus(tileCell.terrain) * 3
+      if (tileCell.terrain === 'tall_grass') score += 4
+      if (tileCell.terrain === 'lava_geyser' && tileCell.geyserActive) score -= 28
       if (canHit) {
         score += 14
         const arc = computeAttackArc(tile.col, tile.row, target.col, target.row, target.facing)
@@ -4621,8 +4991,9 @@ export function stepGame(state: GameState, dt: number): void {
         u.z = tz
         u.path.shift()
         u.moveProgress = 0
-        if (u.team === 'ally' && battle.phase === 'player' && toCell.terrain === 'shrine') {
-          battle.moveUndo = null
+        triggerStepOnHazard(state, u, toCell)
+        if (!u.alive || isBattleEnded(battle)) {
+          continue
         }
         if (u.path.length === 0) {
           u.animState = 'idle'
@@ -4635,13 +5006,13 @@ export function stepGame(state: GameState, dt: number): void {
                 battle.armedSkillIndex = null
               } else {
                 const target = unitAt(battle, pending.col, pending.row)
-                if (
-                  target &&
-                  target.team === 'enemy' &&
-                  manhattan(u.col, u.row, target.col, target.row) <= effectiveAttackRange(battle, u.col, u.row, target.col, target.row, u.range) &&
-                  hasLineOfSight(battle, u.col, u.row, target.col, target.row, false)
-                ) {
+                const effRange = effectiveAttackRange(battle, u.col, u.row, pending.col, pending.row, u.range)
+                const distToPending = manhattan(u.col, u.row, pending.col, pending.row)
+                const clearLoS = hasLineOfSight(battle, u.col, u.row, pending.col, pending.row, false)
+                if (target && target.team === 'enemy' && distToPending <= effRange && clearLoS) {
                   executeBasicAttack(state, u, target)
+                } else if (!target && isIntactBarricade(battle.cells[pending.row]?.[pending.col]) && distToPending <= effRange && clearLoS) {
+                  executeBasicAttackOnBarricade(state, u, pending.col, pending.row)
                 }
               }
             }

@@ -356,7 +356,12 @@ export const BIOME_STYLES: Record<BiomeId, BiomeStyle> = {
       snow: [color('e0edf7'), color('d0e1f0')],
       darkstone: [color('5b6278'), color('50576b')],
       stairs: [color('c2b7a3'), color('b0a591')],
-      void: [color('1c202e'), color('161a26')]
+      void: [color('1c202e'), color('161a26')],
+      lava_geyser: [color('4d383f'), color('402e34')],
+      ice: [color('9ce8ff'), color('86daf7')],
+      cursed_altar: [color('4f3869'), color('422e59')],
+      tall_grass: [color('4a944a'), color('3f8541')],
+      barricade: [color('a7afc4'), color('98a0b5')]
     },
     treeColor: C_FOREST_MID,
     treeTiers: [C_FOREST, C_FOREST_MID, C_FOREST_LIGHT],
@@ -387,7 +392,12 @@ export const BIOME_STYLES: Record<BiomeId, BiomeStyle> = {
       snow: [color('e0edf7'), color('d0e1f0')],
       darkstone: [color('535f73'), color('485366')],
       stairs: [color('b5ad9c'), color('a39b8a')],
-      void: [color('18232e'), color('131c26')]
+      void: [color('18232e'), color('131c26')],
+      lava_geyser: [color('4a383f'), color('3e2e35')],
+      ice: [color('96e3fa'), color('80d4f0')],
+      cursed_altar: [color('4a3663'), color('3e2c54')],
+      tall_grass: [color('3e8554'), color('357549')],
+      barricade: [color('9ca7b8'), color('8d98aa')]
     },
     treeColor: C_AUTUMN_MID,
     treeTiers: [C_AUTUMN_DEEP, C_AUTUMN_MID, C_AUTUMN_LIGHT],
@@ -418,7 +428,12 @@ export const BIOME_STYLES: Record<BiomeId, BiomeStyle> = {
       snow: [color('a8bed1'), color('98afc2')],
       darkstone: [color('555c70'), color('4b5163')],
       stairs: [color('8d94a8'), color('7b8296')],
-      void: [color('131624'), color('0f121e')]
+      void: [color('131624'), color('0f121e')],
+      lava_geyser: [color('4a323d'), color('3d2833')],
+      ice: [color('7bcce8'), color('68bad6')],
+      cursed_altar: [color('472f66'), color('3b2657')],
+      tall_grass: [color('39595c'), color('304d4f')],
+      barricade: [color('828a9e'), color('747c91')]
     },
     treeColor: color('3b5c5e'),
     treeTiers: [color('2e4a52'), color('3c6166'), color('4f7a7a')],
@@ -449,7 +464,12 @@ export const BIOME_STYLES: Record<BiomeId, BiomeStyle> = {
       snow: [color('e3eff7'), color('d4e4f0')],
       darkstone: [color('62738a'), color('56667c')],
       stairs: [color('a3bdd4'), color('91acc4')],
-      void: [color('1c2838'), color('16202e')]
+      void: [color('1c2838'), color('16202e')],
+      lava_geyser: [color('543a45'), color('47303a')],
+      ice: [color('9ce8ff'), color('82dbfa')],
+      cursed_altar: [color('564178'), color('493669')],
+      tall_grass: [color('5a9188'), color('4c8077')],
+      barricade: [color('8d9fb5'), color('7f91a8')]
     },
     treeColor: color('3d787a'),
     treeTiers: [color('306369'), color('478287'), color('d8eaf5')],
@@ -480,7 +500,12 @@ export const BIOME_STYLES: Record<BiomeId, BiomeStyle> = {
       snow: [color('9c8f99'), color('8a7d87')],
       darkstone: [color('4d424f'), color('423845')],
       stairs: [color('856f6c'), color('735f5c')],
-      void: [color('1a1118'), color('140d13')]
+      void: [color('1a1118'), color('140d13')],
+      lava_geyser: [color('452b30'), color('382226')],
+      ice: [color('78bdd6'), color('64a9c2')],
+      cursed_altar: [color('4a2954'), color('3d2147')],
+      tall_grass: [color('4e5942'), color('414a37')],
+      barricade: [color('736773'), color('665b66')]
     },
     treeColor: color('664642'),
     treeTiers: [color('573d3d'), color('754b42'), color('9e5a44')],
@@ -511,7 +536,12 @@ export const BIOME_STYLES: Record<BiomeId, BiomeStyle> = {
       snow: [color('9482ad'), color('83729c')],
       darkstone: [color('473a5e'), color('3d3152')],
       stairs: [color('8f7ab0'), color('7c689c')],
-      void: [color('140e24'), color('100b1d')]
+      void: [color('140e24'), color('100b1d')],
+      lava_geyser: [color('45293b'), color('382030')],
+      ice: [color('85cef0'), color('72bde0')],
+      cursed_altar: [color('472a6e'), color('3c225e')],
+      tall_grass: [color('435c69'), color('394f5c')],
+      barricade: [color('72648a'), color('64577a')]
     },
     treeColor: color('543c70'),
     treeTiers: [color('3e2d59'), color('563e78'), color('76589e')],
@@ -791,6 +821,30 @@ export function buildStaticBoardBatches(biome: BiomeId, cells: GridCell[][]): {
         gables.add([wx, wy + 1.32, wz - 0.54], [1.08, 0.28, 0.34], 0, C_STONE_LIGHT)
         crystals.add([wx, wy + 0.86, wz - 0.54], [0.20, 0.32, 0.20], 0, style.propGlow, 0.96)
         brazierPositions.push([wx, wy + 1.05, wz - 0.50])
+      } else if (cell.terrain === 'cursed_altar') {
+        addTerracedColumn(tileBases, copings, wx, wy, wz, hLvl, C_OBSIDIAN, style.cliff, C_VIOLET)
+        tileCaps.add([wx, wy - 0.05, wz], [TILE_SIZE * 0.91, 0.14, TILE_SIZE * 0.91], 0, tint)
+        rings.add([wx, wy + 0.04, wz], [0.58, 0.08, 0.58], 0, C_OBSIDIAN)
+        bevelProps.add([wx, wy + 0.16, wz - 0.56], [0.92, 0.24, 0.34], 0, C_OBSIDIAN)
+        cyls.add([wx - 0.34, wy + 0.42, wz - 0.56], [0.11, 0.56, 0.11], 0, C_STONE_DARK)
+        cyls.add([wx + 0.34, wy + 0.42, wz - 0.56], [0.11, 0.56, 0.11], 0, C_STONE_DARK)
+        brazierPositions.push([wx, wy + 0.95, wz - 0.52])
+      } else if (cell.terrain === 'lava_geyser') {
+        addTerracedColumn(tileBases, copings, wx, wy, wz, hLvl, C_OBSIDIAN, style.cliff, style.baseStone)
+        tileCaps.add([wx, wy - 0.06, wz], [TILE_SIZE * 0.92, 0.15, TILE_SIZE * 0.92], 0, tint)
+        // Volcanic basalt vent crater rim (dynamic magma core & erupting plumes render per-frame in scene.ts)
+        rings.add([wx, wy + 0.05, wz], [0.56, 0.14, 0.56], 0, C_OBSIDIAN)
+        pebbles.add([wx - 0.46, wy + 0.04, wz + 0.34], [0.22, 0.12, 0.18], h * 3, style.cliff)
+        pebbles.add([wx + 0.44, wy + 0.04, wz - 0.36], [0.20, 0.11, 0.22], h * 5, C_OBSIDIAN)
+      } else if (cell.terrain === 'ice') {
+        addTerracedColumn(tileBases, copings, wx, wy, wz, hLvl, C_ICE_DEEP, style.cliff, C_ICE)
+        tileCaps.add([wx, wy - 0.06, wz], [TILE_SIZE * 0.93, 0.15, TILE_SIZE * 0.93], 0, tint, 0.24)
+        copings.add([wx, wy + 0.02, wz], [TILE_SIZE * 0.78, 0.03, TILE_SIZE * 0.78], 0, C_ICE, 0.36)
+        crystals.add([wx + 0.52, wy + 0.07, wz - 0.48], [0.14, 0.16, 0.14], h * 2.2, C_CYAN, 0.55)
+      } else if (cell.terrain === 'barricade') {
+        // Static base matches flagstone cleanly so destroying a barricade leaves walkable stone immediately!
+        addTerracedColumn(tileBases, copings, wx, wy, wz, hLvl, style.baseStone, style.cliff, C_STONE_LIGHT)
+        tileCaps.add([wx, wy - 0.06, wz], [TILE_SIZE * 0.92, 0.15, TILE_SIZE * 0.92], 0, style.tiles.stone[checker])
       } else if (isWater || isLava) {
         const bedH = Math.max(0.32, wy - 0.06 - (-1.42))
         tileBases.add([wx, -1.42 + bedH * 0.5, wz], [TILE_SIZE * 0.95, bedH, TILE_SIZE * 0.95], 0, style.cliff)
@@ -804,7 +858,7 @@ export function buildStaticBoardBatches(biome: BiomeId, cells: GridCell[][]): {
           )
         }
       } else {
-        const isSoftSoil = cell.terrain === 'grass' || cell.terrain === 'snow' || cell.terrain === 'hill'
+        const isSoftSoil = cell.terrain === 'grass' || cell.terrain === 'snow' || cell.terrain === 'hill' || cell.terrain === 'tall_grass'
         const underCol = isSoftSoil ? style.tileEarth : style.baseStone
         const copingCol = cell.terrain === 'darkstone' ? style.baseStone : C_STONE_LIGHT
         addTerracedColumn(tileBases, copings, wx, wy, wz, hLvl, underCol, style.cliff, copingCol)

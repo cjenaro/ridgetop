@@ -630,6 +630,11 @@ const N: TileTerrain = 'snow'
 const D: TileTerrain = 'darkstone'
 const T: TileTerrain = 'stairs'
 const V: TileTerrain = 'void'
+const M: TileTerrain = 'lava_geyser'
+const I: TileTerrain = 'ice'
+const A: TileTerrain = 'cursed_altar'
+const F: TileTerrain = 'tall_grass'
+const K: TileTerrain = 'barricade'
 
 // Compact placeholder grid for upcoming ("SOON...") expansion nodes
 const SOON_GRID: readonly (readonly TileTerrain[])[] = [
@@ -668,9 +673,9 @@ export const CHAPTERS: readonly ChapterSpec[] = [
     rewardHeroId: 'knight',
     grid: [
       [V, G, H, H, T, G, G],
-      [G, S, T, G, P, S, H],
+      [G, S, T, G, K, S, H],
       [G, S, R, G, G, H, G],
-      [G, H, G, P, G, S, G],
+      [G, H, F, P, F, S, G],
       [V, G, G, W, W, G, V]
     ],
     heights: [
@@ -712,11 +717,11 @@ export const CHAPTERS: readonly ChapterSpec[] = [
     rewardEquipId: 'copper_signet',
     rewardHeroId: 'archer',
     grid: [
-      [V, G, W, G, H, H],
+      [V, G, W, F, H, H],
       [G, S, B, S, T, G],
-      [G, H, W, G, P, G],
+      [G, H, W, G, K, G],
       [G, S, B, S, T, G],
-      [V, G, W, G, H, V]
+      [V, G, W, F, H, V]
     ],
     heights: [
       [0, 0, 0, 0, 2, 2],
@@ -760,8 +765,8 @@ export const CHAPTERS: readonly ChapterSpec[] = [
     grid: [
       [V, G, W, W, G, H, H, V],
       [G, H, B, B, S, T, G, G],
-      [G, T, W, W, G, P, G, G],
-      [G, R, W, W, G, G, S, H],
+      [G, T, W, W, F, K, G, G],
+      [G, R, W, W, G, F, S, H],
       [G, T, B, B, S, T, H, G],
       [V, G, W, W, G, G, G, V]
     ],
@@ -807,9 +812,9 @@ export const CHAPTERS: readonly ChapterSpec[] = [
     rewardHeroId: 'mage',
     grid: [
       [V, H, H, P, T, H, H, V],
-      [G, T, G, G, G, G, T, G],
-      [G, S, R, P, G, P, S, G],
-      [G, T, G, G, G, G, T, G],
+      [G, T, F, F, G, G, T, G],
+      [G, S, R, K, G, P, S, G],
+      [G, T, F, F, G, G, T, G],
       [V, H, H, P, T, H, H, V]
     ],
     heights: [
@@ -854,11 +859,11 @@ export const CHAPTERS: readonly ChapterSpec[] = [
     rewardHeroId: 'cleric',
     grid: [
       [V, H, T, R, T, H, V],
-      [G, G, P, G, P, G, G],
+      [G, F, P, G, P, F, G],
       [G, S, T, H, T, S, G],
       [G, R, G, H, G, R, S],
       [G, S, T, H, T, S, G],
-      [G, G, P, G, P, G, G],
+      [G, F, P, G, P, F, G],
       [V, H, T, W, T, H, V]
     ],
     heights: [
@@ -908,9 +913,9 @@ export const CHAPTERS: readonly ChapterSpec[] = [
     grid: [
       [V, D, S, T, D, S, H, V],
       [S, S, P, S, S, P, S, H],
-      [S, T, S, R, S, S, T, S],
+      [S, T, S, R, A, S, T, S],
       [S, S, S, S, S, S, S, S],
-      [S, S, P, S, S, P, S, H],
+      [S, S, K, S, S, P, S, H],
       [V, D, S, T, D, S, H, V]
     ],
     heights: [
@@ -956,7 +961,7 @@ export const CHAPTERS: readonly ChapterSpec[] = [
     grid: [
       [V, D, H, D, H, H, V],
       [S, T, P, T, P, T, S],
-      [S, R, S, S, S, H, S],
+      [S, R, S, A, S, H, S],
       [S, S, S, P, S, S, S],
       [S, T, P, T, P, T, S],
       [V, D, H, D, H, H, V]
@@ -1005,7 +1010,7 @@ export const CHAPTERS: readonly ChapterSpec[] = [
       [V, S, D, D, S, V],
       [S, P, T, T, P, S],
       [S, T, R, H, S, S],
-      [S, T, H, S, S, S],
+      [S, T, H, A, S, S],
       [S, P, T, T, P, S],
       [V, S, D, D, S, V]
     ],
@@ -1051,8 +1056,8 @@ export const CHAPTERS: readonly ChapterSpec[] = [
     grid: [
       [V, V, H, H, N, T, H, H, V],
       [N, S, T, P, N, H, T, S, H],
-      [N, S, R, S, T, S, S, T, N],
-      [W, W, N, N, P, N, S, S, H],
+      [N, S, R, I, T, S, I, T, N],
+      [W, W, N, I, P, I, S, S, H],
       [N, S, T, N, N, H, T, S, N],
       [V, N, N, V, W, W, N, V, V]
     ],
@@ -1097,13 +1102,13 @@ export const CHAPTERS: readonly ChapterSpec[] = [
     rewardEquipId: 'eagle_charm',
     rewardHeroId: null,
     grid: [
-      [V, N, H, N, N, H, N, V],
+      [V, N, H, I, I, H, N, V],
       [N, S, W, B, B, W, S, N],
       [N, W, W, T, T, W, W, N],
       [N, B, T, R, H, T, B, H],
       [N, W, W, T, T, W, W, N],
       [N, S, W, B, B, W, S, N],
-      [V, N, H, N, N, H, N, V]
+      [V, N, H, I, I, H, N, V]
     ],
     heights: [
       [0, 0, 1, 1, 1, 1, 1, 0],
@@ -1149,9 +1154,9 @@ export const CHAPTERS: readonly ChapterSpec[] = [
     rewardHeroId: null,
     grid: [
       [V, H, N, V, V, N, H, H, N, V],
-      [N, S, S, B, B, S, P, T, S, H],
-      [N, R, N, V, V, N, T, H, S, N],
-      [N, N, N, V, V, N, H, T, S, N],
+      [N, S, S, B, B, S, K, T, S, H],
+      [N, R, I, V, V, I, T, H, S, N],
+      [N, N, I, V, V, I, H, T, S, N],
       [N, S, S, B, B, S, P, T, S, H],
       [V, H, N, V, V, N, H, H, N, V]
     ],
@@ -1202,9 +1207,9 @@ export const CHAPTERS: readonly ChapterSpec[] = [
     grid: [
       [V, D, L, L, D, H, H, D, V],
       [D, S, B, B, S, T, D, H, H],
-      [D, R, L, P, D, D, H, T, D],
-      [D, S, B, B, S, T, D, D, D],
-      [D, D, L, L, D, P, T, H, H],
+      [D, R, L, P, M, D, H, T, D],
+      [D, S, B, B, S, T, M, D, D],
+      [D, D, L, L, M, P, T, H, H],
       [V, H, D, V, V, D, D, D, V]
     ],
     heights: [
@@ -1250,11 +1255,11 @@ export const CHAPTERS: readonly ChapterSpec[] = [
     rewardHeroId: null,
     grid: [
       [V, D, L, B, L, D, V],
-      [D, S, T, S, T, H, D],
+      [D, S, T, M, T, H, D],
       [L, T, P, T, P, T, L],
       [B, S, T, R, T, S, B],
       [L, T, P, T, P, T, L],
-      [D, S, T, S, T, H, D],
+      [D, S, T, M, T, H, D],
       [V, D, L, B, L, D, V]
     ],
     heights: [
@@ -1302,11 +1307,11 @@ export const CHAPTERS: readonly ChapterSpec[] = [
     rewardHeroId: 'champion',
     grid: [
       [V, V, S, H, H, H, S, V, V, V],
-      [V, S, P, S, T, S, P, S, H, V],
-      [D, R, S, T, H, S, T, H, S, D],
+      [V, S, P, A, T, S, P, S, H, V],
+      [D, R, S, T, H, M, T, H, S, D],
       [D, S, S, S, T, S, T, H, H, D],
-      [D, S, S, T, H, S, T, H, S, D],
-      [V, S, P, S, T, S, P, S, H, V],
+      [D, S, S, T, H, M, T, H, S, D],
+      [V, S, P, A, T, S, P, S, H, V],
       [V, V, S, L, L, L, S, V, V, V]
     ],
     heights: [
