@@ -5,7 +5,7 @@ import type { HudPainter } from 'ridgetop'
 import { boxNode, column, createCanvasUi, createUiTheme, overlay, row, spacerNode } from 'ridgetop/ui'
 import type { CanvasWidgetDrawState, LayoutNode, LayoutRect } from 'ridgetop/ui'
 import { isTestingPaused } from 'ridgetop/testing'
-import { bakePortraitCanvases } from './art.ts'
+import { createPortraitStore } from './art.ts'
 import { createCrownshardAudio } from './audio.ts'
 import {
   CHAPTERS, CHAPTER_BY_ID, DIFFICULTY_META, ENEMY_SPECS, EQUIPMENT_BY_ID, HERO_SPECS,
@@ -24,7 +24,7 @@ import {
   toggleSquadMember, unequipItem
 } from './simulation.ts'
 import type {
-  ChapterSpec, CombatForecast, EnemyArchetypeId, GameState, OwnedEquipCard, OwnedHeroCard,
+  BattleUnit, ChapterSpec, CombatForecast, EnemyArchetypeId, GameState, OwnedEquipCard, OwnedHeroCard,
   PackId, PackRevealItem, Rarity
 } from './types.ts'
 import {
@@ -130,10 +130,34 @@ async function start() {
   const scene = createCrownshardScene(renderer)
   const audio = createCrownshardAudio()
   const perf = createPerfMonitor(60)
-  const portraits = bakePortraitCanvases()
+  const portraitStore = createPortraitStore()
+  const portraits = portraitStore.base
 
   const existingSave = loadSave(page.storage)
   let state: GameState = createInitialState(1337, existingSave)
+
+  function heroCardPortrait(hero: OwnedHeroCard | undefined): HTMLCanvasElement | undefined {
+    if (!hero) return undefined
+    return portraitStore.getHero(hero.heroId, {
+      stars: hero.stars,
+      weaponId: getEquipmentByUid(state.campaign, hero.weaponUid)?.equipId,
+      armorId: getEquipmentByUid(state.campaign, hero.armorUid)?.equipId,
+      relicId: getEquipmentByUid(state.campaign, hero.relicUid)?.equipId
+    })
+  }
+
+  function battleUnitPortrait(unit: BattleUnit | undefined): HTMLCanvasElement | undefined {
+    if (!unit) return undefined
+    if (unit.team === 'ally' && unit.heroId) {
+      return portraitStore.getHero(unit.heroId, {
+        stars: unit.stars,
+        weaponId: unit.weaponId,
+        armorId: unit.armorId,
+        relicId: unit.relicId
+      })
+    }
+    return portraits[unit.enemyId ?? unit.heroId ?? 'knight']
+  }
   let screen: Screen = 'title'
   let campTab: CampTab = 'squad'
   let pendingChapter = CHAPTER_BY_ID[state.campaign.selectedStageId]?.index ?? getNextRecommendedStage(state.campaign).index
@@ -173,7 +197,7 @@ async function start() {
       title: `Ascended ${'★'.repeat(hero.stars)}`,
       subtitle: `${spec.name}, ${spec.title} — Tier ${hero.stars}`,
       accent: TIER_COLOR[hero.stars],
-      portrait: portraits[hero.heroId],
+      portrait: heroCardPortrait(hero),
       stars: hero.stars,
       skill: unlocked
         ? { tier: unlocked.tier, name: unlocked.name, desc: unlocked.desc, vfx: unlocked.vfx, skillId: unlocked.id }
@@ -340,6 +364,8 @@ async function start() {
       showToast(`Best Fit equipped ${names} on ${heroName}.`)
       const targetHero = getHeroByUid(state.campaign, heroUid)
       if (targetHero) {
+        const lastSpec = EQUIPMENT_BY_ID[equipped[equipped.length - 1].equipId]
+        scene.triggerCampEquipFlourish(targetHero.uid, lastSpec?.slot, lastSpec?.accentHex)
         let bestRare: OwnedEquipCard | null = null
         let bestRank = -1
         for (const it of equipped) {
@@ -362,6 +388,13 @@ async function start() {
     uiDirty = true
   }
 
+  function setCampTab(next: CampTab) {
+    campTab = next
+    if (screen === 'camp') {
+      scene.setCampFraming(next === 'armory' ? 'armory' : 'camp')
+    }
+  }
+
   function setScreen(next: Screen) {
     screen = next
     lockedForecastCell = null
@@ -369,7 +402,7 @@ async function start() {
     if (next !== 'camp') { packAnim = null; fanfare = null }
     if (next === 'victory' || next === 'defeat') resultAnimTime = 0
     if (next === 'title' || next === 'camp' || next === 'story' || next === 'world') {
-      scene.setCampFraming(next)
+      scene.setCampFraming(next === 'camp' && campTab === 'armory' ? 'armory' : next)
       scene.setForecast(null)
     }
     uiDirty = true
@@ -1659,8 +1692,9 @@ async function start() {
     const tokenW = mobilePortrait ? 42 : mobileLandscape ? 38 : 50
     const tokenH = mobilePortrait ? 46 : mobileLandscape ? 42 : 60
     const timelineNodes: LayoutNode[] = battle.turnOrder.slice(0, maxSlots).map((entry, idx) => {
+      const unit = getUnitByUid(battle, entry.uid)
       const pKey = entry.heroId ?? entry.enemyId ?? 'knight'
-      const icon = portraits[pKey]
+      const icon = unit ? battleUnitPortrait(unit) : portraits[pKey]
       return boxNode({
         id: `tl-${idx}`,
         style: { width: tokenW, height: tokenH },
@@ -1827,7 +1861,7 @@ async function start() {
       statusImportant = true
     }
 
-    const activePortrait = inspected ? portraits[inspected.heroId ?? inspected.enemyId ?? 'knight'] : undefined
+    const activePortrait = battleUnitPortrait(inspected ?? undefined)
     const roleLabel = inspected
       ? (inspected.heroId ? HERO_SPECS[inspected.heroId].title : inspected.isBoss ? 'Boss' : 'Foe')
       : ''
@@ -2204,10 +2238,16 @@ async function start() {
       const isLocked = lockedForecastCell !== null
       const fcCompact = isPhone
       const fcW = mobilePortrait ? w - 12 : mobileLandscape ? 316 : 332
-      const attPortrait = fc.attackerHeroId ? portraits[fc.attackerHeroId] : undefined
+      const attUnit = fc.attackerUid ? getUnitByUid(battle, fc.attackerUid) : undefined
+      const tgtUnit = fc.targetUid ? getUnitByUid(battle, fc.targetUid) : undefined
+      const attPortrait = attUnit
+        ? battleUnitPortrait(attUnit)
+        : (fc.attackerHeroId ? portraits[fc.attackerHeroId] : undefined)
       const tgtPortrait = fc.targetTeam === 'none'
         ? undefined
-        : portraits[fc.targetHeroId ?? fc.targetEnemyId ?? 'goblin']
+        : tgtUnit
+          ? battleUnitPortrait(tgtUnit)
+          : portraits[fc.targetHeroId ?? fc.targetEnemyId ?? 'goblin']
       const mainH = fcCompact ? 96 : 104
 
       const altRows: LayoutNode[] = []
@@ -2510,7 +2550,7 @@ async function start() {
         const copies = getMergeCandidates(camp, hero.uid).length
         const need = hero.stars === 1 ? MERGE_COPIES_REQUIRED[1] : hero.stars === 2 ? MERGE_COPIES_REQUIRED[2] : 0
         const readyMerge = hero.stars < 3 && copies >= need
-        const portrait = portraits[hero.heroId]
+        const portrait = heroCardPortrait(hero)
         return boxNode({
           id: `camp-hero-${idx}`,
           style: mobile ? { grow: 1, height: 64 } : { height: 48 },
@@ -2570,7 +2610,7 @@ async function start() {
         const aSpec = armor ? EQUIPMENT_BY_ID[armor.equipId] : undefined
         const rSpec = relic ? EQUIPMENT_BY_ID[relic.equipId] : undefined
         const salvageVal = RARITY_META[spec.rarity].salvage * (selHero.stars === 3 ? 4 : selHero.stars === 2 ? 2 : 1)
-        const heroPortrait = portraits[selHero.heroId]
+        const heroPortrait = heroCardPortrait(selHero)
 
         const mergeLabel = selHero.stars >= 3
           ? 'Max Tier'
@@ -2625,6 +2665,7 @@ async function start() {
                 audio.unlock()
                 if (mergeHero(state, selHero.uid)) {
                   saveNow()
+                  scene.triggerCampEquipFlourish(selHero.uid, undefined, TIER_COLOR[selHero.stars])
                   startAscensionFanfare(selHero)
                 }
               },
@@ -2709,7 +2750,7 @@ async function start() {
               label: wSpec ? wSpec.name : 'Empty Weapon',
               onPress: () => {
                 if (wSpec) { unequipItem(state, selHero.uid, 'weapon'); saveNow(); uiDirty = true }
-                else { campTab = 'armory'; armorySlotFilter = 'weapon'; uiDirty = true }
+                else { setCampTab('armory'); armorySlotFilter = 'weapon'; uiDirty = true }
               },
               draw: (ctx: CanvasRenderingContext2D, rect: LayoutRect, st: CanvasWidgetDrawState) => drawEquipCard(ctx, rect, { slot: 'weapon', spec: wSpec }, st)
             }
@@ -2721,7 +2762,7 @@ async function start() {
               label: aSpec ? aSpec.name : 'Empty Armor',
               onPress: () => {
                 if (aSpec) { unequipItem(state, selHero.uid, 'armor'); saveNow(); uiDirty = true }
-                else { campTab = 'armory'; armorySlotFilter = 'armor'; uiDirty = true }
+                else { setCampTab('armory'); armorySlotFilter = 'armor'; uiDirty = true }
               },
               draw: (ctx: CanvasRenderingContext2D, rect: LayoutRect, st: CanvasWidgetDrawState) => drawEquipCard(ctx, rect, { slot: 'armor', spec: aSpec }, st)
             }
@@ -2733,7 +2774,7 @@ async function start() {
               label: rSpec ? rSpec.name : 'Empty Relic',
               onPress: () => {
                 if (rSpec) { unequipItem(state, selHero.uid, 'relic'); saveNow(); uiDirty = true }
-                else { campTab = 'armory'; armorySlotFilter = 'relic'; uiDirty = true }
+                else { setCampTab('armory'); armorySlotFilter = 'relic'; uiDirty = true }
               },
               draw: (ctx: CanvasRenderingContext2D, rect: LayoutRect, st: CanvasWidgetDrawState) => drawEquipCard(ctx, rect, { slot: 'relic', spec: rSpec }, st)
             }
@@ -2904,6 +2945,7 @@ async function start() {
                     const wasOnSel = findEquipOwner(camp, item.uid)?.uid === selHero.uid
                     if (equipItem(state, selHero.uid, item.uid)) {
                       saveNow()
+                      scene.triggerCampEquipFlourish(selHero.uid, item.slot, spec?.accentHex)
                       showToast(`Equipped ${spec?.name ?? 'item'} on ${HERO_SPECS[selHero.heroId].name}.`)
                       if (!wasOnSel) startEquipFanfare(selHero, item.equipId)
                     }
@@ -2953,6 +2995,21 @@ async function start() {
 
       const armBestCount = selHero ? findBestFitUpgrades(camp, selHero.uid).length : 0
       const armBestLabel = armBestCount > 0 ? `Best Fit (+${armBestCount})` : 'Best Fit'
+      const armPortrait = heroCardPortrait(selHero)
+      const armHeroPortraitNode = boxNode({
+        id: 'arm-sel-portrait',
+        style: { width: 34, height: 34 },
+        widget: {
+          type: 'panel',
+          draw: (ctx: CanvasRenderingContext2D, rect: LayoutRect) => drawPortraitTile(
+            ctx, rect.x, rect.y, Math.min(rect.width, rect.height), armPortrait, {
+              ring: selHero ? RARITY_META[HERO_SPECS[selHero.heroId].rarity].hex : COLOR.accent,
+              ringW: 2,
+              r: 8
+            }
+          )
+        }
+      })
       const armHeroStrip = row({
         id: 'arm-hero-strip',
         style: { grow: 1.2, height: 34, padding: 3, gap: 4 },
@@ -3006,11 +3063,11 @@ async function start() {
       bodyNode = column({ id: 'camp-armory-body', style: { grow: 1, gap: 8 } }, [
         ...(mobile
           ? [
-              row({ id: 'arm-top-m1', style: { height: 34, gap: 6, align: 'center' } }, [armHeroStrip, armBestBtn]),
+              row({ id: 'arm-top-m1', style: { height: 34, gap: 6, align: 'center' } }, [armHeroPortraitNode, armHeroStrip, armBestBtn]),
               armFilterStrip
             ]
           : [
-              row({ id: 'arm-top-controls', style: { height: 34, gap: 8, align: 'center' } }, [armHeroStrip, armFilterStrip, armBestBtn])
+              row({ id: 'arm-top-controls', style: { height: 34, gap: 8, align: 'center' } }, [armHeroPortraitNode, armHeroStrip, armFilterStrip, armBestBtn])
             ]),
         ...itemRows,
         spacerNode(1),
@@ -3248,7 +3305,7 @@ async function start() {
                 type: 'button',
                 label: 'Squad',
                 selected: campTab === 'squad',
-                onPress: () => { campTab = 'squad'; mobileCampCollapsed = false; uiDirty = true },
+                onPress: () => { setCampTab('squad'); mobileCampCollapsed = false; uiDirty = true },
                 draw: (ctx: CanvasRenderingContext2D, rect: LayoutRect, st: CanvasWidgetDrawState) => drawTab(ctx, rect, 'Squad', st, {
                   icon: 'users',
                   count: mobile ? undefined : `${camp.heroes.length}`
@@ -3261,7 +3318,7 @@ async function start() {
                 type: 'button',
                 label: 'Armory',
                 selected: campTab === 'armory',
-                onPress: () => { campTab = 'armory'; mobileCampCollapsed = false; uiDirty = true },
+                onPress: () => { setCampTab('armory'); mobileCampCollapsed = false; uiDirty = true },
                 draw: (ctx: CanvasRenderingContext2D, rect: LayoutRect, st: CanvasWidgetDrawState) => drawTab(ctx, rect, 'Armory', st, {
                   icon: 'bag',
                   count: mobile ? undefined : `${camp.equipment.length}`
@@ -3274,7 +3331,7 @@ async function start() {
                 type: 'button',
                 label: 'Card Decks',
                 selected: campTab === 'decks',
-                onPress: () => { campTab = 'decks'; mobileCampCollapsed = false; uiDirty = true },
+                onPress: () => { setCampTab('decks'); mobileCampCollapsed = false; uiDirty = true },
                 draw: (ctx: CanvasRenderingContext2D, rect: LayoutRect, st: CanvasWidgetDrawState) => drawTab(ctx, rect, mobile ? 'Decks' : 'Card Decks', st, {
                   icon: 'cards',
                   count: mobile ? undefined : `${camp.gold}g`

@@ -24,6 +24,32 @@ const OBSIDIAN: Color = [0.16, 0.14, 0.22, 1]
 const CRIMSON: Color = [0.78, 0.16, 0.22, 1]
 const VIOLET_RUNE: Color = [0.72, 0.34, 0.98, 1]
 const FUR_CREAM: Color = [0.91, 0.87, 0.80, 1]
+const BRIGANDINE_TAN: Color = [0.58, 0.39, 0.25, 1]
+const BRIGANDINE_DARK: Color = [0.38, 0.24, 0.16, 1]
+const BRASS_WARM: Color = [0.84, 0.64, 0.30, 1]
+const WATCHMAN_STEEL: Color = [0.58, 0.65, 0.72, 1]
+const WATCHMAN_DARK: Color = [0.36, 0.42, 0.50, 1]
+const WINDRUNNER_EMERALD: Color = [0.22, 0.62, 0.44, 1]
+const WINDRUNNER_DEEP: Color = [0.13, 0.40, 0.30, 1]
+const RUNED_STEEL: Color = [0.56, 0.68, 0.84, 1]
+const RUNED_AZURE: Color = [0.22, 0.42, 0.78, 1]
+const RUNED_GLOW: Color = [0.42, 0.78, 1.0, 1]
+const FROST_PLATE: Color = [0.72, 0.86, 0.96, 1]
+const FROST_ICE: Color = [0.58, 0.90, 1.0, 1]
+const FROST_CRYSTAL: Color = [0.82, 0.96, 1.0, 1]
+const FROST_FUR: Color = [0.93, 0.96, 0.99, 1]
+const DAWN_GOLD: Color = [1.0, 0.84, 0.34, 1]
+const DAWN_GLOW: Color = [1.0, 0.94, 0.56, 1]
+const COPPER_BURNISHED: Color = [0.82, 0.50, 0.31, 1]
+const COPPER_DARK: Color = [0.54, 0.31, 0.18, 1]
+const COPPER_AMBER: Color = [1.0, 0.76, 0.34, 1]
+const GALE_JADE: Color = [0.34, 0.85, 0.62, 1]
+const GALE_MINT: Color = [0.70, 1.0, 0.86, 1]
+const GALE_SILVER: Color = [0.82, 0.90, 0.94, 1]
+const BLOOD_RUBY: Color = [0.96, 0.22, 0.36, 1]
+const BLOOD_IRON: Color = [0.26, 0.20, 0.26, 1]
+const SKYHAWK_VIOLET: Color = [0.58, 0.32, 0.84, 1]
+const SKYHAWK_GLOW: Color = [0.82, 0.58, 1.0, 1]
 
 type Side = -1 | 1
 
@@ -2175,6 +2201,704 @@ export function registerCrownshardArmor(builder: CharacterBuilder): void {
       { name: 'mantle_eclipse_yoke', mesh: m.mantleYoke, color: gold },
       { name: 'mantle_eclipse_core', mesh: m.emblemCore, position: [0, -0.300, -0.180], rotation: [Math.PI * 0.5, 0, 0], color: palette.metalDark },
       { name: 'mantle_eclipse_ring', mesh: m.emblemRing, color: palette.glow, unlit: 0.90 }
+    ]
+  })
+
+  // -------------------------------------------------------------------------
+  // BESPOKE EQUIPMENT ARMORS & RELICS (distinct visuals for all 11 Armor/Relic items)
+  // -------------------------------------------------------------------------
+  registerEquipmentArmorAndRelics(builder)
+}
+
+interface EquipmentArmorMeshes {
+  // Scout Brigandine
+  readonly brigandineBody: Mesh
+  readonly brigandineLapel: Mesh
+  readonly brigandineBandolier: Mesh
+  readonly brigandineStud: Mesh
+  readonly brigandinePadL: Mesh
+  readonly brigandinePadR: Mesh
+  // Watchman Plate
+  readonly watchmanCuirass: Mesh
+  readonly watchmanFauld: Mesh
+  readonly watchmanPlaque: Mesh
+  readonly watchmanGorget: Mesh
+  readonly watchmanPadUpL: Mesh
+  readonly watchmanPadUpR: Mesh
+  readonly watchmanPadLoL: Mesh
+  readonly watchmanPadLoR: Mesh
+  // Windrunner Cloak
+  readonly windrunnerCape: Mesh
+  readonly windrunnerTailL: Mesh
+  readonly windrunnerTailR: Mesh
+  readonly windrunnerHem: Mesh
+  readonly windrunnerCowl: Mesh
+  readonly windrunnerPadL: Mesh
+  readonly windrunnerPadR: Mesh
+  // Runed Chainmail
+  readonly runedMailBody: Mesh
+  readonly runedSurcoat: Mesh
+  readonly runedSigil: Mesh
+  readonly runedPadL: Mesh
+  readonly runedPadR: Mesh
+  // Frostguard Plate
+  readonly frostguardCuirass: Mesh
+  readonly frostguardRibL: Mesh
+  readonly frostguardRibR: Mesh
+  readonly frostguardCore: Mesh
+  readonly frostguardPadL: Mesh
+  readonly frostguardPadR: Mesh
+  readonly frostguardSpike: Mesh
+  readonly frostguardMantle: Mesh
+  // Aegis of Dawn
+  readonly aegisCuirass: Mesh
+  readonly aegisSunburst: Mesh
+  readonly aegisCore: Mesh
+  readonly aegisPadL: Mesh
+  readonly aegisPadR: Mesh
+  readonly aegisWingHiL: Mesh
+  readonly aegisWingHiR: Mesh
+  readonly aegisWingLoL: Mesh
+  readonly aegisWingLoR: Mesh
+  readonly aegisCollarBase: Mesh
+  readonly aegisCollarCrown: Mesh
+  // Relics: Copper Signet, Gale Striders, Blood Amulet, Skyhawk Crest, Heart of Solis
+  readonly copperCuffL: Mesh
+  readonly copperCuffR: Mesh
+  readonly copperRing: Mesh
+  readonly copperSeal: Mesh
+  readonly galeBootL: Mesh
+  readonly galeBootR: Mesh
+  readonly galeWingBigL: Mesh
+  readonly galeWingBigR: Mesh
+  readonly galeWingSmallL: Mesh
+  readonly galeWingSmallR: Mesh
+  readonly galeCrestL: Mesh
+  readonly galeCrestR: Mesh
+  readonly bloodChain: Mesh
+  readonly bloodRuby: Mesh
+  readonly bloodFang: Mesh
+  readonly skyhawkBand: Mesh
+  readonly skyhawkWingL: Mesh
+  readonly skyhawkWingR: Mesh
+  readonly skyhawkEye: Mesh
+  readonly skyhawkBracer: Mesh
+  readonly skyhawkFin: Mesh
+  readonly solisGorget: Mesh
+  readonly solisHeart: Mesh
+  readonly solisRay: Mesh
+  readonly solisBelt: Mesh
+  readonly solisBeltBuckle: Mesh
+}
+
+let cachedEquipArmor: EquipmentArmorMeshes | undefined
+
+function getEquipmentArmorMeshes(): EquipmentArmorMeshes {
+  if (cachedEquipArmor) return cachedEquipArmor
+
+  // 1. Scout Brigandine (warm quilted leather doublet + riveted shoulder pads)
+  const rawBrig = sculptLoft([
+    { y: -0.205, rx: 0.228, rz: 0.156, frontFlat: 0.10, backFlat: 0.08 },
+    { y: -0.118, rx: 0.204, rz: 0.146, frontFlat: 0.10, backFlat: 0.08 },
+    { y: 0.015, rx: 0.248, rz: 0.172, zOffset: 0.010, frontFlat: 0.08, backFlat: 0.08 },
+    { y: 0.150, rx: 0.284, rz: 0.178, zOffset: 0.008, frontFlat: 0.08, backFlat: 0.08 },
+    { y: 0.214, rx: 0.244, rz: 0.154 },
+    { y: 0.242, rx: 0.158, rz: 0.126 }
+  ], { sides: 8 })
+  const brigandineBody = bakeVertexAO(
+    bakeZoneColors(rawBrig, (_cx, cy) => {
+      const band = Math.floor((cy + 0.3) * 14) % 2
+      return band === 0 ? WHITE : [0.84, 0.80, 0.76, 1]
+    }),
+    { strength: 0.16, verticalGradient: 0.10 }
+  )
+  const brigandineLapel = sculptLoft([
+    { y: 0.195, rx: 0.194, rz: 0.156, zOffset: 0.010, frontFlat: 0.06 },
+    { y: 0.248, rx: 0.174, rz: 0.140, zOffset: 0.004 }
+  ], { sides: 8, aoStrength: 0.14, aoGradient: 0.06 })
+  const brigandineBandolier = sculptLoft([
+    { y: -0.155, rx: 0.036, rz: 0.020, xOffset: -0.118, zOffset: 0.158 },
+    { y: 0.020, rx: 0.040, rz: 0.022, xOffset: 0.004, zOffset: 0.180 },
+    { y: 0.190, rx: 0.038, rz: 0.020, xOffset: 0.118, zOffset: 0.164 }
+  ], { sides: 6, aoStrength: 0.12, aoGradient: 0.06 })
+  const brigandineStud = createHexDiscMesh(0.022, 0.016, 0.005)
+  const brigandinePadL = createShoulderShell(-1, -0.062, 0.078, 0.196, 0.398, 0.114, 0.03)
+  const brigandinePadR = createShoulderShell(1, -0.062, 0.078, 0.196, 0.398, 0.114, 0.03)
+
+  // 2. Watchman Plate (heavy riveted steel breastplate + double-lame iron pauldrons)
+  const rawWatch = sculptLoft([
+    { y: -0.205, rx: 0.232, rz: 0.158, frontFlat: 0.08, backFlat: 0.08 },
+    { y: -0.118, rx: 0.206, rz: 0.148, frontFlat: 0.08, backFlat: 0.08 },
+    { y: 0.020, rx: 0.260, rz: 0.178, zOffset: 0.014, frontFlat: 0.04, backFlat: 0.08 },
+    { y: 0.152, rx: 0.292, rz: 0.186, zOffset: 0.012, frontFlat: 0.04, backFlat: 0.08 },
+    { y: 0.214, rx: 0.252, rz: 0.160, zOffset: 0.002 },
+    { y: 0.242, rx: 0.164, rz: 0.132 }
+  ], { sides: 8 })
+  const watchmanCuirass = bakeVertexAO(
+    bakeZoneColors(rawWatch, (_cx, cy, _cz, _nx, _ny, nz) => {
+      if (nz > 0.5 && cy > 0.02) return [1.10, 1.12, 1.15, 1]
+      if (cy < -0.06) return [0.82, 0.85, 0.90, 1]
+      return WHITE
+    }),
+    { strength: 0.17, verticalGradient: 0.10 }
+  )
+  const watchmanFauld = sculptLoft([
+    { y: -0.150, rx: 0.220, rz: 0.160, frontFlat: 0.08, backFlat: 0.08 },
+    { y: -0.070, rx: 0.238, rz: 0.170, zOffset: 0.006, frontFlat: 0.08, backFlat: 0.08 }
+  ], { sides: 8, aoStrength: 0.14, aoGradient: 0.08 })
+  const watchmanPlaque = createCrestDiamondMesh(0.072, 0.082, 0.022)
+  const watchmanGorget = sculptLoft([
+    { y: 0.206, rx: 0.194, rz: 0.156, zOffset: 0.006 },
+    { y: 0.252, rx: 0.168, rz: 0.138, zOffset: 0.004 }
+  ], { sides: 8, aoStrength: 0.14, aoGradient: 0.06 })
+  const watchmanPadUpL = createShoulderShell(-1, -0.024, 0.098, 0.190, 0.422, 0.124, 0.05)
+  const watchmanPadUpR = createShoulderShell(1, -0.024, 0.098, 0.190, 0.422, 0.124, 0.05)
+  const watchmanPadLoL = createShoulderShell(-1, -0.098, -0.004, 0.222, 0.436, 0.118, 0.08)
+  const watchmanPadLoR = createShoulderShell(1, -0.098, -0.004, 0.222, 0.436, 0.118, 0.08)
+
+  // 3. Windrunner Cloak (emerald swallowtail cloak + cowl collar + leaf shoulder wraps)
+  const rawWindCape = sculptLoft([
+    makeCapeRing(-0.560, 0.340, -0.146, 0.026, 0.058),
+    makeCapeRing(-0.340, 0.300, -0.104, 0.028, 0.050),
+    makeCapeRing(-0.140, 0.260, -0.056, 0.030, 0.040),
+    makeCapeRing(0.032, 0.214, 0.018, 0.036, 0.024)
+  ])
+  const windrunnerCape = bakeVertexAO(
+    bakeZoneColors(rawWindCape, (_cx, cy, _cz, _nx, _ny, nz) => {
+      if (nz > 0.35) return [0.76, 0.88, 0.80, 1]
+      if (cy < -0.44) return [0.92, 0.98, 0.94, 1]
+      return WHITE
+    }),
+    { strength: 0.15, verticalGradient: 0.10 }
+  )
+  const createSwallowTail = (side: Side): Mesh => sculptLoft([
+    { y: -0.780, rx: 0.014, rz: 0.010, xOffset: side * 0.220, zOffset: -0.196 },
+    { y: -0.660, rx: 0.076, rz: 0.018, xOffset: side * 0.185, zOffset: -0.172 },
+    { y: -0.520, rx: 0.116, rz: 0.022, xOffset: side * 0.150, zOffset: -0.144 }
+  ], { sides: 6, aoStrength: 0.14, aoGradient: 0.08 })
+  const windrunnerTailL = createSwallowTail(-1)
+  const windrunnerTailR = createSwallowTail(1)
+  const windrunnerHem = sculptLoft([
+    makeCapeRing(-0.584, 0.348, -0.152, 0.030, 0.060),
+    makeCapeRing(-0.540, 0.340, -0.144, 0.030, 0.058)
+  ], { aoStrength: 0.10, aoGradient: 0.04 })
+  const windrunnerCowl = sculptLoft([
+    { y: -0.072, rx: 0.270, rz: 0.204, zOffset: 0.006, frontFlat: 0.06, backFlat: 0.06 },
+    { y: -0.018, rx: 0.246, rz: 0.192, zOffset: 0.008, frontFlat: 0.06, backFlat: 0.06 },
+    { y: 0.038, rx: 0.194, rz: 0.162, zOffset: 0.002 }
+  ], { sides: 8, aoStrength: 0.16, aoGradient: 0.10 })
+  const windrunnerPadL = createShoulderShell(-1, -0.074, 0.082, 0.184, 0.412, 0.120, 0.12)
+  const windrunnerPadR = createShoulderShell(1, -0.074, 0.082, 0.184, 0.412, 0.120, 0.12)
+
+  // 4. Runed Chainmail (silver-blue articulated ringmail + azure surcoat + glowing ward runes)
+  const rawRuned = sculptLoft([
+    { y: -0.206, rx: 0.230, rz: 0.156, frontFlat: 0.10, backFlat: 0.08 },
+    { y: -0.120, rx: 0.202, rz: 0.144, frontFlat: 0.10, backFlat: 0.08 },
+    { y: 0.018, rx: 0.254, rz: 0.174, zOffset: 0.012, frontFlat: 0.06, backFlat: 0.08 },
+    { y: 0.150, rx: 0.286, rz: 0.182, zOffset: 0.010, frontFlat: 0.06, backFlat: 0.08 },
+    { y: 0.212, rx: 0.246, rz: 0.156 },
+    { y: 0.240, rx: 0.160, rz: 0.128 }
+  ], { sides: 8 })
+  const runedMailBody = bakeVertexAO(
+    bakeZoneColors(rawRuned, (cx, cy) => {
+      const meshPat = (Math.floor((cx + 0.5) * 18) + Math.floor((cy + 0.5) * 18)) % 2
+      return meshPat === 0 ? [1.06, 1.08, 1.14, 1] : [0.84, 0.88, 0.96, 1]
+    }),
+    { strength: 0.16, verticalGradient: 0.10 }
+  )
+  const runedSurcoat = sculptLoft([
+    { y: -0.204, rx: 0.112, rz: 0.020, zOffset: 0.154 },
+    { y: -0.116, rx: 0.100, rz: 0.020, zOffset: 0.144 },
+    { y: 0.022, rx: 0.126, rz: 0.022, zOffset: 0.178 },
+    { y: 0.152, rx: 0.134, rz: 0.022, zOffset: 0.182 },
+    { y: 0.206, rx: 0.102, rz: 0.018, zOffset: 0.148 }
+  ], { sides: 6, aoStrength: 0.12, aoGradient: 0.06 })
+  const runedSigil = createCrestDiamondMesh(0.054, 0.080, 0.020)
+  const runedPadL = createShoulderShell(-1, -0.082, 0.092, 0.188, 0.422, 0.124, 0.08)
+  const runedPadR = createShoulderShell(1, -0.082, 0.092, 0.188, 0.422, 0.124, 0.08)
+
+  // 5. Frostguard Plate (glacial armored cuirass + ice ribs + jagged frost spikes + winter fur)
+  const rawFrost = sculptLoft([
+    { y: -0.208, rx: 0.236, rz: 0.160, frontFlat: 0.06, backFlat: 0.08 },
+    { y: -0.120, rx: 0.208, rz: 0.150, frontFlat: 0.06, backFlat: 0.08 },
+    { y: 0.020, rx: 0.266, rz: 0.184, zOffset: 0.016, frontFlat: 0.02, backFlat: 0.06 },
+    { y: 0.154, rx: 0.298, rz: 0.192, zOffset: 0.014, frontFlat: 0.02, backFlat: 0.06 },
+    { y: 0.216, rx: 0.256, rz: 0.164 },
+    { y: 0.244, rx: 0.168, rz: 0.136 }
+  ], { sides: 8 })
+  const frostguardCuirass = bakeVertexAO(
+    bakeZoneColors(rawFrost, (_cx, cy, _cz, _nx, _ny, nz) => {
+      if (nz > 0.5 && cy > 0.02) return [1.08, 1.14, 1.20, 1]
+      if (cy < -0.08) return [0.78, 0.86, 0.96, 1]
+      return WHITE
+    }),
+    { strength: 0.16, verticalGradient: 0.10 }
+  )
+  const createFrostRib = (side: Side): Mesh => sculptLoft([
+    { y: -0.045, rx: 0.032, rz: 0.032, xOffset: side * 0.146, zOffset: 0.160 },
+    { y: 0.085, rx: 0.044, rz: 0.038, xOffset: side * 0.184, zOffset: 0.172 },
+    { y: 0.188, rx: 0.032, rz: 0.028, xOffset: side * 0.156, zOffset: 0.156 }
+  ], { sides: 5, aoStrength: 0.12, aoGradient: 0.06 })
+  const frostguardRibL = createFrostRib(-1)
+  const frostguardRibR = createFrostRib(1)
+  const frostguardCore = createCrestDiamondMesh(0.056, 0.086, 0.024)
+  const frostguardPadL = createShoulderShell(-1, -0.090, 0.102, 0.188, 0.436, 0.130, 0.08)
+  const frostguardPadR = createShoulderShell(1, -0.090, 0.102, 0.188, 0.436, 0.130, 0.08)
+  const frostguardSpike = createSpikeCone(0.188, 0.044)
+  const frostguardMantle = bakeVertexAO(
+    sculptLoft([
+      makeStarRing(-0.064, 10, 0.312, 0.228, 0.264, 0.194, 0, 0.004, 0.10),
+      makeStarRing(-0.012, 10, 0.324, 0.238, 0.274, 0.204, 0, 0.004, 0.22),
+      makeStarRing(0.034, 10, 0.274, 0.206, 0.232, 0.176, 0, 0.002, 0.10),
+      makeStarRing(0.062, 10, 0.194, 0.156, 0.168, 0.138, 0, 0.000, 0.22)
+    ]),
+    { strength: 0.14, verticalGradient: 0.08 }
+  )
+
+  // 6. Aegis of Dawn (radiant ivory-gold solar cuirass + twin feathered wing pauldrons + sun crown collar)
+  const rawAegis = sculptLoft([
+    { y: -0.208, rx: 0.236, rz: 0.160, frontFlat: 0.06, backFlat: 0.08 },
+    { y: -0.120, rx: 0.208, rz: 0.150, frontFlat: 0.06, backFlat: 0.08 },
+    { y: 0.022, rx: 0.268, rz: 0.186, zOffset: 0.016, frontFlat: 0.02, backFlat: 0.06 },
+    { y: 0.156, rx: 0.300, rz: 0.194, zOffset: 0.014, frontFlat: 0.02, backFlat: 0.06 },
+    { y: 0.218, rx: 0.258, rz: 0.166 },
+    { y: 0.246, rx: 0.168, rz: 0.136 }
+  ], { sides: 8 })
+  const aegisCuirass = bakeVertexAO(
+    bakeZoneColors(rawAegis, (_cx, cy, _cz, _nx, _ny, nz) => {
+      if (nz > 0.5 && cy > 0.02) return [1.06, 1.04, 0.98, 1]
+      if (cy < -0.09) return [0.92, 0.88, 0.80, 1]
+      return WHITE
+    }),
+    { strength: 0.14, verticalGradient: 0.08 }
+  )
+  const aegisSunburst = sculptLoft([
+    makeStarRing(-0.014, 8, 0.084, 0.084, 0.048, 0.048),
+    makeStarRing(0.014, 8, 0.076, 0.076, 0.044, 0.044)
+  ], { aoStrength: 0.10, aoGradient: 0.04 })
+  const aegisCore = createHexDiscMesh(0.036, 0.026, 0.008)
+  const aegisPadL = createShoulderShell(-1, -0.092, 0.108, 0.186, 0.440, 0.132, 0.10)
+  const aegisPadR = createShoulderShell(1, -0.092, 0.108, 0.186, 0.440, 0.132, 0.10)
+  const aegisWingHiL = createWingBlade(-1, 0.245, 0.085)
+  const aegisWingHiR = createWingBlade(1, 0.245, 0.085)
+  const aegisWingLoL = createWingBlade(-1, 0.155, 0.110)
+  const aegisWingLoR = createWingBlade(1, 0.155, 0.110)
+  const aegisCollarBase = sculptLoft([
+    { y: -0.052, rx: 0.270, rz: 0.194, zOffset: 0.008 },
+    { y: -0.012, rx: 0.248, rz: 0.178, zOffset: 0.004 },
+    { y: 0.024, rx: 0.194, rz: 0.152 }
+  ], { sides: 8, aoStrength: 0.14, aoGradient: 0.08 })
+  const aegisCollarCrown = sculptLoft([
+    makeCapeRing(-0.016, 0.228, -0.098, 0.036, 0.052),
+    makeCapeRing(0.084, 0.288, -0.114, 0.034, 0.064),
+    makeCapeRing(0.186, 0.318, -0.132, 0.026, 0.068)
+  ], { aoStrength: 0.12, aoGradient: 0.06 })
+
+  // 7. Copper Signet (hammered copper vambraces + engraved glowing amber signet seal)
+  const copperCuffL = createBracerSleeve(-1, -0.072, 0.094, 0.078, 0.082, 0.094, 0.098)
+  const copperCuffR = createBracerSleeve(1, -0.072, 0.094, 0.078, 0.082, 0.094, 0.098)
+  const copperRing = createHexDiscMesh(0.044, 0.024, 0.008)
+  const copperSeal = createCrestDiamondMesh(0.024, 0.032, 0.018)
+
+  // 8. Gale Striders (winged emerald-silver aerodynamic greave cuffs)
+  const galeBootL = createBootCuffBand(-1, -0.028, 0.106, 0.102, 0.110)
+  const galeBootR = createBootCuffBand(1, -0.028, 0.106, 0.102, 0.110)
+  const createGaleWing = (side: Side, scaleY: number, zShift: number): Mesh => sculptLoft([
+    { y: 0.004, rx: 0.014, rz: 0.028, xOffset: side * 0.104, zOffset: -0.012 + zShift },
+    { y: 0.078 * scaleY, rx: 0.026, rz: 0.048, xOffset: side * 0.146, zOffset: -0.046 + zShift },
+    { y: 0.162 * scaleY, rx: 0.020, rz: 0.038, xOffset: side * 0.172, zOffset: -0.088 + zShift },
+    { y: 0.210 * scaleY, rx: 0.006, rz: 0.012, xOffset: side * 0.162, zOffset: -0.110 + zShift }
+  ], { sides: 6, aoStrength: 0.12, aoGradient: 0.06 })
+  const galeWingBigL = createGaleWing(-1, 1.0, 0)
+  const galeWingBigR = createGaleWing(1, 1.0, 0)
+  const galeWingSmallL = createGaleWing(-1, 0.66, -0.018)
+  const galeWingSmallR = createGaleWing(1, 0.66, -0.018)
+  const galeCrestL = createKneeGuard(-1)
+  const galeCrestR = createKneeGuard(1)
+
+  // 9. Crimson Pendant / Blood Amulet (iron-gold collar chain + faceted glowing blood ruby drop)
+  const bloodChain = sculptLoft([
+    { y: -0.056, rx: 0.244, rz: 0.188, zOffset: 0.010 },
+    { y: -0.018, rx: 0.228, rz: 0.176, zOffset: 0.008 },
+    { y: 0.020, rx: 0.194, rz: 0.154, zOffset: 0.004 }
+  ], { sides: 10, aoStrength: 0.14, aoGradient: 0.08 })
+  const bloodRuby = sculptLoft([
+    { y: -0.175, rx: 0.008, rz: 0.008 },
+    { y: -0.110, rx: 0.052, rz: 0.036 },
+    { y: -0.055, rx: 0.042, rz: 0.030 },
+    { y: -0.015, rx: 0.014, rz: 0.012 }
+  ], { sides: 6, aoStrength: 0.06, aoGradient: 0.04 })
+  const bloodFang = createSpikeCone(0.085, 0.022)
+
+  // 10. Skyhawk Crest (violet-gold falconer belt with spread-winged hawk emblem + plumed bracer)
+  const skyhawkBand = sculptLoft([
+    { y: -0.058, rx: 0.236, rz: 0.174, frontFlat: 0.08, backFlat: 0.08 },
+    { y: 0.000, rx: 0.244, rz: 0.180, frontFlat: 0.08, backFlat: 0.08 },
+    { y: 0.058, rx: 0.234, rz: 0.172, frontFlat: 0.08, backFlat: 0.08 }
+  ], { sides: 8, aoStrength: 0.14, aoGradient: 0.08 })
+  const createHawkWing = (side: Side): Mesh => sculptLoft([
+    { y: -0.032, rx: 0.022, rz: 0.018, xOffset: side * 0.044, zOffset: 0.186 },
+    { y: 0.016, rx: 0.058, rz: 0.022, xOffset: side * 0.112, zOffset: 0.194 },
+    { y: 0.064, rx: 0.044, rz: 0.018, xOffset: side * 0.168, zOffset: 0.178 },
+    { y: 0.092, rx: 0.012, rz: 0.010, xOffset: side * 0.194, zOffset: 0.156 }
+  ], { sides: 6, aoStrength: 0.12, aoGradient: 0.06 })
+  const skyhawkWingL = createHawkWing(-1)
+  const skyhawkWingR = createHawkWing(1)
+  const skyhawkEye = createCrestDiamondMesh(0.036, 0.052, 0.024)
+  const skyhawkBracer = createBracerSleeve(1, -0.068, 0.094, 0.078, 0.082, 0.094, 0.098)
+  const skyhawkFin = sculptLoft([
+    { y: -0.050, rx: 0.016, rz: 0.030, xOffset: 0.092, zOffset: -0.004 },
+    { y: 0.036, rx: 0.028, rz: 0.052, xOffset: 0.118, zOffset: -0.022 },
+    { y: 0.126, rx: 0.018, rz: 0.036, xOffset: 0.126, zOffset: -0.044 },
+    { y: 0.160, rx: 0.006, rz: 0.012, xOffset: 0.116, zOffset: -0.056 }
+  ], { sides: 6, aoStrength: 0.12, aoGradient: 0.06 })
+
+  // 11. Heart of Solis (radiant solar heart medallion collar + ceremonial sun-sash belt)
+  const solisGorget = sculptLoft([
+    { y: -0.060, rx: 0.268, rz: 0.194, zOffset: 0.010 },
+    { y: -0.014, rx: 0.244, rz: 0.178, zOffset: 0.006 },
+    { y: 0.028, rx: 0.192, rz: 0.152 }
+  ], { sides: 8, aoStrength: 0.14, aoGradient: 0.08 })
+  const solisHeart = createCrestDiamondMesh(0.056, 0.072, 0.030)
+  const solisRay = createSpikeCone(0.095, 0.022)
+  const solisBelt = sculptLoft([
+    { y: -0.062, rx: 0.238, rz: 0.176, frontFlat: 0.08, backFlat: 0.08 },
+    { y: 0.000, rx: 0.246, rz: 0.182, frontFlat: 0.08, backFlat: 0.08 },
+    { y: 0.062, rx: 0.238, rz: 0.176, frontFlat: 0.08, backFlat: 0.08 }
+  ], { sides: 8, aoStrength: 0.14, aoGradient: 0.08 })
+  const solisBeltBuckle = sculptLoft([
+    makeStarRing(-0.016, 8, 0.074, 0.074, 0.046, 0.046),
+    makeStarRing(0.016, 8, 0.068, 0.068, 0.042, 0.042)
+  ], { aoStrength: 0.10, aoGradient: 0.04 })
+
+  cachedEquipArmor = {
+    brigandineBody,
+    brigandineLapel,
+    brigandineBandolier,
+    brigandineStud,
+    brigandinePadL,
+    brigandinePadR,
+    watchmanCuirass,
+    watchmanFauld,
+    watchmanPlaque,
+    watchmanGorget,
+    watchmanPadUpL,
+    watchmanPadUpR,
+    watchmanPadLoL,
+    watchmanPadLoR,
+    windrunnerCape,
+    windrunnerTailL,
+    windrunnerTailR,
+    windrunnerHem,
+    windrunnerCowl,
+    windrunnerPadL,
+    windrunnerPadR,
+    runedMailBody,
+    runedSurcoat,
+    runedSigil,
+    runedPadL,
+    runedPadR,
+    frostguardCuirass,
+    frostguardRibL,
+    frostguardRibR,
+    frostguardCore,
+    frostguardPadL,
+    frostguardPadR,
+    frostguardSpike,
+    frostguardMantle,
+    aegisCuirass,
+    aegisSunburst,
+    aegisCore,
+    aegisPadL,
+    aegisPadR,
+    aegisWingHiL,
+    aegisWingHiR,
+    aegisWingLoL,
+    aegisWingLoR,
+    aegisCollarBase,
+    aegisCollarCrown,
+    copperCuffL,
+    copperCuffR,
+    copperRing,
+    copperSeal,
+    galeBootL,
+    galeBootR,
+    galeWingBigL,
+    galeWingBigR,
+    galeWingSmallL,
+    galeWingSmallR,
+    galeCrestL,
+    galeCrestR,
+    bloodChain,
+    bloodRuby,
+    bloodFang,
+    skyhawkBand,
+    skyhawkWingL,
+    skyhawkWingR,
+    skyhawkEye,
+    skyhawkBracer,
+    skyhawkFin,
+    solisGorget,
+    solisHeart,
+    solisRay,
+    solisBelt,
+    solisBeltBuckle
+  }
+  return cachedEquipArmor
+}
+
+function registerEquipmentArmorAndRelics(builder: CharacterBuilder): void {
+  // --- 1. Scout Brigandine (`leather_jerkin`) ---
+  builder.registerPart('chest', 'chest_scout_brigandine', () => {
+    const m = getEquipmentArmorMeshes()
+    return [
+      { name: 'brigandine_body', mesh: m.brigandineBody, color: BRIGANDINE_TAN },
+      { name: 'brigandine_lapel', mesh: m.brigandineLapel, color: BRIGANDINE_DARK },
+      { name: 'brigandine_bandolier', mesh: m.brigandineBandolier, color: BRIGANDINE_DARK },
+      { name: 'brigandine_stud_1', mesh: m.brigandineStud, position: [-0.072, 0.118, 0.184], rotation: [Math.PI * 0.5, 0, 0], color: BRASS_WARM },
+      { name: 'brigandine_stud_2', mesh: m.brigandineStud, position: [0.072, 0.118, 0.184], rotation: [Math.PI * 0.5, 0, 0], color: BRASS_WARM },
+      { name: 'brigandine_stud_3', mesh: m.brigandineStud, position: [0, 0.025, 0.194], rotation: [Math.PI * 0.5, 0, 0], color: BRASS_WARM }
+    ]
+  })
+
+  builder.registerPart('pauldrons', 'pauldrons_brigandine', () => {
+    const m = getEquipmentArmorMeshes()
+    return [
+      { name: 'pauldron_brigandine_l', mesh: m.brigandinePadL, color: BRIGANDINE_TAN },
+      { name: 'pauldron_brigandine_r', mesh: m.brigandinePadR, color: BRIGANDINE_TAN },
+      { name: 'pauldron_brigandine_stud_l', mesh: m.brigandineStud, position: [-0.340, 0.020, 0.088], rotation: [Math.PI * 0.5, 0.35, 0], color: BRASS_WARM },
+      { name: 'pauldron_brigandine_stud_r', mesh: m.brigandineStud, position: [0.340, 0.020, 0.088], rotation: [Math.PI * 0.5, -0.35, 0], color: BRASS_WARM }
+    ]
+  })
+
+  // --- 2. Watchman Plate (`iron_plate`) ---
+  builder.registerPart('chest', 'chest_watchman_plate', () => {
+    const m = getEquipmentArmorMeshes()
+    return [
+      { name: 'watchman_cuirass', mesh: m.watchmanCuirass, color: WATCHMAN_STEEL },
+      { name: 'watchman_fauld', mesh: m.watchmanFauld, color: WATCHMAN_DARK },
+      { name: 'watchman_gorget', mesh: m.watchmanGorget, color: WATCHMAN_DARK },
+      { name: 'watchman_plaque', mesh: m.watchmanPlaque, position: [0, 0.076, 0.192], color: shadeColor(WATCHMAN_STEEL, 0.12) }
+    ]
+  })
+
+  builder.registerPart('pauldrons', 'pauldrons_watchman', () => {
+    const m = getEquipmentArmorMeshes()
+    return [
+      { name: 'pauldron_watchman_up_l', mesh: m.watchmanPadUpL, color: WATCHMAN_STEEL },
+      { name: 'pauldron_watchman_up_r', mesh: m.watchmanPadUpR, color: WATCHMAN_STEEL },
+      { name: 'pauldron_watchman_lo_l', mesh: m.watchmanPadLoL, color: WATCHMAN_DARK },
+      { name: 'pauldron_watchman_lo_r', mesh: m.watchmanPadLoR, color: WATCHMAN_DARK }
+    ]
+  })
+
+  // --- 3. Windrunner Cloak (`ranger_cloak`) ---
+  builder.registerPart('back', 'cape_windrunner', () => {
+    const m = getEquipmentArmorMeshes()
+    const base = getArmorMeshes()
+    return [
+      { name: 'cape_windrunner_body', mesh: m.windrunnerCape, color: WINDRUNNER_EMERALD },
+      { name: 'cape_windrunner_tail_l', mesh: m.windrunnerTailL, color: WINDRUNNER_DEEP },
+      { name: 'cape_windrunner_tail_r', mesh: m.windrunnerTailR, color: WINDRUNNER_DEEP },
+      { name: 'cape_windrunner_hem', mesh: m.windrunnerHem, color: BRASS_WARM },
+      { name: 'cape_windrunner_clasp_l', mesh: base.capeClasp, position: [-0.180, 0.026, 0.034], rotation: [Math.PI * 0.5, 0, 0], color: BRASS_WARM },
+      { name: 'cape_windrunner_clasp_r', mesh: base.capeClasp, position: [0.180, 0.026, 0.034], rotation: [Math.PI * 0.5, 0, 0], color: BRASS_WARM }
+    ]
+  })
+
+  builder.registerPart('collar', 'collar_windrunner', () => {
+    const m = getEquipmentArmorMeshes()
+    const base = getArmorMeshes()
+    return [
+      { name: 'collar_windrunner_cowl', mesh: m.windrunnerCowl, color: WINDRUNNER_EMERALD },
+      { name: 'collar_windrunner_tail', mesh: base.scarfTail, color: WINDRUNNER_DEEP }
+    ]
+  })
+
+  builder.registerPart('pauldrons', 'pauldrons_windrunner', () => {
+    const m = getEquipmentArmorMeshes()
+    return [
+      { name: 'pauldron_windrunner_l', mesh: m.windrunnerPadL, color: WINDRUNNER_DEEP },
+      { name: 'pauldron_windrunner_r', mesh: m.windrunnerPadR, color: WINDRUNNER_DEEP },
+      { name: 'pauldron_windrunner_stud_l', mesh: m.brigandineStud, position: [-0.335, 0.022, 0.106], rotation: [Math.PI * 0.5, 0.35, 0], color: BRASS_WARM },
+      { name: 'pauldron_windrunner_stud_r', mesh: m.brigandineStud, position: [0.335, 0.022, 0.106], rotation: [Math.PI * 0.5, -0.35, 0], color: BRASS_WARM }
+    ]
+  })
+
+  // --- 4. Runed Chainmail (`runed_mail`) ---
+  builder.registerPart('chest', 'chest_runed_mail', () => {
+    const m = getEquipmentArmorMeshes()
+    const base = getArmorMeshes()
+    return [
+      { name: 'runed_mail_body', mesh: m.runedMailBody, color: RUNED_STEEL },
+      { name: 'runed_mail_surcoat', mesh: m.runedSurcoat, color: RUNED_AZURE },
+      { name: 'runed_mail_collar', mesh: base.plateCollarRim, color: RUNED_STEEL },
+      { name: 'runed_mail_sigil', mesh: m.runedSigil, position: [0, 0.072, 0.194], color: RUNED_GLOW, unlit: 0.92 },
+      { name: 'runed_mail_bar_l', mesh: base.obsidianRuneBar, position: [-0.074, 0.072, 0.190], rotation: [0, -0.32, 0.20], color: RUNED_GLOW, unlit: 0.88 },
+      { name: 'runed_mail_bar_r', mesh: base.obsidianRuneBar, position: [0.074, 0.072, 0.190], rotation: [0, 0.32, -0.20], color: RUNED_GLOW, unlit: 0.88 }
+    ]
+  })
+
+  builder.registerPart('pauldrons', 'pauldrons_runed_mail', () => {
+    const m = getEquipmentArmorMeshes()
+    const base = getArmorMeshes()
+    return [
+      { name: 'pauldron_runed_l', mesh: m.runedPadL, color: RUNED_STEEL },
+      { name: 'pauldron_runed_r', mesh: m.runedPadR, color: RUNED_STEEL },
+      { name: 'pauldron_runed_rim_l', mesh: base.knightRimL, color: RUNED_AZURE },
+      { name: 'pauldron_runed_rim_r', mesh: base.knightRimR, color: RUNED_AZURE },
+      { name: 'pauldron_runed_gem_l', mesh: base.arcaneGem, position: [-0.340, 0.022, 0.118], rotation: [0, -0.45, 0], color: RUNED_GLOW, unlit: 0.92 },
+      { name: 'pauldron_runed_gem_r', mesh: base.arcaneGem, position: [0.340, 0.022, 0.118], rotation: [0, 0.45, 0], color: RUNED_GLOW, unlit: 0.92 }
+    ]
+  })
+
+  // --- 5. Frostguard Plate (`frostguard_plate`) ---
+  builder.registerPart('chest', 'chest_frostguard', () => {
+    const m = getEquipmentArmorMeshes()
+    return [
+      { name: 'frostguard_cuirass', mesh: m.frostguardCuirass, color: FROST_PLATE },
+      { name: 'frostguard_rib_l', mesh: m.frostguardRibL, color: FROST_ICE, unlit: 0.25 },
+      { name: 'frostguard_rib_r', mesh: m.frostguardRibR, color: FROST_ICE, unlit: 0.25 },
+      { name: 'frostguard_core', mesh: m.frostguardCore, position: [0, 0.074, 0.198], color: FROST_CRYSTAL, unlit: 0.92 }
+    ]
+  })
+
+  builder.registerPart('pauldrons', 'pauldrons_frostguard', () => {
+    const m = getEquipmentArmorMeshes()
+    const base = getArmorMeshes()
+    return [
+      { name: 'pauldron_frostguard_l', mesh: m.frostguardPadL, color: FROST_PLATE },
+      { name: 'pauldron_frostguard_r', mesh: m.frostguardPadR, color: FROST_PLATE },
+      { name: 'pauldron_frostguard_rim_l', mesh: base.paladinRimL, color: FROST_ICE, unlit: 0.24 },
+      { name: 'pauldron_frostguard_rim_r', mesh: base.paladinRimR, color: FROST_ICE, unlit: 0.24 },
+      { name: 'pauldron_frostguard_spike_l1', mesh: m.frostguardSpike, position: [-0.365, 0.056, 0], rotation: [0, 0, 0.56], color: FROST_CRYSTAL, unlit: 0.42 },
+      { name: 'pauldron_frostguard_spike_l2', mesh: base.spikeSmall, position: [-0.340, 0.022, 0.090], rotation: [0.44, 0, 0.86], color: FROST_ICE, unlit: 0.36 },
+      { name: 'pauldron_frostguard_spike_r1', mesh: m.frostguardSpike, position: [0.365, 0.056, 0], rotation: [0, 0, -0.56], color: FROST_CRYSTAL, unlit: 0.42 },
+      { name: 'pauldron_frostguard_spike_r2', mesh: base.spikeSmall, position: [0.340, 0.022, 0.090], rotation: [0.44, 0, -0.86], color: FROST_ICE, unlit: 0.36 }
+    ]
+  })
+
+  builder.registerPart('collar', 'collar_frostguard', () => {
+    const m = getEquipmentArmorMeshes()
+    const base = getArmorMeshes()
+    return [
+      { name: 'collar_frostguard_fur', mesh: m.frostguardMantle, color: FROST_FUR },
+      { name: 'collar_frostguard_gem', mesh: base.goldCollarGem, position: [0, -0.024, 0.205], color: FROST_CRYSTAL, unlit: 0.90 }
+    ]
+  })
+
+  // --- 6. Aegis of Dawn (`aegis_of_dawn`) ---
+  builder.registerPart('chest', 'chest_aegis_dawn', () => {
+    const m = getEquipmentArmorMeshes()
+    return [
+      { name: 'aegis_cuirass', mesh: m.aegisCuirass, color: IVORY },
+      { name: 'aegis_sunburst', mesh: m.aegisSunburst, position: [0, 0.078, 0.198], rotation: [Math.PI * 0.5, 0, 0], color: DAWN_GOLD },
+      { name: 'aegis_core', mesh: m.aegisCore, position: [0, 0.078, 0.212], rotation: [Math.PI * 0.5, 0, 0], color: DAWN_GLOW, unlit: 0.96 }
+    ]
+  })
+
+  builder.registerPart('pauldrons', 'pauldrons_aegis_dawn', () => {
+    const m = getEquipmentArmorMeshes()
+    const base = getArmorMeshes()
+    return [
+      { name: 'pauldron_aegis_l', mesh: m.aegisPadL, color: IVORY },
+      { name: 'pauldron_aegis_r', mesh: m.aegisPadR, color: IVORY },
+      { name: 'pauldron_aegis_wing_hi_l', mesh: m.aegisWingHiL, color: DAWN_GOLD },
+      { name: 'pauldron_aegis_wing_hi_r', mesh: m.aegisWingHiR, color: DAWN_GOLD },
+      { name: 'pauldron_aegis_wing_lo_l', mesh: m.aegisWingLoL, color: shadeColor(DAWN_GOLD, -0.10) },
+      { name: 'pauldron_aegis_wing_lo_r', mesh: m.aegisWingLoR, color: shadeColor(DAWN_GOLD, -0.10) },
+      { name: 'pauldron_aegis_gem_l', mesh: base.gildedCrestGem, position: [-0.352, 0.048, 0.120], rotation: [0, -0.42, 0], color: DAWN_GLOW, unlit: 0.94 },
+      { name: 'pauldron_aegis_gem_r', mesh: base.gildedCrestGem, position: [0.352, 0.048, 0.120], rotation: [0, 0.42, 0], color: DAWN_GLOW, unlit: 0.94 }
+    ]
+  })
+
+  builder.registerPart('collar', 'collar_aegis_dawn', () => {
+    const m = getEquipmentArmorMeshes()
+    const base = getArmorMeshes()
+    return [
+      { name: 'collar_aegis_base', mesh: m.aegisCollarBase, color: DAWN_GOLD },
+      { name: 'collar_aegis_crown', mesh: m.aegisCollarCrown, color: shadeColor(DAWN_GOLD, 0.10) },
+      { name: 'collar_aegis_gem', mesh: base.goldCollarGem, position: [0, -0.022, 0.194], color: DAWN_GLOW, unlit: 0.94 }
+    ]
+  })
+
+  // --- 7. Copper Signet (`copper_signet`) ---
+  const buildCopperSignetBracer = (side: Side): RigPart[] => {
+    const m = getEquipmentArmorMeshes()
+    const isL = side === -1
+    const tag = isL ? 'l' : 'r'
+    return [
+      { name: `bracer_copper_cuff_${tag}`, mesh: isL ? m.copperCuffL : m.copperCuffR, color: COPPER_BURNISHED },
+      { name: `bracer_copper_ring_${tag}`, mesh: m.copperRing, position: [side * 0.096, -0.018, 0.020], rotation: [0, 0, Math.PI * 0.5], color: COPPER_DARK },
+      { name: `bracer_copper_seal_${tag}`, mesh: m.copperSeal, position: [side * 0.108, -0.018, 0.020], rotation: [0, side * Math.PI * 0.5, 0], color: COPPER_AMBER, unlit: 0.90 }
+    ]
+  }
+  builder.registerPart('bracerL', 'bracer_copper_signet', () => buildCopperSignetBracer(-1))
+  builder.registerPart('bracerR', 'bracer_copper_signet', () => buildCopperSignetBracer(1))
+
+  // --- 8. Gale Striders (`swift_boots`) ---
+  const buildGaleStriders = (side: Side): RigPart[] => {
+    const m = getEquipmentArmorMeshes()
+    const isL = side === -1
+    const tag = isL ? 'l' : 'r'
+    return [
+      { name: `boot_gale_cuff_${tag}`, mesh: isL ? m.galeBootL : m.galeBootR, color: GALE_JADE },
+      { name: `boot_gale_wing_hi_${tag}`, mesh: isL ? m.galeWingBigL : m.galeWingBigR, color: GALE_SILVER },
+      { name: `boot_gale_wing_lo_${tag}`, mesh: isL ? m.galeWingSmallL : m.galeWingSmallR, color: GALE_MINT, unlit: 0.55 },
+      { name: `boot_gale_crest_${tag}`, mesh: isL ? m.galeCrestL : m.galeCrestR, color: GALE_MINT, unlit: 0.85 }
+    ]
+  }
+  builder.registerPart('bootL', 'boot_gale_striders', () => buildGaleStriders(-1))
+  builder.registerPart('bootR', 'boot_gale_striders', () => buildGaleStriders(1))
+
+  // --- 9. Crimson Pendant (`blood_amulet`) ---
+  builder.registerPart('collar', 'collar_blood_amulet', () => {
+    const m = getEquipmentArmorMeshes()
+    return [
+      { name: 'blood_amulet_chain', mesh: m.bloodChain, color: BLOOD_IRON },
+      { name: 'blood_amulet_ruby', mesh: m.bloodRuby, position: [0, -0.018, 0.194], color: BLOOD_RUBY, unlit: 0.94 },
+      { name: 'blood_amulet_fang_l', mesh: m.bloodFang, position: [-0.068, -0.044, 0.184], rotation: [0.22, 0, -2.65], color: RADIANT_GOLD },
+      { name: 'blood_amulet_fang_r', mesh: m.bloodFang, position: [0.068, -0.044, 0.184], rotation: [0.22, 0, 2.65], color: RADIANT_GOLD }
+    ]
+  })
+
+  // --- 10. Skyhawk Crest (`eagle_charm`) ---
+  builder.registerPart('belt', 'belt_skyhawk_crest', () => {
+    const m = getEquipmentArmorMeshes()
+    return [
+      { name: 'belt_skyhawk_band', mesh: m.skyhawkBand, color: SKYHAWK_VIOLET },
+      { name: 'belt_skyhawk_wing_l', mesh: m.skyhawkWingL, color: RADIANT_GOLD },
+      { name: 'belt_skyhawk_wing_r', mesh: m.skyhawkWingR, color: RADIANT_GOLD },
+      { name: 'belt_skyhawk_eye', mesh: m.skyhawkEye, position: [0, 0.012, 0.204], color: SKYHAWK_GLOW, unlit: 0.94 }
+    ]
+  })
+
+  builder.registerPart('bracerR', 'bracer_skyhawk', () => {
+    const m = getEquipmentArmorMeshes()
+    return [
+      { name: 'bracer_skyhawk_cuff', mesh: m.skyhawkBracer, color: SKYHAWK_VIOLET },
+      { name: 'bracer_skyhawk_fin', mesh: m.skyhawkFin, color: RADIANT_GOLD },
+      { name: 'bracer_skyhawk_gem', mesh: m.copperSeal, position: [0.106, 0.036, 0.012], rotation: [0, Math.PI * 0.5, 0], color: SKYHAWK_GLOW, unlit: 0.94 }
+    ]
+  })
+
+  // --- 11. Heart of Solis (`heart_of_solis`) ---
+  builder.registerPart('collar', 'collar_heart_of_solis', () => {
+    const m = getEquipmentArmorMeshes()
+    return [
+      { name: 'solis_collar_gorget', mesh: m.solisGorget, color: DAWN_GOLD },
+      { name: 'solis_collar_heart', mesh: m.solisHeart, position: [0, -0.036, 0.206], color: DAWN_GLOW, unlit: 0.96 },
+      { name: 'solis_collar_ray_l', mesh: m.solisRay, position: [-0.072, -0.026, 0.194], rotation: [0, 0, 1.35], color: DAWN_GOLD },
+      { name: 'solis_collar_ray_r', mesh: m.solisRay, position: [0.072, -0.026, 0.194], rotation: [0, 0, -1.35], color: DAWN_GOLD }
+    ]
+  })
+
+  builder.registerPart('belt', 'belt_heart_of_solis', () => {
+    const m = getEquipmentArmorMeshes()
+    return [
+      { name: 'solis_belt_band', mesh: m.solisBelt, color: DAWN_GOLD },
+      { name: 'solis_belt_buckle', mesh: m.solisBeltBuckle, position: [0, 0.004, 0.192], rotation: [Math.PI * 0.5, 0, 0], color: shadeColor(DAWN_GOLD, 0.10) },
+      { name: 'solis_belt_core', mesh: m.aegisCore, position: [0, 0.004, 0.208], rotation: [Math.PI * 0.5, 0, 0], color: DAWN_GLOW, unlit: 0.96 }
     ]
   })
 }
