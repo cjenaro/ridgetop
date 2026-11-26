@@ -4,6 +4,20 @@ import {
   CHAPTERS, CHAPTER_BY_ID, ENEMY_SPECS, EQUIPMENT_BY_ID, EQUIPMENT_LIST, HERO_LIST, HERO_SPECS,
   MERGE_COPIES_REQUIRED, PACK_BY_ID, PLAYABLE_CHAPTERS, RARITY_META, RARITY_ORDER, TACTIC_BY_ID, TACTIC_LIST
 } from './data.ts'
+import {
+  EPIC_PITY_THRESHOLD, EQUIP_CRAFT_COST, EQUIP_SALVAGE_DUST, HERO_CRAFT_COST, HERO_SALVAGE_SHARDS,
+  LEGENDARY_PITY_THRESHOLD, MAX_HERO_OVERFLOW_SHARDS, canCraftEquipment, canCraftHero, craftEquipment,
+  craftHero, getCraftableEquipment, getCraftableHeroes, getDuplicateMaxHeroShards, getEquipCraftCost,
+  getEquipSalvageDust, getHeroCraftCost, getHeroSalvageShards, getPackPityStatus, hasMaxedHero,
+  resolvePackPityFloor, selectProtectedEquipment, selectProtectedHero, updatePackPityCounters
+} from './forge.ts'
+export {
+  EPIC_PITY_THRESHOLD, EQUIP_CRAFT_COST, EQUIP_SALVAGE_DUST, HERO_CRAFT_COST, HERO_SALVAGE_SHARDS,
+  LEGENDARY_PITY_THRESHOLD, MAX_HERO_OVERFLOW_SHARDS, canCraftEquipment, canCraftHero, craftEquipment,
+  craftHero, getCraftableEquipment, getCraftableHeroes, getDuplicateMaxHeroShards, getEquipCraftCost,
+  getEquipSalvageDust, getHeroCraftCost, getHeroSalvageShards, getPackPityStatus, hasMaxedHero,
+  resolvePackPityFloor, selectProtectedEquipment, selectProtectedHero, updatePackPityCounters
+}
 import { computePincerAssistDamage, findPincerAssisters, isPincerMeleeSkill } from './pincer.ts'
 export { computePincerAssistDamage, findPincerAssisters, isPincerMeleeSkill } from './pincer.ts'
 import {
@@ -47,10 +61,11 @@ import type {
   ElementalComboPreview, EnemyArchetypeId, EnemyThreatMap, EquipSlot,
   EquipmentSpec, FacingDir, FacingExposureLevel, FacingExposureReport, FacingThreatEntry,
   FlankThreatTile, GameState, GridCell, GridCoord, HeroClassId, MoveAttackTile, OwnedEquipCard,
-  OwnedHeroCard, OwnedTacticCard, PackId, PackRevealItem, Rarity, SaveData, SkillSpec, StatusKind,
+  OwnedHeroCard, OwnedTacticCard, PackId, PackRevealItem, Rarity, SaveData, SavedCampaignState, SkillSpec, StatusKind,
   TacticCardSpec, TileTerrain, TurnActionKind, TurnOrderActionPreview, TurnPreviewEntry
 } from './types.ts'
 
+export type { PackPityStatus } from './types.ts'
 export { applyDisplacement, resolveDisplacementPreview } from './forced-movement.ts'
 export {
   classifyElement, classifyHazardElement, collectWildfirePatch,
@@ -462,19 +477,16 @@ function rollRarity(campaign: CampaignState, weights: Record<Rarity, number>, mi
   return RARITY_ORDER[minIdx]
 }
 
-function pickNearestByRarity<T extends { readonly rarity: Rarity }>(
+function getNearestByRarityPool<T extends { readonly rarity: Rarity }>(
   items: readonly T[],
   target: Rarity,
-  campaign: CampaignState,
   minRarity?: Rarity
-): T {
+): T[] {
   const minRank = minRarity ? rarityRank(minRarity) : 0
   const eligible = items.filter(it => rarityRank(it.rarity) >= minRank)
   const pool = eligible.length ? eligible : items
   const exact = pool.filter(it => it.rarity === target)
-  if (exact.length) {
-    return exact[Math.floor(randFloat(campaign) * exact.length) % exact.length]
-  }
+  if (exact.length) return exact
   const tRank = rarityRank(target)
   let bestDist = 99
   let best: T[] = []
@@ -483,7 +495,17 @@ function pickNearestByRarity<T extends { readonly rarity: Rarity }>(
     if (d < bestDist) { bestDist = d; best = [it] }
     else if (d === bestDist) best.push(it)
   }
-  return best[Math.floor(randFloat(campaign) * best.length) % best.length]
+  return best
+}
+
+function pickNearestByRarity<T extends { readonly rarity: Rarity }>(
+  items: readonly T[],
+  target: Rarity,
+  campaign: CampaignState,
+  minRarity?: Rarity
+): T {
+  const pool = getNearestByRarityPool(items, target, minRarity)
+  return pool[Math.floor(randFloat(campaign) * pool.length) % pool.length]
 }
 
 export function canBuyPack(campaign: CampaignState, packId: PackId): boolean {
@@ -498,42 +520,77 @@ export function buyPack(state: GameState, packId: PackId): PackRevealItem[] | nu
   campaign.gold -= pack.cost
   campaign.packsOpened += 1
 
+  const nextSinceEpic = Math.max(0, campaign.packsSinceEpic) + 1
+  const nextSinceLegendary = Math.max(0, campaign.packsSinceLegendary) + 1
+  campaign.packsSinceEpic = nextSinceEpic
+  campaign.packsSinceLegendary = nextSinceLegendary
+  const pityGuarantee = resolvePackPityFloor(nextSinceEpic, nextSinceLegendary)
+
   const reveal: PackRevealItem[] = []
   let bestRarity: Rarity = 'common'
 
   for (let i = 0; i < pack.cardsPerPack; i++) {
-    const floor: Rarity = i === 0 ? pack.guaranteedMinRarity : 'common'
+    let floor: Rarity = i === 0 ? pack.guaranteedMinRarity : 'common'
+    let pityTriggered: 'epic' | 'legendary' | undefined
+    if (i === 0 && pityGuarantee) {
+      if (rarityRank(pityGuarantee) > rarityRank(floor)) {
+        floor = pityGuarantee
+      }
+      pityTriggered = pityGuarantee
+    }
     const rollWeights = i === 0 && pack.featuredWeights ? pack.featuredWeights : pack.weights
     const rarity = rollRarity(campaign, rollWeights, floor)
-    if (rarityRank(rarity) > rarityRank(bestRarity)) bestRarity = rarity
 
-    // Card 0 or ~48% Hero, ~32% Equipment, ~20% Tactic
+    // Card 1 or ~48% Hero, ~32% Equipment, ~20% Tactic
     const kindRoll = randFloat(campaign)
     if (i === 1 || kindRoll < 0.48) {
-      const heroSpec = pickNearestByRarity(HERO_LIST, rarity, campaign, floor)
-      const isNew = !campaign.heroes.some(h => h.heroId === heroSpec.id)
-      const card: OwnedHeroCard = {
-        uid: allocUid(campaign, 'hero'),
-        heroId: heroSpec.id,
-        stars: 1,
-        weaponUid: null,
-        armorUid: null,
-        relicUid: null
+      const heroPool = getNearestByRarityPool(HERO_LIST, rarity, floor)
+      const heroSpec = selectProtectedHero(heroPool, campaign, randFloat(campaign))
+      if (rarityRank(heroSpec.rarity) > rarityRank(bestRarity)) bestRarity = heroSpec.rarity
+
+      if (hasMaxedHero(campaign, heroSpec.id)) {
+        const bonusShards = getDuplicateMaxHeroShards(heroSpec.rarity)
+        campaign.shards += bonusShards
+        reveal.push({
+          kind: 'hero',
+          uid: allocUid(campaign, 'shard'),
+          refId: heroSpec.id,
+          name: `${heroSpec.name} (${heroSpec.title})`,
+          rarity: heroSpec.rarity,
+          detail: `MAX ★ → +${bonusShards} SHARDS`,
+          value: computeCardValue(heroSpec.rarity, 1),
+          isNew: false,
+          convertedShards: bonusShards,
+          ...(pityTriggered ? { pityTriggered } : {})
+        })
+      } else {
+        const isNew = !campaign.heroes.some(h => h.heroId === heroSpec.id)
+        const card: OwnedHeroCard = {
+          uid: allocUid(campaign, 'hero'),
+          heroId: heroSpec.id,
+          stars: 1,
+          weaponUid: null,
+          armorUid: null,
+          relicUid: null
+        }
+        campaign.heroes.push(card)
+        const copies = campaign.heroes.filter(h => h.heroId === heroSpec.id && h.stars === 1).length
+        reveal.push({
+          kind: 'hero',
+          uid: card.uid,
+          refId: heroSpec.id,
+          name: `${heroSpec.name} (${heroSpec.title})`,
+          rarity: heroSpec.rarity,
+          detail: `Hero 1* · Copies: ${copies}/3`,
+          value: computeCardValue(heroSpec.rarity, 1),
+          isNew,
+          ...(pityTriggered ? { pityTriggered } : {})
+        })
       }
-      campaign.heroes.push(card)
-      const copies = campaign.heroes.filter(h => h.heroId === heroSpec.id && h.stars === 1).length
-      reveal.push({
-        kind: 'hero',
-        uid: card.uid,
-        refId: heroSpec.id,
-        name: `${heroSpec.name} (${heroSpec.title})`,
-        rarity: heroSpec.rarity,
-        detail: `Hero 1* · Copies: ${copies}/3`,
-        value: computeCardValue(heroSpec.rarity, 1),
-        isNew
-      })
     } else if (kindRoll < 0.80) {
-      const equipSpec: EquipmentSpec = pickNearestByRarity(EQUIPMENT_LIST, rarity, campaign, floor)
+      const equipPool = getNearestByRarityPool(EQUIPMENT_LIST, rarity, floor)
+      const equipSpec: EquipmentSpec = selectProtectedEquipment(equipPool, campaign, randFloat(campaign))
+      if (rarityRank(equipSpec.rarity) > rarityRank(bestRarity)) bestRarity = equipSpec.rarity
       const isNew = !campaign.equipment.some(e => e.equipId === equipSpec.id)
       const card: OwnedEquipCard = {
         uid: allocUid(campaign, 'eq'),
@@ -549,10 +606,12 @@ export function buyPack(state: GameState, packId: PackId): PackRevealItem[] | nu
         rarity: equipSpec.rarity,
         detail: `${equipSpec.slot.toUpperCase()} · ${equipSpec.desc}`,
         value: computeCardValue(equipSpec.rarity),
-        isNew
+        isNew,
+        ...(pityTriggered ? { pityTriggered } : {})
       })
     } else {
       const tacticSpec: TacticCardSpec = pickNearestByRarity(TACTIC_LIST, rarity, campaign, floor)
+      if (rarityRank(tacticSpec.rarity) > rarityRank(bestRarity)) bestRarity = tacticSpec.rarity
       const isNew = !campaign.tactics.some(t => t.tacticId === tacticSpec.id)
       const card: OwnedTacticCard = {
         uid: allocUid(campaign, 'tac'),
@@ -567,11 +626,13 @@ export function buyPack(state: GameState, packId: PackId): PackRevealItem[] | nu
         rarity: tacticSpec.rarity,
         detail: `TACTIC (${tacticSpec.cost} AP) · ${tacticSpec.desc}`,
         value: computeCardValue(tacticSpec.rarity),
-        isNew
+        isNew,
+        ...(pityTriggered ? { pityTriggered } : {})
       })
     }
   }
 
+  updatePackPityCounters(campaign, bestRarity)
   campaign.lastPackReveal = reveal
   state.sounds.push({ kind: 'pack', rarity: bestRarity })
   return reveal
@@ -586,12 +647,14 @@ export function salvageHeroCard(state: GameState, heroUid: string): number {
   const spec = HERO_SPECS[hero.heroId]
   const base = RARITY_META[spec.rarity].salvage
   const gold = hero.stars === 3 ? base * 4 : hero.stars === 2 ? base * 2 : base
+  const shards = getHeroSalvageShards(spec.rarity, hero.stars)
   campaign.heroes.splice(idx, 1)
   campaign.squadUids = campaign.squadUids.filter(uid => uid !== heroUid)
   if (campaign.selectedCampHeroUid === heroUid) {
     campaign.selectedCampHeroUid = campaign.squadUids[0] ?? campaign.heroes[0]?.uid ?? null
   }
   campaign.gold += gold
+  campaign.shards += shards
   state.sounds.push({ kind: 'coin' })
   return gold
 }
@@ -611,7 +674,9 @@ export function salvageEquipCard(state: GameState, equipUid: string): number {
   }
   campaign.equipment.splice(idx, 1)
   const gold = RARITY_META[spec.rarity].salvage
+  const dust = getEquipSalvageDust(spec.rarity)
   campaign.gold += gold
+  campaign.dust += dust
   state.sounds.push({ kind: 'coin' })
   return gold
 }
@@ -621,12 +686,16 @@ export function createInitialCampaign(seed = 1337): CampaignState {
     seed: (seed >>> 0) || 1337,
     nextUid: 1,
     gold: 100,
+    dust: 0,
+    shards: 0,
     chaptersCleared: 0,
     clearedStageIds: [],
     selectedStageId: CHAPTERS[0].id,
     endlessBest: 0,
     battlesWon: 0,
     packsOpened: 0,
+    packsSinceEpic: 0,
+    packsSinceLegendary: 0,
     heroes: [],
     equipment: [],
     tactics: [],
@@ -747,7 +816,7 @@ function isFiniteNum(v: unknown): v is number {
   return typeof v === 'number' && Number.isFinite(v)
 }
 
-function cloneCampaignFromSave(c: CampaignState, fallbackSeed: number): CampaignState {
+function cloneCampaignFromSave(c: SavedCampaignState, fallbackSeed: number): CampaignState {
   const rawCount = Number.isFinite(c.chaptersCleared) ? clamp(Math.floor(c.chaptersCleared), 0, PLAYABLE_CHAPTERS.length) : 0
   const clearedStageIds: string[] = Array.isArray(c.clearedStageIds)
     ? c.clearedStageIds.filter((id): id is string => typeof id === 'string' && Boolean(CHAPTER_BY_ID[id]) && !CHAPTER_BY_ID[id].comingSoon)
@@ -757,6 +826,8 @@ function cloneCampaignFromSave(c: CampaignState, fallbackSeed: number): Campaign
     seed: Number.isFinite(c.seed) ? (c.seed >>> 0) || 1337 : fallbackSeed,
     nextUid: Number.isFinite(c.nextUid) && c.nextUid > 0 ? Math.floor(c.nextUid) : 100,
     gold: Number.isFinite(c.gold) && c.gold >= 0 ? Math.floor(c.gold) : 100,
+    dust: isFiniteNum(c.dust) && c.dust >= 0 ? Math.floor(c.dust) : 0,
+    shards: isFiniteNum(c.shards) && c.shards >= 0 ? Math.floor(c.shards) : 0,
     chaptersCleared: dedupCleared.length,
     clearedStageIds: dedupCleared,
     selectedStageId: typeof c.selectedStageId === 'string' && CHAPTER_BY_ID[c.selectedStageId]
@@ -765,6 +836,8 @@ function cloneCampaignFromSave(c: CampaignState, fallbackSeed: number): Campaign
     endlessBest: Number.isFinite(c.endlessBest) ? Math.max(0, Math.floor(c.endlessBest)) : 0,
     battlesWon: Number.isFinite(c.battlesWon) ? Math.max(0, Math.floor(c.battlesWon)) : 0,
     packsOpened: Number.isFinite(c.packsOpened) ? Math.max(0, Math.floor(c.packsOpened)) : 0,
+    packsSinceEpic: isFiniteNum(c.packsSinceEpic) ? Math.max(0, Math.floor(c.packsSinceEpic)) : 0,
+    packsSinceLegendary: isFiniteNum(c.packsSinceLegendary) ? Math.max(0, Math.floor(c.packsSinceLegendary)) : 0,
     heroes: c.heroes.map(h => ({ ...h })),
     equipment: Array.isArray(c.equipment) ? c.equipment.map(e => ({ ...e })) : [],
     tactics: Array.isArray(c.tactics) ? c.tactics.map(t => ({ ...t })) : [],
@@ -1549,12 +1622,16 @@ export function loadSave(storage: StorageLike | null | undefined): SaveData | nu
         seed: 'seed' in camp && typeof camp.seed === 'number' ? camp.seed : 1337,
         nextUid: 'nextUid' in camp && typeof camp.nextUid === 'number' ? camp.nextUid : 100,
         gold: 'gold' in camp && typeof camp.gold === 'number' ? camp.gold : 100,
+        dust: 'dust' in camp && isFiniteNum(camp.dust) && camp.dust >= 0 ? Math.floor(camp.dust) : 0,
+        shards: 'shards' in camp && isFiniteNum(camp.shards) && camp.shards >= 0 ? Math.floor(camp.shards) : 0,
         chaptersCleared: clearedStageIds.length,
         clearedStageIds,
         selectedStageId,
         endlessBest: 'endlessBest' in camp && typeof camp.endlessBest === 'number' ? camp.endlessBest : 0,
         battlesWon: 'battlesWon' in camp && typeof camp.battlesWon === 'number' ? camp.battlesWon : 0,
         packsOpened: 'packsOpened' in camp && typeof camp.packsOpened === 'number' ? camp.packsOpened : 0,
+        packsSinceEpic: 'packsSinceEpic' in camp && isFiniteNum(camp.packsSinceEpic) && camp.packsSinceEpic >= 0 ? Math.floor(camp.packsSinceEpic) : 0,
+        packsSinceLegendary: 'packsSinceLegendary' in camp && isFiniteNum(camp.packsSinceLegendary) && camp.packsSinceLegendary >= 0 ? Math.floor(camp.packsSinceLegendary) : 0,
         heroes: camp.heroes.filter((h): h is OwnedHeroCard => typeof h === 'object' && h !== null && 'uid' in h && 'heroId' in h),
         equipment: 'equipment' in camp && Array.isArray(camp.equipment)
           ? camp.equipment.filter((e): e is OwnedEquipCard => typeof e === 'object' && e !== null && 'uid' in e && 'equipId' in e)

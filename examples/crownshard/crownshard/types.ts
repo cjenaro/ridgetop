@@ -473,6 +473,15 @@ export interface PackRevealItem {
   readonly detail: string
   readonly value: number
   readonly isNew: boolean
+  readonly convertedShards?: number
+  readonly pityTriggered?: 'epic' | 'legendary'
+}
+
+export interface PackPityStatus {
+  readonly packsSinceEpic: number
+  readonly epicIn: number
+  readonly packsSinceLegendary: number
+  readonly legendaryIn: number
 }
 
 export interface GridCell {
@@ -955,12 +964,16 @@ export interface CampaignState {
   seed: number
   nextUid: number
   gold: number
+  dust: number
+  shards: number
   chaptersCleared: number
   clearedStageIds: string[]
   selectedStageId: string
   endlessBest: number
   battlesWon: number
   packsOpened: number
+  packsSinceEpic: number
+  packsSinceLegendary: number
   heroes: OwnedHeroCard[]
   equipment: OwnedEquipCard[]
   tactics: OwnedTacticCard[]
@@ -977,9 +990,19 @@ export interface GameState {
   vfx: VfxEvent[]
 }
 
+export type SavedCampaignState = Omit<
+  CampaignState,
+  'dust' | 'shards' | 'packsSinceEpic' | 'packsSinceLegendary'
+> & {
+  dust?: number
+  shards?: number
+  packsSinceEpic?: number
+  packsSinceLegendary?: number
+}
+
 export interface SaveData {
   version: 1
-  campaign: CampaignState
+  campaign: SavedCampaignState
   activeBattle?: BattleSaveSnapshot | null
 }
 

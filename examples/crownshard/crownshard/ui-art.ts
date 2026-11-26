@@ -1,10 +1,11 @@
 import type { CanvasWidgetDrawState, LayoutRect } from 'ridgetop/ui'
 import type {
   BattleUnit, ChapterSpec, CombatForecast, CombatForecastAlt, DifficultyLevel, ElementalComboPreview, EquipSlot, EquipmentSpec,
-  FacingDir, FacingExposureLevel, HeroSpec, LandmarkKind, OwnedHeroCard, PackRevealItem, PackSpec,
+  FacingDir, FacingExposureLevel, HeroSpec, LandmarkKind, OwnedHeroCard, PackPityStatus, PackRevealItem, PackSpec,
   Rarity, SkillSpec, StatusKind, TacticCardSpec, TurnOrderActionPreview, TurnPreviewEntry
 } from './types.ts'
 import { DIFFICULTY_META, RARITY_META, RARITY_ORDER } from './data.ts'
+import { EPIC_PITY_THRESHOLD, LEGENDARY_PITY_THRESHOLD } from './forge.ts'
 
 // ===========================================================================
 // Stylized Game UI Tokens
@@ -353,7 +354,7 @@ function drawCurrencyBadge(
   x: number,
   cy: number,
   text: string,
-  kind: 'coin' | 'gem' | 'deck',
+  kind: 'coin' | 'gem' | 'deck' | 'dust' | 'shards',
   h = 26
 ) {
   const pillH = h - 4
@@ -369,7 +370,7 @@ function drawCurrencyBadge(
   ctx.fillStyle = COLOR.wellDeep
   ctx.fill()
   rr(ctx, pillX + 1.5, pillY + 1.5, pillW - 3, pillH - 3, pillH / 2 - 1)
-  ctx.strokeStyle = '#4e6394'
+  ctx.strokeStyle = kind === 'dust' ? '#8c5ad9' : kind === 'shards' ? '#3d99d6' : '#4e6394'
   ctx.lineWidth = 1.5
   ctx.stroke()
   rr(ctx, pillX, pillY, pillW, pillH, pillH / 2)
@@ -383,6 +384,10 @@ function drawCurrencyBadge(
     draw3DCoin(ctx, icx, cy, iconR)
   } else if (kind === 'gem') {
     drawFacetedGem(ctx, icx, cy, iconR, '#66ff9e', '#17a654')
+  } else if (kind === 'dust') {
+    drawFacetedGem(ctx, icx, cy, iconR, '#e0a8ff', '#7c3aed')
+  } else if (kind === 'shards') {
+    drawFacetedGem(ctx, icx, cy, iconR, '#7ae7ff', '#1d82d9')
   } else {
     // Deck badge disc
     ctx.beginPath()
@@ -401,7 +406,15 @@ function drawCurrencyBadge(
   drawText(ctx, text, pillX + iconR * 0.95 + 4, cy + 0.5, {
     size: 12.5,
     weight: 900,
-    color: kind === 'coin' ? COLOR.accentHi : kind === 'deck' ? '#b8ffd6' : '#ffffff',
+    color: kind === 'coin'
+      ? COLOR.accentHi
+      : kind === 'deck'
+        ? '#b8ffd6'
+        : kind === 'dust'
+          ? '#e5bfff'
+          : kind === 'shards'
+            ? '#9ceeff'
+            : '#ffffff',
     display: true,
     stroke: true,
     strokeWidth: 2.6
@@ -3326,7 +3339,14 @@ export function drawForecastAltChip(
 // Vanguard Camp (Chunky Currency Counters, Character Roster, Armory, Packs)
 // ===========================================================================
 
-export function drawCampHeader(ctx: CanvasRenderingContext2D, rect: LayoutRect, gold: number, deckValue: number, compact: boolean) {
+export function drawCampHeader(
+  ctx: CanvasRenderingContext2D,
+  rect: LayoutRect,
+  gold: number,
+  deckValue: number,
+  compact: boolean,
+  forgeBalances?: { dust: number; shards: number }
+) {
   const { x, y, width: w, height: h } = rect
   const cy = y + h / 2
   const title = compact && w < 165 ? 'Camp' : 'Vanguard Camp'
@@ -3354,9 +3374,15 @@ export function drawCampHeader(ctx: CanvasRenderingContext2D, rect: LayoutRect, 
   })
   let cx = x + 36 + tw + 14
   if (cx + 76 > x + w) return
-  cx += drawCurrencyBadge(ctx, cx, cy, `${gold}`, 'coin', 28) + 10
-  if (!compact && cx + 116 < x + w) {
-    drawCurrencyBadge(ctx, cx, cy, `${deckValue}g`, 'deck', 28)
+  cx += drawCurrencyBadge(ctx, cx, cy, `${gold}`, 'coin', 28) + 8
+  if (forgeBalances && !compact && cx + 150 < x + w) {
+    cx += drawCurrencyBadge(ctx, cx, cy, `${forgeBalances.dust}`, 'dust', 26) + 8
+    if (cx + 76 < x + w) {
+      cx += drawCurrencyBadge(ctx, cx, cy, `${forgeBalances.shards}`, 'shards', 26) + 8
+    }
+  }
+  if (!compact && cx + 106 < x + w) {
+    drawCurrencyBadge(ctx, cx, cy, `${deckValue}g`, 'deck', 26)
   }
 }
 
@@ -3836,6 +3862,8 @@ export function drawRevealCard(
     detail: string
     value: number
     isNew: boolean
+    convertedShards?: number
+    pityTriggered?: 'epic' | 'legendary'
     portrait?: CanvasImageSource
     tacticSpec?: TacticCardSpec
     equipAccent?: string
@@ -3908,10 +3936,22 @@ export function drawRevealCard(
 
   const kindLabel = o.kind === 'hero' ? 'Hero' : o.kind === 'tactic' ? 'Tactic' : o.kind[0].toUpperCase() + o.kind.slice(1)
   drawText(ctx, `${meta.label} ${kindLabel}`, x + w / 2, bannerY + 30, { size: 9, weight: 900, color: meta.hex, align: 'center', upper: true, spacing: 0.8, maxW: w - 14, display: true })
-  drawParagraph(ctx, o.detail, x + 10, bannerY + 36, w - 20, y + h - bannerY - 58, { size: 10, weight: 700, color: '#d8e3ff', align: 'center', lineHeight: 12.5 })
+  drawParagraph(ctx, o.detail, x + 10, bannerY + 36, w - 20, y + h - bannerY - 58, {
+    size: 10,
+    weight: o.convertedShards ? 900 : 700,
+    color: o.convertedShards ? '#9ceeff' : '#d8e3ff',
+    align: 'center',
+    lineHeight: 12.5
+  })
 
-  // Bottom value badge
-  drawChip(ctx, x + w / 2, y + h - 22, `${o.value}g`, { icon: 'coin', h: 18, size: 10, color: COLOR.accentHi, bg: COLOR.wellDeep, border: COLOR.outline, align: 'center' })
+  // Bottom value / shard conversion badge
+  if (o.convertedShards && o.convertedShards > 0) {
+    drawChip(ctx, x + w / 2, y + h - 22, `+${o.convertedShards} SHARDS`, {
+      icon: 'gem', h: 18, size: 9.5, color: '#9ceeff', bg: '#152b4a', border: COLOR.outline, align: 'center'
+    })
+  } else {
+    drawChip(ctx, x + w / 2, y + h - 22, `${o.value}g`, { icon: 'coin', h: 18, size: 10, color: COLOR.accentHi, bg: COLOR.wellDeep, border: COLOR.outline, align: 'center' })
+  }
 
   drawCornerRibbon(ctx, x, y, w, h, r, meta.hex, 22)
   rr(ctx, x + 1, y + 1, w - 2, h - 2, Math.max(1, r - 1))
@@ -3919,9 +3959,230 @@ export function drawRevealCard(
   ctx.lineWidth = 2.4
   ctx.stroke()
 
-  if (o.isNew) {
-    drawChip(ctx, x + 8, y + 8, 'NEW', { h: 18, size: 9.5, color: COLOR.accentText, bg: COLOR.accentHi, border: COLOR.outline })
+  let badgeY = y + 8
+  if (o.convertedShards && o.convertedShards > 0) {
+    drawChip(ctx, x + 8, badgeY, 'MAX ★', { h: 18, size: 9, color: '#072236', bg: '#7ae7ff', border: COLOR.outline })
+    badgeY += 20
+  } else if (o.isNew) {
+    drawChip(ctx, x + 8, badgeY, 'NEW', { h: 18, size: 9.5, color: COLOR.accentText, bg: COLOR.accentHi, border: COLOR.outline })
+    badgeY += 20
   }
+  if (o.pityTriggered) {
+    const pityColor = o.pityTriggered === 'legendary' ? '#ffcb57' : '#d79eff'
+    drawChip(ctx, x + 8, badgeY, 'PITY', {
+      h: 17, size: 8.5, color: o.pityTriggered === 'legendary' ? COLOR.accentText : '#1e0b36', bg: pityColor, border: COLOR.outline
+    })
+  }
+  ctx.restore()
+}
+
+/**
+ * Visible Pack Pity Counter banner showing remaining packs until guaranteed Epic+ and Legendary drops
+ * with crisp segmented progress bars.
+ */
+export function drawPityBanner(
+  ctx: CanvasRenderingContext2D,
+  rect: LayoutRect,
+  pity: PackPityStatus,
+  compact = false
+) {
+  const { x, y, width: w, height: h } = rect
+  if (w < 40 || h < 18) return
+
+  const epicRatio = Math.max(0, Math.min(1, pity.packsSinceEpic / EPIC_PITY_THRESHOLD))
+  const legRatio = Math.max(0, Math.min(1, pity.packsSinceLegendary / LEGENDARY_PITY_THRESHOLD))
+  const epicHot = pity.epicIn <= 1
+  const legHot = pity.legendaryIn <= 1
+
+  ctx.save()
+  drawSurface(ctx, rect, {
+    r: RADIUS.md,
+    lipH: 2,
+    fill: '#232d52',
+    fillBot: '#151c36',
+    rim: legHot ? '#ffcb5788' : epicHot ? '#c87dff88' : '#7590c844',
+    shadow: false
+  })
+
+  const padX = compact ? 10 : 14
+  const epicWord = pity.epicIn === 1 ? 'pack' : 'packs'
+  const legWord = pity.legendaryIn === 1 ? 'pack' : 'packs'
+  const headline = compact
+    ? `Epic in ${pity.epicIn} ${epicWord} · Leg in ${pity.legendaryIn} ${legWord}`
+    : `Pity Guarantee: Epic in ${pity.epicIn} ${epicWord} · Legendary in ${pity.legendaryIn} ${legWord}`
+
+  const barRowY = y + h - 14
+  const headlineY = y + (h >= 36 ? 12 : h * 0.34)
+  drawText(ctx, headline, x + padX, headlineY, {
+    size: compact ? 10 : 11,
+    weight: 900,
+    color: legHot ? '#ffe078' : epicHot ? '#e5bfff' : '#dce6ff',
+    maxW: w - padX * 2,
+    display: true,
+    shadow: true
+  })
+
+  const halfGap = compact ? 10 : 18
+  const colW = Math.max(40, (w - padX * 2 - halfGap) / 2)
+  const labelW = compact ? 52 : 76
+
+  // Epic segmented meter
+  const ex = x + padX
+  drawText(ctx, compact ? `EP ${pity.packsSinceEpic}/${EPIC_PITY_THRESHOLD}` : `EPIC ${pity.packsSinceEpic}/${EPIC_PITY_THRESHOLD}`, ex, barRowY + 4, {
+    size: 9.5,
+    weight: 900,
+    color: epicHot ? '#f0ccff' : '#c87dff',
+    display: true,
+    maxW: labelW
+  })
+  const eBarW = Math.max(24, colW - labelW - 4)
+  drawBar(ctx, ex + labelW + 2, barRowY, eBarW, 8, epicRatio, '#c87dff', COLOR.wellDeep, Math.min(10, EPIC_PITY_THRESHOLD))
+
+  // Legendary segmented meter
+  const lx = ex + colW + halfGap
+  drawText(ctx, compact ? `LG ${pity.packsSinceLegendary}/${LEGENDARY_PITY_THRESHOLD}` : `LEG ${pity.packsSinceLegendary}/${LEGENDARY_PITY_THRESHOLD}`, lx, barRowY + 4, {
+    size: 9.5,
+    weight: 900,
+    color: legHot ? '#fff0a6' : '#ffcb57',
+    display: true,
+    maxW: labelW
+  })
+  const lBarW = Math.max(24, colW - labelW - 4)
+  drawBar(ctx, lx + labelW + 2, barRowY, lBarW, 8, legRatio, '#ffcb57', COLOR.wellDeep, 8)
+
+  ctx.restore()
+}
+
+/** Armory Forge currency strip showing current Arcane Dust and Hero Shards balances. */
+export function drawForgeBalanceBanner(
+  ctx: CanvasRenderingContext2D,
+  rect: LayoutRect,
+  dust: number,
+  shards: number,
+  compact = false
+) {
+  const { x, y, width: w, height: h } = rect
+  if (w < 40 || h < 20) return
+  const cy = y + h / 2
+
+  ctx.save()
+  drawSurface(ctx, rect, {
+    r: RADIUS.md,
+    lipH: 2,
+    fill: '#232e54',
+    fillBot: '#151c36',
+    rim: '#8c69d666',
+    shadow: false
+  })
+
+  let cx = x + 8
+  const badgeH = Math.min(26, h - 6)
+  cx += drawCurrencyBadge(ctx, cx, cy, compact ? `${dust}` : `${dust} Dust`, 'dust', badgeH) + 8
+  cx += drawCurrencyBadge(ctx, cx, cy, compact ? `${shards}` : `${shards} Shards`, 'shards', badgeH) + 10
+
+  const remW = x + w - cx - 10
+  if (!compact && remW > 120) {
+    drawText(ctx, 'Salvage gear → Dust · Heroes / Max ★ → Shards', cx, cy + 0.5, {
+      size: 10,
+      weight: 700,
+      color: COLOR.muted,
+      maxW: remW
+    })
+  }
+  ctx.restore()
+}
+
+/** Armory Forge craftable Hero / Equipment recipe card. */
+export function drawForgeRecipeCard(
+  ctx: CanvasRenderingContext2D,
+  rect: LayoutRect,
+  o: {
+    kind: 'hero' | EquipSlot
+    rarity: Rarity
+    name: string
+    subtitle: string
+    refId: string
+    accentHex?: string
+    portrait?: CanvasImageSource
+    ownedCount: number
+    maxed?: boolean
+    cost: number
+    currency: 'dust' | 'shards'
+    affordable: boolean
+  },
+  st?: CanvasWidgetDrawState
+) {
+  const meta = RARITY_META[o.rarity]
+  const { x, y, width: w, height: h } = rect
+  const hot = Boolean(st?.hovered || st?.focused)
+  const r = RADIUS.md
+
+  ctx.save()
+  drawSurface(ctx, rect, {
+    r,
+    lipH: 3,
+    fill: hot ? '#3a4d7a' : '#2a385e',
+    fillBot: '#1c2642',
+    rim: o.affordable ? meta.hex + '66' : '#ffffff14',
+    shadow: false
+  })
+
+  const faceH = h - 3
+  const is = Math.min(faceH - 10, 38)
+  const ix = x + 6
+  const iy = y + (faceH - is) / 2
+
+  if (o.kind === 'hero') {
+    drawPortraitTile(ctx, ix, iy, is, o.portrait, { ring: meta.hex, ringW: 2, r: 8 })
+  } else {
+    rr(ctx, ix, iy, is, is, RADIUS.sm)
+    const ig = ctx.createLinearGradient(0, iy, 0, iy + is)
+    ig.addColorStop(0, meta.hex + 'aa')
+    ig.addColorStop(1, '#141c33')
+    ctx.fillStyle = ig
+    ctx.fill()
+    ctx.strokeStyle = COLOR.outline
+    ctx.lineWidth = 1.8
+    ctx.stroke()
+    drawEquipIcon(ctx, o.kind, o.refId, o.accentHex ?? meta.hex, ix + is / 2, iy + is / 2, is * 0.36)
+  }
+
+  const tx = ix + is + 9
+  const right = x + w - 10
+  const statusText = o.maxed ? 'MAX ★' : o.ownedCount > 0 ? `Owned x${o.ownedCount}` : 'Unowned'
+  const statusColor = o.maxed ? '#7ae7ff' : o.ownedCount > 0 ? '#b8ffd6' : COLOR.accentHi
+  const statusBg = o.maxed ? '#13314a' : o.ownedCount > 0 ? '#143627' : '#362712'
+  const statusW = Math.min(72, measureText(ctx, statusText, 9, 800, true) + 14)
+
+  const twoLine = faceH >= 40
+  drawText(ctx, o.name, tx, y + faceH / 2 - (twoLine ? 8 : 0), {
+    size: 12,
+    weight: 900,
+    color: '#ffffff',
+    maxW: Math.max(30, right - tx - statusW - 44),
+    display: true,
+    shadow: true
+  })
+
+  // Rarity pill right next to status chip
+  const chipY = y + faceH / 2 - (twoLine ? 16 : 8)
+  const sw = drawChip(ctx, right, chipY, statusText, {
+    h: 16, size: 8.5, color: statusColor, bg: statusBg, border: COLOR.outline, align: 'right'
+  })
+  drawChip(ctx, right - sw - 4, chipY, meta.short, {
+    h: 16, size: 8.5, color: meta.hex, bg: COLOR.wellDeep, border: COLOR.outline, align: 'right'
+  })
+
+  if (twoLine) {
+    drawText(ctx, o.subtitle, tx, y + faceH / 2 + 8.5, {
+      size: 10,
+      weight: 600,
+      color: COLOR.muted,
+      maxW: Math.max(40, right - tx)
+    })
+  }
+
+  drawCornerRibbon(ctx, x, y, w, faceH + 1, r, meta.hex, 12)
   ctx.restore()
 }
 
@@ -6899,6 +7160,8 @@ export function drawAnimatedRevealCard(
     detail: string
     value: number
     isNew: boolean
+    convertedShards?: number
+    pityTriggered?: 'epic' | 'legendary'
     portrait?: CanvasImageSource
     tacticSpec?: TacticCardSpec
     equipAccent?: string
