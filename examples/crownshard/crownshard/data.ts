@@ -201,23 +201,26 @@ export const HERO_SPECS: Record<HeroClassId, HeroSpec> = {
     skills: [
       {
         id: 'sun_mend', name: 'Sunbeam Mend', tier: 1,
-        desc: 'Heal an ally for 28 HP & grant +8 Shield.',
+        desc: 'Heal an ally 28 HP (+8 Shield), or Revive a downed hero (50% HP).',
         range: 3, cooldown: 2, target: 'ally', pattern: 'single',
         powerMul: 0, flatBonus: 0, healAmount: 28, shieldAmount: 8, ignoreArmor: 0,
+        canRevive: true, reviveHpRatio: 0.5,
         vfx: 'holy'
       },
       {
         id: 'sanctuary_wave', name: 'Sanctuary Wave', tier: 2,
-        desc: 'Heal self & adjacent allies for 24 HP + 14 Shield.',
+        desc: 'Heal self & adjacent allies 24 HP + 14 Shield; revives adjacent downed allies.',
         range: 0, cooldown: 3, target: 'self', pattern: 'aura',
         powerMul: 0, flatBonus: 0, healAmount: 24, shieldAmount: 14, ignoreArmor: 0,
+        canRevive: true, reviveHpRatio: 0.45,
         vfx: 'holy'
       },
       {
         id: 'dawns_judgment', name: 'Dawn Judgment', tier: 3,
-        desc: 'Smite 3x3 enemies (155% ATK) & heal nearby allies.',
+        desc: 'Smite 3x3 enemies (155% ATK) & heal or revive nearby allies.',
         range: 3, cooldown: 3, target: 'tile', pattern: 'area3',
         powerMul: 1.55, flatBonus: 8, healAmount: 22, shieldAmount: 10, ignoreArmor: 0.7,
+        canRevive: true, reviveHpRatio: 0.55,
         vfx: 'holy'
       }
     ]
@@ -490,8 +493,14 @@ export const TACTIC_LIST: readonly TacticCardSpec[] = [
   {
     id: 'healing_draught', name: 'Sunleaf Tonic', rarity: 'common', cost: 1,
     target: 'ally', pattern: 'single',
-    desc: 'Restore 26 HP to target hero.',
-    damage: 0, heal: 26, shield: 0, apGain: 0, vfx: 'holy'
+    desc: 'Restore 26 HP or Revive a downed hero (45% HP).',
+    damage: 0, heal: 26, shield: 0, apGain: 0, canRevive: true, reviveHpRatio: 0.45, vfx: 'holy'
+  },
+  {
+    id: 'phoenix_sigil', name: 'Phoenix Sigil', rarity: 'uncommon', cost: 1,
+    target: 'ally', pattern: 'single',
+    desc: 'Revive a downed hero (60% HP) or heal 30 HP + 12 Shield.',
+    damage: 0, heal: 30, shield: 12, apGain: 0, canRevive: true, reviveHpRatio: 0.6, vfx: 'holy'
   },
   {
     id: 'iron_ward', name: 'Iron Ward', rarity: 'common', cost: 1,
@@ -532,8 +541,8 @@ export const TACTIC_LIST: readonly TacticCardSpec[] = [
   {
     id: 'solar_blessing', name: 'Solar Blessing', rarity: 'legendary', cost: 2,
     target: 'any', pattern: 'all_allies',
-    desc: 'Heal ALL heroes 30 HP, +22 Shield & Empower!',
-    damage: 0, heal: 30, shield: 22, apGain: 0, status: 'empower', vfx: 'holy'
+    desc: 'Heal or Revive ALL heroes (30 HP), +22 Shield & Empower!',
+    damage: 0, heal: 30, shield: 22, apGain: 0, canRevive: true, reviveHpRatio: 0.6, status: 'empower', vfx: 'holy'
   }
 ]
 

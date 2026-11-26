@@ -798,6 +798,16 @@ export function createBattleVfx(pool: MeshPool, particles: Particles, onShake: (
         })
         return d + 0.42
       }
+      case 'phoenix_sigil': {
+        for (const c of cells) {
+          beam(c, C.gold, d, { radius: 0.44, height: 6.0, life: 0.85 })
+          groundRing(c, C.fireTip, d + 0.08, 0.72, 0.22, 1.55, 2.2)
+          groundRing(c, C.holy, d + 0.14, 0.62, 0.18, 1.15, -3.0)
+          motes(c, C.gold, 12, 0.48, 2.1, d + 0.12)
+          embers(c, 8, 0.42, d + 0.1, C.fireTip)
+        }
+        return d + 0.18
+      }
       case 'iron_ward':
         for (const c of cells) {
           add(d, 1.3, (u, t) => {
@@ -1040,6 +1050,7 @@ export function createBattleVfx(pool: MeshPool, particles: Particles, onShake: (
     dust,
     embers,
     motes,
+    beam,
     groundRing,
     strike,
     skill,

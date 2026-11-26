@@ -5,6 +5,7 @@ export const GRID_ROWS = 6
 export const TILE_SIZE = 1.65
 export const HEIGHT_STEP = 0.45
 export const MAX_HEIGHT_LEVEL = 4
+export const KO_COUNTDOWN_TURNS = 3
 
 export type Rarity = 'common' | 'uncommon' | 'rare' | 'epic' | 'legendary'
 
@@ -67,6 +68,8 @@ export interface SkillSpec {
   readonly healAmount: number
   readonly shieldAmount: number
   readonly ignoreArmor: number
+  readonly canRevive?: boolean
+  readonly reviveHpRatio?: number
   readonly status?: 'burn' | 'slow' | 'stun' | 'empower'
   readonly vfx: 'slash' | 'arrow' | 'arcane' | 'fire' | 'frost' | 'holy' | 'shadow'
 }
@@ -119,6 +122,8 @@ export interface TacticCardSpec {
   readonly heal: number
   readonly shield: number
   readonly apGain: number
+  readonly canRevive?: boolean
+  readonly reviveHpRatio?: number
   readonly status?: 'burn' | 'slow' | 'stun' | 'empower'
   readonly refreshMove?: boolean
   readonly vfx: 'fire' | 'frost' | 'holy' | 'arcane' | 'slash' | 'shadow'
@@ -337,6 +342,8 @@ export interface BattleUnit {
   moved: boolean
   acted: boolean
   alive: boolean
+  downed: boolean
+  koCountdown: number
   burnTurns: number
   slowTurns: number
   stunTurns: number
@@ -391,8 +398,9 @@ export type VfxEvent =
   /** Enemy signature move (Archon Eclipse Nova, Bog Shaman totem mend, and raid-boss telegraphs). */
   | { kind: 'special'; uid: string; move: 'eclipse_nova' | 'shaman_mend' | 'lich_summon' | 'frostwyrm_breath' | 'titan_slam'; at: Vec3; cells: Vec3[] }
   | { kind: 'heal'; at: Vec3 }
+  | { kind: 'revive'; at: Vec3; uid?: string }
   | { kind: 'shield'; at: Vec3 }
-  | { kind: 'ko'; at: Vec3; isBoss?: boolean }
+  | { kind: 'ko'; at: Vec3; isBoss?: boolean; downed?: boolean }
   | { kind: 'levelup'; at: Vec3 }
 
 export interface BattleReward {
@@ -508,6 +516,7 @@ export interface CombatForecastAlt {
   readonly critChance: number
   readonly healAmount: number
   readonly selfShield: number
+  readonly isRevive?: boolean
   readonly status?: 'burn' | 'slow' | 'stun' | 'empower'
   readonly lethalNormal: boolean
   readonly requiresMove: boolean
@@ -548,6 +557,8 @@ export interface CombatForecast {
   readonly empowered: boolean
   readonly attackArc: AttackArc
   readonly isOffensive: boolean
+  readonly isRevive: boolean
+  readonly reviveKoCountdown?: number
   readonly friendlyFire: boolean
   readonly friendlyFireCount: number
   readonly emptyTileTarget: boolean
@@ -637,6 +648,8 @@ export interface BattleUnitSnapshot {
   readonly moved: boolean
   readonly acted: boolean
   readonly alive: boolean
+  readonly downed?: boolean
+  readonly koCountdown?: number
   readonly burnTurns: number
   readonly slowTurns: number
   readonly stunTurns: number
@@ -817,4 +830,12 @@ export function vectorToFacing(dc: number, dr: number, fallback: FacingDir = 'e'
   if (dc === 0 && dr === 0) return fallback
   if (Math.abs(dc) >= Math.abs(dr)) return dc > 0 ? 'e' : 'w'
   return dr > 0 ? 's' : 'n'
+}
+
+export function isUnitDowned(unit: Pick<BattleUnit, 'alive' | 'downed' | 'koCountdown'>): boolean {
+  return !unit.alive && unit.downed && unit.koCountdown > 0
+}
+
+export function isUnitActive(unit: Pick<BattleUnit, 'alive'>): boolean {
+  return unit.alive
 }
