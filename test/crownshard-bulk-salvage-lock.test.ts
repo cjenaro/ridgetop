@@ -178,12 +178,12 @@ test('findBulkSalvageableCommonDupes & bulkSalvageCommonDupes salvage only exces
   const { campaign } = state
   // Initial campaign has 1 equipped iron_sword, 1 equipped hunter_bow, 1 equipped leather_jerkin.
   assert.deepEqual(findBulkSalvageableCommonDupes(campaign), [])
-  assert.deepEqual(previewBulkSalvageCommonDupes(campaign), { count: 0, totalGold: 0, equipUids: [] })
+  assert.deepEqual(previewBulkSalvageCommonDupes(campaign), { count: 0, totalGold: 0, totalDust: 0, equipUids: [] })
 
   // Safe no-op when nothing qualifies
   const goldInit = campaign.gold
   const soundsInit = state.sounds.length
-  assert.deepEqual(bulkSalvageCommonDupes(state), { salvagedCount: 0, totalGold: 0 })
+  assert.deepEqual(bulkSalvageCommonDupes(state), { salvagedCount: 0, totalGold: 0, totalDust: 0 })
   assert.equal(campaign.gold, goldInit)
   assert.equal(state.sounds.length, soundsInit)
 
@@ -245,6 +245,7 @@ test('findBulkSalvageableCommonDupes & bulkSalvageCommonDupes salvage only exces
     sig2.uid
   ]
   const expectedGold = expectedUids.length * RARITY_META.common.salvage
+  const expectedDust = expectedUids.length * 10
 
   const found = findBulkSalvageableCommonDupes(campaign)
   assert.deepEqual(found.map(i => i.uid), expectedUids)
@@ -252,13 +253,16 @@ test('findBulkSalvageableCommonDupes & bulkSalvageCommonDupes salvage only exces
   const preview = previewBulkSalvageCommonDupes(campaign)
   assert.equal(preview.count, expectedUids.length)
   assert.equal(preview.totalGold, expectedGold)
+  assert.equal(preview.totalDust, expectedDust)
   assert.deepEqual(preview.equipUids, expectedUids)
 
   const goldBefore = campaign.gold
+  const dustBefore = campaign.dust
   state.sounds = []
   const result = bulkSalvageCommonDupes(state)
-  assert.deepEqual(result, { salvagedCount: expectedUids.length, totalGold: expectedGold })
+  assert.deepEqual(result, { salvagedCount: expectedUids.length, totalGold: expectedGold, totalDust: expectedDust })
   assert.equal(campaign.gold, goldBefore + expectedGold)
+  assert.equal(campaign.dust, dustBefore + expectedDust)
   assert.deepEqual(state.sounds, [{ kind: 'coin' }], 'Bulk salvage should emit a single coalesced coin sound')
 
   // Verify all salvaged UIDs are gone
@@ -277,7 +281,7 @@ test('findBulkSalvageableCommonDupes & bulkSalvageCommonDupes salvage only exces
 
   // Re-running bulk salvage immediately must be a safe no-op (never salvages the last remaining copy of iron_plate!)
   assert.deepEqual(findBulkSalvageableCommonDupes(campaign), [])
-  assert.deepEqual(bulkSalvageCommonDupes(state), { salvagedCount: 0, totalGold: 0 })
+  assert.deepEqual(bulkSalvageCommonDupes(state), { salvagedCount: 0, totalGold: 0, totalDust: 0 })
   assert.ok(getEquipmentByUid(campaign, plate1.uid), 'Last remaining copy of iron_plate must never be salvaged')
 })
 

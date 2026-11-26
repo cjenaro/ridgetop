@@ -109,9 +109,7 @@ export function computeEquipmentStatDiff(
   let afterStats = beforeStats
   if (!isAlreadyEquipped) {
     const hypotheticalHero: OwnedHeroCard = {
-      uid: hero.uid,
-      heroId: hero.heroId,
-      stars: hero.stars,
+      ...hero,
       weaponUid: slot === 'weapon' ? candidate.uid : hero.weaponUid,
       armorUid: slot === 'armor' ? candidate.uid : hero.armorUid,
       relicUid: slot === 'relic' ? candidate.uid : hero.relicUid

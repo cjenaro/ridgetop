@@ -5,10 +5,10 @@ import {
   CHAMPION_KO_CT_SURGE, EQUIP_EFFECTS, HERO_PASSIVES, MAX_TACTIC_DECK, MIN_TACTIC_DECK,
   SHIELD_WALL_DEF_BONUS, autoBuildTacticDeck, computeCombatForecast, computeCounterDamage,
   computeCoverBonus, computeHeroStats, computeMoveTiles, computeShieldWallDefBonus,
-  computeTacticDeckCurve, computeTargetTiles, createInitialState, effectiveAttackRange,
-  effectiveSpeed, endPlayerTurn, equipItem, findGridPath, getActiveTacticDeckUids,
-  getEquipEffect, getHeroPassive, getUnitByUid, loadSave, persistSave, selectHeroByUid,
-  selectTile, serializeSave, startChapterBattle, stepGame, toggleTacticInDeck,
+  computeTacticDeckCurve, computeTargetTiles, craftEquipment, craftHero, createInitialState,
+  effectiveAttackRange, effectiveSpeed, endPlayerTurn, equipItem, findGridPath, getActiveTacticDeckUids,
+  getEquipEffect, getHeroPassive, getUnitByUid, loadSave, persistSave, previewPathOpportunityAttacks,
+  selectHeroByUid, selectTile, serializeSave, startChapterBattle, stepGame, toggleTacticInDeck,
   unitTerrainMoveCost, armSkill
 } from '../examples/crownshard/crownshard/simulation.ts'
 import { gridToWorld, terrainElevation } from '../examples/crownshard/crownshard/types.ts'
@@ -410,6 +410,99 @@ test('Mage Arcane Conduit refunds +1 AP and splashes 20% magic DMG to 1 adjacent
   assert.equal(target.alive, false, 'Arcane Bolt must KO the low-HP target')
   assert.equal(battle.ap, 2, 'Arcane Conduit must refund +1 AP on skill KO')
   assert.equal(bystander.hp, 50 - expectedSplash, `Arcane Conduit must splash ${expectedSplash} magic DMG to adjacent foe`)
+})
+
+test('Wave 5 QA regressions: OA Shield Wall parity, Dragonfang forecast ignoreArmor, Arcane Conduit splash KO XP, and Forge defaults', () => {
+  // 1. Forge defaults: craftHero initializes level: 1, xp: 0, locked: false; craftEquipment initializes locked: false
+  const forgeState = createInitialState(5051)
+  forgeState.campaign.shards = 2000
+  forgeState.campaign.dust = 2000
+  const craftedHero = craftHero(forgeState, 'paladin')!
+  assert.equal(craftedHero.level, 1)
+  assert.equal(craftedHero.xp, 0)
+  assert.equal(craftedHero.locked, false)
+  const craftedEquip = craftEquipment(forgeState, 'dragonfang_spear')!
+  assert.equal(craftedEquip.locked, false)
+
+  // 2. Dragonfang Halberd forecast ignoreArmor reflects +10% pierce vs DEF >= 5
+  const state = createInitialState(5052)
+  state.campaign.equipment.push({ uid: 'eq_dragonfang_test', equipId: 'dragonfang_spear', slot: 'weapon', locked: false })
+  equipItem(state, state.campaign.heroes[0].uid, 'eq_dragonfang_test')
+  const battle = startChapterBattle(state, 0)
+  flattenBoard(battle)
+  const knight = battle.units.find(u => u.heroId === 'knight')!
+  const archer = battle.units.find(u => u.heroId === 'archer')!
+  const enemy = battle.units.find(u => u.team === 'enemy')!
+  for (const u of battle.units) {
+    if (u.uid !== knight.uid && u.uid !== archer.uid && u.uid !== enemy.uid) {
+      u.alive = false
+      u.hp = 0
+    }
+  }
+  placeUnit(battle, knight, 2, 2)
+  placeUnit(battle, archer, 3, 2) // Adjacent to Knight -> Shield Wall (+3 DEF)
+  placeUnit(battle, enemy, 3, 3)  // Adjacent enemy sentinel to Archer
+  enemy.def = 8
+  enemy.hp = 80
+  enemy.maxHp = 80
+  enemy.shield = 0
+  enemy.facing = 'n'
+  battle.phase = 'player'
+  battle.activeUnitUid = knight.uid
+  knight.acted = false
+  selectHeroByUid(state, knight.uid)
+  const fcDragon = computeCombatForecast(state, 3, 3)!
+  assert.ok(fcDragon.ignoreArmor >= 0.10 - 1e-6, `Expected Dragonfang Halberd ignoreArmor >= 0.10, got ${fcDragon.ignoreArmor}`)
+
+  // 3. OA preview vs live execution parity when ally stands beside Knight (Shield Wall)
+  battle.activeUnitUid = archer.uid
+  archer.moved = false
+  archer.acted = false
+  archer.hp = 60
+  archer.maxHp = 60
+  archer.shield = 0
+  archer.facing = 's'
+  selectHeroByUid(state, archer.uid)
+  const preview = previewPathOpportunityAttacks(battle, archer, [{ col: 4, row: 2 }])
+  assert.equal(preview.triggers.length, 1, 'Leaving enemy sentinel adjacency must preview 1 OA')
+  const hpBeforeOa = archer.hp
+  assert.equal(selectTile(state, 4, 2), true)
+  for (let i = 0; i < 60; i++) stepGame(state, STEP)
+  assert.equal(hpBeforeOa - archer.hp, preview.totalHpLoss, 'Live OA damage with Knight Shield Wall must exactly match preview')
+
+  // 4. Arcane Conduit splash KO awards XP
+  const mageState = createInitialState(5053)
+  const mageBattle = startChapterBattle(mageState, 0)
+  flattenBoard(mageBattle)
+  const mage = mageBattle.units.find(u => u.heroId === 'mage')!
+  const foes = mageBattle.units.filter(u => u.team === 'enemy')
+  const t1 = foes[0]
+  const t2 = foes[1]
+  for (const u of mageBattle.units) {
+    if (u.uid !== mage.uid && u.uid !== t1.uid && u.uid !== t2.uid) {
+      u.alive = false
+      u.hp = 0
+    }
+  }
+  placeUnit(mageBattle, mage, 1, 2)
+  placeUnit(mageBattle, t1, 3, 2)
+  placeUnit(mageBattle, t2, 4, 2)
+  t1.hp = 4
+  t1.shield = 0
+  t2.hp = 2
+  t2.shield = 0
+  mageBattle.phase = 'player'
+  mageBattle.activeUnitUid = mage.uid
+  mageBattle.ap = 2
+  mage.acted = false
+  mage.crit = 0
+  mage.cooldowns = [0, 0, 0]
+  selectHeroByUid(mageState, mage.uid)
+  assert.equal(armSkill(mageState, 0), true)
+  assert.equal(selectTile(mageState, 3, 2), true)
+  assert.equal(t2.alive, false, 'Arcane Conduit splash should KO 2-HP adjacent foe')
+  const xpGained = mageBattle.xpEarnedByHero[mage.uid] ?? 0
+  assert.ok(xpGained >= 60, `Expected XP for both primary KO and splash KO, got ${xpGained}`)
 })
 
 test('Paladin Vengeful Aegis boosts frontal shielded Counter-Attack by +30% and grants +4 Shield', () => {

@@ -250,6 +250,20 @@ test('computeEquipmentStatDiff accurately computes positive, negative, zero, and
   }
 })
 
+test('computeEquipmentStatDiff preserves hero level and xp when computing hypothetical stats', () => {
+  const state = createInitialState(777)
+  const { campaign } = state
+  const knight = campaign.heroes[0]
+  knight.level = 13
+  knight.xp = 42
+
+  const sunsteel = addEquip(campaign, 'sunsteel_blade')
+  const diff = assertExactEquipParity(state, knight.uid, sunsteel.uid)
+  assert.equal(diff.stats.atk.delta > 0, true, 'Sunsteel Blade must show positive ATK delta on a Lv 13 hero')
+  assert.equal(diff.stats.maxHp.delta, 0, 'Sunsteel Blade must not subtract hero level HP bonuses')
+  assert.equal(diff.netPowerDelta > 0, true, 'Net power delta must be positive on a leveled hero')
+})
+
 test('computeEquipmentStatDiff identifies cross-hero ownership and respects stat clamps', () => {
   const state = createInitialState(9001)
   const { campaign } = state

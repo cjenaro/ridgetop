@@ -1,5 +1,8 @@
 import { ENEMY_SPECS, HERO_SPECS } from './data.ts'
 import {
+  computeAttackerDamageMultiplier, computeBonusIgnoreArmor, computeShieldWallDefBonus
+} from './passives.ts'
+import {
   OPPORTUNITY_ATTACK_DAMAGE_MUL,
   cellHeightAt, facingVector, terrainDefBonus, terrainWalkable, vectorToFacing
 } from './types.ts'
@@ -151,9 +154,9 @@ export function computeZocPerimeterTiles(
  * `rawDamage = attacker.atk * OPPORTUNITY_ATTACK_DAMAGE_MUL`, `ignoreArmor = 0`, `canCrit = false`).
  */
 export function computeOpportunityAttackDamage(
-  battle: Pick<BattleState, 'cells' | 'cols' | 'rows'>,
-  attacker: Pick<BattleUnit, 'col' | 'row' | 'atk' | 'empowerTurns'>,
-  defender: Pick<BattleUnit, 'def' | 'shield'>,
+  battle: Pick<BattleState, 'cells' | 'cols' | 'rows'> & Partial<Pick<BattleState, 'units'>>,
+  attacker: Pick<BattleUnit, 'col' | 'row' | 'atk' | 'empowerTurns'> & Partial<Pick<BattleUnit, 'heroId' | 'weaponId' | 'armorId' | 'relicId'>>,
+  defender: Pick<BattleUnit, 'def' | 'shield'> & Partial<Pick<BattleUnit, 'uid' | 'team' | 'alive' | 'slowTurns' | 'burnTurns' | 'stunTurns' | 'isBoss'>>,
   defenderCol: number,
   defenderRow: number,
   defenderFacing: FacingDir,
@@ -171,10 +174,23 @@ export function computeOpportunityAttackDamage(
   const attackArc = attackArcFor(attacker.col, attacker.row, defenderCol, defenderRow, defenderFacing)
   dmg *= arcDamageMultiplier(attackArc)
   if (attacker.empowerTurns > 0) dmg *= 1.35
+  dmg *= computeAttackerDamageMultiplier(attacker, {
+    slowTurns: defender.slowTurns ?? 0,
+    burnTurns: defender.burnTurns ?? 0,
+    stunTurns: defender.stunTurns ?? 0,
+    isBoss: Boolean(defender.isBoss)
+  })
 
   const cell = battle.cells[defenderRow]?.[defenderCol]
   const terrainDef = cell ? terrainDefBonus(cell.terrain) : 0
-  const effDef = Math.max(0, defender.def + terrainDef)
+  const shieldWallDef = battle.units && defender.uid && defender.team
+    ? computeShieldWallDefBonus(
+        { units: battle.units },
+        { uid: defender.uid, team: defender.team, col: defenderCol, row: defenderRow, alive: defender.alive ?? true }
+      )
+    : 0
+  const bonusIgnoreArmor = clamp(computeBonusIgnoreArmor(attacker, defender.def), 0, 1)
+  const effDef = Math.max(0, (defender.def + shieldWallDef) * (1 - bonusIgnoreArmor) + terrainDef)
   const damage = Math.max(4, Math.round(dmg - effDef * 0.72))
   const shieldPool = Math.max(0, remainingShield)
   const shieldAbsorbed = Math.min(shieldPool, damage)

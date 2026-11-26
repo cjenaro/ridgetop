@@ -1,15 +1,18 @@
 import { EQUIPMENT_BY_ID, RARITY_META } from './data.ts'
+import { getEquipSalvageDust } from './forge.ts'
 import type { CampaignState, GameState, OwnedEquipCard, OwnedHeroCard } from './types.ts'
 
 export interface BulkSalvagePreview {
   readonly count: number
   readonly totalGold: number
+  readonly totalDust: number
   readonly equipUids: readonly string[]
 }
 
 export interface BulkSalvageResult {
   readonly salvagedCount: number
   readonly totalGold: number
+  readonly totalDust: number
 }
 
 /**
@@ -85,29 +88,32 @@ export function findBulkSalvageableCommonDupes(campaign: CampaignState): OwnedEq
 export function previewBulkSalvageCommonDupes(campaign: CampaignState): BulkSalvagePreview {
   const dupes = findBulkSalvageableCommonDupes(campaign)
   let totalGold = 0
+  let totalDust = 0
   const equipUids: string[] = []
   for (const item of dupes) {
     const spec = EQUIPMENT_BY_ID[item.equipId]
     if (!spec) continue
     equipUids.push(item.uid)
     totalGold += RARITY_META[spec.rarity].salvage
+    totalDust += getEquipSalvageDust(spec.rarity)
   }
-  return { count: equipUids.length, totalGold, equipUids }
+  return { count: equipUids.length, totalGold, totalDust, equipUids }
 }
 
 /**
  * Execute bulk salvage of all eligible Common duplicates using `salvageEquip`,
- * ensuring any single-item salvage rewards (gold, future dust, etc.) compose cleanly.
+ * ensuring any single-item salvage rewards (gold, Arcane Dust, etc.) compose cleanly.
  */
 export function executeBulkSalvageCommonDupes(
   state: GameState,
   salvageEquip: (state: GameState, equipUid: string) => number
 ): BulkSalvageResult {
   const dupes = findBulkSalvageableCommonDupes(state.campaign)
-  if (dupes.length === 0) return { salvagedCount: 0, totalGold: 0 }
+  if (dupes.length === 0) return { salvagedCount: 0, totalGold: 0, totalDust: 0 }
 
   const uids = dupes.map(item => item.uid)
   const soundStart = state.sounds.length
+  const dustBefore = state.campaign.dust
   let salvagedCount = 0
   let totalGold = 0
 
@@ -137,7 +143,8 @@ export function executeBulkSalvageCommonDupes(
     state.sounds = compacted
   }
 
-  return { salvagedCount, totalGold }
+  const totalDust = Math.max(0, state.campaign.dust - dustBefore)
+  return { salvagedCount, totalGold, totalDust }
 }
 
 export function isHeroLocked(hero: Pick<OwnedHeroCard, 'locked'> | undefined): boolean {

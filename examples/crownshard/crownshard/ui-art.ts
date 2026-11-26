@@ -1208,11 +1208,12 @@ export function drawTab(ctx: CanvasRenderingContext2D, rect: LayoutRect, label: 
   const textColor = st.selected ? COLOR.accentText : hot ? '#ffffff' : COLOR.muted
   const size = h < 30 ? 11.5 : 13
   const countW = o.count ? measureText(ctx, o.count, 10, 900, true) + 14 : 0
-  const iconW = o.icon ? 19 : 0
-  const availTextW = Math.max(24, w - 16 - iconW - (countW ? countW + 6 : 0))
+  const showIcon = Boolean(o.icon) && w >= 74
+  const iconW = showIcon ? 19 : 0
+  const availTextW = Math.max(24, w - (showIcon ? 16 : 8) - iconW - (countW ? countW + 6 : 0))
   const textW = Math.min(measureText(ctx, label, size, 900, true), availTextW)
   let cx = x + (w - (iconW + textW + (countW ? countW + 6 : 0))) / 2
-  if (o.icon) {
+  if (showIcon && o.icon) {
     drawIcon(ctx, o.icon, cx + 7, cy, 14, st.selected ? COLOR.accentText : hot ? COLOR.accentHi : COLOR.muted)
     cx += iconW
   }
@@ -2391,10 +2392,11 @@ export function drawUnitCard(
   const cy = y + faceH - pad - 10
   if (cy - 10 < barY + barH + 15) return
   if (passive && cy - 24 > barY + barH + 17) {
-    drawText(ctx, passive.shortLabel, barX + 2, barY + barH + 22, {
+    const passiveLine = showXpBar ? `★ ${passive.name}: ${passive.shortLabel}` : passive.shortLabel
+    drawText(ctx, passiveLine, barX + 2, barY + barH + 22, {
       size: 8.5,
       weight: 700,
-      color: COLOR.muted,
+      color: showXpBar ? passive.accentHex : COLOR.muted,
       maxW: barW - 4
     })
   }
@@ -3830,7 +3832,7 @@ export function drawEquipCard(
   const tx = ix + is + 9
   const right = x + w - 9
   const tagW = o.ownerText ? Math.min(72, measureText(ctx, o.ownerText, 9.5, 800, true) + 16) : on ? 22 : 0
-  const twoLine = faceH >= 42
+  const twoLine = faceH >= 38
   const threeLine = Boolean(effect) && faceH >= 47
   const nameY = threeLine ? y + 11.5 : y + faceH / 2 - (twoLine ? 8 : 0)
   drawText(ctx, spec.name, tx, nameY, { size: 12, weight: 900, maxW: right - tx - tagW - 4, display: true, shadow: true })

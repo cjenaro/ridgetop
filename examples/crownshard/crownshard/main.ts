@@ -3448,7 +3448,7 @@ async function start() {
     // Keep upper ~48% of viewport open on desktop so the live 3D campfire + squad shine!
     // On phone, allow collapsing the sheet down to the tab bar to inspect the 3D squad!
     const collapsed = isPhone && mobileCampCollapsed
-    const sheetH = collapsed
+    let sheetH = collapsed
       ? 62
       : mobile
         ? Math.min(h - 118, 496)
@@ -4122,18 +4122,19 @@ async function start() {
       })
       const bulkPreview = previewBulkSalvageCommonDupes(camp)
       const bulkLabel = bulkPreview.count > 0
-        ? `Salvage ${bulkPreview.count} ${bulkPreview.count === 1 ? 'Dupe' : 'Dupes'} (+${bulkPreview.totalGold}g)`
+        ? mobile
+          ? `Salvage ${bulkPreview.count} (+${bulkPreview.totalGold}g/+${bulkPreview.totalDust}D)`
+          : `Salvage ${bulkPreview.count} (+${bulkPreview.totalGold}g +${bulkPreview.totalDust} Dust)`
         : 'Salvage Common Dupes'
       const armBulkSalvageBtn = boxNode({
         id: 'cs-bulk-salvage',
-        style: { width: mobile ? (bulkPreview.count > 0 ? 156 : 138) : wide ? (bulkPreview.count > 0 ? 184 : 162) : (bulkPreview.count > 0 ? 164 : 146), height: 34 },
+        style: { width: mobile ? (bulkPreview.count > 0 ? 172 : 138) : wide ? (bulkPreview.count > 0 ? 218 : 162) : (bulkPreview.count > 0 ? 196 : 146), height: 34 },
         widget: {
           type: 'button',
           label: bulkLabel,
           disabled: bulkPreview.count === 0,
           onPress: () => {
             audio.unlock()
-            const dustBefore = state.campaign.dust
             const res = bulkSalvageCommonDupes(state)
             if (res.salvagedCount > 0) {
               if (hoveredArmoryEquipUid && !getEquipmentByUid(state.campaign, hoveredArmoryEquipUid)) {
@@ -4142,11 +4143,10 @@ async function start() {
               if (inspectedArmoryEquipUid && !getEquipmentByUid(state.campaign, inspectedArmoryEquipUid)) {
                 inspectedArmoryEquipUid = null
               }
-              const dustGained = state.campaign.dust - dustBefore
               saveNow()
               showToast(
-                dustGained > 0
-                  ? `Salvaged ${res.salvagedCount} common ${res.salvagedCount === 1 ? 'dupe' : 'dupes'} for +${res.totalGold}g & +${dustGained} Arcane Dust.`
+                res.totalDust > 0
+                  ? `Salvaged ${res.salvagedCount} common ${res.salvagedCount === 1 ? 'dupe' : 'dupes'} for +${res.totalGold}g & +${res.totalDust} Arcane Dust.`
                   : `Salvaged ${res.salvagedCount} common ${res.salvagedCount === 1 ? 'dupe' : 'dupes'} for +${res.totalGold}g.`
               )
             }
@@ -4788,6 +4788,9 @@ async function start() {
         const diff = activeArmoryDiff
         if (campTab !== 'armory' || !diff || collapsed || packAnim) return []
         const diffH = shortH ? 58 : mobile ? 78 : 64
+        if (mobile) {
+          sheetH = Math.min(sheetH, Math.max(240, h - 68 - diffH - 18))
+        }
         const dockW = Math.min(sheetW, mobile ? sheetW : 780)
         const showTouchConfirm = Boolean(
           inspectedArmoryEquipUid && !diff.isAlreadyEquipped && armorySelectedHero && confirmInspectedArmoryEquip

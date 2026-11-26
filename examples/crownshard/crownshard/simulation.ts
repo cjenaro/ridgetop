@@ -4419,6 +4419,7 @@ export function computeCombatForecast(state: GameState, col: number, row: number
         hpAfterNormal = Math.min(primary.maxHp, primary.hp + healAmount)
         hpAfterCrit = hpAfterNormal
       } else if (armedSkill.powerMul > 0) {
+        ignoreArmor = clamp(armedSkill.ignoreArmor + computeBonusIgnoreArmor(active, primary.def), 0, 1)
         const raw = active.atk * armedSkill.powerMul + armedSkill.flatBonus
         const m = previewDamageMath(battle, active, primary, approachCol, approachRow, raw, armedSkill.ignoreArmor, true, true)
         normalDmg = m.normalDmg
@@ -4444,6 +4445,7 @@ export function computeCombatForecast(state: GameState, col: number, row: number
       }
     }
   } else if (primary.team !== active.team) {
+    ignoreArmor = clamp(computeBonusIgnoreArmor(active, primary.def), 0, 1)
     const m = previewDamageMath(battle, active, primary, approachCol, approachRow, active.atk, 0, true)
     normalDmg = m.normalDmg
     critDmg = m.critDmg
@@ -4930,6 +4932,9 @@ function triggerOnKoEffects(
       addFloat(battle, splashTarget.x, splashTarget.y + 0.35, splashTarget.z, rem > 0 ? `CONDUIT -${rem}` : `BLOCK ${absorbed}`, '#a5b8ff')
       if (splashTarget.hp <= 0) {
         handleUnitDefeat(state, splashTarget)
+        if (attacker.team === 'ally' && splashTarget.team === 'enemy') {
+          awardHeroBattleXp(state, attacker, XP_ACTION_DAMAGE + (splashTarget.isBoss ? XP_ACTION_BOSS_KO : XP_ACTION_KO))
+        }
       }
     }
   }

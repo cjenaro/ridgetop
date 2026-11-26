@@ -185,9 +185,12 @@ export function craftHero(state: GameState, heroId: HeroClassId): OwnedHeroCard 
     uid: allocForgeUid(state.campaign, 'hero'),
     heroId: spec.id,
     stars: 1,
+    level: 1,
+    xp: 0,
     weaponUid: null,
     armorUid: null,
-    relicUid: null
+    relicUid: null,
+    locked: false
   }
   state.campaign.heroes.push(card)
   state.sounds.push({ kind: 'pack', rarity: spec.rarity })
@@ -220,7 +223,8 @@ export function craftEquipment(state: GameState, equipId: string): OwnedEquipCar
   const card: OwnedEquipCard = {
     uid: allocForgeUid(state.campaign, 'eq'),
     equipId: spec.id,
-    slot: spec.slot
+    slot: spec.slot,
+    locked: false
   }
   state.campaign.equipment.push(card)
   state.sounds.push({ kind: 'pack', rarity: spec.rarity })
