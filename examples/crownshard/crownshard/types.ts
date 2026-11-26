@@ -500,6 +500,17 @@ export type VfxEvent =
   | { kind: 'tactic'; tacticId: string; style: TacticCardSpec['vfx']; at: Vec3; cells: Vec3[]; casterUid: string | null }
   /** Damage landed on a unit: directional arc, crit, and whether a shield absorbed it entirely. */
   | { kind: 'impact'; uid: string; attackerUid: string | null; arc: AttackArc; crit: boolean; blocked: boolean; absorbed: number; damage: number }
+  /** Coordinated Pincer / Follow-Up strike connecting attacker -> target <- assister. */
+  | {
+      kind: 'pincer'
+      attackerUid: string
+      assisterUid: string
+      targetUid: string
+      attackerPos: Vec3
+      assisterPos: Vec3
+      targetPos: Vec3
+      damage: number
+    }
   /** Enemy signature move (Archon Eclipse Nova, Bog Shaman totem mend, and raid-boss telegraphs). */
   | { kind: 'special'; uid: string; move: 'eclipse_nova' | 'shaman_mend' | 'lich_summon' | 'frostwyrm_breath' | 'titan_slam'; at: Vec3; cells: Vec3[] }
   | { kind: 'heal'; at: Vec3 }
@@ -624,6 +635,7 @@ export interface CombatForecastAlt {
   readonly isRevive?: boolean
   readonly status?: StatusKind
   readonly selfStatus?: StatusKind
+  readonly pincerDmg?: number
   readonly lethalNormal: boolean
   readonly requiresMove: boolean
   readonly attackArc: AttackArc
@@ -679,6 +691,11 @@ export interface CombatForecast {
   readonly targetHpAfterCrit: number
   readonly lethalNormal: boolean
   readonly lethalCrit: boolean
+  readonly pincerAssisterUid?: string
+  readonly pincerAssisterName?: string
+  readonly pincerDmg?: number
+  readonly pincerFromCol?: number
+  readonly pincerFromRow?: number
   readonly alternatives: readonly CombatForecastAlt[]
 }
 

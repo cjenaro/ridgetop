@@ -2824,8 +2824,8 @@ export function drawCombatForecast(
     strokeWidth: 2.2
   })
 
-  // Action + tactical modifier chips (priority: Revive / Friendly Fire / Backstab / Flank first!)
-  const tags: { text: string; bg: string; color: string }[] = []
+  // Action + tactical modifier chips (priority: Revive / Friendly Fire / Pincer / Backstab / Flank first!)
+  const tags: { text: string; bg: string; color: string; border?: string }[] = []
   if (isRevive) {
     tags.push({
       text: fc.reviveKoCountdown ? `REVIVE · KO ${fc.reviveKoCountdown}` : 'REVIVE!',
@@ -2838,6 +2838,18 @@ export function drawCombatForecast(
       text: fc.friendlyFireCount > 1 ? `ALLY HIT x${fc.friendlyFireCount}!` : 'FRIENDLY FIRE!',
       bg: '#8a1647',
       color: '#ffd4e6'
+    })
+  }
+  const hasPincer = Boolean(fc.pincerAssisterUid && (fc.pincerDmg ?? 0) > 0)
+  if (hasPincer && fc.pincerDmg) {
+    const allyShort = (fc.pincerAssisterName ?? 'Ally').split(' ').pop() ?? 'Ally'
+    const fullLabel = `PINCER +${fc.pincerDmg} (${allyShort})`
+    const fullW = Math.round(measureText(ctx, fullLabel, 8.5, 900, true) + 12)
+    tags.push({
+      text: fullW <= midW + 6 ? fullLabel : `PINCER +${fc.pincerDmg}`,
+      bg: '#7a4d04',
+      color: '#ffe878',
+      border: '#ffd45c'
     })
   }
   if (fc.isOffensive && !isEmpty) {
@@ -2890,7 +2902,7 @@ export function drawCombatForecast(
   }
   let tx = cx - tagTotal / 2
   for (const t of visibleTags) {
-    drawChip(ctx, tx, chipY, t.text, { h: chipH, size: 8.5, color: t.color, bg: t.bg, border: COLOR.outline })
+    drawChip(ctx, tx, chipY, t.text, { h: chipH, size: 8.5, color: t.color, bg: t.bg, border: t.border ?? COLOR.outline })
     tx += t.cw + 4
   }
 
@@ -2950,9 +2962,10 @@ export function drawCombatForecast(
       display: true
     })
   } else {
+    const pincerBonus = fc.pincerDmg && fc.pincerDmg > 0 ? fc.pincerDmg : 0
     const dmgStr = fc.critChance > 0 && fc.critDmg > fc.normalDmg
-      ? `${fc.normalDmg}-${fc.critDmg} DMG`
-      : `${fc.normalDmg} DMG`
+      ? (pincerBonus > 0 ? `${fc.normalDmg}-${fc.critDmg} (+${pincerBonus})` : `${fc.normalDmg}-${fc.critDmg} DMG`)
+      : (pincerBonus > 0 ? `${fc.normalDmg}+${pincerBonus} DMG` : `${fc.normalDmg} DMG`)
     drawText(ctx, dmgStr, innerX, wellY + 14, {
       size: o.compact ? 14 : 16.5,
       weight: 900,

@@ -1061,6 +1061,54 @@ export function createBattleVfx(pool: MeshPool, particles: Particles, onShake: (
     if (kind === 'flank') later(delay, () => sparks(chest, color('ffd166'), 6, 1.8))
   }
 
+  /**
+   * Coordinated Pincer / Follow-Up VFX: golden/cyan energy tether connecting
+   * attacker -> target <- assister, assister highlight ring, follow-up slash arc,
+   * twin shockwaves, and strike sparks at the target.
+   */
+  function pincer(attackerPos: Vec3, assisterPos: Vec3, targetPos: Vec3, delay: number) {
+    const C = VFX_COLORS
+    const attChest: Vec3 = [attackerPos[0], attackerPos[1] + 0.88, attackerPos[2]]
+    const assChest: Vec3 = [assisterPos[0], assisterPos[1] + 0.88, assisterPos[2]]
+    const tgtChest: Vec3 = [targetPos[0], targetPos[1] + 0.85, targetPos[2]]
+    const yawFromAssister = yawBetween(assisterPos, targetPos)
+
+    // Glowing curved energy assist arcs connecting attacker -> target <- assister
+    const arcDelay = Math.max(0, delay - 0.08)
+    add(arcDelay, 0.42, (u, t) => {
+      const fade = 1 - easeIn(u)
+      const beads = 7
+      for (const origin of [attChest, assChest]) {
+        const isAssister = origin === assChest
+        const col = isAssister ? C.gold : C.haste
+        for (let i = 0; i < beads; i++) {
+          const s = (i + 0.5) / beads
+          const p = lerp3(origin, tgtChest, s)
+          p[1] += Math.sin(s * Math.PI) * (isAssister ? 0.58 : 0.44)
+          const sz = (0.09 + Math.sin(s * Math.PI) * 0.06) * (0.65 + 0.55 * fade)
+          pool.add(crystalMesh, p, [pos(sz), pos(sz), pos(sz)], t * 8 + i, withAlpha(col, 0.96 * fade), 1, 'additive')
+        }
+      }
+      // Pulsing golden clamp ring under assister
+      const ar = 0.66 + 0.16 * easeOut(u)
+      pool.add(flatRing, [assisterPos[0], assisterPos[1] + 0.08, assisterPos[2]], [pos(ar), 1, pos(ar)], t * 3.2, withAlpha(C.gold, 0.9 * fade), 1, 'additive')
+    })
+
+    // Crisp follow-up golden/cyan slash + strike streaks + sparks at target
+    const near: Vec3 = lerp3(assChest, tgtChest, 0.72)
+    slash(near, yawFromAssister, C.gold, delay, { radius: 0.95, roll: 0.35, life: 0.28, mesh: slashWide })
+    slash(near, yawFromAssister, C.haste, delay + 0.03, { radius: 0.82, roll: -0.45, life: 0.24 })
+    streak(assChest, tgtChest, C.gold, delay, 0.22, 0.08)
+    streak(attChest, tgtChest, C.haste, delay, 0.20, 0.05)
+    later(delay, () => {
+      onShake(0.14)
+      groundRing(targetPos, C.gold, 0, 0.38, 0.22, 1.35, 2.2)
+      groundRing(targetPos, C.haste, 0.03, 0.34, 0.18, 1.05, -2.6)
+      sparks(tgtChest, C.gold, 10, 2.3)
+      sparks(tgtChest, C.haste, 6, 1.7)
+    })
+  }
+
   return {
     get active() { return effects.length },
     clear() { effects.length = 0 },
@@ -1093,6 +1141,7 @@ export function createBattleVfx(pool: MeshPool, particles: Particles, onShake: (
     tactic,
     special,
     impact,
+    pincer,
     lance
   }
 }

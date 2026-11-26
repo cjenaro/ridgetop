@@ -5363,7 +5363,7 @@ async function start() {
       const activeForecast = resolveActiveForecast()
       scene.setForecast(activeForecast)
       const fcSig = activeForecast
-        ? `${activeForecast.attackerUid}:${activeForecast.targetUid}:${activeForecast.mode}:${activeForecast.skillIndex}:${activeForecast.targetCol},${activeForecast.targetRow}:${lockedForecastCell ? 1 : 0}`
+        ? `${activeForecast.attackerUid}:${activeForecast.targetUid}:${activeForecast.mode}:${activeForecast.skillIndex}:${activeForecast.targetCol},${activeForecast.targetRow}:${activeForecast.pincerAssisterUid ?? ''}:${activeForecast.pincerDmg ?? 0}:${lockedForecastCell ? 1 : 0}`
         : ''
       if (fcSig !== lastForecastSig) {
         lastForecastSig = fcSig
