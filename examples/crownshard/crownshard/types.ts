@@ -448,6 +448,8 @@ export interface OwnedHeroCard {
   readonly uid: string
   readonly heroId: HeroClassId
   stars: 1 | 2 | 3
+  level?: number
+  xp?: number
   weaponUid: string | null
   armorUid: string | null
   relicUid: string | null
@@ -496,6 +498,7 @@ export interface BattleUnit {
   readonly heroId?: HeroClassId
   readonly enemyId?: EnemyArchetypeId
   readonly stars: 1 | 2 | 3
+  level: number
   readonly isBoss: boolean
   readonly weaponId?: string
   readonly armorId?: string
@@ -611,6 +614,20 @@ export type VfxEvent =
       iceSlid?: boolean
     }
 
+export interface BattleHeroXpGain {
+  readonly uid: string
+  readonly heroId: HeroClassId
+  readonly name: string
+  readonly xpGained: number
+  readonly oldLevel: number
+  readonly newLevel: number
+  readonly levelsGained: number
+  readonly currentXp: number
+  readonly xpForNext: number
+  readonly isMaxLevel: boolean
+  readonly survived: boolean
+}
+
 export interface BattleReward {
   readonly gold: number
   readonly equipCard: OwnedEquipCard | null
@@ -622,6 +639,7 @@ export interface BattleReward {
   readonly specialRewardsClaimed: boolean
   readonly unlockedSlot4: boolean
   readonly campaignWon: boolean
+  readonly heroXpGains: readonly BattleHeroXpGain[]
 }
 
 export interface TurnPreviewEntry {
@@ -870,6 +888,8 @@ export interface BattleState {
   bannerText: string
   bannerTimer: number
   shake: number
+  xpEarnedByHero: Record<string, number>
+  heroStartLevelByUid: Record<string, number>
   reward: BattleReward | null
 }
 
@@ -890,6 +910,7 @@ export interface BattleUnitSnapshot {
   readonly heroId?: HeroClassId
   readonly enemyId?: EnemyArchetypeId
   readonly stars: 1 | 2 | 3
+  readonly level?: number
   readonly isBoss: boolean
   readonly weaponId?: string
   readonly armorId?: string
@@ -949,6 +970,8 @@ export interface BattleSaveSnapshot {
   readonly enemyActedThisTurn: boolean
   readonly rngSeed?: number
   readonly objective?: BattleObjectiveSnapshot
+  readonly xpEarnedByHero?: Record<string, number>
+  readonly heroStartLevelByUid?: Record<string, number>
 }
 
 export interface CampaignState {

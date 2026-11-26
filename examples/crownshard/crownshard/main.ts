@@ -21,7 +21,7 @@ import {
   equipItem, evaluateAllFacingExposures, evaluateFacingExposure, findBestFitUpgrades, findEquipOwner, findGridPath,
   formatOpportunityWarning, getChapterObjectiveSummary, getEquipmentByUid, getHeroByUid, getHeroSkill,
   getMergeCandidates, getNextRecommendedStage, getObjectiveProgressText, getStageUnlockHint, getTacticByUid,
-  getUnitByUid, isChestClaimed, isDeployTile, isEndlessUnlocked, isStageCleared, isStageUnlocked, loadSave,
+  getUnitByUid, heroLevelProgress, isChestClaimed, isDeployTile, isEndlessUnlocked, isStageCleared, isStageUnlocked, loadSave,
   maxSquadSize, mergeHero, moveDeployUnit, persistSave, previewPathOpportunityAttacks, previewTurnOrderAfterAction,
   previewWaitFacing, restoreBattleState, rotateDeployUnit, salvageEquipCard, salvageHeroCard, selectHeroByUid,
   selectTile, serializeBattleState, shouldAutoSaveOnTurnBoundary, startChapterBattle, stepGame, swapDeployUnit,
@@ -38,7 +38,7 @@ import {
   drawAnimatedRevealCard, drawApMeter, drawBattleInfo, drawBoosterPack, drawButton, drawCameraCompassButton, drawCampHeader,
   drawChapterPicker, drawChip, drawCombatForecast, drawControlHints, drawDefeatBackdrop, drawDeployHeroChip,
   drawDifficultyBadge, drawEmptyNote, drawEndTurnButton, drawEquipCard, drawForecastAltChip,
-  drawHeroHeader, drawHeroRosterCard, drawHintPill, drawIconButton, drawLabel, drawLetterbox,
+  drawHeroHeader, drawHeroRosterCard, drawHeroXpSummaryAnimated, drawHintPill, drawIconButton, drawLabel, drawLetterbox,
   drawLootRow, drawModal, drawObjectiveBadge, drawOverline, drawPackCeremonyBackdrop, drawPanel, drawPortraitTile,
   drawResultHeadlineAnimated, drawRevealCard, drawRewardRowAnimated, drawSegmentTrack,
   drawSettingRow, drawSheet, drawSkillRow, drawSkillTile, drawSpeakerPortrait, drawStatStrip,
@@ -2433,6 +2433,8 @@ async function start() {
     const roleLabel = inspected
       ? (inspected.heroId ? HERO_SPECS[inspected.heroId].title : inspected.isBoss ? 'Boss' : 'Foe')
       : ''
+    const inspectedOwned = inspected?.team === 'ally' ? getHeroByUid(state.campaign, inspected.uid) : undefined
+    const inspectedXpProgress = inspectedOwned ? heroLevelProgress(inspectedOwned.level, inspectedOwned.xp) : undefined
     const fpsShort = `${Math.round(perf.snapshot().fps || 60)}`
     const chapterShort = battle.endlessWave > 0 ? `Endless Wave ${battle.endlessWave}` : `${ch.title} · D${battle.difficulty}`
 
@@ -2722,7 +2724,7 @@ async function start() {
             widget: {
               type: 'panel',
               draw: (ctx: CanvasRenderingContext2D, rect: LayoutRect) => drawUnitCard(
-                ctx, rect, inspected, activePortrait, inspected ? effectiveSpeed(inspected) : 0, roleLabel
+                ctx, rect, inspected, activePortrait, inspected ? effectiveSpeed(inspected) : 0, roleLabel, inspectedXpProgress
               )
             }
           }),
@@ -2779,7 +2781,7 @@ async function start() {
           widget: {
             type: 'panel',
             draw: (ctx: CanvasRenderingContext2D, rect: LayoutRect) => drawUnitCard(
-              ctx, rect, inspected, activePortrait, inspected ? effectiveSpeed(inspected) : 0, roleLabel
+              ctx, rect, inspected, activePortrait, inspected ? effectiveSpeed(inspected) : 0, roleLabel, inspectedXpProgress
             )
           }
         }),
@@ -2845,7 +2847,7 @@ async function start() {
           widget: {
             type: 'panel',
             draw: (ctx: CanvasRenderingContext2D, rect: LayoutRect) => drawUnitCard(
-              ctx, rect, inspected, activePortrait, inspected ? effectiveSpeed(inspected) : 0, roleLabel
+              ctx, rect, inspected, activePortrait, inspected ? effectiveSpeed(inspected) : 0, roleLabel, inspectedXpProgress
             )
           }
         }),
@@ -3516,6 +3518,8 @@ async function start() {
               name: spec.name,
               title: spec.title,
               stars: selHero.stars,
+              level: selHero.level,
+              xp: selHero.xp,
               rarity: spec.rarity,
               power: stats.powerScore,
               portrait: heroPortrait,
@@ -4497,6 +4501,23 @@ async function start() {
             }
           })
         )
+      }
+      if (reward.heroXpGains.length > 0) {
+        const xpIdx = rIdx++
+        const xpPortraits: Record<string, HTMLCanvasElement | undefined> = {}
+        for (const g of reward.heroXpGains) {
+          const ownedHero = getHeroByUid(state.campaign, g.uid)
+          xpPortraits[g.uid] = ownedHero ? heroCardPortrait(ownedHero) : portraits[g.heroId]
+        }
+        rewardRows.push(boxNode({
+          id: 'res-xp', style: { height: shortH ? 58 : 70 },
+          widget: {
+            type: 'panel',
+            draw: (ctx: CanvasRenderingContext2D, rect: LayoutRect) => drawHeroXpSummaryAnimated(
+              ctx, rect, reward.heroXpGains, xpPortraits, rowReveal(xpIdx)
+            )
+          }
+        }))
       }
       if (reward.unlockedSlot4) {
         const sIdx = rIdx++
