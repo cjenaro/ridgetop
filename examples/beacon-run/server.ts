@@ -13,25 +13,15 @@ import { createCharacterStore, openCharacterStore } from './game/character-store
 import { createPlayer, restartPlayer, stepPlayer } from './game/simulation.ts'
 
 const files = ['index.html', 'style.css', 'game-ui.css', 'main.js']
-const roomRoute = /^\/rooms(?:\/([a-z0-9-]+))?\/([a-z0-9-]{1,32})\/(events|input|leave|ws)$/
-const expeditionRoute = /^\/expeditions\/([a-z0-9-]+)\/([a-z0-9-]{1,32})\/(events|input|leave|ws)$/
+const roomRoute = /^\/rooms(?:\/([a-z0-9-]+))?\/([a-z0-9-]{1,32})$/
+const expeditionRoute = /^\/expeditions\/([a-z0-9-]+)\/([a-z0-9-]{1,32})$/
 const session = createCookieSession({ name: 'ridgetop_character', path: '/expeditions', maxAge: 31536000 })
 function isCourseId(value: string): value is CourseId { return Object.hasOwn(courses, value) }
-
-function rejectUpgradeSocket(socket: Duplex, status: number, reason: string) {
-  if (socket.listenerCount('error') === 0) socket.on('error', () => { /* ignore pre-close socket error */ })
-  if (!socket.destroyed && socket.writable) {
-    try {
-      socket.write(`HTTP/1.1 ${status} ${reason}\r\nContent-Length: 0\r\nConnection: close\r\n\r\n`)
-    } catch { /* ignore write errors on closing socket */ }
-  }
-  socket.destroy()
-}
 
 export interface BeaconRunBackend {
   rooms: RoomService<{ zone: CourseId; expedition: boolean }>
   handle(req: IncomingMessage, res: ServerResponse, pathname: string): Promise<boolean>
-  upgrade(req: IncomingMessage, socket: Duplex, head: Buffer, pathname: string): boolean
+  upgrade(req: IncomingMessage, socket: Duplex, head: Buffer, pathname: string): boolean | Promise<boolean>
   stop(): void
   save(): Promise<void>
 }
@@ -70,32 +60,35 @@ export function createBeaconRunBackend({ characters = createCharacterStore() }: 
     }
   })
 
-  function resolveRoomJoin(req: IncomingMessage, pathname: string) {
-    const expedition = expeditionRoute.exec(pathname)
-    const match = expedition ?? roomRoute.exec(pathname)
-    if (!match) return undefined
-    const [, zone = 'ridge', code, action] = match
-    const key = (expedition ? 'expedition/' : 'race/') + zone + '/' + code
-    return { expedition: Boolean(expedition), zone, key, action }
-  }
-
-  function authorizeJoin(req: IncomingMessage, zone: string, expedition: boolean):
-    { ok: true; courseZone: CourseId; identity?: string } |
-    { ok: false; status: number; reason: string; message: string } {
-    if (!isCourseId(zone)) {
-      return { ok: false, status: 404, reason: 'Not Found', message: 'Course not found' }
+  const roomHandlers = rooms.createHostHandlers({
+    match(basePath) {
+      const expedition = expeditionRoute.exec(basePath)
+      const match = expedition ?? roomRoute.exec(basePath)
+      if (!match) return null
+      const [, zone = 'ridge', code] = match
+      if (!isCourseId(zone)) {
+        return { reject: 404, reason: 'Not Found', message: 'Course not found' }
+      }
+      const isExpedition = Boolean(expedition)
+      return {
+        key: (isExpedition ? 'expedition/' : 'race/') + zone + '/' + code,
+        world: { zone, expedition: isExpedition }
+      }
+    },
+    authorize(req, matched) {
+      const { zone, expedition } = matched.world
+      if (!expedition) return { ok: true }
+      const identity = session.read(req)
+      const profile = identity ? characters.get(identity) : undefined
+      if (!profile) {
+        return { ok: false, status: 401, reason: 'Unauthorized', message: 'Enter the expedition to create a character' }
+      }
+      if (!canEnterRegion(profile.cleared, zone)) {
+        return { ok: false, status: 403, reason: 'Forbidden', message: 'Clear the previous zone first' }
+      }
+      return { ok: true, identity }
     }
-    const courseZone: CourseId = zone
-    const identity = expedition ? session.read(req) : undefined
-    const profile = identity ? characters.get(identity) : undefined
-    if (expedition && !profile) {
-      return { ok: false, status: 401, reason: 'Unauthorized', message: 'Enter the expedition to create a character' }
-    }
-    if (expedition && profile && !canEnterRegion(profile.cleared, courseZone)) {
-      return { ok: false, status: 403, reason: 'Forbidden', message: 'Clear the previous zone first' }
-    }
-    return { ok: true, courseZone, identity }
-  }
+  })
 
   async function handle(req: IncomingMessage, res: ServerResponse, pathname: string): Promise<boolean> {
     if (pathname === '/expeditions/character' && req.method === 'POST') {
@@ -114,44 +107,13 @@ export function createBeaconRunBackend({ characters = createCharacterStore() }: 
       }
       return true
     }
-    const resolved = resolveRoomJoin(req, pathname)
-    if (!resolved) return false
-    const { expedition, zone, key, action } = resolved
-    if (!isCourseId(zone)) sendText(res, 404, 'Course not found')
-    else if (action === 'events' && req.method === 'GET') {
-      const auth = authorizeJoin(req, zone, expedition)
-      if (!auth.ok) sendText(res, auth.status, auth.message)
-      else rooms.join(req, res, { key, world: { zone: auth.courseZone, expedition }, identity: auth.identity })
-    } else if ((action === 'input' || action === 'leave') && req.method === 'POST') {
-      await rooms.receive(req, res, key, action)
-    } else if (action === 'ws') {
-      sendText(res, 426, 'Upgrade Required')
-    } else {
-      sendText(res, 405)
-    }
-    return true
-  }
-
-  function upgrade(req: IncomingMessage, socket: Duplex, head: Buffer, pathname: string): boolean {
-    const resolved = resolveRoomJoin(req, pathname)
-    if (!resolved || resolved.action !== 'ws') return false
-    const auth = authorizeJoin(req, resolved.zone, resolved.expedition)
-    if (!auth.ok) {
-      rejectUpgradeSocket(socket, auth.status, auth.reason)
-      return true
-    }
-    rooms.upgrade(req, socket, head, {
-      key: resolved.key,
-      world: { zone: auth.courseZone, expedition: resolved.expedition },
-      identity: auth.identity
-    })
-    return true
+    return roomHandlers.handle(req, res, pathname)
   }
 
   return {
     rooms,
     handle,
-    upgrade,
+    upgrade: roomHandlers.upgrade,
     stop: rooms.close,
     save: characters.save
   }

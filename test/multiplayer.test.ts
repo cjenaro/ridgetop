@@ -8,7 +8,17 @@ import { once } from 'node:events'
 import { createServer } from 'node:http'
 import { createConnection } from 'node:net'
 import { connectRoom, STEP } from '../packages/ridgetop/framework/index.ts'
-import { createRoomService } from '../packages/ridgetop/framework/server.ts'
+import { interpolatePlatformerPlayer, interpolateSpatialEntity } from '../packages/ridgetop/framework/room-client.ts'
+import { createRoomService, rejectUpgrade } from '../packages/ridgetop/framework/server.ts'
+import {
+  computeWsAccept,
+  createWsFrameDecoder,
+  encodeWsClose,
+  encodeWsFrame,
+  isValidWireCloseCode,
+  truncateUtf8,
+  validateWsUpgradeRequest
+} from '../packages/ridgetop/framework/ws.ts'
 
 interface ArenaInput {
   ax: number
@@ -67,33 +77,27 @@ function createArenaServer(options: { maxPayloadBytes?: number } = {}) {
     maxPayloadBytes: options.maxPayloadBytes
   })
 
-  const route = /^\/rooms\/([a-z0-9-]+)\/(events|input|leave|ws)$/
-  const server = createServer(async (req, res) => {
-    const pathname = new URL(req.url ?? '/', 'http://localhost').pathname
-    const match = route.exec(pathname)
-    if (!match) {
-      res.writeHead(404).end('Not found')
-      return
-    }
-    const [, key, action] = match
-    if (action === 'events' && req.method === 'GET') {
-      rooms.join(req, res, { key, world: { arena: key } })
-    } else if ((action === 'input' || action === 'leave') && req.method === 'POST') {
-      await rooms.receive(req, res, key, action)
-    } else {
-      res.writeHead(405).end()
+  const route = /^\/rooms\/([a-z0-9-]+)$/
+  const handlers = rooms.createHostHandlers({
+    match(basePath) {
+      const match = route.exec(basePath)
+      if (!match) return null
+      return { key: match[1], world: { arena: match[1] } }
     }
   })
 
-  server.on('upgrade', (req, socket, head) => {
+  const server = createServer(async (req, res) => {
     const pathname = new URL(req.url ?? '/', 'http://localhost').pathname
-    const match = route.exec(pathname)
-    if (!match || match[2] !== 'ws') {
-      socket.write('HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\nConnection: close\r\n\r\n')
-      socket.destroy()
-      return
+    if (!(await handlers.handle(req, res, pathname))) {
+      res.writeHead(404).end('Not found')
     }
-    rooms.upgrade(req, socket, head, { key: match[1], world: { arena: match[1] } })
+  })
+
+  server.on('upgrade', async (req, socket, head) => {
+    const pathname = new URL(req.url ?? '/', 'http://localhost').pathname
+    if (!(await handlers.upgrade(req, socket, head, pathname))) {
+      rejectUpgrade(socket, 404, 'Not Found')
+    }
   })
 
   return {
@@ -1021,4 +1025,153 @@ test('WebSocket RFC 6455 close validation, 64-bit MSB check, 120Hz prediction pa
     if (prevWS) Object.defineProperty(globalThis, 'WebSocket', prevWS)
     else delete (globalThis as Record<string, unknown>).WebSocket
   }
+})
+
+test('pure RFC 6455 codec: handshake validation, frame encoding, UTF-8 truncation, and close codes', () => {
+  // RFC 6455 §1.3 canonical Sec-WebSocket-Accept test vector
+  const rfcKey = 'dGhlIHNhbXBsZSBub25jZQ=='
+  assert.equal(computeWsAccept(rfcKey), 's3pPLMBiTxaQ9kYGzzhZRbK+xOo=')
+
+  // validateWsUpgradeRequest
+  assert.deepEqual(validateWsUpgradeRequest({ method: 'POST', headers: {} }), {
+    ok: false, status: 405, reason: 'Method Not Allowed'
+  })
+  assert.deepEqual(validateWsUpgradeRequest({ method: 'GET', headers: { 'sec-websocket-version': '8' } }), {
+    ok: false, status: 426, reason: 'Upgrade Required', extraHeaders: 'Sec-WebSocket-Version: 13\r\n'
+  })
+  assert.deepEqual(validateWsUpgradeRequest({
+    method: 'GET',
+    headers: { upgrade: 'websocket', connection: 'keep-alive, Upgrade', 'sec-websocket-version': '13', 'sec-websocket-key': 'bad' }
+  }), { ok: false, status: 400, reason: 'Bad Request' })
+  assert.deepEqual(validateWsUpgradeRequest({
+    method: 'GET',
+    headers: { upgrade: 'WebSocket', connection: 'keep-alive, Upgrade', 'sec-websocket-version': '13', 'sec-websocket-key': rfcKey }
+  }), { ok: true, key: rfcKey, accept: 's3pPLMBiTxaQ9kYGzzhZRbK+xOo=' })
+
+  // encodeWsFrame across 7-bit, 16-bit, and 64-bit length headers
+  const small = encodeWsFrame(0x1, Buffer.from('hi', 'utf8'))
+  assert.equal(small[0], 0x81)
+  assert.equal(small[1], 2)
+  assert.equal(small.subarray(2).toString('utf8'), 'hi')
+
+  const mediumPayload = Buffer.alloc(300, 0x41)
+  const medium = encodeWsFrame(0x1, mediumPayload)
+  assert.equal(medium[0], 0x81)
+  assert.equal(medium[1], 126)
+  assert.equal(medium.readUInt16BE(2), 300)
+  assert.equal(medium.byteLength, 304)
+
+  const largePayload = Buffer.alloc(70_000, 0x42)
+  const large = encodeWsFrame(0x2, largePayload)
+  assert.equal(large[0], 0x82)
+  assert.equal(large[1], 127)
+  assert.equal(Number(large.readBigUInt64BE(2)), 70_000)
+  assert.equal(large.byteLength, 70_010)
+
+  // truncateUtf8 never splits multi-byte UTF-8 sequences
+  assert.equal(truncateUtf8('a😀b', 0).byteLength, 0)
+  assert.equal(truncateUtf8('a😀b', 1).toString('utf8'), 'a')
+  assert.equal(truncateUtf8('a😀b', 3).toString('utf8'), 'a')
+  assert.equal(truncateUtf8('a😀b', 4).toString('utf8'), 'a')
+  assert.equal(truncateUtf8('a😀b', 5).toString('utf8'), 'a😀')
+  assert.equal(truncateUtf8('😀', 2).byteLength, 0)
+
+  // encodeWsClose caps reason at 123 bytes and stays valid UTF-8
+  const longClose = encodeWsClose(1000, 'é'.repeat(80))
+  assert.equal(longClose[0], 0x88)
+  const closeLen = longClose[1]
+  assert.ok(closeLen <= 125)
+  assert.equal(longClose.readUInt16BE(2), 1000)
+  assert.equal(new TextDecoder('utf-8', { fatal: true }).decode(longClose.subarray(4)), 'é'.repeat(61))
+
+  // isValidWireCloseCode
+  for (const valid of [1000, 1001, 1002, 1003, 1007, 1008, 1009, 1010, 1011, 3000, 4000, 4999]) {
+    assert.equal(isValidWireCloseCode(valid), true, `Expected ${valid} to be valid`)
+  }
+  for (const invalid of [0, 999, 1004, 1005, 1006, 1015, 2999, 5000]) {
+    assert.equal(isValidWireCloseCode(invalid), false, `Expected ${invalid} to be invalid`)
+  }
+})
+
+test('pure RFC 6455 incremental frame decoder handles fragmentation, byte-by-byte streaming, and all protocol errors', () => {
+  // 1. Byte-by-byte streaming of fragmented UTF-8 text + interleaved Ping + Pong + Close
+  const decoder = createWsFrameDecoder({ maxPayloadBytes: 512 })
+  const emojiText = 'hello 🌍 world!'.repeat(10)
+  const raw = Buffer.from(emojiText, 'utf8')
+  const stream = Buffer.concat([
+    makeClientWsFrame(0x1, raw.subarray(0, 11), { fin: false }), // splits mid-UTF-8 emoji intentionally!
+    makeClientWsFrame(0x9, Buffer.from('mid-ping', 'utf8')),
+    makeClientWsFrame(0xa, Buffer.from('mid-pong', 'utf8')),
+    makeClientWsFrame(0x0, raw.subarray(11), { fin: true }),
+    makeClientWsFrame(0x8, Buffer.concat([Buffer.from([0x03, 0xe8]), Buffer.from('bye', 'utf8')]))
+  ])
+  const collected = []
+  for (let i = 0; i < stream.byteLength; i++) {
+    collected.push(...decoder.feed(stream.subarray(i, i + 1)))
+  }
+  assert.equal(decoder.closed, true)
+  assert.equal(collected.length, 4)
+  assert.deepEqual(collected[0], { type: 'ping', payload: Buffer.from('mid-ping', 'utf8') })
+  assert.deepEqual(collected[1], { type: 'pong', payload: Buffer.from('mid-pong', 'utf8') })
+  assert.deepEqual(collected[2], { type: 'text', text: emojiText })
+  assert.deepEqual(collected[3], { type: 'close', code: 1000, reason: 'bye' })
+
+  // Feeding after close is a no-op
+  assert.deepEqual(decoder.feed(makeClientWsFrame(0x1, Buffer.from('ignored'))), [])
+
+  // 2. Empty close frame defaults to 1000
+  const emptyCloseDec = createWsFrameDecoder()
+  assert.deepEqual(emptyCloseDec.feed(makeClientWsFrame(0x8, Buffer.alloc(0))), [{ type: 'close', code: 1000, reason: '' }])
+
+  // 3. Protocol error matrix (fast in-process, zero sockets)
+  const errorCases: [string, Buffer, number, { maxPayloadBytes?: number; maxPendingBytes?: number }?][] = [
+    ['unmasked frame', makeClientWsFrame(0x1, Buffer.from('x'), { masked: false }), 1002],
+    ['reserved bits set', makeClientWsFrame(0x1, Buffer.from('x'), { rsv: 0x2 }), 1002],
+    ['fragmented control frame', makeClientWsFrame(0x9, Buffer.from('x'), { fin: false }), 1002],
+    ['oversized control frame (>125)', Buffer.from([0x89, 0xfe, 0x00, 0x7e, 0, 0, 0, 0]), 1002],
+    ['binary frame', makeClientWsFrame(0x2, Buffer.from([1, 2, 3])), 1003],
+    ['unsupported data opcode 0x3', makeClientWsFrame(0x3, Buffer.from('x')), 1002],
+    ['unsupported control opcode 0xb', makeClientWsFrame(0xb, Buffer.from('x')), 1002],
+    ['unexpected continuation', makeClientWsFrame(0x0, Buffer.from('x')), 1002],
+    ['new text during fragmentation', Buffer.concat([makeClientWsFrame(0x1, Buffer.from('a'), { fin: false }), makeClientWsFrame(0x1, Buffer.from('b'))]), 1002],
+    ['payload exceeds maxPayloadBytes', makeClientWsFrame(0x1, Buffer.alloc(65, 0x61)), 1009, { maxPayloadBytes: 64 }],
+    ['fragmented total exceeds maxPayloadBytes', Buffer.concat([makeClientWsFrame(0x1, Buffer.alloc(40, 0x61), { fin: false }), makeClientWsFrame(0x0, Buffer.alloc(40, 0x61))]), 1009, { maxPayloadBytes: 64 }],
+    ['pending buffer exceeds maxPendingBytes', Buffer.alloc(200), 1009, { maxPayloadBytes: 64, maxPendingBytes: 128 }],
+    ['64-bit length with MSB=1', Buffer.from([0x81, 0xff, 0x80, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]), 1002],
+    ['64-bit length above safe int', Buffer.from([0x81, 0xff, 0x00, 0x20, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]), 1009],
+    ['1-byte close payload', makeClientWsFrame(0x8, Buffer.from([0x03])), 1002],
+    ['forbidden wire close code 1006', makeClientWsFrame(0x8, Buffer.from([0x03, 0xee])), 1002],
+    ['invalid UTF-8 in text frame', makeClientWsFrame(0x1, Buffer.from([0xff, 0xfe])), 1007],
+    ['invalid UTF-8 in close reason', makeClientWsFrame(0x8, Buffer.from([0x03, 0xe8, 0xff, 0xfe])), 1007]
+  ]
+  for (const [label, bytes, expectedCode, opts] of errorCases) {
+    const dec = createWsFrameDecoder(opts)
+    const events = dec.feed(bytes)
+    assert.equal(dec.closed, true, `${label}: decoder must close`)
+    assert.equal(events.length, 1, `${label}: expected 1 error event`)
+    assert.equal(events[0].type, 'error', `${label}: expected error event`)
+    if (events[0].type === 'error') {
+      assert.equal(events[0].code, expectedCode, `${label}: expected close code ${expectedCode}, got ${events[0].code}`)
+    }
+  }
+})
+
+test('isolated platformer interpolation snaps on falls change while generic spatial interpolation ignores falls', () => {
+  const prev = { id: 'p1', x: 10, y: 20, z: 30, revision: 0, falls: 0 }
+  const next = { id: 'p1', x: 20, y: 40, z: 50, revision: 0, falls: 1 }
+
+  const genericBlended = interpolateSpatialEntity(prev, next, 0.5)
+  assert.equal(genericBlended.x, 15)
+  assert.equal(genericBlended.y, 30)
+  assert.equal(genericBlended.z, 40)
+
+  const platformerSnapped = interpolatePlatformerPlayer(prev, next, 0.5)
+  assert.equal(platformerSnapped.x, 20)
+  assert.equal(platformerSnapped.y, 40)
+  assert.equal(platformerSnapped.z, 50)
+
+  // When falls matches, platformer interpolation delegates to spatial blending
+  const smooth = interpolatePlatformerPlayer(prev, { ...next, falls: 0 }, 0.5)
+  assert.equal(smooth.x, 15)
+  assert.equal(smooth.y, 30)
 })

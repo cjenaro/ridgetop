@@ -1,25 +1,73 @@
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import type { Duplex } from 'node:stream'
 import type { RoomInput } from './types.ts'
+import type { WsConnection } from './ws.ts'
 import { Buffer } from 'node:buffer'
-import { createHash, randomUUID } from 'node:crypto'
+import { randomUUID } from 'node:crypto'
 import { performance } from 'node:perf_hooks'
 import { STEP } from './loop.ts'
 import { sendText } from './host.ts'
+import {
+  acceptWsConnection,
+  defaultHttpReason,
+  encodeWsFrame,
+  rejectUpgrade,
+  validateWsUpgradeRequest
+} from './ws.ts'
 
-const emptyInput: RoomInput = Object.freeze({ left: false, right: false, jump: 0 })
 const resumeMs = 15_000
 const frameBudget = 16_384
 const maxInputQueue = 64
-const wsGuid = '258EAFA5-E914-47DA-95CA-C5AB0DC85B11'
-const wsKeyPattern = /^[A-Za-z0-9+/]{22}==$/
-const utf8Fatal = new TextDecoder('utf-8', { fatal: true })
+
+export type RoomAction = 'events' | 'input' | 'leave' | 'ws'
 
 export interface RoomJoinOptions<World> {
   key: string
   world: World
   identity?: string
   resume?: string
+}
+
+export interface RoomInputSchema<Input> {
+  initialInput(): Input
+  parseInput(raw: unknown, previous: Input): Input | null
+  mergeInput?(previous: Input, next: Input): Input
+  idleInput?(previous: Input): Input
+}
+
+export interface RoomHostRejection {
+  readonly reject: number
+  readonly reason?: string
+  readonly message?: string
+}
+
+export interface RoomHostMatch<World> {
+  readonly key: string
+  readonly world: World
+  readonly identity?: string
+  readonly resume?: string
+}
+
+export type RoomAuthorizeResult<World> =
+  | { readonly ok: true; readonly world?: World; readonly identity?: string; readonly resume?: string }
+  | { readonly ok: false; readonly status: number; readonly reason?: string; readonly message?: string }
+
+export interface RoomHostHandlersOptions<World> {
+  match(
+    basePath: string,
+    req: IncomingMessage,
+    action: RoomAction
+  ): RoomHostMatch<World> | RoomHostRejection | null | undefined
+  authorize?(
+    req: IncomingMessage,
+    matched: RoomHostMatch<World>,
+    action: 'events' | 'ws'
+  ): RoomAuthorizeResult<World> | Promise<RoomAuthorizeResult<World>>
+}
+
+export interface RoomHostHandlers {
+  handle(req: IncomingMessage, res: ServerResponse, pathname: string): Promise<boolean>
+  upgrade(req: IncomingMessage, socket: Duplex, head: Buffer, pathname: string): boolean | Promise<boolean>
 }
 
 export interface RoomServiceOptions<World, Player, Snapshot extends object, Input = RoomInput> {
@@ -39,6 +87,7 @@ export interface RoomService<World> {
   join(req: IncomingMessage, res: ServerResponse, options: RoomJoinOptions<World>): void
   upgrade(req: IncomingMessage, socket: Duplex, head: Buffer, options: RoomJoinOptions<World>): boolean
   receive(req: IncomingMessage, res: ServerResponse, key: string, action: 'input' | 'leave'): Promise<void>
+  createHostHandlers(options: RoomHostHandlersOptions<World>): RoomHostHandlers
   close(): void
 }
 
@@ -58,7 +107,7 @@ interface ResolvedRoomServiceOptions<World, Player, Snapshot extends object, Inp
   initialInput(): Input
   mergeInput(previous: Input, next: Input): Input
   idleInput(previous: Input): Input
-  customSchema: boolean
+  requireRestart: boolean
   maxPayloadBytes?: number
 }
 
@@ -70,100 +119,22 @@ function isSafeInt(value: unknown): value is number {
   return typeof value === 'number' && Number.isSafeInteger(value)
 }
 
-function hasCustomInputSchema<World, Player, Snapshot extends object, Input>(
-  options:
-    | RoomServiceOptions<World, Player, Snapshot, RoomInput>
-    | CustomRoomServiceOptions<World, Player, Snapshot, Input>
-): options is CustomRoomServiceOptions<World, Player, Snapshot, Input> {
-  return typeof options.parseInput === 'function' && typeof options.initialInput === 'function'
+function isPromiseLike<T>(value: T | Promise<T>): value is Promise<T> {
+  return isRecord(value) && typeof value.then === 'function'
 }
 
-function disableNagle(socket: Duplex): void {
-  if ('setNoDelay' in socket && typeof socket.setNoDelay === 'function') {
-    socket.setNoDelay(true)
+function isRoomHostRejection(value: unknown): value is RoomHostRejection {
+  return isRecord(value) && typeof value.reject === 'number'
+}
+
+function splitRoomPathname(pathname: string): { basePath: string; action: RoomAction } | null {
+  const slash = pathname.lastIndexOf('/')
+  if (slash < 0) return null
+  const tail = pathname.slice(slash + 1)
+  if (tail === 'events' || tail === 'input' || tail === 'leave' || tail === 'ws') {
+    return { basePath: pathname.slice(0, slash), action: tail }
   }
-}
-
-function defaultParseInput(raw: unknown, previous: RoomInput): RoomInput | null {
-  if (!isRecord(raw)) return null
-  if (
-    typeof raw.left !== 'boolean' ||
-    typeof raw.right !== 'boolean' ||
-    !isSafeInt(raw.jump) ||
-    raw.jump < previous.jump
-  ) {
-    return null
-  }
-  return { left: raw.left, right: raw.right, jump: raw.jump }
-}
-
-function defaultIdleInput(previous: RoomInput): RoomInput {
-  return { left: false, right: false, jump: previous.jump }
-}
-
-function encodeWsFrame(opcode: number, payload: Buffer): Buffer {
-  const len = payload.byteLength
-  let headerLen = 2
-  if (len >= 65_536) headerLen = 10
-  else if (len >= 126) headerLen = 4
-  const frame = Buffer.allocUnsafe(headerLen + len)
-  frame[0] = 0x80 | (opcode & 0x0f)
-  if (len < 126) {
-    frame[1] = len
-  } else if (len < 65_536) {
-    frame[1] = 126
-    frame.writeUInt16BE(len, 2)
-  } else {
-    frame[1] = 127
-    frame.writeBigUInt64BE(BigInt(len), 2)
-  }
-  payload.copy(frame, headerLen)
-  return frame
-}
-
-function truncateUtf8(text: string, maxBytes: number): Buffer {
-  const buf = Buffer.from(text, 'utf8')
-  if (buf.byteLength <= maxBytes) return buf
-  let end = maxBytes
-  // Step back over UTF-8 continuation bytes (10xxxxxx) to find the start of the split character.
-  while (end > 0 && (buf[end] & 0xc0) === 0x80) end--
-  // If the byte at `end` is a multi-byte lead byte whose full sequence exceeds maxBytes, exclude it.
-  if (end > 0 && (buf[end] & 0x80) !== 0) {
-    const lead = buf[end]
-    const charLen = (lead & 0xe0) === 0xc0 ? 2 : (lead & 0xf0) === 0xe0 ? 3 : (lead & 0xf8) === 0xf0 ? 4 : 1
-    if (end + charLen > maxBytes) return buf.subarray(0, end)
-  }
-  return buf.subarray(0, end)
-}
-
-function encodeWsClose(code: number, reason = ''): Buffer {
-  const reasonBuf = reason ? truncateUtf8(reason, 123) : Buffer.alloc(0)
-  const payload = Buffer.allocUnsafe(2 + reasonBuf.byteLength)
-  payload.writeUInt16BE(code, 0)
-  reasonBuf.copy(payload, 2)
-  return encodeWsFrame(0x8, payload)
-}
-
-function isValidWireCloseCode(code: number): boolean {
-  if (code >= 3000 && code <= 4999) return true
-  return (code >= 1000 && code <= 1003) || (code >= 1007 && code <= 1011)
-}
-
-function rejectUpgrade(socket: Duplex, status: number, reason: string, extraHeaders = '') {
-  if (socket.listenerCount('error') === 0) socket.on('error', () => { /* ignore pre-close socket error */ })
-  if (!socket.destroyed && socket.writable) {
-    try {
-      socket.write(`HTTP/1.1 ${status} ${reason}\r\nContent-Length: 0\r\nConnection: close\r\n${extraHeaders}\r\n`)
-    } catch {
-      /* ignore write errors on closing socket */
-    }
-  }
-  socket.destroy()
-}
-
-function headerHasToken(value: string | string[] | undefined, token: string): boolean {
-  const raw = Array.isArray(value) ? value.join(',') : (value ?? '')
-  return raw.split(',').some(part => part.trim().toLowerCase() === token)
+  return null
 }
 
 function extractResumeFromUrl(url: string | undefined): string {
@@ -174,6 +145,42 @@ function extractResumeFromUrl(url: string | undefined): string {
     return ''
   }
 }
+
+function hasCustomInputSchema<World, Player, Snapshot extends object, Input>(
+  options:
+    | RoomServiceOptions<World, Player, Snapshot, RoomInput>
+    | CustomRoomServiceOptions<World, Player, Snapshot, Input>
+): options is CustomRoomServiceOptions<World, Player, Snapshot, Input> {
+  return typeof options.parseInput === 'function' && typeof options.initialInput === 'function'
+}
+
+// ---------------------------------------------------------------------------
+// Platformer room input preset (backwards-compatible default for RoomInput)
+// ---------------------------------------------------------------------------
+
+const emptyPlatformerInput: RoomInput = Object.freeze({ left: false, right: false, jump: 0 })
+
+export const platformerRoomInputSchema: Readonly<Required<RoomInputSchema<RoomInput>>> = Object.freeze({
+  initialInput: (): RoomInput => ({ ...emptyPlatformerInput }),
+  parseInput(raw: unknown, previous: RoomInput): RoomInput | null {
+    if (!isRecord(raw)) return null
+    if (
+      typeof raw.left !== 'boolean' ||
+      typeof raw.right !== 'boolean' ||
+      !isSafeInt(raw.jump) ||
+      raw.jump < previous.jump
+    ) {
+      return null
+    }
+    return { left: raw.left, right: raw.right, jump: raw.jump }
+  },
+  mergeInput: (_previous: RoomInput, next: RoomInput): RoomInput => next,
+  idleInput: (previous: RoomInput): RoomInput => ({ left: false, right: false, jump: previous.jump })
+})
+
+// ---------------------------------------------------------------------------
+// Generic authoritative RoomService
+// ---------------------------------------------------------------------------
 
 export function createRoomService<World, Player, Snapshot extends object>(
   options: RoomServiceOptions<World, Player, Snapshot, RoomInput>
@@ -190,7 +197,7 @@ export function createRoomService<World, Player, Snapshot extends object, Input 
     const initialInput = options.initialInput
     return createRoomServiceImpl({
       ...options,
-      customSchema: true,
+      requireRestart: false,
       initialInput,
       parseInput: options.parseInput,
       mergeInput: options.mergeInput ?? ((_previous, next) => next),
@@ -198,13 +205,14 @@ export function createRoomService<World, Player, Snapshot extends object, Input 
     })
   }
   const customInitial = options.initialInput
+  const hasCustomOverride = Boolean(options.parseInput || customInitial || options.mergeInput || options.idleInput)
   return createRoomServiceImpl<World, Player, Snapshot, RoomInput>({
     ...options,
-    customSchema: Boolean(options.parseInput || customInitial || options.mergeInput || options.idleInput),
-    initialInput: customInitial ?? (() => ({ ...emptyInput })),
-    parseInput: options.parseInput ?? defaultParseInput,
-    mergeInput: options.mergeInput ?? ((_previous, next) => next),
-    idleInput: options.idleInput ?? (customInitial ? () => customInitial() : defaultIdleInput)
+    requireRestart: !hasCustomOverride,
+    initialInput: customInitial ?? platformerRoomInputSchema.initialInput,
+    parseInput: options.parseInput ?? platformerRoomInputSchema.parseInput,
+    mergeInput: options.mergeInput ?? platformerRoomInputSchema.mergeInput,
+    idleInput: options.idleInput ?? (customInitial ? () => customInitial() : platformerRoomInputSchema.idleInput)
   })
 }
 
@@ -218,7 +226,7 @@ function createRoomServiceImpl<World, Player, Snapshot extends object, Input>({
   initialInput: makeInitialInput,
   mergeInput: combineInput,
   idleInput: toIdleInput,
-  customSchema,
+  requireRestart,
   maxPayloadBytes
 }: ResolvedRoomServiceOptions<World, Player, Snapshot, Input>): RoomService<World> {
   const httpPayloadLimit = maxPayloadBytes ?? 512
@@ -226,7 +234,7 @@ function createRoomServiceImpl<World, Player, Snapshot extends object, Input>({
 
   type MemberTransport =
     | { kind: 'sse'; res: ServerResponse }
-    | { kind: 'ws'; socket: Duplex; close(code?: number, reason?: string): void }
+    | { kind: 'ws'; conn: WsConnection }
 
   type QueuedInput = { input: Input; seq: number }
 
@@ -265,7 +273,7 @@ function createRoomServiceImpl<World, Player, Snapshot extends object, Input>({
     member.inputQueue.length = 0
     if (transport) {
       if (transport.kind === 'sse') transport.res.end()
-      else transport.close(1000, 'Left room')
+      else transport.conn.close(1000, 'Left room')
     }
     if (!room.members.size) {
       rooms.delete(key)
@@ -332,7 +340,7 @@ function createRoomServiceImpl<World, Player, Snapshot extends object, Input>({
     if (rawRestart !== undefined) {
       if (!isSafeInt(rawRestart) || rawRestart < member.restart) return false
       restart = rawRestart
-    } else if (!customSchema) {
+    } else if (requireRestart) {
       return false
     }
 
@@ -414,253 +422,64 @@ function createRoomServiceImpl<World, Player, Snapshot extends object, Input>({
 
   function upgrade(req: IncomingMessage, socket: Duplex, head: Buffer, { key, world, identity, resume }: RoomJoinOptions<World>): boolean {
     if (socket.destroyed) return false
-    if (req.method !== 'GET') {
-      rejectUpgrade(socket, 405, 'Method Not Allowed')
-      return false
-    }
-    const wsVersion = String(req.headers['sec-websocket-version'] ?? '')
-    if (wsVersion !== '13') {
-      rejectUpgrade(socket, 426, 'Upgrade Required', 'Sec-WebSocket-Version: 13\r\n')
-      return false
-    }
-    const wsKey = typeof req.headers['sec-websocket-key'] === 'string' ? req.headers['sec-websocket-key'].trim() : ''
-    if (
-      !headerHasToken(req.headers.upgrade, 'websocket') ||
-      !headerHasToken(req.headers.connection, 'upgrade') ||
-      !wsKeyPattern.test(wsKey) ||
-      Buffer.from(wsKey, 'base64').byteLength !== 16
-    ) {
-      rejectUpgrade(socket, 400, 'Bad Request')
+    const handshake = validateWsUpgradeRequest(req)
+    if (!handshake.ok) {
+      rejectUpgrade(socket, handshake.status, handshake.reason, handshake.extraHeaders)
       return false
     }
 
     const resumeToken = resume ?? (extractResumeFromUrl(req.url) || String(req.headers['last-event-id'] ?? ''))
     const result = allocateMember(key, world, identity, resumeToken)
     if ('status' in result) {
-      const reason = result.message || (result.status === 401 ? 'Unauthorized' : result.status === 409 ? 'Conflict' : 'Service Unavailable')
+      const reason = result.message || defaultHttpReason(result.status)
       rejectUpgrade(socket, result.status, reason)
       return false
     }
 
     const { room, member, token } = result
-    let closed = false
-    let closeTimer: ReturnType<typeof setTimeout> | undefined
+    const welcomeFrame = encodeWsFrame(0x1, Buffer.from(JSON.stringify({ type: 'welcome', id: member.id, token }), 'utf8'))
+    let transport: MemberTransport | undefined
 
-    function clearCloseTimer() {
-      if (closeTimer !== undefined) {
-        clearTimeout(closeTimer)
-        closeTimer = undefined
-      }
-    }
-
-    function closeSocket(code = 1000, reason = '') {
-      if (closed) return
-      closed = true
-      if (!socket.destroyed && socket.writable) {
-        try {
-          socket.write(encodeWsClose(code, reason))
-          socket.end()
-          closeTimer = setTimeout(() => {
-            closeTimer = undefined
-            if (!socket.destroyed) socket.destroy()
-          }, 1500)
-          closeTimer.unref?.()
-        } catch {
-          socket.destroy()
-        }
-      } else if (!socket.destroyed) {
-        socket.destroy()
-      }
-    }
-
-    const transport: MemberTransport = { kind: 'ws', socket, close: closeSocket }
-    const onDisconnect = () => {
-      closed = true
-      clearCloseTimer()
-      detachMember(member, transport)
-    }
-    socket.on('close', onDisconnect)
-    socket.on('error', onDisconnect)
-
-    member.transport = transport
-    member.expiresAt = Infinity
-    member.lastInput = performance.now()
-    startTimer()
-
-    const accept = createHash('sha1').update(wsKey + wsGuid).digest('base64')
-    disableNagle(socket)
-    try {
-      socket.write(
-        'HTTP/1.1 101 Switching Protocols\r\n' +
-        'Upgrade: websocket\r\n' +
-        'Connection: Upgrade\r\n' +
-        `Sec-WebSocket-Accept: ${accept}\r\n` +
-        '\r\n'
-      )
-      const welcomeFrame = encodeWsFrame(0x1, Buffer.from(JSON.stringify({ type: 'welcome', id: member.id, token }), 'utf8'))
-      socket.write(welcomeFrame)
-    } catch {
-      onDisconnect()
-      socket.destroy()
-      return false
-    }
-
-    let pending: Buffer = Buffer.alloc(0)
-    let fragments: Buffer[] | null = null
-    let fragmentBytes = 0
-    const maxPendingBytes = Math.max(65_536, (wsPayloadLimit + 14) * 16)
-
-    function failWs(code: number, reason: string) {
-      closeSocket(code, reason)
-      detachMember(member, transport)
-    }
-
-    function handleTextMessage(text: string) {
-      if (member.transport !== transport || room.members.get(token) !== member) return
-      let parsed: unknown
-      try { parsed = JSON.parse(text) } catch { return }
-      if (!isRecord(parsed)) return
-      if (parsed.type === 'leave') {
-        removeMember(key, room, token, member)
-        return
-      }
-      if (parsed.type === 'ping') {
-        if (!socket.destroyed && socket.writable && socket.writableLength < frameBudget) {
-          socket.write(encodeWsFrame(0x1, Buffer.from(JSON.stringify({ type: 'pong' }), 'utf8')))
-        }
-        return
-      }
-      applyInputPayload(room, member, parsed)
-    }
-
-    function feed(chunk: Buffer) {
-      if (closed || !chunk.byteLength) return
-      if (pending.byteLength + chunk.byteLength > maxPendingBytes) return failWs(1009, 'Payload too large')
-      pending = pending.byteLength ? Buffer.concat([pending, chunk]) : chunk
-      while (!closed && pending.byteLength >= 2) {
-        const b0 = pending[0]
-        const b1 = pending[1]
-        const fin = (b0 & 0x80) !== 0
-        const rsv = b0 & 0x70
-        const opcode = b0 & 0x0f
-        const masked = (b1 & 0x80) !== 0
-        let length = b1 & 0x7f
-        let offset = 2
-
-        if (rsv !== 0) return failWs(1002, 'Reserved bits set')
-        if (!masked) return failWs(1002, 'Client frames must be masked')
-
-        const isControl = (opcode & 0x08) !== 0
-        if (isControl) {
-          if (!fin) return failWs(1002, 'Control frames must not be fragmented')
-          if (length > 125) return failWs(1002, 'Control frame too large')
-        }
-
-        if (length === 126) {
-          if (pending.byteLength < 4) return
-          length = pending.readUInt16BE(2)
-          offset = 4
-        } else if (length === 127) {
-          if (pending.byteLength < 10) return
-          const hi = pending.readUInt32BE(2)
-          if (hi >= 0x8000_0000) return failWs(1002, 'Invalid 64-bit payload length')
-          if (hi > 0x001f_ffff) return failWs(1009, 'Payload too large')
-          length = Number(pending.readBigUInt64BE(2))
-          offset = 10
-        }
-
-        if (length > wsPayloadLimit) return failWs(1009, 'Payload too large')
-
-        if (!isControl) {
-          if (opcode === 0x0) {
-            if (!fragments) return failWs(1002, 'Unexpected continuation frame')
-            if (fragmentBytes + length > wsPayloadLimit) return failWs(1009, 'Message too large')
-          } else if (opcode === 0x1) {
-            if (fragments) return failWs(1002, 'Expected continuation frame')
-          } else if (opcode === 0x2) {
-            return failWs(1003, 'Binary frames not supported')
-          } else {
-            return failWs(1002, 'Unsupported opcode')
-          }
-        } else if (opcode !== 0x8 && opcode !== 0x9 && opcode !== 0xa) {
-          return failWs(1002, 'Unsupported control opcode')
-        }
-
-        const frameTotal = offset + 4 + length
-        if (pending.byteLength < frameTotal) return
-
-        const mask0 = pending[offset]
-        const mask1 = pending[offset + 1]
-        const mask2 = pending[offset + 2]
-        const mask3 = pending[offset + 3]
-        const payloadStart = offset + 4
-        const payload = Buffer.allocUnsafe(length)
-        for (let i = 0; i < length; i++) {
-          const m = (i & 3) === 0 ? mask0 : (i & 3) === 1 ? mask1 : (i & 3) === 2 ? mask2 : mask3
-          payload[i] = pending[payloadStart + i] ^ m
-        }
-        pending = frameTotal === pending.byteLength ? Buffer.alloc(0) : pending.subarray(frameTotal)
-
-        if (opcode === 0x8) {
-          if (length === 1) return failWs(1002, 'Invalid close payload')
-          if (length >= 2) {
-            const closeCode = payload.readUInt16BE(0)
-            if (!isValidWireCloseCode(closeCode)) return failWs(1002, 'Invalid close code')
-            if (length > 2) {
-              try {
-                utf8Fatal.decode(payload.subarray(2))
-              } catch {
-                return failWs(1007, 'Invalid UTF-8 in close reason')
-              }
-            }
-            closeSocket(closeCode)
-          } else {
-            closeSocket(1000)
-          }
-          detachMember(member, transport)
+    const conn = acceptWsConnection(socket, {
+      accept: handshake.accept,
+      head,
+      initialFrame: welcomeFrame,
+      maxPayloadBytes: wsPayloadLimit,
+      frameBudget,
+      onOpen(wsConn) {
+        transport = { kind: 'ws', conn: wsConn }
+        member.transport = transport
+        member.expiresAt = Infinity
+        member.lastInput = performance.now()
+        startTimer()
+      },
+      onText(text) {
+        if (!transport || member.transport !== transport || room.members.get(token) !== member) return
+        let parsed: unknown
+        try { parsed = JSON.parse(text) } catch { return }
+        if (!isRecord(parsed)) return
+        if (parsed.type === 'leave') {
+          removeMember(key, room, token, member)
           return
         }
-        if (opcode === 0x9) {
-          if (!socket.destroyed && socket.writable && socket.writableLength < frameBudget) {
-            socket.write(encodeWsFrame(0xa, payload))
+        if (parsed.type === 'ping') {
+          if (transport.kind === 'ws') {
+            transport.conn.sendText(JSON.stringify({ type: 'pong' }))
           }
-          continue
+          return
         }
-        if (opcode === 0xa) {
-          continue
-        }
-
-        let complete: Buffer
-        if (opcode === 0x1 && fin) {
-          complete = payload
-        } else {
-          if (opcode === 0x1) {
-            fragments = [payload]
-            fragmentBytes = length
-          } else {
-            if (!fragments) return failWs(1002, 'Unexpected continuation frame')
-            fragments.push(payload)
-            fragmentBytes += length
-          }
-          if (!fin) continue
-          complete = Buffer.concat(fragments, fragmentBytes)
-          fragments = null
-          fragmentBytes = 0
-        }
-
-        let text: string
-        try {
-          text = utf8Fatal.decode(complete)
-        } catch {
-          return failWs(1007, 'Invalid UTF-8')
-        }
-        handleTextMessage(text)
+        applyInputPayload(room, member, parsed)
+      },
+      onClose() {
+        if (transport) detachMember(member, transport)
       }
-    }
+    })
 
-    socket.on('data', feed)
-    if (head && head.byteLength > 0) feed(head)
-    if (socket.destroyed) onDisconnect()
+    if (!conn) {
+      member.expiresAt = performance.now() + resumeMs
+      startTimer()
+      return false
+    }
     return true
   }
 
@@ -696,6 +515,89 @@ function createRoomServiceImpl<World, Player, Snapshot extends object, Input>({
     if (!member.transport || room.members.get(token) !== member) return sendText(res, 401)
     if (!applyInputPayload(room, member, input)) return sendText(res, 400)
     sendText(res, 204)
+  }
+
+  function createHostHandlers(options: RoomHostHandlersOptions<World>): RoomHostHandlers {
+    function authorizeForAction(
+      req: IncomingMessage,
+      matched: RoomHostMatch<World>,
+      action: 'events' | 'ws'
+    ): RoomAuthorizeResult<World> | Promise<RoomAuthorizeResult<World>> {
+      if (!options.authorize) {
+        return { ok: true, world: matched.world, identity: matched.identity, resume: matched.resume }
+      }
+      return options.authorize(req, matched, action)
+    }
+
+    async function handle(req: IncomingMessage, res: ServerResponse, pathname: string): Promise<boolean> {
+      const split = splitRoomPathname(pathname)
+      if (!split) return false
+      const matched = options.match(split.basePath, req, split.action)
+      if (!matched) return false
+      if (isRoomHostRejection(matched)) {
+        sendText(res, matched.reject, matched.message ?? '')
+        return true
+      }
+      if (split.action === 'events') {
+        if (req.method !== 'GET') {
+          sendText(res, 405)
+          return true
+        }
+        const auth = await authorizeForAction(req, matched, 'events')
+        if (!auth.ok) {
+          sendText(res, auth.status, auth.message ?? '')
+          return true
+        }
+        join(req, res, {
+          key: matched.key,
+          world: auth.world !== undefined ? auth.world : matched.world,
+          identity: auth.identity ?? matched.identity,
+          resume: auth.resume ?? matched.resume
+        })
+        return true
+      }
+      if (split.action === 'input' || split.action === 'leave') {
+        if (req.method !== 'POST') {
+          sendText(res, 405)
+          return true
+        }
+        await receive(req, res, matched.key, split.action)
+        return true
+      }
+      sendText(res, 426, 'Upgrade Required')
+      return true
+    }
+
+    function upgradeRoute(req: IncomingMessage, socket: Duplex, head: Buffer, pathname: string): boolean | Promise<boolean> {
+      const split = splitRoomPathname(pathname)
+      if (!split || split.action !== 'ws') return false
+      const matched = options.match(split.basePath, req, 'ws')
+      if (!matched) return false
+      if (isRoomHostRejection(matched)) {
+        rejectUpgrade(socket, matched.reject, matched.reason ?? defaultHttpReason(matched.reject))
+        return true
+      }
+      const finishUpgrade = (auth: RoomAuthorizeResult<World>): boolean => {
+        if (!auth.ok) {
+          rejectUpgrade(socket, auth.status, auth.reason ?? defaultHttpReason(auth.status))
+          return true
+        }
+        upgrade(req, socket, head, {
+          key: matched.key,
+          world: auth.world !== undefined ? auth.world : matched.world,
+          identity: auth.identity ?? matched.identity,
+          resume: auth.resume ?? matched.resume
+        })
+        return true
+      }
+      const authResult = authorizeForAction(req, matched, 'ws')
+      if (isPromiseLike(authResult)) {
+        return authResult.then(finishUpgrade)
+      }
+      return finishUpgrade(authResult)
+    }
+
+    return { handle, upgrade: upgradeRoute }
   }
 
   let previous = performance.now()
@@ -786,8 +688,8 @@ function createRoomServiceImpl<World, Player, Snapshot extends object, Input>({
                 res.write(ssePacket)
               }
             } else {
-              const socket = transport.socket
-              if (socket.destroyed || !socket.writable) {
+              const socket = transport.conn.socket
+              if (transport.conn.closed || socket.destroyed || !socket.writable) {
                 detachMember(member, transport)
               } else if (socket.writableLength >= frameBudget) {
                 socket.destroy()
@@ -811,6 +713,7 @@ function createRoomServiceImpl<World, Player, Snapshot extends object, Input>({
     join,
     upgrade,
     receive,
+    createHostHandlers,
     close() {
       stopTimer()
       for (const { members } of rooms.values()) {
@@ -819,7 +722,7 @@ function createRoomServiceImpl<World, Player, Snapshot extends object, Input>({
           member.transport = null
           if (!transport) continue
           if (transport.kind === 'sse') transport.res.end()
-          else transport.close(1001, 'Server closing')
+          else transport.conn.close(1001, 'Server closing')
         }
       }
       rooms.clear()

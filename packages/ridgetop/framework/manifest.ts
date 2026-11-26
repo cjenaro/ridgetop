@@ -86,6 +86,7 @@ export const SERVER_FRAMEWORK_MODULES: readonly string[] = Object.freeze([
   'decision-api.js',
   'decision-providers.js',
   'host.js',
+  'ws.js',
   'room-server.js',
   'records.js',
   'server.js',

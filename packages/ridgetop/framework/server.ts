@@ -1,7 +1,19 @@
 export { createGameHost, isMain, ridgetopBrowserSpecifiers, sendJson, sendText, startGameHost } from './host.ts'
-export type { GameHostMount } from './host.ts'
-export { createRoomService } from './room-server.ts'
-export type { RoomJoinOptions, RoomService, RoomServiceOptions } from './room-server.ts'
+export type { GameHostMount, UpgradeResult } from './host.ts'
+export { rejectUpgrade } from './ws.ts'
+export { createRoomService, platformerRoomInputSchema } from './room-server.ts'
+export type {
+  RoomAction,
+  RoomAuthorizeResult,
+  RoomHostHandlers,
+  RoomHostHandlersOptions,
+  RoomHostMatch,
+  RoomHostRejection,
+  RoomInputSchema,
+  RoomJoinOptions,
+  RoomService,
+  RoomServiceOptions
+} from './room-server.ts'
 export { createCookieSession, createIdentity, createRecords, openRecords } from './records.ts'
 export { createDecisionApi } from './decision-api.ts'
 export { bakeIconPng, formatPackageSummary, packageGame, parsePackageArgs } from './packager.ts'
