@@ -1429,6 +1429,7 @@ export function createCrownshardScene(renderer: LowPolyRenderer) {
       lastFloatId = -1
       lastActiveUid = null
       spotlightUnitUid = null
+      inspectedEnemyUid = null
       hitStop = 0
       cameraZoom = 1.0
       cameraZoomActual = 1.0

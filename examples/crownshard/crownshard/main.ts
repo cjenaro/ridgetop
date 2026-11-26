@@ -27,7 +27,7 @@ import {
 } from './simulation.ts'
 import { FACING_DIRS, cellHeightLevel } from './types.ts'
 import type {
-  BattleSaveSnapshot, BattleUnit, ChapterSpec, CombatForecast, EnemyArchetypeId, GameState, OwnedEquipCard,
+  BattleSaveSnapshot, BattleUnit, ChapterSpec, CombatForecast, EnemyArchetypeId, FacingDir, GameState, OwnedEquipCard,
   OwnedHeroCard, PackId, PackRevealItem, Rarity, TurnActionKind, TurnOrderActionPreview
 } from './types.ts'
 import {
@@ -404,9 +404,12 @@ async function start() {
     pendingEndless = state.battle.endlessWave
     lastBattlePhase = state.battle.phase
     lastActiveUid = state.battle.activeUnitUid
+    lastBattleTurn = state.battle.turn
     syncTurnBoundaryTracker(turnSaveTracker, state.battle)
     scene.resetCamera()
     scene.setCameraYaw(0, true)
+    scene.setDangerZoneVisible(dangerZoneOn)
+    scene.setInspectedEnemyUid(null)
     setScreen('battle')
     renderer.canvas.focus()
     return true
@@ -417,6 +420,7 @@ async function start() {
     resumableBattle = null
     lastBattlePhase = null
     lastActiveUid = null
+    lastBattleTurn = 0
     syncTurnBoundaryTracker(turnSaveTracker, null)
     saveNow()
     if (toastMsg) showToast(toastMsg)
@@ -488,6 +492,7 @@ async function start() {
     if (!active || active.team !== 'ally') return null
 
     if (hoveredActionKind) return hoveredActionKind
+    if (battle.facingPicker) return 'wait'
     if (activeForecast && activeForecast.mode !== 'tactic') {
       return activeForecast.requiresMove || active.moved ? 'move_and_act' : 'act'
     }
@@ -586,18 +591,25 @@ async function start() {
     }
   }
 
+  function commitWaitFacing(dir?: FacingDir): boolean {
+    if (!state.battle || state.battle.phase !== 'player' || !state.battle.facingPicker) return false
+    if (!confirmWaitFacingPicker(state, dir)) return false
+    lockedForecastCell = null
+    mobileHandOpen = false
+    clearBattleHoverFeedback()
+    if (shouldAutoSaveOnTurnBoundary(turnSaveTracker, state.battle)) saveNow()
+    uiDirty = true
+    hudRev++
+    return true
+  }
+
   function endBattleTurn() {
     audio.unlock()
     if (state.battle?.phase === 'player') {
       lockedForecastCell = null
       mobileHandOpen = false
       if (state.battle.facingPicker) {
-        if (confirmWaitFacingPicker(state)) {
-          clearBattleHoverFeedback()
-          if (shouldAutoSaveOnTurnBoundary(turnSaveTracker, state.battle)) saveNow()
-          uiDirty = true
-          hudRev++
-        }
+        commitWaitFacing()
       } else if (beginWaitFacingPicker(state)) {
         clearBattleHoverFeedback()
         scene.setHoveredCell(null)
@@ -919,9 +931,9 @@ async function start() {
     if (state.battle.facingPicker) {
       const hit = scene.pickFacingPickerAt(state.battle, x, y, w, h)
       if (hit === 'confirm') {
-        if (confirmWaitFacingPicker(state)) { uiDirty = true; hudRev++ }
+        commitWaitFacing()
       } else if (hit) {
-        if (confirmWaitFacingPicker(state, hit)) { uiDirty = true; hudRev++ }
+        commitWaitFacing(hit)
       }
       return
     }
@@ -987,10 +999,10 @@ async function start() {
     if (state.battle.facingPicker) {
       const hit = scene.pickFacingPickerAt(state.battle, x, y, w, h)
       if (hit === 'confirm') {
-        if (confirmWaitFacingPicker(state)) { uiDirty = true; hudRev++ }
+        commitWaitFacing()
       } else if (hit) {
         if (hit === state.battle.facingPicker.previewFacing) {
-          if (confirmWaitFacingPicker(state, hit)) { uiDirty = true; hudRev++ }
+          commitWaitFacing(hit)
         } else if (previewWaitFacing(state, hit)) {
           uiDirty = true
           hudRev++
@@ -1104,10 +1116,7 @@ async function start() {
         if (state.battle.facingPicker && state.battle.phase === 'player') {
           event.preventDefault()
           audio.unlock()
-          if (confirmWaitFacingPicker(state)) {
-            uiDirty = true
-            hudRev++
-          }
+          commitWaitFacing()
           return
         }
         if (lockedForecastCell) {
@@ -1128,6 +1137,7 @@ async function start() {
         } else if (beginWaitFacingPicker(state)) {
           lockedForecastCell = null
           mobileHandOpen = false
+          clearBattleHoverFeedback()
           scene.setHoveredCell(null)
           scene.setForecast(null)
           uiDirty = true
@@ -4726,6 +4736,7 @@ async function start() {
 
   let lastBattlePhase: string | null = null
   let lastActiveUid: string | null = null
+  let lastBattleTurn = 0
 
   function syncUi(force = false) {
     const canvas = renderer.canvas
@@ -4919,9 +4930,11 @@ async function start() {
       }
       const bPhase = state.battle?.phase ?? null
       const activeUid = state.battle?.activeUnitUid ?? null
-      if (bPhase !== lastBattlePhase || activeUid !== lastActiveUid) {
+      const bTurn = state.battle?.turn ?? 0
+      if (bPhase !== lastBattlePhase || activeUid !== lastActiveUid || bTurn !== lastBattleTurn) {
         lastBattlePhase = bPhase
         lastActiveUid = activeUid
+        lastBattleTurn = bTurn
         lockedForecastCell = null
         mobileHandOpen = false
         clearBattleHoverFeedback()

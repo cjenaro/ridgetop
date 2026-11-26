@@ -781,7 +781,7 @@ export function serializeBattleState(
       ...(u.relicId !== undefined ? { relicId: u.relicId } : {}),
       col,
       row,
-      facing: u.facing,
+      facing: battle.facingPicker?.unitUid === u.uid ? battle.facingPicker.originalFacing : u.facing,
       hp: u.hp,
       maxHp: u.maxHp,
       shield: u.shield,
@@ -4143,6 +4143,7 @@ export function undoMove(state: GameState): boolean {
   active.lungeZ = 0
 
   battle.moveUndo = null
+  battle.facingPicker = null
   battle.pendingAction = null
   battle.armedSkillIndex = null
   battle.armedTacticUid = null

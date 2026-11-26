@@ -3,8 +3,8 @@ import test from 'node:test'
 import type { LowPolyRenderer, RenderStats } from '../packages/ridgetop/framework/index.ts'
 import { createCrownshardScene } from '../examples/crownshard/crownshard/scene.ts'
 import {
-  armSkill, armTacticCard, canUndoMove, computeCombatForecast, computeDangerZone,
-  computeEnemyThreat, createInitialState, endPlayerTurn, getUnitByUid, refreshHighlights,
+  armSkill, armTacticCard, beginWaitFacingPicker, canUndoMove, computeCombatForecast, computeDangerZone,
+  computeEnemyThreat, createInitialState, endPlayerTurn, getUnitByUid, previewWaitFacing, refreshHighlights,
   rotateActiveUnitFacing, selectTile, setUnitFacing, startChapterBattle, stepGame, undoMove
 } from '../examples/crownshard/crownshard/simulation.ts'
 import {
@@ -560,4 +560,29 @@ test('CrownshardScene renders Danger Zone + inspected enemy threat + move/target
   scene.setInspectedEnemyUid(null)
   assert.equal(scene.isDangerZoneVisible(), false)
   scene.dispose()
+})
+
+test('Undo Move cleanly dismisses an open Wait-to-Face picker and restores turn-start tile and facing', () => {
+  const state = createInitialState(8199)
+  const battle = startChapterBattle(state, 0)
+  flattenArena(battle, 'grass', 0)
+  const hero = getUnitByUid(battle, battle.activeUnitUid)!
+  placeUnit(battle, hero, 2, 2)
+  setUnitFacing(hero, 'e')
+  refreshHighlights(battle, state.campaign)
+
+  assert.equal(selectTile(state, 3, 2), true)
+  walkToArrival(state)
+  assert.equal(canUndoMove(battle), true)
+  assert.equal(beginWaitFacingPicker(state), true)
+  assert.ok(battle.facingPicker)
+  assert.equal(previewWaitFacing(state, 'w'), true)
+
+  assert.equal(undoMove(state), true)
+  assert.equal(battle.facingPicker, null, 'undoMove must dismiss active Wait-to-Face picker')
+  assert.equal(hero.col, 2)
+  assert.equal(hero.row, 2)
+  assert.equal(hero.facing, 'e', 'undoMove must restore turn-start facing, not Wait-to-Face preview')
+  assert.equal(hero.moved, false)
+  assert.equal(selectTile(state, 2, 3), true, 'selectTile must work immediately after undoing from Wait-to-Face')
 })
