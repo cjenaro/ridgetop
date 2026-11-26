@@ -609,3 +609,126 @@ test('CrownshardScene renders displacement preview arcs & slide animations and u
   assert.ok(fake.maxInstances > 40)
   scene.dispose()
 })
+
+test('Wave 4 cross-feature seams: geyser knockback triggers Combust, downed heroes block knockback overlap, swap-geyser KO advances turn, Pincer+collision shield parity', async () => {
+  const { refreshHighlights, serializeBattleState, validateBattleSnapshot } = await import('../examples/crownshard/crownshard/simulation.ts')
+
+  const makeFlatBattle = (seed: number) => {
+    const state = createInitialState(seed)
+    const battle = startChapterBattle(state, 0)
+    flattenBoard(battle, 'grass', 0)
+    const heroes = battle.units.filter(u => u.team === 'ally')
+    const enemies = battle.units.filter(u => u.team === 'enemy')
+    for (let i = 2; i < heroes.length; i++) { heroes[i].alive = false; heroes[i].hp = 0 }
+    for (let i = 1; i < enemies.length; i++) { enemies[i].alive = false; enemies[i].hp = 0 }
+    return { state, battle, heroes, enemies }
+  }
+  const activate = (state: ReturnType<typeof createInitialState>, unit: BattleUnit) => {
+    const battle = state.battle!
+    battle.phase = 'player'
+    battle.activeUnitUid = unit.uid
+    battle.selectedUnitUid = unit.uid
+    unit.moved = false
+    unit.acted = false
+    refreshHighlights(battle, state.campaign)
+  }
+
+  // 1. Knocking Poisoned target onto erupting lava_geyser triggers Combust combo
+  {
+    const { state, battle, heroes, enemies } = makeFlatBattle(9401)
+    const knight = heroes[0]
+    const enemy = enemies[0]
+    placeUnit(battle, knight, 2, 2)
+    placeUnit(battle, enemy, 3, 2)
+    battle.cells[2][4] = makeCell(4, 2, 'lava_geyser', 0)
+    battle.cells[2][4].geyserActive = true
+    enemy.hp = 120
+    enemy.maxHp = 120
+    enemy.poisonStacks = 3
+    activate(state, knight)
+
+    assert.equal(armSkill(state, 0), true)
+    const fc = computeCombatForecast(state, 3, 2)!
+    assert.ok(fc.displacementPreview)
+    state.vfx = []
+    assert.equal(selectTile(state, 3, 2), true)
+    assert.equal(enemy.col, 4)
+    assert.equal(enemy.poisonStacks, 0, 'Geyser knockback must detonate Poison via Combust')
+    assert.ok(state.vfx.some(ev => ev.kind === 'combo' && ev.combo === 'combust'), 'Must emit Combust VFX on geyser knockback')
+  }
+
+  // 2. Knockback never stacks enemy onto a downed hero tile (save validation stays valid)
+  {
+    const { state, battle, heroes, enemies } = makeFlatBattle(9402)
+    const knight = heroes[0]
+    const downedAlly = heroes[1]
+    const enemy = enemies[0]
+    placeUnit(battle, knight, 2, 2)
+    placeUnit(battle, enemy, 3, 2)
+    placeUnit(battle, downedAlly, 4, 2)
+    downedAlly.hp = 0
+    downedAlly.alive = false
+    downedAlly.downed = true
+    downedAlly.koCountdown = 3
+    activate(state, knight)
+
+    const res = applyDisplacement(state, knight, enemy, { kind: 'knockback', distance: 1 })
+    assert.equal(res.moved, false, 'Enemy must not land on a downed hero tile')
+    assert.equal(enemy.col, 3)
+    const snap = serializeBattleState(battle)
+    assert.ok(snap && validateBattleSnapshot(snap), 'Battle snapshot must stay valid with zero overlapping units')
+  }
+
+  // 3. Rogue Swap onto erupting lava_geyser KOing active hero cleanly advances turn (no soft-lock)
+  {
+    const state = createInitialState(9403)
+    state.campaign.heroes.push({ uid: 'rogue_swap_ko', heroId: 'rogue', stars: 1, weaponUid: null, armorUid: null, relicUid: null })
+    state.campaign.squadUids = [state.campaign.heroes[0].uid, 'rogue_swap_ko']
+    const battle = startChapterBattle(state, 0)
+    flattenBoard(battle, 'grass', 0)
+    const knight = battle.units.find(u => u.heroId === 'knight')!
+    const rogue = battle.units.find(u => u.heroId === 'rogue')!
+    const enemy = battle.units.find(u => u.team === 'enemy')!
+    for (const u of battle.units) {
+      if (u.uid !== knight.uid && u.uid !== rogue.uid && u.uid !== enemy.uid) { u.alive = false; u.hp = 0 }
+    }
+    placeUnit(battle, knight, 0, 0)
+    placeUnit(battle, rogue, 2, 2)
+    placeUnit(battle, enemy, 3, 2)
+    battle.cells[2][3] = makeCell(3, 2, 'lava_geyser', 0)
+    battle.cells[2][3].geyserActive = true
+    rogue.hp = 4
+    enemy.hp = 120
+    enemy.maxHp = 120
+    activate(state, rogue)
+
+    assert.equal(armSkill(state, 0), true)
+    assert.equal(selectTile(state, 3, 2), true)
+    assert.equal(rogue.alive, false)
+    assert.equal(rogue.downed, true)
+    assert.notEqual(battle.activeUnitUid, rogue.uid, 'Active hero downed by Swap into geyser must advance turn')
+  }
+
+  // 4. Pincer + Shield Bash unit collision onto shielded enemy matches CombatForecast HP exactly
+  {
+    const { state, battle, heroes, enemies } = makeFlatBattle(9404)
+    const knight = heroes[0]
+    const archer = heroes[1]
+    const enemy = enemies[0]
+    placeUnit(battle, knight, 2, 2)
+    placeUnit(battle, enemy, 3, 2)
+    placeUnit(battle, archer, 4, 2)
+    knight.crit = 0
+    enemy.hp = 80
+    enemy.maxHp = 80
+    enemy.shield = 38
+    activate(state, knight)
+
+    assert.equal(armSkill(state, 0), true)
+    const fc = computeCombatForecast(state, 3, 2)!
+    assert.ok((fc.pincerDmg ?? 0) > 0)
+    assert.ok((fc.displacementPreview?.totalBonusDmg ?? 0) > 0)
+    assert.equal(selectTile(state, 3, 2), true)
+    assert.equal(enemy.hp, fc.targetHpAfterNormal, 'Live HP after Pincer + collision on shielded target must match CombatForecast')
+  }
+})

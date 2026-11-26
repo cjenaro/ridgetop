@@ -4223,8 +4223,8 @@ export function computeCombatForecast(state: GameState, col: number, row: number
     if (assisters.length > 0) {
       pincerAssister = assisters[0]
       pincerDmg = computePincerAssistDamage(battle, pincerAssister, primary)
-      const normalTotalAfterShield = Math.max(0, normalDmg + pincerDmg - primary.shield)
-      const critTotalAfterShield = Math.max(0, critDmg + pincerDmg - primary.shield)
+      const normalTotalAfterShield = Math.max(0, normalDmg + pincerDmg - primary.shield) + (elementalCombo?.bonusDamage ?? 0)
+      const critTotalAfterShield = Math.max(0, critDmg + pincerDmg - primary.shield) + (elementalCombo?.bonusDamage ?? 0)
       hpAfterNormal = Math.max(0, primary.hp - normalTotalAfterShield)
       hpAfterCrit = Math.max(0, primary.hp - critTotalAfterShield)
     }
@@ -4247,12 +4247,12 @@ export function computeCombatForecast(state: GameState, col: number, row: number
     )
     if (displacementPreview.totalBonusDmg > 0) {
       if (hpAfterNormal > 0) {
-        const shieldAfterNormal = Math.max(0, primary.shield - normalDmg)
+        const shieldAfterNormal = Math.max(0, primary.shield - normalDmg - pincerDmg)
         const bonusHpNormal = Math.max(0, displacementPreview.totalBonusDmg - shieldAfterNormal)
         hpAfterNormal = Math.max(0, hpAfterNormal - bonusHpNormal)
       }
       if (hpAfterCrit > 0) {
-        const shieldAfterCrit = Math.max(0, primary.shield - critDmg)
+        const shieldAfterCrit = Math.max(0, primary.shield - critDmg - pincerDmg)
         const bonusHpCrit = Math.max(0, displacementPreview.totalBonusDmg - shieldAfterCrit)
         hpAfterCrit = Math.max(0, hpAfterCrit - bonusHpCrit)
       }
@@ -5325,6 +5325,23 @@ function executeBasicAttack(state: GameState, attacker: BattleUnit, target: Batt
     executeCounterAttack(state, target, attacker)
   }
   checkBattleOutcome(state)
+  advanceTurnIfActiveHeroDowned(state)
+}
+
+function advanceTurnIfActiveHeroDowned(state: GameState): void {
+  const battle = state.battle
+  if (!battle || isBattleEnded(battle) || battle.phase !== 'player') return
+  const curActive = battle.units.find(u => u.uid === battle.activeUnitUid)
+  if (!curActive || !curActive.alive) {
+    battle.pendingAction = null
+    battle.armedSkillIndex = null
+    battle.armedTacticUid = null
+    battle.moveUndo = null
+    battle.oaTriggeredUids = []
+    battle.facingPicker = null
+    battle.objective.roundsElapsed += 1
+    advanceToNextUnitTurn(state)
+  }
 }
 
 function executeHeroSkill(
@@ -5496,6 +5513,7 @@ function executeHeroSkill(
   }
 
   checkBattleOutcome(state)
+  advanceTurnIfActiveHeroDowned(state)
 }
 
 function executeTacticCard(state: GameState, tacticUid: string, col: number, row: number): boolean {
@@ -5611,6 +5629,7 @@ function executeTacticCard(state: GameState, tacticUid: string, col: number, row
   }
 
   checkBattleOutcome(state)
+  advanceTurnIfActiveHeroDowned(state)
   refreshHighlights(battle, state.campaign)
   return true
 }

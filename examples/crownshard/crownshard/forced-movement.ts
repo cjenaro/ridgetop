@@ -11,9 +11,11 @@ import {
   cellHeightLevel,
   facingVector,
   gridToWorld,
+  isUnitDowned,
   terrainDefBonus,
   terrainElevation
 } from './types.ts'
+import { classifyHazardElement, previewElementalCombo, triggerElementalCombo } from './elemental-combos.ts'
 import type {
   BattleState,
   BattleUnit,
@@ -108,7 +110,7 @@ function buildSummaryTag(
  * Never mutates battle state; used by both CombatForecast and applyDisplacement.
  */
 export function resolveDisplacementPreview(
-  battle: Pick<BattleState, 'cells' | 'cols' | 'rows' | 'units'>,
+  battle: Pick<BattleState, 'cells' | 'cols' | 'rows' | 'units'> & { readonly biome?: BattleState['biome'] },
   actor: BattleUnit | null,
   target: BattleUnit,
   displacement: DisplacementSpec,
@@ -296,7 +298,7 @@ export function resolveDisplacementPreview(
     }
 
     const blocker = battle.units.find(u => {
-      if (!u.alive || u.uid === target.uid) return false
+      if (!(u.alive || isUnitDowned(u)) || u.uid === target.uid) return false
       const uCol = actor && u.uid === actor.uid ? originCol : u.col
       const uRow = actor && u.uid === actor.uid ? originRow : u.row
       return uCol === nextCol && uRow === nextRow
@@ -306,8 +308,10 @@ export function resolveDisplacementPreview(
       collidedUnitUid = blocker.uid
       collidedUnitName = blocker.name
       collidedCell = { col: nextCol, row: nextRow }
-      collisionDmg += COLLISION_IMPACT_DAMAGE
-      secondaryCollisionDmg += COLLISION_IMPACT_DAMAGE
+      if (blocker.alive) {
+        collisionDmg += COLLISION_IMPACT_DAMAGE
+        secondaryCollisionDmg += COLLISION_IMPACT_DAMAGE
+      }
       break
     }
 
@@ -335,15 +339,24 @@ export function resolveDisplacementPreview(
   let hazardKind: 'none' | 'lava_geyser' | 'cursed_altar' | 'ice' = 'none'
   let hazardDmg = 0
 
+  const comboBattle = { cells: battle.cells, cols: battle.cols, rows: battle.rows, biome: battle.biome ?? 'meadow' as const }
   if (finalCell.terrain === 'lava_geyser' && finalCell.geyserActive) {
     hazardKind = 'lava_geyser'
     hazardDmg = computeGeyserImpactDmg(target, finalCell)
+    const geyserElem = classifyHazardElement('lava_geyser')
+    const geyserCombo = geyserElem ? previewElementalCombo(comboBattle, geyserElem, target, curCol, curRow) : null
+    if (geyserCombo && geyserCombo.bonusDamage > 0) hazardDmg += geyserCombo.bonusDamage
     causesBurn = true
   } else if (finalCell.terrain === 'cursed_altar' && !finalCell.altarUsed && moved) {
     hazardKind = 'cursed_altar'
     hazardDmg = Math.min(CURSED_ALTAR_HP_COST, Math.max(0, target.hp - 1))
   } else if (iceSlid) {
     hazardKind = 'ice'
+  }
+  if (collidedWith === 'lava' && causesBurn) {
+    const lavaElem = classifyHazardElement('lava')
+    const lavaCombo = lavaElem ? previewElementalCombo(comboBattle, lavaElem, target, curCol, curRow) : null
+    if (lavaCombo && lavaCombo.bonusDamage > 0) hazardDmg += lavaCombo.bonusDamage
   }
 
   const totalBonusDmg = collisionDmg + fallDmg + hazardDmg
@@ -536,7 +549,14 @@ function triggerLandingHazard(
     state.vfx.push({ kind: 'burst', style: 'fire', at: [tx, ty + 0.4, tz], radius: 0.95 })
     pushFloat(battle, unit.x, unit.y + 0.48, unit.z, 'GEYSER!', '#ff7a38')
     const geyserDmg = computeGeyserImpactDmg(unit, cell)
-    const dealt = applyImpactDamage(state, unit, geyserDmg, `-${geyserDmg}`, '#ff7a38', 0.1)
+    let dealt = applyImpactDamage(state, unit, geyserDmg, `-${geyserDmg}`, '#ff7a38', 0.1)
+    if (unit.alive) {
+      const geyserElem = classifyHazardElement('lava_geyser')
+      if (geyserElem) {
+        const comboRes = triggerElementalCombo(state, null, geyserElem, unit, cell.col, cell.row, defeatDisplacedUnit)
+        if (comboRes) dealt += comboRes.totalDamageDealt
+      }
+    }
     if (unit.alive) {
       unit.burnTurns = Math.max(unit.burnTurns, 2)
       pushFloat(battle, unit.x, unit.y + 0.82, unit.z, 'BURN!', '#ff7a38')
@@ -739,8 +759,15 @@ export function applyDisplacement(
         pushFloat(battle, target.x, target.y + 0.92, target.z, 'SLOW!', '#8ce8ff')
       }
       if (preview.collidedWith === 'lava' && preview.causesBurn) {
-        target.burnTurns = Math.max(target.burnTurns, 2)
-        pushFloat(battle, target.x, target.y + 1.12, target.z, 'BURN!', '#ff7a38')
+        const lavaElem = classifyHazardElement('lava')
+        if (lavaElem) {
+          const comboRes = triggerElementalCombo(state, null, lavaElem, target, target.col, target.row, defeatDisplacedUnit)
+          if (comboRes) targetDmgDealt += comboRes.totalDamageDealt
+        }
+        if (target.alive) {
+          target.burnTurns = Math.max(target.burnTurns, 2)
+          pushFloat(battle, target.x, target.y + 1.12, target.z, 'BURN!', '#ff7a38')
+        }
       }
     }
 
