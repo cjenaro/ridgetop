@@ -5,15 +5,16 @@ import {
   MERGE_COPIES_REQUIRED, PACK_BY_ID, PLAYABLE_CHAPTERS, RARITY_META, RARITY_ORDER, TACTIC_BY_ID, TACTIC_LIST
 } from './data.ts'
 import {
-  GRID_COLS, GRID_ROWS, cellHeightAt, cellHeightLevel, defaultTerrainHeightLevel,
+  GRID_COLS, GRID_ROWS, MAX_HEIGHT_LEVEL, cellHeightAt, cellHeightLevel, defaultTerrainHeightLevel,
   facingToYaw, facingVector, gridToWorld, terrainDefBonus, terrainElevation, terrainMoveCost,
   terrainWalkable, vectorToFacing
 } from './types.ts'
 import type {
-  AttackArc, BattleReward, BattleState, BattleUnit, BiomeId, CampaignState, ChapterSpec, CombatForecast,
-  CombatForecastAlt, DifficultyLevel, EquipSlot, EquipmentSpec, FacingDir, GameState, GridCell, HeroClassId,
-  MoveAttackTile, OwnedEquipCard, OwnedHeroCard, OwnedTacticCard, PackId, PackRevealItem, Rarity, SaveData,
-  SkillSpec, TacticCardSpec, TileTerrain, TurnPreviewEntry
+  AttackArc, BattleCellSnapshot, BattleReward, BattleSaveSnapshot, BattleState, BattleUnit,
+  BattleUnitSnapshot, BiomeId, CampaignState, ChapterSpec, CombatForecast, CombatForecastAlt,
+  DifficultyLevel, EnemyArchetypeId, EquipSlot, EquipmentSpec, FacingDir, GameState, GridCell,
+  HeroClassId, MoveAttackTile, OwnedEquipCard, OwnedHeroCard, OwnedTacticCard, PackId, PackRevealItem,
+  Rarity, SaveData, SkillSpec, TacticCardSpec, TileTerrain, TurnPreviewEntry
 } from './types.ts'
 
 export const SAVE_KEY = 'ridgetop.crownshard.save.v1'
@@ -629,48 +630,663 @@ export function createInitialCampaign(seed = 1337): CampaignState {
   return campaign
 }
 
-export function createInitialState(seed = 1337, save?: SaveData | null): GameState {
-  if (save && save.version === 1 && save.campaign && Array.isArray(save.campaign.heroes) && save.campaign.heroes.length > 0) {
-    const c = save.campaign
-    const rawCount = Number.isFinite(c.chaptersCleared) ? clamp(Math.floor(c.chaptersCleared), 0, PLAYABLE_CHAPTERS.length) : 0
-    const clearedStageIds: string[] = Array.isArray(c.clearedStageIds)
-      ? c.clearedStageIds.filter((id): id is string => typeof id === 'string' && Boolean(CHAPTER_BY_ID[id]) && !CHAPTER_BY_ID[id].comingSoon)
-      : PLAYABLE_CHAPTERS.slice(0, rawCount).map(ch => ch.id)
-    const dedupCleared = Array.from(new Set(clearedStageIds))
-    const cloned: CampaignState = {
-      seed: Number.isFinite(c.seed) ? (c.seed >>> 0) || 1337 : seed,
-      nextUid: Number.isFinite(c.nextUid) && c.nextUid > 0 ? Math.floor(c.nextUid) : 100,
-      gold: Number.isFinite(c.gold) && c.gold >= 0 ? Math.floor(c.gold) : 100,
-      chaptersCleared: dedupCleared.length,
-      clearedStageIds: dedupCleared,
-      selectedStageId: typeof c.selectedStageId === 'string' && CHAPTER_BY_ID[c.selectedStageId]
-        ? c.selectedStageId
-        : CHAPTERS[0].id,
-      endlessBest: Number.isFinite(c.endlessBest) ? Math.max(0, Math.floor(c.endlessBest)) : 0,
-      battlesWon: Number.isFinite(c.battlesWon) ? Math.max(0, Math.floor(c.battlesWon)) : 0,
-      packsOpened: Number.isFinite(c.packsOpened) ? Math.max(0, Math.floor(c.packsOpened)) : 0,
-      heroes: c.heroes.map(h => ({ ...h })),
-      equipment: Array.isArray(c.equipment) ? c.equipment.map(e => ({ ...e })) : [],
-      tactics: Array.isArray(c.tactics) ? c.tactics.map(t => ({ ...t })) : [],
-      squadUids: Array.isArray(c.squadUids) && c.squadUids.length ? c.squadUids.slice() : [c.heroes[0].uid],
-      selectedCampHeroUid: c.selectedCampHeroUid ?? c.heroes[0].uid,
-      lastPackReveal: []
-    }
-    if (!isStageUnlocked(cloned, cloned.selectedStageId)) {
-      cloned.selectedStageId = getNextRecommendedStage(cloned).id
-    }
-    return { time: 0, campaign: cloned, battle: null, sounds: [], vfx: [] }
+const TERRAIN_LOOKUP: ReadonlyMap<string, TileTerrain> = new Map<string, TileTerrain>([
+  ['grass', 'grass'],
+  ['stone', 'stone'],
+  ['hill', 'hill'],
+  ['bridge', 'bridge'],
+  ['water', 'water'],
+  ['shrine', 'shrine'],
+  ['pillar', 'pillar'],
+  ['lava', 'lava'],
+  ['snow', 'snow'],
+  ['darkstone', 'darkstone'],
+  ['stairs', 'stairs'],
+  ['void', 'void']
+])
+
+const BIOME_LOOKUP: ReadonlyMap<string, BiomeId> = new Map<string, BiomeId>([
+  ['meadow', 'meadow'],
+  ['river', 'river'],
+  ['crypt', 'crypt'],
+  ['frost', 'frost'],
+  ['volcano', 'volcano'],
+  ['throne', 'throne']
+])
+
+const FACING_LOOKUP: ReadonlyMap<string, FacingDir> = new Map<string, FacingDir>([
+  ['n', 'n'],
+  ['s', 's'],
+  ['e', 'e'],
+  ['w', 'w']
+])
+
+const HERO_ID_LOOKUP: ReadonlyMap<string, HeroClassId> = new Map<string, HeroClassId>(
+  HERO_LIST.map(h => [h.id, h.id])
+)
+
+const ENEMY_ID_LOOKUP: ReadonlyMap<string, EnemyArchetypeId> = new Map<string, EnemyArchetypeId>([
+  ['goblin', 'goblin'],
+  ['bone_archer', 'bone_archer'],
+  ['orc_brute', 'orc_brute'],
+  ['bog_shaman', 'bog_shaman'],
+  ['crypt_knight', 'crypt_knight'],
+  ['frost_golem', 'frost_golem'],
+  ['eclipse_archon', 'eclipse_archon']
+])
+
+function toDifficultyLevel(raw: number): DifficultyLevel {
+  const n = clamp(Math.floor(raw), 1, 8)
+  if (n === 1) return 1
+  if (n === 2) return 2
+  if (n === 3) return 3
+  if (n === 4) return 4
+  if (n === 5) return 5
+  if (n === 6) return 6
+  if (n === 7) return 7
+  return 8
+}
+
+function toStarTier(raw: number): 1 | 2 | 3 {
+  const s = clamp(Math.round(raw), 1, 3)
+  if (s === 1) return 1
+  if (s === 2) return 2
+  return 3
+}
+
+function isRecord(v: unknown): v is Record<string, unknown> {
+  return typeof v === 'object' && v !== null && !Array.isArray(v)
+}
+
+function isFiniteNum(v: unknown): v is number {
+  return typeof v === 'number' && Number.isFinite(v)
+}
+
+function cloneCampaignFromSave(c: CampaignState, fallbackSeed: number): CampaignState {
+  const rawCount = Number.isFinite(c.chaptersCleared) ? clamp(Math.floor(c.chaptersCleared), 0, PLAYABLE_CHAPTERS.length) : 0
+  const clearedStageIds: string[] = Array.isArray(c.clearedStageIds)
+    ? c.clearedStageIds.filter((id): id is string => typeof id === 'string' && Boolean(CHAPTER_BY_ID[id]) && !CHAPTER_BY_ID[id].comingSoon)
+    : PLAYABLE_CHAPTERS.slice(0, rawCount).map(ch => ch.id)
+  const dedupCleared = Array.from(new Set(clearedStageIds))
+  const cloned: CampaignState = {
+    seed: Number.isFinite(c.seed) ? (c.seed >>> 0) || 1337 : fallbackSeed,
+    nextUid: Number.isFinite(c.nextUid) && c.nextUid > 0 ? Math.floor(c.nextUid) : 100,
+    gold: Number.isFinite(c.gold) && c.gold >= 0 ? Math.floor(c.gold) : 100,
+    chaptersCleared: dedupCleared.length,
+    clearedStageIds: dedupCleared,
+    selectedStageId: typeof c.selectedStageId === 'string' && CHAPTER_BY_ID[c.selectedStageId]
+      ? c.selectedStageId
+      : CHAPTERS[0].id,
+    endlessBest: Number.isFinite(c.endlessBest) ? Math.max(0, Math.floor(c.endlessBest)) : 0,
+    battlesWon: Number.isFinite(c.battlesWon) ? Math.max(0, Math.floor(c.battlesWon)) : 0,
+    packsOpened: Number.isFinite(c.packsOpened) ? Math.max(0, Math.floor(c.packsOpened)) : 0,
+    heroes: c.heroes.map(h => ({ ...h })),
+    equipment: Array.isArray(c.equipment) ? c.equipment.map(e => ({ ...e })) : [],
+    tactics: Array.isArray(c.tactics) ? c.tactics.map(t => ({ ...t })) : [],
+    squadUids: Array.isArray(c.squadUids) && c.squadUids.length ? c.squadUids.slice() : [c.heroes[0].uid],
+    selectedCampHeroUid: c.selectedCampHeroUid ?? c.heroes[0].uid,
+    lastPackReveal: []
   }
+  if (!isStageUnlocked(cloned, cloned.selectedStageId)) {
+    cloned.selectedStageId = getNextRecommendedStage(cloned).id
+  }
+  return cloned
+}
+
+export function serializeBattleState(
+  battle: BattleState | null,
+  rngSeed?: number
+): BattleSaveSnapshot | null {
+  if (!battle) return null
+  if (battle.phase !== 'player' && battle.phase !== 'enemy') return null
+  const hasAliveAlly = battle.units.some(u => u.alive && u.team === 'ally')
+  const hasAliveEnemy = battle.units.some(u => u.alive && u.team === 'enemy')
+  if (!hasAliveAlly || !hasAliveEnemy) return null
+
+  const occupied = new Set<string>()
+  for (const u of battle.units) {
+    if (u.alive && u.path.length === 0) occupied.add(`${u.col},${u.row}`)
+  }
+
+  let enemyMidMoveReset = false
+  const units: BattleUnitSnapshot[] = battle.units.map(u => {
+    let col = u.col
+    let row = u.row
+    if (u.alive && u.path.length > 0) {
+      const dest = u.path[u.path.length - 1]
+      const destKey = `${dest.col},${dest.row}`
+      if (isCellInBounds(dest.col, dest.row, battle.cols, battle.rows) && !occupied.has(destKey)) {
+        col = dest.col
+        row = dest.row
+        occupied.add(destKey)
+      } else {
+        occupied.add(`${col},${row}`)
+      }
+      if (battle.phase === 'enemy' && u.uid === battle.activeUnitUid && !u.acted) {
+        enemyMidMoveReset = true
+      }
+    }
+    const snap: BattleUnitSnapshot = {
+      uid: u.uid,
+      team: u.team,
+      name: u.name,
+      ...(u.heroId !== undefined ? { heroId: u.heroId } : {}),
+      ...(u.enemyId !== undefined ? { enemyId: u.enemyId } : {}),
+      stars: u.stars,
+      isBoss: u.isBoss,
+      ...(u.weaponId !== undefined ? { weaponId: u.weaponId } : {}),
+      ...(u.armorId !== undefined ? { armorId: u.armorId } : {}),
+      ...(u.relicId !== undefined ? { relicId: u.relicId } : {}),
+      col,
+      row,
+      facing: u.facing,
+      hp: u.hp,
+      maxHp: u.maxHp,
+      shield: u.shield,
+      atk: u.atk,
+      def: u.def,
+      speed: u.speed,
+      ct: u.ct,
+      move: u.move,
+      jump: u.jump,
+      range: u.range,
+      crit: u.crit,
+      lifesteal: u.lifesteal,
+      moved: u.moved,
+      acted: u.acted,
+      alive: u.alive,
+      burnTurns: u.burnTurns,
+      slowTurns: u.slowTurns,
+      stunTurns: u.stunTurns,
+      empowerTurns: u.empowerTurns,
+      cooldowns: [u.cooldowns[0], u.cooldowns[1], u.cooldowns[2]]
+    }
+    return snap
+  })
+
+  const cells: BattleCellSnapshot[][] = battle.cells.map(row =>
+    row.map(cell => ({
+      terrain: cell.terrain,
+      heightLevel: cellHeightLevel(cell),
+      ...(cell.shrineUsed ? { shrineUsed: true } : {})
+    }))
+  )
+
   return {
+    version: 1,
+    stageId: battle.stageId,
+    chapterIndex: battle.chapterIndex,
+    endlessWave: battle.endlessWave,
+    difficulty: battle.difficulty,
+    cols: battle.cols,
+    rows: battle.rows,
+    biome: battle.biome,
+    cells,
+    units,
+    turn: battle.turn,
+    phase: battle.phase,
+    activeUnitUid: battle.activeUnitUid,
+    selectedUnitUid: battle.selectedUnitUid,
+    ap: battle.ap,
+    maxAp: battle.maxAp,
+    drawPile: battle.drawPile.slice(),
+    hand: battle.hand.slice(),
+    discardPile: battle.discardPile.slice(),
+    tacticsPlayed: battle.tacticsPlayed,
+    enemyDelay: battle.enemyDelay,
+    enemyActedThisTurn: enemyMidMoveReset ? false : battle.enemyActedThisTurn,
+    ...(rngSeed !== undefined && Number.isFinite(rngSeed) ? { rngSeed: (rngSeed >>> 0) || 1337 } : {})
+  }
+}
+
+export function validateBattleSnapshot(raw: unknown): BattleSaveSnapshot | null {
+  if (!isRecord(raw)) return null
+  if (raw.version !== 1) return null
+
+  const stageId = typeof raw.stageId === 'string' ? raw.stageId : ''
+  const chapter = CHAPTER_BY_ID[stageId]
+  if (!chapter) return null
+
+  if (!isFiniteNum(raw.chapterIndex) || raw.chapterIndex < 0 || raw.chapterIndex >= CHAPTERS.length) return null
+  const chapterIndex = chapter.index
+
+  if (!isFiniteNum(raw.endlessWave) || raw.endlessWave < 0) return null
+  const endlessWave = Math.floor(raw.endlessWave)
+
+  const rawDiff = isFiniteNum(raw.difficulty) ? raw.difficulty : chapter.difficulty
+  const difficulty: DifficultyLevel = toDifficultyLevel(rawDiff)
+
+  const biome = typeof raw.biome === 'string' ? BIOME_LOOKUP.get(raw.biome) : undefined
+  if (!biome) return null
+
+  if (!isFiniteNum(raw.cols) || !isFiniteNum(raw.rows)) return null
+  const cols = Math.floor(raw.cols)
+  const rows = Math.floor(raw.rows)
+  if (cols < 2 || cols > 32 || rows < 2 || rows > 32) return null
+
+  if (!Array.isArray(raw.cells) || raw.cells.length !== rows) return null
+  const cells: BattleCellSnapshot[][] = []
+  for (let r = 0; r < rows; r++) {
+    const rawRow = raw.cells[r]
+    if (!Array.isArray(rawRow) || rawRow.length !== cols) return null
+    const line: BattleCellSnapshot[] = []
+    for (let c = 0; c < cols; c++) {
+      const rawCell = rawRow[c]
+      if (!isRecord(rawCell) || typeof rawCell.terrain !== 'string') return null
+      const terrain = TERRAIN_LOOKUP.get(rawCell.terrain)
+      if (!terrain) return null
+      const rawH = rawCell.heightLevel
+      if (rawH !== undefined && !isFiniteNum(rawH)) return null
+      const heightLevel = terrain === 'void'
+        ? -1
+        : rawH !== undefined
+          ? clamp(Math.round(rawH), 0, MAX_HEIGHT_LEVEL)
+          : defaultTerrainHeightLevel(terrain)
+      line.push({
+        terrain,
+        heightLevel,
+        ...(rawCell.shrineUsed === true ? { shrineUsed: true } : {})
+      })
+    }
+    cells.push(line)
+  }
+
+  if (raw.phase !== 'player' && raw.phase !== 'enemy') return null
+  const phase = raw.phase
+
+  if (!isFiniteNum(raw.turn) || raw.turn < 1) return null
+  const turn = Math.floor(raw.turn)
+
+  if (!isFiniteNum(raw.maxAp) || !isFiniteNum(raw.ap)) return null
+  const maxAp = clamp(Math.floor(raw.maxAp), 1, 12)
+  const ap = clamp(Math.floor(raw.ap), 0, maxAp)
+
+  if (!Array.isArray(raw.units) || raw.units.length === 0) return null
+  const seenUids = new Set<string>()
+  const occupied = new Set<string>()
+  const units: BattleUnitSnapshot[] = []
+  let aliveAllies = 0
+  let aliveEnemies = 0
+
+  for (const item of raw.units) {
+    if (!isRecord(item)) return null
+    if (typeof item.uid !== 'string' || item.uid.length === 0 || seenUids.has(item.uid)) return null
+    seenUids.add(item.uid)
+
+    if (item.team !== 'ally' && item.team !== 'enemy') return null
+    const team = item.team
+
+    if (typeof item.name !== 'string' || item.name.length === 0) return null
+
+    let heroId: HeroClassId | undefined
+    let enemyId: EnemyArchetypeId | undefined
+    if (team === 'ally') {
+      const parsedHero = typeof item.heroId === 'string' ? HERO_ID_LOOKUP.get(item.heroId) : undefined
+      if (!parsedHero) return null
+      heroId = parsedHero
+    } else {
+      const parsedEnemy = typeof item.enemyId === 'string' ? ENEMY_ID_LOOKUP.get(item.enemyId) : undefined
+      if (!parsedEnemy) return null
+      enemyId = parsedEnemy
+    }
+
+    if (!isFiniteNum(item.stars)) return null
+    const stars = toStarTier(item.stars)
+    const isBoss = Boolean(item.isBoss)
+
+    if (!isFiniteNum(item.col) || !isFiniteNum(item.row)) return null
+    const col = Math.floor(item.col)
+    const row = Math.floor(item.row)
+    if (!isCellInBounds(col, row, cols, rows)) return null
+
+    const facing = typeof item.facing === 'string' ? FACING_LOOKUP.get(item.facing) : undefined
+    if (!facing) return null
+
+    if (
+      !isFiniteNum(item.maxHp) || item.maxHp < 1 ||
+      !isFiniteNum(item.hp) ||
+      !isFiniteNum(item.shield) ||
+      !isFiniteNum(item.atk) ||
+      !isFiniteNum(item.def) ||
+      !isFiniteNum(item.speed) ||
+      !isFiniteNum(item.ct) ||
+      !isFiniteNum(item.move) ||
+      !isFiniteNum(item.jump) ||
+      !isFiniteNum(item.range) ||
+      !isFiniteNum(item.crit) ||
+      !isFiniteNum(item.lifesteal) ||
+      !isFiniteNum(item.burnTurns) ||
+      !isFiniteNum(item.slowTurns) ||
+      !isFiniteNum(item.stunTurns) ||
+      !isFiniteNum(item.empowerTurns)
+    ) {
+      return null
+    }
+    if (typeof item.alive !== 'boolean' || typeof item.moved !== 'boolean' || typeof item.acted !== 'boolean') {
+      return null
+    }
+    if (!Array.isArray(item.cooldowns) || item.cooldowns.length !== 3) return null
+    const cd0 = item.cooldowns[0]
+    const cd1 = item.cooldowns[1]
+    const cd2 = item.cooldowns[2]
+    if (!isFiniteNum(cd0) || !isFiniteNum(cd1) || !isFiniteNum(cd2)) return null
+
+    const maxHp = Math.max(1, Math.round(item.maxHp))
+    const alive = item.alive && item.hp > 0
+    const hp = alive ? clamp(Math.round(item.hp), 1, maxHp) : 0
+
+    if (alive) {
+      if (cells[row][col].terrain === 'void') return null
+      const posKey = `${col},${row}`
+      if (occupied.has(posKey)) return null
+      occupied.add(posKey)
+      if (team === 'ally') aliveAllies++
+      else aliveEnemies++
+    }
+
+    const weaponId = typeof item.weaponId === 'string' && EQUIPMENT_BY_ID[item.weaponId] ? item.weaponId : undefined
+    const armorId = typeof item.armorId === 'string' && EQUIPMENT_BY_ID[item.armorId] ? item.armorId : undefined
+    const relicId = typeof item.relicId === 'string' && EQUIPMENT_BY_ID[item.relicId] ? item.relicId : undefined
+
+    units.push({
+      uid: item.uid,
+      team,
+      name: item.name,
+      ...(heroId !== undefined ? { heroId } : {}),
+      ...(enemyId !== undefined ? { enemyId } : {}),
+      stars,
+      isBoss,
+      ...(weaponId !== undefined ? { weaponId } : {}),
+      ...(armorId !== undefined ? { armorId } : {}),
+      ...(relicId !== undefined ? { relicId } : {}),
+      col,
+      row,
+      facing,
+      hp,
+      maxHp,
+      shield: Math.max(0, Math.round(item.shield)),
+      atk: Math.max(1, Math.round(item.atk)),
+      def: Math.max(0, Math.round(item.def)),
+      speed: clamp(Math.round(item.speed), 1, 50),
+      ct: clamp(item.ct, 0, 1000),
+      move: clamp(Math.round(item.move), 1, 12),
+      jump: clamp(Math.round(item.jump), 0, 8),
+      range: clamp(Math.round(item.range), 1, 12),
+      crit: clamp(item.crit, 0, 1),
+      lifesteal: clamp(item.lifesteal, 0, 1),
+      moved: item.moved,
+      acted: item.acted,
+      alive,
+      burnTurns: Math.max(0, Math.floor(item.burnTurns)),
+      slowTurns: Math.max(0, Math.floor(item.slowTurns)),
+      stunTurns: Math.max(0, Math.floor(item.stunTurns)),
+      empowerTurns: Math.max(0, Math.floor(item.empowerTurns)),
+      cooldowns: [
+        Math.max(0, Math.floor(cd0)),
+        Math.max(0, Math.floor(cd1)),
+        Math.max(0, Math.floor(cd2))
+      ]
+    })
+  }
+
+  if (aliveAllies === 0 || aliveEnemies === 0) return null
+
+  const activeUnitUid = typeof raw.activeUnitUid === 'string' ? raw.activeUnitUid : null
+  const activeUnit = activeUnitUid ? units.find(u => u.uid === activeUnitUid && u.alive) : undefined
+  if (!activeUnit) return null
+  if (phase === 'player' && activeUnit.team !== 'ally') return null
+  if (phase === 'enemy' && activeUnit.team !== 'enemy') return null
+
+  const rawSelectedUid = typeof raw.selectedUnitUid === 'string' ? raw.selectedUnitUid : null
+  const selectedUnitUid = rawSelectedUid && units.some(u => u.uid === rawSelectedUid && u.alive)
+    ? rawSelectedUid
+    : activeUnitUid
+
+  if (!Array.isArray(raw.drawPile) || !Array.isArray(raw.hand) || !Array.isArray(raw.discardPile)) return null
+  const drawPile = raw.drawPile.filter((s): s is string => typeof s === 'string' && s.length > 0)
+  const hand = raw.hand.filter((s): s is string => typeof s === 'string' && s.length > 0)
+  const discardPile = raw.discardPile.filter((s): s is string => typeof s === 'string' && s.length > 0)
+
+  const tacticsPlayed = isFiniteNum(raw.tacticsPlayed) ? Math.max(0, Math.floor(raw.tacticsPlayed)) : 0
+  const enemyDelay = isFiniteNum(raw.enemyDelay) ? clamp(raw.enemyDelay, 0, 2) : 0.34
+  const enemyActedThisTurn = typeof raw.enemyActedThisTurn === 'boolean' ? raw.enemyActedThisTurn : false
+  const rngSeed = isFiniteNum(raw.rngSeed) ? ((raw.rngSeed >>> 0) || 1337) : undefined
+
+  return {
+    version: 1,
+    stageId,
+    chapterIndex,
+    endlessWave,
+    difficulty,
+    cols,
+    rows,
+    biome,
+    cells,
+    units,
+    turn,
+    phase,
+    activeUnitUid,
+    selectedUnitUid,
+    ap,
+    maxAp,
+    drawPile,
+    hand,
+    discardPile,
+    tacticsPlayed,
+    enemyDelay,
+    enemyActedThisTurn,
+    ...(rngSeed !== undefined ? { rngSeed } : {})
+  }
+}
+
+export function restoreBattleState(state: GameState, snapshot: unknown): boolean {
+  const valid = validateBattleSnapshot(snapshot)
+  if (!valid) return false
+
+  if (valid.rngSeed !== undefined) {
+    state.campaign.seed = (valid.rngSeed >>> 0) || 1337
+  }
+  state.campaign.selectedStageId = valid.stageId
+
+  const cells: GridCell[][] = valid.cells.map((rowCells, row) =>
+    rowCells.map((c, col) => ({
+      col,
+      row,
+      terrain: c.terrain,
+      elevation: terrainElevation(c.terrain, c.heightLevel),
+      walkable: terrainWalkable(c.terrain),
+      heightLevel: c.heightLevel,
+      ...(c.shrineUsed ? { shrineUsed: true } : {})
+    }))
+  )
+
+  const units: BattleUnit[] = valid.units.map(u => {
+    const cell = cells[u.row][u.col]
+    const [wx, wy, wz] = gridToWorld(u.col, u.row, cell.elevation, valid.cols, valid.rows)
+    return {
+      uid: u.uid,
+      team: u.team,
+      name: u.name,
+      ...(u.heroId !== undefined ? { heroId: u.heroId } : {}),
+      ...(u.enemyId !== undefined ? { enemyId: u.enemyId } : {}),
+      stars: u.stars,
+      isBoss: u.isBoss,
+      ...(u.weaponId !== undefined ? { weaponId: u.weaponId } : {}),
+      ...(u.armorId !== undefined ? { armorId: u.armorId } : {}),
+      ...(u.relicId !== undefined ? { relicId: u.relicId } : {}),
+      col: u.col,
+      row: u.row,
+      x: wx,
+      y: wy,
+      z: wz,
+      yaw: facingToYaw(u.facing),
+      facing: u.facing,
+      path: [],
+      moveProgress: 0,
+      hp: u.hp,
+      maxHp: u.maxHp,
+      shield: u.shield,
+      atk: u.atk,
+      def: u.def,
+      speed: u.speed,
+      ct: u.ct,
+      move: u.move,
+      jump: u.jump,
+      range: u.range,
+      crit: u.crit,
+      lifesteal: u.lifesteal,
+      moved: u.moved,
+      acted: u.acted,
+      alive: u.alive,
+      burnTurns: u.burnTurns,
+      slowTurns: u.slowTurns,
+      stunTurns: u.stunTurns,
+      empowerTurns: u.empowerTurns,
+      cooldowns: [u.cooldowns[0], u.cooldowns[1], u.cooldowns[2]],
+      animState: 'idle',
+      animTimer: 0,
+      hitFlash: 0,
+      lungeX: 0,
+      lungeZ: 0
+    }
+  })
+
+  // Keep only tactic card UIDs that exist in campaign.tactics, deduplicated across piles
+  const ownedTactics = new Set(state.campaign.tactics.map(t => t.uid))
+  const usedTactics = new Set<string>()
+  const filterPile = (pile: readonly string[]): string[] => {
+    const out: string[] = []
+    for (const uid of pile) {
+      if (!ownedTactics.has(uid) || usedTactics.has(uid)) continue
+      usedTactics.add(uid)
+      out.push(uid)
+    }
+    return out
+  }
+  const hand = filterPile(valid.hand)
+  const drawPile = filterPile(valid.drawPile)
+  const discardPile = filterPile(valid.discardPile)
+
+  const battle: BattleState = {
+    stageId: valid.stageId,
+    chapterIndex: valid.chapterIndex,
+    endlessWave: valid.endlessWave,
+    difficulty: valid.difficulty,
+    cols: valid.cols,
+    rows: valid.rows,
+    biome: valid.biome,
+    cells,
+    units,
+    turn: valid.turn,
+    phase: valid.phase,
+    activeUnitUid: valid.activeUnitUid,
+    selectedUnitUid: valid.selectedUnitUid,
+    turnOrder: [],
+    armedSkillIndex: null,
+    armedTacticUid: null,
+    ap: valid.ap,
+    maxAp: valid.maxAp,
+    drawPile,
+    hand,
+    discardPile,
+    tacticsPlayed: valid.tacticsPlayed,
+    moveTiles: [],
+    targetTiles: [],
+    moveAttackTiles: [],
+    pendingAction: null,
+    enemyDelay: valid.phase === 'enemy' ? Math.max(0.25, valid.enemyDelay) : 0,
+    enemyActedThisTurn: valid.enemyActedThisTurn,
+    floatingNumbers: [],
+    nextFloatId: 1,
+    bannerText: '',
+    bannerTimer: 0,
+    shake: 0,
+    reward: null
+  }
+
+  state.battle = battle
+  state.sounds = []
+  state.vfx = []
+  refreshHighlights(battle, state.campaign)
+  return true
+}
+
+export function abandonBattle(state: GameState): boolean {
+  if (!state.battle) return false
+  state.battle = null
+  return true
+}
+
+export interface BattleTurnBoundaryTracker {
+  lastKey: string | null
+}
+
+export function createTurnBoundaryTracker(): BattleTurnBoundaryTracker {
+  return { lastKey: null }
+}
+
+export function battleTurnBoundaryKey(battle: BattleState | null): string | null {
+  if (!battle) return null
+  if (battle.phase !== 'player' && battle.phase !== 'enemy') return null
+  return `${battle.stageId}:${battle.endlessWave}:${battle.turn}:${battle.phase}:${battle.activeUnitUid ?? ''}`
+}
+
+export function syncTurnBoundaryTracker(
+  tracker: BattleTurnBoundaryTracker,
+  battle: BattleState | null
+): void {
+  tracker.lastKey = battleTurnBoundaryKey(battle)
+}
+
+/**
+ * Pure turn-boundary detector for mid-battle auto-save.
+ * Fires once per turn boundary (battle start, player turn start, enemy turn start)
+ * and never fires on idle frames within the same turn.
+ */
+export function shouldAutoSaveOnTurnBoundary(
+  tracker: BattleTurnBoundaryTracker,
+  battle: BattleState | null
+): boolean {
+  const key = battleTurnBoundaryKey(battle)
+  if (key === null) {
+    tracker.lastKey = null
+    return false
+  }
+  if (key === tracker.lastKey) return false
+  tracker.lastKey = key
+  return true
+}
+
+export function hydrateSave(state: GameState, save: SaveData | null | undefined, fallbackSeed = 1337): boolean {
+  if (!save || save.version !== 1 || !save.campaign || !Array.isArray(save.campaign.heroes) || save.campaign.heroes.length === 0) {
+    return false
+  }
+  state.campaign = cloneCampaignFromSave(save.campaign, fallbackSeed)
+  state.battle = null
+  state.sounds = []
+  state.vfx = []
+  if (save.activeBattle) {
+    restoreBattleState(state, save.activeBattle)
+  }
+  return true
+}
+
+export function createInitialState(seed = 1337, save?: SaveData | null): GameState {
+  const state: GameState = {
     time: 0,
     campaign: createInitialCampaign(seed),
     battle: null,
     sounds: [],
     vfx: []
   }
+  if (save) {
+    hydrateSave(state, save, seed)
+  }
+  return state
 }
 
 export function serializeSave(state: GameState): SaveData {
+  const activeBattle = serializeBattleState(state.battle, state.campaign.seed)
   return {
     version: 1,
     campaign: {
@@ -681,7 +1297,8 @@ export function serializeSave(state: GameState): SaveData {
       tactics: state.campaign.tactics.map(t => ({ ...t })),
       squadUids: state.campaign.squadUids.slice(),
       lastPackReveal: []
-    }
+    },
+    activeBattle
   }
 }
 
@@ -703,6 +1320,7 @@ export function loadSave(storage: StorageLike | null | undefined): SaveData | nu
     const selectedStageId = 'selectedStageId' in camp && typeof camp.selectedStageId === 'string' && CHAPTER_BY_ID[camp.selectedStageId]
       ? camp.selectedStageId
       : CHAPTERS[0].id
+    const activeBattle = 'activeBattle' in parsed ? validateBattleSnapshot(parsed.activeBattle) : null
     return {
       version: 1,
       campaign: {
@@ -729,17 +1347,26 @@ export function loadSave(storage: StorageLike | null | undefined): SaveData | nu
           ? camp.selectedCampHeroUid
           : null,
         lastPackReveal: []
-      }
+      },
+      activeBattle
     }
   } catch {
     return null
   }
 }
 
-export function persistSave(storage: StorageLike | null | undefined, state: GameState): void {
+export function persistSave(
+  storage: StorageLike | null | undefined,
+  state: GameState,
+  fallbackActiveBattle?: BattleSaveSnapshot | null
+): void {
   if (!storage) return
   try {
-    storage.setItem(SAVE_KEY, JSON.stringify(serializeSave(state)))
+    const data = serializeSave(state)
+    if (!state.battle && !data.activeBattle && fallbackActiveBattle) {
+      data.activeBattle = fallbackActiveBattle
+    }
+    storage.setItem(SAVE_KEY, JSON.stringify(data))
   } catch { /* Quota or private mode */ }
 }
 
@@ -979,6 +1606,7 @@ export function startChapterBattle(state: GameState, chapterIndex: number, endle
     drawPile: deckUids,
     hand: [],
     discardPile: [],
+    tacticsPlayed: 0,
     moveTiles: [],
     targetTiles: [],
     moveAttackTiles: [],
@@ -2513,6 +3141,7 @@ function executeTacticCard(state: GameState, tacticUid: string, col: number, row
   if (spec.apGain > 0) battle.ap += spec.apGain
   battle.hand.splice(handIdx, 1)
   battle.discardPile.push(tacticUid)
+  battle.tacticsPlayed += 1
   battle.armedTacticUid = null
   state.sounds.push({ kind: 'card' })
 

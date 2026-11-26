@@ -14,19 +14,20 @@ import {
 } from './data.ts'
 import { cameraCardinalHeading, createCrownshardScene } from './scene.ts'
 import {
-  armSkill, armTacticCard, autoEquipBestFit, buyPack, canBuyPack, canMergeHero, clearSave,
+  abandonBattle, armSkill, armTacticCard, autoEquipBestFit, buyPack, canBuyPack, canMergeHero, clearSave,
   computeCombatForecast, computeDeckValue, computeHeroStats, computeSquadPower, createInitialState,
-  effectiveSpeed, endPlayerTurn, equipItem, findBestFitUpgrades, findEquipOwner, getEquipmentByUid,
-  getHeroByUid, getHeroSkill, getMergeCandidates, getNextRecommendedStage, getStageUnlockHint,
-  getTacticByUid, getUnitByUid, isEndlessUnlocked, isStageCleared, isStageUnlocked, loadSave,
-  maxSquadSize, mergeHero, persistSave, rotateActiveUnitFacing, salvageEquipCard, salvageHeroCard,
-  selectHeroByUid, selectTile, startChapterBattle, stepGame,
+  createTurnBoundaryTracker, effectiveSpeed, endPlayerTurn, equipItem, findBestFitUpgrades, findEquipOwner,
+  getEquipmentByUid, getHeroByUid, getHeroSkill, getMergeCandidates, getNextRecommendedStage,
+  getStageUnlockHint, getTacticByUid, getUnitByUid, isEndlessUnlocked, isStageCleared, isStageUnlocked,
+  loadSave, maxSquadSize, mergeHero, persistSave, restoreBattleState, rotateActiveUnitFacing,
+  salvageEquipCard, salvageHeroCard, selectHeroByUid, selectTile, serializeBattleState,
+  shouldAutoSaveOnTurnBoundary, startChapterBattle, stepGame, syncTurnBoundaryTracker,
   toggleSquadMember, unequipItem
 } from './simulation.ts'
 import { cellHeightLevel } from './types.ts'
 import type {
-  BattleUnit, ChapterSpec, CombatForecast, EnemyArchetypeId, GameState, OwnedEquipCard, OwnedHeroCard,
-  PackId, PackRevealItem, Rarity
+  BattleSaveSnapshot, BattleUnit, ChapterSpec, CombatForecast, EnemyArchetypeId, GameState, OwnedEquipCard,
+  OwnedHeroCard, PackId, PackRevealItem, Rarity
 } from './types.ts'
 import {
   COLOR, RADIUS, TIER_COLOR, TYPE, UI_THEME_PALETTE, WORLD_MAP_H, WORLD_MAP_W,
@@ -145,6 +146,14 @@ async function start() {
 
   const existingSave = loadSave(page.storage)
   let state: GameState = createInitialState(1337, existingSave)
+  let resumableBattle: BattleSaveSnapshot | null = state.battle
+    ? serializeBattleState(state.battle, state.campaign.seed)
+    : null
+  // Keep Title / World / Camp on the 3D camp diorama until the player resumes or starts a battle
+  if (state.battle) {
+    state.battle = null
+  }
+  const turnSaveTracker = createTurnBoundaryTracker()
 
   function heroCardPortrait(hero: OwnedHeroCard | undefined): HTMLCanvasElement | undefined {
     if (!hero) return undefined
@@ -360,7 +369,58 @@ async function start() {
   })
 
   function saveNow() {
-    persistSave(page.storage, state)
+    if (state.battle) {
+      resumableBattle = serializeBattleState(state.battle, state.campaign.seed)
+    }
+    persistSave(page.storage, state, resumableBattle)
+  }
+
+  function formatResumableBattleLabel(snap: BattleSaveSnapshot, compact = false): string {
+    const ch = CHAPTER_BY_ID[snap.stageId] ?? CHAPTERS[snap.chapterIndex] ?? CHAPTERS[0]
+    const stageLabel = snap.endlessWave > 0 ? `Endless W${snap.endlessWave}` : ch.title
+    return compact
+      ? `Resume (T${snap.turn}) · ${stageLabel}`
+      : `Resume Battle — ${stageLabel} (Turn ${snap.turn})`
+  }
+
+  function resumeSavedBattle(): boolean {
+    if (!resumableBattle) return false
+    audio.unlock()
+    const ok = restoreBattleState(state, resumableBattle)
+    if (!ok || !state.battle) {
+      resumableBattle = null
+      syncTurnBoundaryTracker(turnSaveTracker, null)
+      saveNow()
+      uiDirty = true
+      return false
+    }
+    pendingChapter = state.battle.chapterIndex
+    pendingEndless = state.battle.endlessWave
+    lastBattlePhase = state.battle.phase
+    lastActiveUid = state.battle.activeUnitUid
+    syncTurnBoundaryTracker(turnSaveTracker, state.battle)
+    scene.resetCamera()
+    scene.setCameraYaw(0, true)
+    setScreen('battle')
+    renderer.canvas.focus()
+    return true
+  }
+
+  function discardResumableBattle(toastMsg?: string) {
+    abandonBattle(state)
+    resumableBattle = null
+    lastBattlePhase = null
+    lastActiveUid = null
+    syncTurnBoundaryTracker(turnSaveTracker, null)
+    saveNow()
+    if (toastMsg) showToast(toastMsg)
+    uiDirty = true
+    hudRev++
+  }
+
+  function retreatFromBattle() {
+    discardResumableBattle()
+    openCamp('squad')
   }
 
   function runBestFit(heroUid: string): number {
@@ -463,7 +523,13 @@ async function start() {
 
   function launchBattle() {
     audio.unlock()
+    resumableBattle = null
     startChapterBattle(state, pendingChapter, pendingEndless)
+    lastBattlePhase = state.battle?.phase ?? null
+    lastActiveUid = state.battle?.activeUnitUid ?? null
+    if (shouldAutoSaveOnTurnBoundary(turnSaveTracker, state.battle)) {
+      saveNow()
+    }
     scene.resetCamera()
     scene.setCameraYaw(0, true)
     setScreen('battle')
@@ -473,6 +539,8 @@ async function start() {
   function startCampaign(fresh = false) {
     audio.unlock()
     if (fresh) {
+      resumableBattle = null
+      syncTurnBoundaryTracker(turnSaveTracker, null)
       clearSave(page.storage)
       state = createInitialState((Date.now() & 0xffff) || 1337)
       saveNow()
@@ -488,6 +556,9 @@ async function start() {
       lockedForecastCell = null
       mobileHandOpen = false
       endPlayerTurn(state)
+      if (shouldAutoSaveOnTurnBoundary(turnSaveTracker, state.battle)) {
+        saveNow()
+      }
       uiDirty = true
       hudRev++
     }
@@ -966,13 +1037,17 @@ async function start() {
   function buildTitleTree(w: number, h: number): LayoutNode {
     const mobile = w < 600
     const shortH = h < 480
-    const hasSave = Boolean(existingSave && (existingSave.campaign.battlesWon > 0 || existingSave.campaign.packsOpened > 0))
+    const hasBattleSave = Boolean(resumableBattle)
+    const hasSave = hasBattleSave || Boolean(existingSave && (existingSave.campaign.battlesWon > 0 || existingSave.campaign.packsOpened > 0))
     const playLabel = hasSave
       ? `Continue (${state.campaign.clearedStageIds.length}/${PLAYABLE_CHAPTERS.length})`
       : 'Begin Campaign'
+    const resumeLabel = resumableBattle
+      ? formatResumableBattleLabel(resumableBattle, mobile || shortH)
+      : ''
 
     const logoH = shortH ? Math.min(108, Math.round(h * 0.30)) : Math.min(138, Math.round(h * 0.22))
-    const cardW = Math.min(w - 28, shortH ? 420 : 480)
+    const cardW = Math.min(w - 28, shortH ? 460 : 520)
     const btnH = shortH ? 40 : 48
 
     return overlay({ id: 'root', style: { anchor: 'fill' } }, [
@@ -1006,16 +1081,41 @@ async function start() {
             )
           }
         })]),
+        ...(hasBattleSave ? [row({ id: 't-resume', style: { height: btnH, gap: 8 } }, [
+          boxNode({
+            id: 'cs-resume-battle', style: { grow: 2.5, height: btnH },
+            widget: {
+              type: 'button',
+              label: resumeLabel,
+              primary: true,
+              onPress: () => resumeSavedBattle(),
+              draw: (ctx: CanvasRenderingContext2D, rect: LayoutRect, st: CanvasWidgetDrawState) => drawButton(
+                ctx, rect, resumeLabel, st, { variant: 'primary', icon: 'sword', size: shortH || mobile ? 12.5 : 13.5 }
+              )
+            }
+          }),
+          boxNode({
+            id: 'cs-abandon-battle', style: { grow: 1, height: btnH },
+            widget: {
+              type: 'button',
+              label: 'Abandon',
+              onPress: () => discardResumableBattle(),
+              draw: (ctx: CanvasRenderingContext2D, rect: LayoutRect, st: CanvasWidgetDrawState) => drawButton(
+                ctx, rect, 'Abandon', st, { variant: 'danger', icon: 'retreat', size: shortH || mobile ? 12 : 12.5 }
+              )
+            }
+          })
+        ])] : []),
         row({ id: 't-actions', style: { height: btnH, gap: 10 } }, [
           boxNode({
             id: 'cs-play', style: { grow: 1.5, height: btnH },
             widget: {
               type: 'button',
               label: playLabel,
-              primary: true,
+              primary: !hasBattleSave,
               onPress: () => startCampaign(false),
               draw: (ctx: CanvasRenderingContext2D, rect: LayoutRect, st: CanvasWidgetDrawState) => drawButton(
-                ctx, rect, playLabel, st, { variant: 'primary', icon: 'play', size: shortH ? 14 : 15 }
+                ctx, rect, playLabel, st, { variant: hasBattleSave ? 'secondary' : 'primary', icon: hasBattleSave ? 'map' : 'play', size: shortH ? 14 : 15 }
               )
             }
           }),
@@ -1458,6 +1558,61 @@ async function start() {
           }
         }
       }),
+
+      // Floating Top-Left Resume Battle Banner (when a mid-battle auto-save exists)
+      ...(resumableBattle ? (() => {
+        const resumeSnap = resumableBattle
+        const wmResumeLabel = formatResumableBattleLabel(resumeSnap, isCompact)
+        return [row({
+          id: 'wm-resume-bar',
+          style: {
+            anchor: 'top-left',
+            width: mobile ? Math.min(w - 16, 420) : 410,
+            height: isCompact ? 42 : 46,
+            inset: [outerPad, topH + outerPad + 10],
+            padding: [5, 6],
+            gap: 6,
+            align: 'center',
+            respectSafeArea: true
+          },
+          widget: {
+            type: 'panel',
+            blocksPointer: true,
+            draw: (ctx: CanvasRenderingContext2D, rect: LayoutRect) => drawPanel(ctx, rect, {
+              r: RADIUS.lg,
+              lipH: 4,
+              fill: '#2a3a64f2',
+              fillBot: '#182342f5'
+            })
+          }
+        }, [
+          boxNode({
+            id: 'cs-world-resume',
+            style: { grow: 2.5, height: isCompact ? 32 : 34 },
+            widget: {
+              type: 'button',
+              label: wmResumeLabel,
+              primary: true,
+              onPress: () => resumeSavedBattle(),
+              draw: (ctx: CanvasRenderingContext2D, rect: LayoutRect, st: CanvasWidgetDrawState) => drawButton(
+                ctx, rect, wmResumeLabel, st, { variant: 'primary', icon: 'sword', size: isCompact ? 11.5 : 12.5 }
+              )
+            }
+          }),
+          boxNode({
+            id: 'cs-world-abandon',
+            style: { width: mobile ? 76 : 92, height: isCompact ? 32 : 34 },
+            widget: {
+              type: 'button',
+              label: 'Abandon',
+              onPress: () => discardResumableBattle('Saved battle abandoned.'),
+              draw: (ctx: CanvasRenderingContext2D, rect: LayoutRect, st: CanvasWidgetDrawState) => drawButton(
+                ctx, rect, 'Abandon', st, { variant: 'danger', icon: 'retreat', size: 11.5 }
+              )
+            }
+          })
+        ])]
+      })() : []),
 
       // Floating Top-Right Toolbar: Zoom (- / Fit / +) + Endless + Vanguard Camp
       row({
@@ -3875,7 +4030,7 @@ async function start() {
         boxNode({
           id: 'cs-retreat', style: { height: rowH },
           widget: {
-            type: 'button', label: 'Retreat to Camp', onPress: () => openCamp('squad'),
+            type: 'button', label: 'Retreat to Camp', onPress: retreatFromBattle,
             draw: (ctx: CanvasRenderingContext2D, rect: LayoutRect, st: CanvasWidgetDrawState) => drawButton(
               ctx, rect, 'Retreat to Camp', st, { variant: 'danger', icon: 'retreat', size: 13 }
             )
@@ -4092,6 +4247,9 @@ async function start() {
       turnOrder: state.battle?.turnOrder.map(t => t.name) ?? [],
       battleAlliesAlive: state.battle ? state.battle.units.filter(u => u.alive && u.team === 'ally').length : 0,
       battleEnemiesAlive: state.battle ? state.battle.units.filter(u => u.alive && u.team === 'enemy').length : 0,
+      hasResumableBattle: Boolean(resumableBattle),
+      resumableBattleTurn: resumableBattle?.turn ?? 0,
+      resumableBattleStageId: resumableBattle?.stageId ?? null,
       moveAttackTargets: state.battle ? state.battle.moveAttackTiles.map(t => ({ col: t.col, row: t.row, fromCol: t.fromCol, fromRow: t.fromRow })) : [],
       mobileHandOpen,
       campCollapsed: mobileCampCollapsed,
@@ -4186,6 +4344,18 @@ async function start() {
           renderUiNow()
         }
         return Boolean(res)
+      },
+      resumeBattle: () => {
+        const ok = resumeSavedBattle()
+        renderUiNow()
+        return ok
+      },
+      abandonBattle: () => {
+        discardResumableBattle()
+        renderUiNow()
+      },
+      saveNow: () => {
+        saveNow()
       }
     }
   })
@@ -4202,6 +4372,9 @@ async function start() {
         campToastTimer = Math.max(0, campToastTimer - dt)
         if (campToastTimer === 0) { campToast = ''; uiDirty = true }
       }
+      if (shouldAutoSaveOnTurnBoundary(turnSaveTracker, state.battle)) {
+        saveNow()
+      }
       const bPhase = state.battle?.phase ?? null
       const activeUid = state.battle?.activeUnitUid ?? null
       if (bPhase !== lastBattlePhase || activeUid !== lastActiveUid) {
@@ -4212,9 +4385,14 @@ async function start() {
         uiDirty = true
         hudRev++
         if (bPhase === 'victory' && screen === 'battle') {
+          resumableBattle = null
+          syncTurnBoundaryTracker(turnSaveTracker, null)
           saveNow()
           setScreen('victory')
         } else if (bPhase === 'defeat' && screen === 'battle') {
+          resumableBattle = null
+          syncTurnBoundaryTracker(turnSaveTracker, null)
+          saveNow()
           setScreen('defeat')
         }
       }
