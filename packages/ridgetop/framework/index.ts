@@ -1,5 +1,4 @@
 export * from './low-poly.ts'
-export { createRenderer } from './renderer.ts'
 export { fixedLoop, STEP } from './loop.ts'
 export { connectRoom } from './room-client.ts'
 export { createRng, evaluateDecisions, nextRandom, verifyBounded, verifyTrace } from './verification.ts'

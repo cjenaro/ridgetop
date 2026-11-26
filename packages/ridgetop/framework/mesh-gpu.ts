@@ -1,8 +1,11 @@
-import { createAlphaSorter, multiply, orthographic, view } from './geometry.ts'
+import { createAlphaSorter } from './geometry.ts'
 import { INSTANCE_SIZE } from './instances.ts'
-import type { BlendMode, InstanceBatch, Matrix, Mesh, MeshBackend, Vec3 } from './types.ts'
-
-const SHADOW_SIZE = 1024
+import {
+  createCameraTracker, createShadowCasterTracker, forEachOrderedBatch, GPU_LIGHT_FLOATS,
+  gpuLightingUniforms, normalizeLighting, packMeshVertices, resolveBatchUpload, SHADOW_MAP_SIZE
+} from './renderer.ts'
+import type { BatchUploadState } from './renderer.ts'
+import type { BlendMode, InstanceBatch, LightingInput, Mesh, MeshBackend } from './types.ts'
 
 const shader = `
 struct Camera {
@@ -97,7 +100,7 @@ fn sampleShadow(worldPos: vec3f) -> f32 {
   let sc = camera.lightMatrix * vec4f(worldPos, 1.0);
   let uv = vec2f(sc.x * 0.5 + 0.5, 0.5 - sc.y * 0.5);
   let depth = clamp(sc.z - camera.shadowParams.y, 0.0, 1.0);
-  let texel = 1.25 / ${SHADOW_SIZE}.0;
+  let texel = 1.25 / ${SHADOW_MAP_SIZE}.0;
   let s0 = textureSampleCompare(shadowMap, shadowSampler, clamp(uv + vec2f(-texel, -texel), vec2f(0.001), vec2f(0.999)), depth);
   let s1 = textureSampleCompare(shadowMap, shadowSampler, clamp(uv + vec2f( texel, -texel), vec2f(0.001), vec2f(0.999)), depth);
   let s2 = textureSampleCompare(shadowMap, shadowSampler, clamp(uv + vec2f(-texel,  texel), vec2f(0.001), vec2f(0.999)), depth);
@@ -125,50 +128,6 @@ fn sampleShadow(worldPos: vec3f) -> f32 {
 }
 `
 
-function computeLightMatrix(light: Float32Array): Matrix {
-  const lx = light[0], ly = Math.max(0.22, light[1]), lz = light[2]
-  const len = Math.hypot(lx, ly, lz) || 1
-  const dx = lx / len, dy = ly / len, dz = lz / len
-  const cx = light[60] || 0, cy = light[61] || 0, cz = light[62] || 0
-  const extent = light[63] > 1 ? light[63] : 24
-  const dist = extent * 2.2
-  const eye: Vec3 = [cx + dx * dist, cy + dy * dist, cz + dz * dist]
-  const up: Vec3 = Math.abs(dy) > 0.96 ? [0, 0, 1] : [0, 1, 0]
-  return multiply(orthographic(extent * 2, extent * 2, 0.5, extent * 4.6), view(eye, [cx, cy, cz], up))
-}
-
-function packGpuLighting(
-  light: Float32Array<ArrayBuffer>,
-  full: Float32Array<ArrayBuffer>,
-  allowShadows: boolean
-): Float32Array<ArrayBuffer> {
-  full.fill(0, 0, 72)
-  full.set(light.subarray(0, Math.min(light.length, 72)))
-  if (light.length < 48) { full[4] = 1; full[5] = 1; full[6] = 1 }
-  if (!allowShadows) full[64] = 0
-  if (full[64] > 0.5) full.set(computeLightMatrix(full), 72)
-  return full
-}
-
-function packMeshVertices(mesh: Mesh): Float32Array<ArrayBuffer> {
-  const count = mesh.vertexCount
-  const out = new Float32Array(count * 9)
-  const src = mesh.data
-  const cols = mesh.colors && mesh.colors.length >= count * 3 ? mesh.colors : undefined
-  for (let i = 0; i < count; i++) {
-    const s = i * 6, d = i * 9
-    out[d] = src[s]; out[d + 1] = src[s + 1]; out[d + 2] = src[s + 2]
-    out[d + 3] = src[s + 3]; out[d + 4] = src[s + 4]; out[d + 5] = src[s + 5]
-    if (cols) {
-      const c = i * 3
-      out[d + 6] = cols[c]; out[d + 7] = cols[c + 1]; out[d + 8] = cols[c + 2]
-    } else {
-      out[d + 6] = 1; out[d + 7] = 1; out[d + 8] = 1
-    }
-  }
-  return out
-}
-
 const SOFTWARE_GPU_RE = /swiftshader|llvmpipe|lavapipe|software|basic render|warp|cpu/i
 
 function describeGpuAdapter(adapter: GPUAdapter): { label: string; isSoftware: boolean } {
@@ -188,7 +147,7 @@ function describeGpuAdapter(adapter: GPUAdapter): { label: string; isSoftware: b
 
 export async function gpuMeshes(
   canvas: HTMLCanvasElement,
-  light: Float32Array<ArrayBuffer>,
+  initialLight: LightingInput,
   options: { allowFallback?: boolean } = {}
 ): Promise<MeshBackend | null> {
   const adapter = await navigator.gpu?.requestAdapter({ powerPreference: 'high-performance' })
@@ -290,11 +249,11 @@ export async function gpuMeshes(
     }
 
     const camera = device.createBuffer({ size: 416, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST })
-    const gpuLightBuf = new Float32Array(88)
-    let shadowsEnabled = hasShadowSupport && light.length >= 65 && light[64] > 0.5
-    device.queue.writeBuffer(camera, 64, packGpuLighting(light, gpuLightBuf, hasShadowSupport))
+    const shadowDisabledScratch = new Float32Array(GPU_LIGHT_FLOATS)
+    let lighting = normalizeLighting(initialLight)
+    let shadowsEnabled = hasShadowSupport && lighting.shadowsEnabled
+    device.queue.writeBuffer(camera, 64, gpuLightingUniforms(lighting, hasShadowSupport, shadowDisabledScratch))
 
-    // Shadow depth texture (lazy-sized or 1x1 dummy when disabled) + comparison sampler
     let shadowTex: GPUTexture | undefined
     let shadowView: GPUTextureView | undefined
     let shadowSampler: GPUSampler | undefined
@@ -334,31 +293,22 @@ export async function gpuMeshes(
         })
       }
     }
-    rebuildBindGroups(shadowsEnabled ? SHADOW_SIZE : 1)
+    rebuildBindGroups(shadowsEnabled ? SHADOW_MAP_SIZE : 1)
 
     const rawContext = canvas.getContext('webgpu')
     if (!rawContext) throw new Error('Could not acquire WebGPU canvas context')
     const context: GPUCanvasContext = rawContext
     context.configure({ device, format, alphaMode: 'opaque' })
     const meshes = new Map<Mesh, GPUBuffer>()
-    const buffers = new Map<InstanceBatch, {
-      buffer: GPUBuffer
-      revision: number
-      cameraRevision?: number
-      lastOrder?: Int32Array
-      lastCount?: number
-      sorted?: boolean
-    }>()
-    const batchSorter = createAlphaSorter(16)
+    const buffers = new Map<InstanceBatch, BatchUploadState & { buffer: GPUBuffer }>()
+    let batchSorter: ReturnType<typeof createAlphaSorter> | undefined
+    const getBatchSorter = () => (batchSorter ??= createAlphaSorter(16))
     const instanceSorter = createAlphaSorter(32)
     let depth: GPUTexture | undefined
     let depthView: GPUTextureView | undefined
-    const lastCamera = new Float32Array(16)
-    let hasCamera = false
-    let cameraRevision = 0
-    let shadowDirty = true
-    const lastShadowBatches: InstanceBatch[] = []
-    const lastShadowRevs: number[] = []
+    const cameraTracker = createCameraTracker()
+    const shadowTracker = createShadowCasterTracker()
+
     function vertexBuffer(mesh: Mesh): GPUBuffer {
       let buffer = meshes.get(mesh)
       if (!buffer) {
@@ -372,23 +322,15 @@ export async function gpuMeshes(
       }
       return buffer
     }
+
     return {
       name: 'WebGPU',
       gpuInfo,
       lost: device.lost,
       maxDimension: device.limits.maxTextureDimension2D,
-      draw(matrix, clear, visible, stats, shadowCasters) {
-        let cameraChanged = !hasCamera
-        if (!cameraChanged) {
-          for (let i = 0; i < 16; i++) {
-            if (matrix[i] !== lastCamera[i]) { cameraChanged = true; break }
-          }
-        }
-        if (cameraChanged) {
+      draw(matrix, clear, visible, stats, shadowCasters, alphaBatchesSorted) {
+        if (cameraTracker.update(matrix)) {
           device.queue.writeBuffer(camera, 0, matrix)
-          lastCamera.set(matrix)
-          hasCamera = true
-          cameraRevision++
         }
         if (!depth || !depthView || depth.width !== canvas.width || depth.height !== canvas.height) {
           depth?.destroy()
@@ -398,8 +340,8 @@ export async function gpuMeshes(
           })
           depthView = depth.createView()
         }
-        if (shadowsEnabled && hasShadowSupport && shadowSizeActive < SHADOW_SIZE) {
-          rebuildBindGroups(SHADOW_SIZE)
+        if (shadowsEnabled && hasShadowSupport && shadowSizeActive < SHADOW_MAP_SIZE) {
+          rebuildBindGroups(SHADOW_MAP_SIZE)
         }
 
         const ensureInstanceBuffer = (batch: InstanceBatch, blend: BlendMode) => {
@@ -417,35 +359,9 @@ export async function gpuMeshes(
             }
             buffers.set(batch, entry)
           }
-          if (blend === 'alpha' && batch.count > 1) {
-            const revisionChanged = entry.revision !== batch.revision
-            if (revisionChanged || entry.cameraRevision !== cameraRevision || !entry.sorted) {
-              const count = batch.count
-              const { inOrder, indices } = instanceSorter.sortInstanceIndices(matrix, batch.data, count)
-              let orderChanged = revisionChanged || !entry.sorted || entry.lastCount !== count
-              if (!orderChanged && entry.lastOrder) {
-                for (let k = 0; k < count; k++) {
-                  if (entry.lastOrder[k] !== indices[k]) { orderChanged = true; break }
-                }
-              }
-              if (orderChanged) {
-                const uploadData = inOrder ? batch.data : instanceSorter.packInstances(batch.data, count)
-                device.queue.writeBuffer(entry.buffer, 0, uploadData, 0, count * INSTANCE_SIZE)
-                if (!entry.lastOrder || entry.lastOrder.length < count) {
-                  entry.lastOrder = new Int32Array(Math.max(count, entry.lastOrder ? entry.lastOrder.length * 2 : 16))
-                }
-                for (let k = 0; k < count; k++) entry.lastOrder[k] = indices[k]
-                entry.lastCount = count
-                entry.revision = batch.revision
-                entry.sorted = true
-                stats.uploadBytes += size
-              }
-              entry.cameraRevision = cameraRevision
-            }
-          } else if (entry.revision !== batch.revision) {
-            device.queue.writeBuffer(entry.buffer, 0, batch.data, 0, batch.count * INSTANCE_SIZE)
-            entry.revision = batch.revision
-            entry.sorted = false
+          const uploadData = resolveBatchUpload(entry, batch, blend, matrix, cameraTracker.revision, instanceSorter)
+          if (uploadData) {
+            device.queue.writeBuffer(entry.buffer, 0, uploadData, 0, batch.count * INSTANCE_SIZE)
             stats.uploadBytes += size
           }
           return entry
@@ -453,19 +369,10 @@ export async function gpuMeshes(
 
         const encoder = device.createCommandEncoder()
 
-        // Tier 2 Directional Shadow Pass (only when enabled & casters or light changed)
+        // Tier 2 Directional Shadow Pass (cached until light or caster batch revisions change)
         if (shadowsEnabled && shadowPipe && shadowView && shadowBindGroup) {
           const casters = shadowCasters ?? visible
-          let needShadow = shadowDirty || casters.length !== lastShadowBatches.length
-          if (!needShadow) {
-            for (let i = 0; i < casters.length; i++) {
-              if (casters[i] !== lastShadowBatches[i] || casters[i].revision !== lastShadowRevs[i]) {
-                needShadow = true
-                break
-              }
-            }
-          }
-          if (needShadow) {
+          if (shadowTracker.needsUpdate(casters)) {
             const spass = encoder.beginRenderPass({
               colorAttachments: [],
               depthStencilAttachment: {
@@ -475,12 +382,8 @@ export async function gpuMeshes(
             spass.setPipeline(shadowPipe)
             spass.setBindGroup(0, shadowBindGroup)
             let sLastMesh: Mesh | undefined
-            lastShadowBatches.length = casters.length
-            lastShadowRevs.length = casters.length
             for (let i = 0; i < casters.length; i++) {
               const batch = casters[i]
-              lastShadowBatches[i] = batch
-              lastShadowRevs[i] = batch.revision
               if ((batch.blend ?? 'opaque') !== 'opaque' || !batch.count) continue
               const entry = ensureInstanceBuffer(batch, 'opaque')
               if (sLastMesh !== batch.mesh) {
@@ -491,7 +394,7 @@ export async function gpuMeshes(
               spass.draw(batch.mesh.vertexCount, batch.count)
             }
             spass.end()
-            shadowDirty = false
+            shadowTracker.commit(casters)
           }
         }
 
@@ -520,32 +423,15 @@ export async function gpuMeshes(
           pass.setVertexBuffer(1, entry.buffer)
           pass.draw(batch.mesh.vertexCount, batch.count)
         }
-        for (let i = 0; i < visible.length; i++) {
-          const batch = visible[i]
-          if ((batch.blend ?? 'opaque') === 'alpha') {
-            let j = i + 1
-            while (j < visible.length && (visible[j].blend ?? 'opaque') === 'alpha') j++
-            const runLen = j - i
-            if (runLen > 1) {
-              const { inOrder, indices } = batchSorter.sortBatchIndices(matrix, visible, i, runLen)
-              if (inOrder) {
-                for (let k = i; k < j; k++) drawBatch(visible[k])
-              } else {
-                for (let k = 0; k < runLen; k++) drawBatch(visible[i + indices[k]])
-              }
-              i = j - 1
-              continue
-            }
-          }
-          drawBatch(batch)
-        }
+        forEachOrderedBatch(matrix, visible, alphaBatchesSorted === true, getBatchSorter, drawBatch)
         pass.end()
         device.queue.submit([encoder.finish()])
       },
       setLighting(next) {
-        shadowsEnabled = hasShadowSupport && next.length >= 65 && next[64] > 0.5
-        shadowDirty = true
-        device.queue.writeBuffer(camera, 64, packGpuLighting(next, gpuLightBuf, hasShadowSupport))
+        lighting = normalizeLighting(next)
+        shadowsEnabled = hasShadowSupport && lighting.shadowsEnabled
+        shadowTracker.markDirty()
+        device.queue.writeBuffer(camera, 64, gpuLightingUniforms(lighting, hasShadowSupport, shadowDisabledScratch))
       },
       release(batch) {
         buffers.get(batch)?.buffer.destroy()

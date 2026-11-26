@@ -1,5 +1,6 @@
-import type { BlendMode, InstanceBatch, Matrix, MeshBackend } from './types.ts'
+import type { BlendMode, InstanceBatch, LightingInput, Matrix, MeshBackend, PreparedLighting } from './types.ts'
 import { INSTANCE_SIZE } from './instances.ts'
+import { createCameraTracker, normalizeLighting } from './renderer.ts'
 
 function clip(polygon: number[][], distance: (point: number[]) => number) {
   const result: number[][] = []
@@ -65,30 +66,24 @@ function transformBatch(
   matrix: Matrix,
   batch: InstanceBatch,
   polygons: Face[],
-  light: Float32Array,
+  light: PreparedLighting,
   depthTest: boolean,
   facePool?: Face[]
 ) {
-  const lx = light[0], ly = light[1], lz = light[2], ambient = light[3]
-  const hasExtended = light.length >= 48
-  const sunR = hasExtended ? light[4] : 1
-  const sunG = hasExtended ? light[5] : 1
-  const sunB = hasExtended ? light[6] : 1
-  const pointCount = hasExtended ? Math.round(light[7]) : 0
-  const fogR = hasExtended ? light[8] : 0
-  const fogG = hasExtended ? light[9] : 0
-  const fogB = hasExtended ? light[10] : 0
-  const fogNear = hasExtended ? light[11] : 0
-  const invFogSpan = hasExtended ? light[12] : 0
-  const hasStylized = light.length >= 60
-  const hasHemi = hasStylized && light[51] > 0.5
-  const skyR = hasHemi ? light[48] : 0, skyG = hasHemi ? light[49] : 0, skyB = hasHemi ? light[50] : 0
-  const grdR = hasHemi ? light[52] : 0, grdG = hasHemi ? light[53] : 0, grdB = hasHemi ? light[54] : 0
-  const toonSteps = hasStylized && light[55] >= 2 ? light[55] : 0
-  const rimStrength = hasStylized && light[59] > 0 ? light[59] : 0
-  const rimR = rimStrength > 0 ? light[56] : 0
-  const rimG = rimStrength > 0 ? light[57] : 0
-  const rimB = rimStrength > 0 ? light[58] : 0
+  const [lx, ly, lz] = light.sunDir
+  const ambient = light.ambient
+  const [sunR, sunG, sunB] = light.sunColor
+  const pointCount = light.pointCount
+  const points = light.points
+  const [fogR, fogG, fogB] = light.fogColor
+  const fogNear = light.fogNear
+  const invFogSpan = light.invFogSpan
+  const hasHemi = light.hasHemi
+  const [skyR, skyG, skyB] = light.skyColor
+  const [grdR, grdG, grdB] = light.groundColor
+  const toonSteps = light.toonSteps
+  const rimStrength = light.rimStrength
+  const [rimR, rimG, rimB] = light.rimColor
   let vax = 0, vay = 0, vaz = 1
   if (rimStrength > 0) {
     const vLen = Math.hypot(matrix[2], matrix[6], matrix[10]) || 1
@@ -270,18 +265,17 @@ function transformBatch(
         const wy = y + d0 * cx + e0 * cy + f0 * cz
         const wz = z + g0 * cx + h0 * cy + k0 * cz
         for (let pi = 0; pi < pointCount; pi++) {
-          const pb = 16 + pi * 4
-          const cb = 32 + pi * 4
-          const dx = light[pb] - wx, dy = light[pb + 1] - wy, dz = light[pb + 2] - wz
+          const pt = points[pi]
+          const dx = pt.x - wx, dy = pt.y - wy, dz = pt.z - wz
           const distSq = dx * dx + dy * dy + dz * dz
-          const atten = 1 - distSq * light[pb + 3]
+          const atten = 1 - distSq * pt.invRadiusSq
           if (atten > 0) {
             const invD = 1 / Math.sqrt(distSq > 1e-5 ? distSq : 1e-5)
             const pdot = (wnx * dx + wny * dy + wnz * dz) * invD
-            const factor = light[cb + 3] * atten * atten * (pdot > 0.25 ? pdot : 0.25)
-            litR += light[cb] * factor
-            litG += light[cb + 1] * factor
-            litB += light[cb + 2] * factor
+            const factor = pt.intensity * atten * atten * (pdot > 0.25 ? pdot : 0.25)
+            litR += pt.r * factor
+            litG += pt.g * factor
+            litB += pt.b * factor
           }
         }
       }
@@ -510,7 +504,8 @@ function depthTarget(width: number, height: number, pixels: Uint32Array, bytes: 
 }
 
 /** Render a transparent strip with the same depth-tested triangles used by the live canvas backend. */
-export function meshViewPixels(cameras: readonly Matrix[], batches: readonly InstanceBatch[], size: number, light: Float32Array<ArrayBuffer>) {
+export function meshViewPixels(cameras: readonly Matrix[], batches: readonly InstanceBatch[], size: number, light: LightingInput) {
+  const resolvedLight = normalizeLighting(light)
   const width = cameras.length * size
   const pixels = new Uint8ClampedArray(width * size * 4)
   const sheet = new Uint32Array(pixels.buffer), frame = new Uint32Array(size * size)
@@ -519,18 +514,18 @@ export function meshViewPixels(cameras: readonly Matrix[], batches: readonly Ins
   for (let column = 0; column < cameras.length; column++) {
     const camera = cameras[column]
     faces.length = 0
-    for (let b = 0; b < batches.length; b++) transformBatch(camera, batches[b], faces, light, true)
+    for (let b = 0; b < batches.length; b++) transformBatch(camera, batches[b], faces, resolvedLight, true)
     target.draw(faces, 0)
     for (let y = 0; y < size; y++) sheet.set(frame.subarray(y * size, (y + 1) * size), y * width + column * size)
   }
   return { width, height: size, pixels }
 }
 
-export function canvasMeshes(canvas: HTMLCanvasElement, initialLight: Float32Array<ArrayBuffer>,
+export function canvasMeshes(canvas: HTMLCanvasElement, initialLight: LightingInput,
   { transparent = false, depthTest = false } = {}): MeshBackend {
   const ctx = canvas.getContext('2d', { alpha: transparent })
   if (!ctx) throw new Error('Canvas 2D is unavailable')
-  let light = initialLight
+  let light = normalizeLighting(initialLight)
   const cache = new Map<InstanceBatch, { revision: number; polygons: Face[] }>()
   const facePool: Face[] = []
   const MAX_POOL = 16384
@@ -542,8 +537,7 @@ export function canvasMeshes(canvas: HTMLCanvasElement, initialLight: Float32Arr
     for (const entry of cache.values()) recycleFaces(entry.polygons)
     cache.clear()
   }
-  const lastCamera = new Float32Array(16)
-  let hasCamera = false
+  const cameraTracker = createCameraTracker()
   const polygons: Face[] = []
   let target: ReturnType<typeof depthTarget>
   let image: ImageData
@@ -551,20 +545,12 @@ export function canvasMeshes(canvas: HTMLCanvasElement, initialLight: Float32Arr
     name: 'Canvas 2D',
     maxDimension: 4096,
     setLighting(next) {
-      if (next) light = next
+      if (next) light = normalizeLighting(next)
       clearCache()
     },
     draw(matrix, clear, visible, stats) {
-      let changed = !hasCamera
-      if (!changed) {
-        for (let i = 0; i < 16; i++) {
-          if (matrix[i] !== lastCamera[i]) { changed = true; break }
-        }
-      }
-      if (changed) {
+      if (cameraTracker.update(matrix)) {
         clearCache()
-        lastCamera.set(matrix)
-        hasCamera = true
       }
       polygons.length = 0
       for (let b = 0; b < visible.length; b++) {

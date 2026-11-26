@@ -200,13 +200,74 @@ export interface PlatformerBody {
   buffer: number
 }
 
+export interface PreparedPointLight {
+  readonly x: number
+  readonly y: number
+  readonly z: number
+  readonly invRadiusSq: number
+  readonly r: number
+  readonly g: number
+  readonly b: number
+  readonly intensity: number
+}
+
+export interface PreparedLighting {
+  readonly sunDir: readonly [number, number, number]
+  readonly ambient: number
+  readonly sunColor: readonly [number, number, number]
+  readonly fogColor: readonly [number, number, number]
+  readonly fogNear: number
+  readonly invFogSpan: number
+  readonly pointCount: number
+  readonly points: readonly PreparedPointLight[]
+  readonly hasHemi: boolean
+  readonly skyColor: readonly [number, number, number]
+  readonly groundColor: readonly [number, number, number]
+  readonly toonSteps: number
+  readonly rimColor: readonly [number, number, number]
+  readonly rimStrength: number
+  readonly shadowsEnabled: boolean
+  readonly shadowCenter: readonly [number, number, number]
+  readonly shadowExtent: number
+  readonly shadowBias: number
+  readonly shadowStrength: number
+  readonly shadowColor: readonly [number, number, number]
+  readonly lightMatrix: Matrix
+  readonly lightPlanes: Float32Array<ArrayBuffer>
+  readonly packed: Float32Array<ArrayBuffer>
+  readonly gpuUniforms: Float32Array<ArrayBuffer>
+  readonly views: {
+    readonly sunDir: Float32Array<ArrayBuffer>
+    readonly sunColor: Float32Array<ArrayBuffer>
+    readonly fog: Float32Array<ArrayBuffer>
+    readonly fogExtra: Float32Array<ArrayBuffer>
+    readonly pointPos: Float32Array<ArrayBuffer>
+    readonly pointCol: Float32Array<ArrayBuffer>
+    readonly skyHemi: Float32Array<ArrayBuffer>
+    readonly groundToon: Float32Array<ArrayBuffer>
+    readonly rimLight: Float32Array<ArrayBuffer>
+    readonly shadowParams: Float32Array<ArrayBuffer>
+    readonly shadowColor: Float32Array<ArrayBuffer>
+  }
+  readonly revision: number
+}
+
+export type LightingInput = PreparedLighting | Float32Array<ArrayBuffer>
+
 export interface MeshBackend {
   name: RendererName
   gpuInfo?: string
   lost?: Promise<unknown>
   maxDimension: number
-  draw(matrix: Matrix, clear: Color, visible: readonly InstanceBatch[], stats: RenderStats, shadowCasters?: readonly InstanceBatch[]): void
-  setLighting?(light: Float32Array<ArrayBuffer>): void
+  draw(
+    matrix: Matrix,
+    clear: Color,
+    visible: readonly InstanceBatch[],
+    stats: RenderStats,
+    shadowCasters?: readonly InstanceBatch[],
+    alphaBatchesSorted?: boolean
+  ): void
+  setLighting?(light: LightingInput): void
   release(batch: InstanceBatch): void
   releaseMesh(mesh: Mesh): void
   dispose(): void
