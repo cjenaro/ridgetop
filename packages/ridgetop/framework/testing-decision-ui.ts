@@ -136,7 +136,13 @@ interface DecisionHistoryEntry {
   readonly response: DecisionApiResponse
 }
 
+export interface DecisionAgentHostBridgeHandle {
+  readonly hostId: string
+  readonly dispose: () => void
+}
+
 export interface DecisionAgentUiHandle {
+  readonly hostId?: string
   readonly refresh: () => void
   readonly stop: () => void
   readonly dispose: () => void
@@ -188,8 +194,86 @@ const PROVIDER_LABELS: Readonly<Record<string, string>> = {
   local: 'Local Heuristic (No Key)'
 }
 
+const MAX_PENDING_RUNTIME_ERRORS = 100
+const MAX_DETECTED_BUGS = 200
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
+}
+
+function safeStringify(value: unknown, space?: number): string {
+  const seen = new WeakSet<object>()
+  try {
+    return JSON.stringify(value, (_key, val: unknown) => {
+      if (typeof val === 'bigint') return val.toString()
+      if (typeof val === 'object' && val !== null) {
+        if (seen.has(val)) return '[Circular]'
+        seen.add(val)
+      }
+      return val
+    }, space) ?? 'undefined'
+  } catch {
+    return String(value)
+  }
+}
+
+function generateHostId(): string {
+  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+    return crypto.randomUUID()
+  }
+  return `host-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`
+}
+
+function sanitizeNumberMap(raw: unknown): Record<string, number> | undefined {
+  if (!isRecord(raw)) return undefined
+  const out: Record<string, number> = {}
+  let hasAny = false
+  for (const [k, v] of Object.entries(raw)) {
+    if (typeof v === 'number' && Number.isFinite(v)) {
+      out[k] = v
+      hasAny = true
+    }
+  }
+  return hasAny ? out : undefined
+}
+
+function sanitizeDecisionResult(raw: unknown, fallbackChoice: string): DecisionAgentResult {
+  if (!isRecord(raw)) return { choice: fallbackChoice }
+  const choice = typeof raw.choice === 'string' && raw.choice ? raw.choice : fallbackChoice
+  const probabilities = sanitizeNumberMap(raw.probabilities)
+  const evidenceProbabilities = sanitizeNumberMap(raw.evidenceProbabilities)
+  const evidence = Array.isArray(raw.evidence)
+    ? raw.evidence.filter((e): e is string => typeof e === 'string')
+    : undefined
+  let usage: { readonly inputTokens?: number; readonly outputTokens?: number } | undefined
+  if (isRecord(raw.usage)) {
+    const inputTokens = typeof raw.usage.inputTokens === 'number' && Number.isFinite(raw.usage.inputTokens) ? raw.usage.inputTokens : undefined
+    const outputTokens = typeof raw.usage.outputTokens === 'number' && Number.isFinite(raw.usage.outputTokens) ? raw.usage.outputTokens : undefined
+    if (inputTokens !== undefined || outputTokens !== undefined) {
+      usage = {
+        ...(inputTokens !== undefined ? { inputTokens } : {}),
+        ...(outputTokens !== undefined ? { outputTokens } : {})
+      }
+    }
+  }
+  return {
+    choice,
+    ...(typeof raw.provider === 'string' ? { provider: raw.provider } : {}),
+    ...(typeof raw.model === 'string' ? { model: raw.model } : {}),
+    ...(typeof raw.confidence === 'number' && Number.isFinite(raw.confidence) ? { confidence: raw.confidence } : {}),
+    ...(probabilities ? { probabilities } : {}),
+    ...(evidence ? { evidence } : {}),
+    ...(evidenceProbabilities ? { evidenceProbabilities } : {}),
+    ...(typeof raw.bugProbability === 'number' && Number.isFinite(raw.bugProbability) ? { bugProbability: raw.bugProbability } : {}),
+    ...(typeof raw.bugSuspected === 'boolean' ? { bugSuspected: raw.bugSuspected } : {}),
+    ...(usage ? { usage } : {}),
+    ...(typeof raw.latencyMs === 'number' && Number.isFinite(raw.latencyMs) ? { latencyMs: raw.latencyMs } : {}),
+    ...(typeof raw.cached === 'boolean' ? { cached: raw.cached } : {})
+  }
+}
+
+function isSafeRelativeUrl(url: string | undefined): url is string {
+  return typeof url === 'string' && url.startsWith('/') && !url.startsWith('//')
 }
 
 function getRidgetopUiGlobal(): RidgetopUiGlobalLike | null {
@@ -281,14 +365,21 @@ export function captureGameCanvasScreenshot(maxDimension = 720): Promise<string 
  */
 export function createLocalDecisionAgentBridge(): DecisionAgentBridge {
   const latestUiWidgets = new Map<string, RidgetopUiWidgetLike>()
-  const pendingRuntimeErrors: string[] = []
+  const pendingRuntimeErrors: { readonly seq: number; readonly message: string }[] = []
+  let runtimeErrorSeq = 0
+  const pushRuntimeError = (message: string) => {
+    pendingRuntimeErrors.push({ seq: ++runtimeErrorSeq, message })
+    if (pendingRuntimeErrors.length > MAX_PENDING_RUNTIME_ERRORS) {
+      pendingRuntimeErrors.splice(0, pendingRuntimeErrors.length - MAX_PENDING_RUNTIME_ERRORS)
+    }
+  }
   const onWindowError = (event: ErrorEvent) => {
     const msg = event.message || (event.error instanceof Error ? event.error.message : String(event.error ?? 'Unknown error'))
-    pendingRuntimeErrors.push(`Error: ${msg}`)
+    pushRuntimeError(`Error: ${msg}`)
   }
   const onUnhandledRejection = (event: PromiseRejectionEvent) => {
     const reason = event.reason instanceof Error ? event.reason.message : String(event.reason ?? 'Unhandled rejection')
-    pendingRuntimeErrors.push(`UnhandledRejection: ${reason}`)
+    pushRuntimeError(`UnhandledRejection: ${reason}`)
   }
   if (typeof window !== 'undefined') {
     window.addEventListener('error', onWindowError)
@@ -311,7 +402,7 @@ export function createLocalDecisionAgentBridge(): DecisionAgentBridge {
     const widgetIds = ui?.query
       ? ui.query({ disabled: false }).map(w => `${w.id}:${w.selected ? 1 : 0}:${w.checked ? 1 : 0}`).slice(0, 24)
       : []
-    return { screen, fingerprint: JSON.stringify({ rawState, widgetIds }) }
+    return { screen, fingerprint: safeStringify({ rawState, widgetIds }) }
   }
 
   function observeUniversalUi(
@@ -475,7 +566,7 @@ export function createLocalDecisionAgentBridge(): DecisionAgentBridge {
     },
     async executeAction({ source, optionId, decision, captureScreenshot }): Promise<DecisionAgentActionOutcome> {
       const beforeSnap = captureFingerprint()
-      const errStartIdx = pendingRuntimeErrors.length
+      const errStartSeq = runtimeErrorSeq
       let executed = false
       let widgetId: string | undefined
       let widgetAction: string | undefined
@@ -498,7 +589,9 @@ export function createLocalDecisionAgentBridge(): DecisionAgentBridge {
         await new Promise(resolve => window.setTimeout(resolve, 120))
       }
       const afterSnap = captureFingerprint()
-      const stepErrors = pendingRuntimeErrors.slice(errStartIdx)
+      const stepErrors = pendingRuntimeErrors
+        .filter(entry => entry.seq > errStartSeq)
+        .map(entry => entry.message)
       const stateChanged = source !== 'sandbox'
         ? (beforeSnap.fingerprint !== afterSnap.fingerprint || beforeSnap.screen !== afterSnap.screen)
         : null
@@ -533,14 +626,18 @@ export function createLocalDecisionAgentBridge(): DecisionAgentBridge {
 
 /**
  * Listen on `BroadcastChannel('ridgetop-decision-agent')` inside a game tab so a Pop-Out
- * Companion Window (`/ __testing/agent`) can observe, drive, and screenshot this tab remotely.
+ * Companion Window (`/__testing/agent`) can observe, drive, and screenshot this tab remotely.
  */
-export function attachDecisionAgentHostBridge(localBridge: DecisionAgentBridge): () => void {
-  if (typeof BroadcastChannel === 'undefined') return () => {}
+export function attachDecisionAgentHostBridge(
+  localBridge: DecisionAgentBridge,
+  hostId: string = generateHostId()
+): DecisionAgentHostBridgeHandle {
+  if (typeof BroadcastChannel === 'undefined') return { hostId, dispose: () => {} }
   const channel = new BroadcastChannel(DECISION_AGENT_CHANNEL)
   channel.onmessage = async (event: MessageEvent) => {
     const msg: unknown = event.data
     if (!isRecord(msg) || msg.role !== 'popout' || typeof msg.reqId !== 'string') return
+    if (typeof msg.hostId === 'string' && msg.hostId.length > 0 && msg.hostId !== hostId) return
     const reqId = msg.reqId
     try {
       if (msg.type === 'snapshot') {
@@ -551,43 +648,54 @@ export function attachDecisionAgentHostBridge(localBridge: DecisionAgentBridge):
           Object.entries(msg.uiVisits).filter((entry): entry is [string, number] => typeof entry[1] === 'number')
         ) : {}
         const snap = await localBridge.getSnapshot(mode, goal, recent, visits)
-        channel.postMessage({ role: 'host', reqId, ok: true, result: snap })
+        channel.postMessage({ role: 'host', hostId, reqId, ok: true, result: snap })
       } else if (msg.type === 'act' && isRecord(msg.payload)) {
         const p = msg.payload
         const source = p.source === 'adapter' || p.source === 'ui' ? p.source : 'sandbox'
         const optionId = typeof p.optionId === 'string' ? p.optionId : ''
         const captureScreenshot = Boolean(p.captureScreenshot)
-        const decisionObj: DecisionAgentResult = isRecord(p.decision) && typeof p.decision.choice === 'string'
-          ? { choice: p.decision.choice }
-          : { choice: optionId }
+        const decisionObj = sanitizeDecisionResult(p.decision, optionId)
         const outcome = await localBridge.executeAction({ source, optionId, decision: decisionObj, captureScreenshot })
-        channel.postMessage({ role: 'host', reqId, ok: true, result: outcome })
+        channel.postMessage({ role: 'host', hostId, reqId, ok: true, result: outcome })
       } else if (msg.type === 'ensurePlayable') {
         await localBridge.ensurePlayable()
-        channel.postMessage({ role: 'host', reqId, ok: true })
+        channel.postMessage({ role: 'host', hostId, reqId, ok: true })
       } else if (msg.type === 'screenshot') {
         const dataUrl = await localBridge.captureScreenshot()
-        channel.postMessage({ role: 'host', reqId, ok: true, result: dataUrl })
+        channel.postMessage({ role: 'host', hostId, reqId, ok: true, result: dataUrl })
       }
     } catch (error) {
-      channel.postMessage({ role: 'host', reqId, ok: false, error: error instanceof Error ? error.message : String(error) })
+      channel.postMessage({ role: 'host', hostId, reqId, ok: false, error: error instanceof Error ? error.message : String(error) })
     }
   }
-  return () => { channel.close() }
+  return {
+    hostId,
+    dispose: () => { channel.close() }
+  }
 }
 
 /**
  * Create a remote `DecisionAgentBridge` for the Pop-Out Companion Window (`/__testing/agent`).
  */
-export function createRemoteDecisionAgentBridge(): DecisionAgentBridge {
+export function createRemoteDecisionAgentBridge(targetHostId?: string): DecisionAgentBridge {
   const channel = typeof BroadcastChannel !== 'undefined' ? new BroadcastChannel(DECISION_AGENT_CHANNEL) : null
   let seq = 0
+  let boundHostId: string | undefined = targetHostId?.trim() || undefined
+  if (!boundHostId && typeof window !== 'undefined' && typeof window.location?.search === 'string') {
+    try {
+      const fromUrl = new URLSearchParams(window.location.search).get('host')?.trim()
+      if (fromUrl) boundHostId = fromUrl
+    } catch { /* Ignore invalid location search. */ }
+  }
   const pending = new Map<string, { resolve: (val: unknown) => void; reject: (err: Error) => void; timer: number }>()
 
   if (channel) {
     channel.onmessage = (event: MessageEvent) => {
       const msg: unknown = event.data
       if (!isRecord(msg) || msg.role !== 'host' || typeof msg.reqId !== 'string') return
+      const msgHostId = typeof msg.hostId === 'string' && msg.hostId.length > 0 ? msg.hostId : undefined
+      if (boundHostId !== undefined && msgHostId !== boundHostId) return
+      if (boundHostId === undefined && msgHostId !== undefined) boundHostId = msgHostId
       const entry = pending.get(msg.reqId)
       if (!entry) return
       pending.delete(msg.reqId)
@@ -606,7 +714,13 @@ export function createRemoteDecisionAgentBridge(): DecisionAgentBridge {
         reject(new Error('No game tab responded (open any Ridgetop game tab on this server)'))
       }, timeoutMs)
       pending.set(reqId, { resolve, reject, timer })
-      channel.postMessage({ role: 'popout', reqId, type, ...extra })
+      channel.postMessage({
+        role: 'popout',
+        reqId,
+        type,
+        ...(boundHostId ? { hostId: boundHostId } : {}),
+        ...extra
+      })
     })
   }
 
@@ -725,11 +839,15 @@ export function mountDecisionAgentPane(
 ): DecisionAgentUiHandle {
   const ownsBridge = !options.bridge
   const bridge = options.bridge ?? createLocalDecisionAgentBridge()
-  const detachHostBridge = bridge.isRemote ? () => {} : attachDecisionAgentHostBridge(bridge)
+  const hostBridge = bridge.isRemote ? null : attachDecisionAgentHostBridge(bridge)
+  const abortController = new AbortController()
 
   let disposed = false
   let running = false
   let busy = false
+  let runGen = 0
+  let snapshotSeq = 0
+  let snapshotInFlight = false
   let loopTimer: number | undefined
   let statusPollTimer: number | undefined
   let stepCounter = 0
@@ -928,7 +1046,7 @@ export function mountDecisionAgentPane(
       bugs: detectedBugs,
       timeline: history
     }
-    const blob = new Blob([JSON.stringify(report, null, 2)], { type: 'application/json' })
+    const blob = new Blob([safeStringify(report, 2)], { type: 'application/json' })
     const url = URL.createObjectURL(blob)
     const a = document.createElement('a')
     a.href = url
@@ -938,6 +1056,7 @@ export function mountDecisionAgentPane(
   }
   const clearBtn = el('button', { className: 'rt-btn', type: 'button', text: 'Clear' })
   clearBtn.onclick = () => {
+    if (busy) return
     history.length = 0
     for (const k of Object.keys(uiVisitCounts)) delete uiVisitCounts[k]
     visitedScreens.clear()
@@ -945,6 +1064,7 @@ export function mountDecisionAgentPane(
     detectedBugs.length = 0
     recentActions.length = 0
     lastOutcomeForApi = null
+    stepCounter = 0
     selectedHistoryIndex = 0
     renderHistory()
   }
@@ -960,7 +1080,8 @@ export function mountDecisionAgentPane(
     void fetch('/__testing/decision/outcome', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ sessionId, game: gamePath, ...payload })
+      body: safeStringify({ sessionId, game: gamePath, ...payload }),
+      signal: abortController.signal
     }).catch(() => { /* Ignore telemetry failure. */ })
   }
 
@@ -969,11 +1090,17 @@ export function mountDecisionAgentPane(
       const res = await fetch('/__testing/decision/screenshot', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ sessionId, step, screen, dataUrl })
+        body: safeStringify({ sessionId, step, screen, dataUrl }),
+        signal: abortController.signal
       })
-      if (!res.ok) return null
-      const json: ScreenshotUploadResponse = await res.json()
-      return json.ok ? json : null
+      if (disposed || !res.ok) return null
+      const json: unknown = await res.json()
+      if (disposed || !isRecord(json) || json.ok !== true) return null
+      return {
+        ok: true,
+        file: typeof json.file === 'string' ? json.file : undefined,
+        url: typeof json.url === 'string' ? json.url : undefined
+      }
     } catch {
       return null
     }
@@ -1046,13 +1173,26 @@ export function mountDecisionAgentPane(
     thinkBtn.disabled = busy
   }
 
+  function isPaneVisible(): boolean {
+    if (bridge.isRemote) return true
+    if (container.offsetParent === null) return false
+    if (container.closest('[hidden]') !== null) return false
+    return true
+  }
+
   async function refreshSnapshot(): Promise<DecisionAgentHostSnapshot> {
-    const snap = await bridge.getSnapshot(agentMode, goalInput.value, recentActions, uiVisitCounts)
-    if (!disposed) {
-      latestSnap = snap
-      renderAdapterStatus(snap)
+    const seq = ++snapshotSeq
+    snapshotInFlight = true
+    try {
+      const snap = await bridge.getSnapshot(agentMode, goalInput.value, recentActions, uiVisitCounts)
+      if (!disposed && seq === snapshotSeq) {
+        latestSnap = snap
+        renderAdapterStatus(snap)
+      }
+      return snap
+    } finally {
+      if (seq === snapshotSeq) snapshotInFlight = false
     }
-    return snap
   }
 
   function renderDecisionEntry(entry: DecisionHistoryEntry | undefined) {
@@ -1112,12 +1252,12 @@ export function mountDecisionAgentPane(
       bugMeterWrap.replaceChildren()
     }
 
-    if (entry.screenshotUrl) {
+    if (isSafeRelativeUrl(entry.screenshotUrl)) {
       shotPreviewWrap.hidden = false
       const link = document.createElement('a')
       link.href = entry.screenshotUrl
       link.target = '_blank'
-      link.rel = 'noopener'
+      link.rel = 'noopener noreferrer'
       link.title = entry.screenshotFile ?? 'Open captured screenshot'
       const img = document.createElement('img')
       img.src = entry.screenshotUrl
@@ -1180,7 +1320,7 @@ export function mountDecisionAgentPane(
         const top = el('div', { className: 'rt-da-bar-head' })
         const nameWrap = el('span', { className: 'rt-da-bar-label' })
         nameWrap.append(
-          el('span', { text: `${ev.label ?? ev.id} = ${JSON.stringify(ev.value)}` }),
+          el('span', { text: `${ev.label ?? ev.id} = ${safeStringify(ev.value)}` }),
           ...(cited ? [el('span', { className: 'rt-da-cited-tag', text: 'CITED' })] : [])
         )
         top.append(nameWrap, el('span', { className: 'rt-da-bar-val', text: pct(prob) }))
@@ -1193,12 +1333,12 @@ export function mountDecisionAgentPane(
       }
     }
 
-    payloadPre.textContent = JSON.stringify({
+    payloadPre.textContent = safeStringify({
       rubric: observation.rubric,
       state: observation.state,
       options: observation.options,
       evidence: observation.evidence
-    }, null, 2)
+    }, 2)
   }
 
   function renderHistory() {
@@ -1251,15 +1391,17 @@ export function mountDecisionAgentPane(
 
   async function runSingleDecision(executeAction: boolean): Promise<boolean> {
     if (busy || disposed) return false
-    const snap = await refreshSnapshot()
-    const { source, observation, gamePath } = snap
-    if (!snap.connected || !observation.ready || !observation.options.length) {
-      return false
-    }
     busy = true
     showError(null)
-    renderAdapterStatus(snap)
+    renderAdapterStatus()
     try {
+      const snap = await refreshSnapshot()
+      if (disposed) return false
+      const { source, observation, gamePath } = snap
+      if (!snap.connected || !observation.ready || !observation.options.length) {
+        return false
+      }
+      renderAdapterStatus(snap)
       const stateObj = isRecord(observation.state) ? observation.state : {}
       const beforeScreen = typeof stateObj.screen === 'string' ? stateObj.screen : (source === 'adapter' ? 'gameplay' : 'ui')
       const enrichedState = lastOutcomeForApi
@@ -1268,7 +1410,8 @@ export function mountDecisionAgentPane(
       const res = await fetch('/__testing/decision/decide', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
+        signal: abortController.signal,
+        body: safeStringify({
           sessionId,
           game: gamePath,
           screen: beforeScreen,
@@ -1286,9 +1429,17 @@ export function mountDecisionAgentPane(
           useCache
         })
       })
-      const data: DecisionApiResponse = await res.json()
-      if (!res.ok || !data.ok || !data.choice) {
-        throw new Error(data.error || `HTTP ${res.status}`)
+      if (disposed) return false
+      let data: DecisionApiResponse | null = null
+      try {
+        const parsed: unknown = await res.json()
+        if (isRecord(parsed)) data = parsed as unknown as DecisionApiResponse
+      } catch {
+        data = null
+      }
+      if (disposed) return false
+      if (!res.ok || !data?.ok || !data.choice) {
+        throw new Error(data?.error || `HTTP ${res.status}`)
       }
 
       const chosenLabel = observation.options.find(o => o.id === data.choice)?.label ?? data.choice
@@ -1311,6 +1462,9 @@ export function mountDecisionAgentPane(
           probabilities: data.probabilities,
           evidence: data.evidence,
           evidenceProbabilities: data.evidenceProbabilities,
+          bugProbability: data.bugProbability,
+          bugSuspected: data.bugSuspected,
+          usage: data.usage,
           latencyMs: data.latencyMs,
           cached: data.cached
         }
@@ -1320,6 +1474,7 @@ export function mountDecisionAgentPane(
           decision: resultObj,
           captureScreenshot: wantShot
         })
+        if (disposed) return false
         executed = outcome.executed
         widgetId = outcome.widgetId
         widgetAction = outcome.widgetAction
@@ -1333,6 +1488,7 @@ export function mountDecisionAgentPane(
         }
       } else if (wantShot) {
         screenshotDataUrl = await bridge.captureScreenshot()
+        if (disposed) return false
       }
 
       stepCounter++
@@ -1365,6 +1521,7 @@ export function mountDecisionAgentPane(
       let screenshotUrl: string | undefined
       if (screenshotDataUrl) {
         const uploaded = await uploadScreenshot(stepCounter, afterScreen || screenLabel, screenshotDataUrl)
+        if (disposed) return false
         if (uploaded) {
           screenshotFile = uploaded.file
           screenshotUrl = uploaded.url
@@ -1396,6 +1553,9 @@ export function mountDecisionAgentPane(
           bugProbability: data.bugProbability,
           screenshot: screenshotFile
         })
+        if (detectedBugs.length > MAX_DETECTED_BUGS) {
+          detectedBugs.splice(0, detectedBugs.length - MAX_DETECTED_BUGS)
+        }
       }
 
       if (executeAction) {
@@ -1438,6 +1598,9 @@ export function mountDecisionAgentPane(
       options.onStatus?.(`Decision #${stepCounter}: ${chosenLabel} (${pct(data.confidence)})`)
       return true
     } catch (error) {
+      if (disposed || (error instanceof DOMException && error.name === 'AbortError')) {
+        return false
+      }
       const msg = error instanceof Error ? error.message : String(error)
       showError(msg)
       options.onStatus?.('Decision error: ' + msg)
@@ -1445,33 +1608,44 @@ export function mountDecisionAgentPane(
       return false
     } finally {
       busy = false
-      void refreshSnapshot()
+      if (!disposed) {
+        renderAdapterStatus()
+        void refreshSnapshot()
+      }
     }
   }
 
-  function scheduleNextTick(immediate = false) {
-    if (!running || disposed) return
+  function scheduleNextTick(immediate = false, gen = runGen) {
+    if (!running || disposed || gen !== runGen) return
+    if (loopTimer !== undefined) {
+      clearTimeout(loopTimer)
+      loopTimer = undefined
+    }
     const delay = immediate ? 100 : Math.max(250, intervalMs)
     loopTimer = window.setTimeout(async () => {
-      if (!running || disposed) return
+      loopTimer = undefined
+      if (!running || disposed || gen !== runGen) return
       const snap = await refreshSnapshot()
+      if (!running || disposed || gen !== runGen) return
       if (snap.connected && snap.observation.ready && snap.observation.options.length) {
         await runSingleDecision(true)
       }
-      if (running && !disposed) scheduleNextTick(false)
+      if (running && !disposed && gen === runGen) scheduleNextTick(false, gen)
     }, delay)
   }
 
   function startAutoPlay() {
-    if (running) return
+    if (running || disposed) return
     running = true
+    const gen = ++runGen
     showError(null)
     renderAdapterStatus()
-    scheduleNextTick(true)
+    scheduleNextTick(true, gen)
   }
 
   function stopAutoPlay() {
     running = false
+    runGen++
     if (loopTimer !== undefined) {
       clearTimeout(loopTimer)
       loopTimer = undefined
@@ -1488,16 +1662,18 @@ export function mountDecisionAgentPane(
   enterBtn.onclick = async () => {
     try {
       await bridge.ensurePlayable()
+      if (disposed) return
       await refreshSnapshot()
     } catch (error) {
+      if (disposed) return
       showError(error instanceof Error ? error.message : String(error))
     }
   }
 
   async function loadServerStatus() {
     try {
-      const res = await fetch('/__testing/decision/status')
-      if (!res.ok) return
+      const res = await fetch('/__testing/decision/status', { signal: abortController.signal })
+      if (disposed || !res.ok) return
       const data: DecisionStatusResponse = await res.json()
       if (disposed) return
       serverStatus = data
@@ -1507,7 +1683,7 @@ export function mountDecisionAgentPane(
       modelInput.value = data.defaultModels?.[providerSelect.value] ?? ''
       updateKeyBadge()
     } catch {
-      keyBadge.textContent = 'Server status unavailable'
+      if (!disposed) keyBadge.textContent = 'Server status unavailable'
     }
   }
 
@@ -1516,7 +1692,7 @@ export function mountDecisionAgentPane(
   })
 
   statusPollTimer = window.setInterval(() => {
-    if (!disposed && !busy) void refreshSnapshot()
+    if (!disposed && !busy && !snapshotInFlight && isPaneVisible()) void refreshSnapshot()
   }, 600)
 
   renderHistory()
@@ -1524,6 +1700,7 @@ export function mountDecisionAgentPane(
   void loadServerStatus()
 
   return {
+    hostId: hostBridge?.hostId,
     refresh() {
       void refreshSnapshot()
       void loadServerStatus()
@@ -1531,13 +1708,14 @@ export function mountDecisionAgentPane(
     stop: stopAutoPlay,
     dispose() {
       disposed = true
+      abortController.abort()
       stopAutoPlay()
       if (statusPollTimer !== undefined) {
         clearInterval(statusPollTimer)
         statusPollTimer = undefined
       }
       unsubAgents()
-      detachHostBridge()
+      hostBridge?.dispose()
       if (ownsBridge) bridge.dispose()
     }
   }

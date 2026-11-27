@@ -2,8 +2,9 @@ import type { IncomingMessage, ServerResponse } from 'node:http'
 import type { DecisionDetailed, DecisionUsage } from './types.ts'
 import type { DecisionProviderName } from './decision-providers.ts'
 import { Buffer } from 'node:buffer'
-import { appendFile, mkdir, readFile, writeFile } from 'node:fs/promises'
+import { appendFile, lstat, mkdir, readdir, readFile, unlink, writeFile } from 'node:fs/promises'
 import { dirname, resolve, sep } from 'node:path'
+import process from 'node:process'
 import { fileURLToPath } from 'node:url'
 import { createDecisionApi, resolveDecisionEnv } from './decision-api.ts'
 import { ridgetopBrowserSpecifiers, sendJson, sendText } from './host.ts'
@@ -50,6 +51,80 @@ const MAX_BODY_BYTES = 48_000
 const MAX_SCREENSHOT_BODY_BYTES = 2_500_000
 const MAX_CACHE_ENTRIES = 64
 const MAX_LOG_LINES = 2000
+const MAX_SESSION_SCREENSHOTS = 200
+const DEFAULT_MAX_SESSION_REQUESTS = 500
+const SHOT_SESSION_RE = /^[a-zA-Z0-9_-]{1,48}$/
+const SHOT_FILENAME_RE = /^[a-zA-Z0-9_-]+\.(png|jpg)$/
+
+class PayloadTooLargeError extends Error {
+  constructor(maxBytes: number) {
+    super('Decision request body exceeds ' + maxBytes + ' bytes')
+    this.name = 'PayloadTooLargeError'
+  }
+}
+
+function isLoopbackHost(hostname: string): boolean {
+  const lower = hostname.toLowerCase()
+  return lower === 'localhost' || lower === '127.0.0.1' || lower === '[::1]' || lower === '::1'
+}
+
+function isAllowedOrigin(origin: string, hostHeader: string | undefined): boolean {
+  let parsed: URL
+  try {
+    parsed = new URL(origin)
+  } catch {
+    return false
+  }
+  if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') return false
+  if (!isLoopbackHost(parsed.hostname)) return false
+  if (hostHeader) {
+    if (parsed.host.toLowerCase() === hostHeader.toLowerCase()) return true
+    try {
+      const hostUrl = new URL('http://' + hostHeader)
+      if (isLoopbackHost(hostUrl.hostname) && parsed.port === hostUrl.port) return true
+    } catch {
+      return false
+    }
+    return false
+  }
+  return true
+}
+
+function resolveMaxSessionRequests(): number {
+  const raw = process.env.RIDGETOP_DECISION_MAX_SESSION_REQUESTS
+  if (raw !== undefined && raw.trim() !== '') {
+    const parsed = Number(raw)
+    if (Number.isSafeInteger(parsed) && parsed >= 0) return parsed
+  }
+  return DEFAULT_MAX_SESSION_REQUESTS
+}
+
+async function pruneSessionScreenshots(targetDir: string): Promise<void> {
+  try {
+    const entries = await readdir(targetDir)
+    if (entries.length <= MAX_SESSION_SCREENSHOTS) return
+    const stats = await Promise.all(
+      entries.map(async name => {
+        const full = resolve(targetDir, name)
+        try {
+          const info = await lstat(full)
+          return info.isFile() ? { full, mtimeMs: info.mtimeMs } : null
+        } catch {
+          return null
+        }
+      })
+    )
+    const files = stats.filter((item): item is { full: string; mtimeMs: number } => item !== null)
+    if (files.length <= MAX_SESSION_SCREENSHOTS) return
+    files.sort((a, b) => a.mtimeMs - b.mtimeMs)
+    const excess = files.length - MAX_SESSION_SCREENSHOTS
+    for (let i = 0; i < excess; i++) {
+      await unlink(files[i].full).catch(() => {})
+    }
+  } catch {
+    // Best-effort pruning.
+  }
+}
 
 function sanitizeSegment(raw: unknown, fallback: string): string {
   if (typeof raw !== 'string') return fallback
@@ -91,7 +166,7 @@ async function readJsonBody(req: IncomingMessage, maxBytes = MAX_BODY_BYTES): Pr
   for await (const chunk of req) {
     const buf = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk)
     total += buf.byteLength
-    if (total > maxBytes) throw new Error('Decision request body exceeds ' + maxBytes + ' bytes')
+    if (total > maxBytes) throw new PayloadTooLargeError(maxBytes)
     chunks.push(buf)
   }
   const raw = Buffer.concat(chunks).toString('utf8')
@@ -118,9 +193,13 @@ function decideWithLocalHeuristic(
     if (scores[i] > maxScore) maxScore = scores[i]
     if (scores[i] < minScore) minScore = scores[i]
   }
-  const spread = Math.max(25, maxScore - minScore)
+  const rawSpread = maxScore - minScore
+  const spread = Number.isFinite(rawSpread) ? Math.max(25, rawSpread) : 25
   const temp = spread / 3
-  const exps = scores.map(s => Math.exp((s - maxScore) / temp))
+  const exps = scores.map(s => {
+    const v = Math.exp((s - maxScore) / temp)
+    return Number.isFinite(v) ? v : 0
+  })
   const sum = exps.reduce((acc, v) => acc + v, 0) || 1
   const probabilities: Record<string, number> = {}
   let bestIdx = 0
@@ -159,7 +238,7 @@ function decideWithLocalHeuristic(
     probabilities,
     evidenceProbabilities,
     bugProbability,
-    bugSuspected: bugProbability >= 0.5,
+    bugSuspected: bugProbability > 0.5,
     model: 'local-heuristic-softmax',
     latencyMs: 1,
     cached: false
@@ -173,26 +252,31 @@ function decideWithLocalHeuristic(
  */
 export function createDecisionAgentHandler(root: URL) {
   const session = { requests: 0, cacheHits: 0, totalInputTokens: 0, totalOutputTokens: 0 }
-  const cache = new Map<string, { provider: string; result: DecisionDetailed<string> }>()
+  const cache = new Map<string, { provider: string; model?: string; promise: Promise<DecisionDetailed<string>> }>()
   const logPath = fileURLToPath(new URL('data/decisions.ndjson', root))
   const shotsRoot = resolve(fileURLToPath(new URL('data/decision-shots', root)))
   let logWriteCount = 0
+  let logQueue: Promise<void> = Promise.resolve()
 
-  async function appendDecisionLog(entry: Record<string, unknown>): Promise<void> {
-    try {
-      await mkdir(dirname(logPath), { recursive: true })
-      const line = JSON.stringify({ ts: new Date().toISOString(), ...entry }) + '\n'
-      await appendFile(logPath, line, 'utf8')
-      logWriteCount++
-      if (logWriteCount % 100 === 0) {
-        const all = (await readFile(logPath, 'utf8')).trim().split('\n')
-        if (all.length > MAX_LOG_LINES) {
-          await writeFile(logPath, all.slice(-MAX_LOG_LINES).join('\n') + '\n', 'utf8')
+  function appendDecisionLog(entry: Record<string, unknown>): Promise<void> {
+    const run = async () => {
+      try {
+        await mkdir(dirname(logPath), { recursive: true })
+        const line = JSON.stringify({ ts: new Date().toISOString(), ...entry }) + '\n'
+        await appendFile(logPath, line, 'utf8')
+        logWriteCount++
+        if (logWriteCount % 100 === 0) {
+          const all = (await readFile(logPath, 'utf8')).trim().split('\n')
+          if (all.length > MAX_LOG_LINES) {
+            await writeFile(logPath, all.slice(-MAX_LOG_LINES).join('\n') + '\n', 'utf8')
+          }
         }
+      } catch {
+        // Never break live gameplay decisions if disk logging fails.
       }
-    } catch {
-      // Never break live gameplay decisions if disk logging fails.
     }
+    logQueue = logQueue.then(run, run)
+    return logQueue
   }
 
   async function readDecisionLog(limit = 200): Promise<Record<string, unknown>[]> {
@@ -225,6 +309,33 @@ export function createDecisionAgentHandler(root: URL) {
       return true
     }
 
+    if (pathname.startsWith('/__testing/decision/')) {
+      const secFetchSite = typeof req.headers['sec-fetch-site'] === 'string'
+        ? req.headers['sec-fetch-site'].trim().toLowerCase()
+        : ''
+      if (secFetchSite === 'cross-site') {
+        res.writeHead(403, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' })
+        res.end(JSON.stringify({ ok: false, error: 'Cross-site requests are forbidden' }))
+        return true
+      }
+      const origin = typeof req.headers.origin === 'string' ? req.headers.origin.trim() : ''
+      if (origin && !isAllowedOrigin(origin, typeof req.headers.host === 'string' ? req.headers.host : undefined)) {
+        res.writeHead(403, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' })
+        res.end(JSON.stringify({ ok: false, error: 'Cross-origin requests are forbidden' }))
+        return true
+      }
+      if (req.method === 'POST') {
+        const contentType = typeof req.headers['content-type'] === 'string'
+          ? req.headers['content-type'].trim().toLowerCase()
+          : ''
+        if (!contentType.startsWith('application/json')) {
+          res.writeHead(415, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' })
+          res.end(JSON.stringify({ ok: false, error: 'Content-Type must be application/json' }))
+          return true
+        }
+      }
+    }
+
     if (pathname === '/__testing/agent' && req.method === 'GET') {
       res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store' })
         .end(renderPopoutAgentHtml())
@@ -252,6 +363,7 @@ export function createDecisionAgentHandler(root: URL) {
         if (!targetPath.startsWith(shotsRoot + sep)) throw new Error('Invalid screenshot path')
         await mkdir(targetDir, { recursive: true })
         await writeFile(targetPath, bytes)
+        await pruneSessionScreenshots(targetDir)
         sendJson(res, {
           ok: true,
           file: `data/decision-shots/${sessionDir}/${filename}`,
@@ -259,7 +371,8 @@ export function createDecisionAgentHandler(root: URL) {
           bytes: bytes.byteLength
         })
       } catch (error) {
-        res.writeHead(400, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' })
+        const status = error instanceof PayloadTooLargeError ? 413 : 400
+        res.writeHead(status, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' })
         res.end(JSON.stringify({ ok: false, error: error instanceof Error ? error.message : String(error) }))
       }
       return true
@@ -268,16 +381,23 @@ export function createDecisionAgentHandler(root: URL) {
     if (pathname.startsWith('/__testing/decision/shot/') && req.method === 'GET') {
       const rel = pathname.slice('/__testing/decision/shot/'.length)
       const parts = rel.split('/')
-      if (parts.length !== 2 || parts.some(p => !p || p === '.' || p === '..' || /[/\\\0]/.test(p))) {
+      if (parts.length !== 2 || !SHOT_SESSION_RE.test(parts[0]) || !SHOT_FILENAME_RE.test(parts[1])) {
         sendText(res, 400, 'Invalid screenshot path')
         return true
       }
-      const targetPath = resolve(shotsRoot, parts[0], parts[1])
-      if (!targetPath.startsWith(shotsRoot + sep)) {
+      const sessionPath = resolve(shotsRoot, parts[0])
+      const targetPath = resolve(sessionPath, parts[1])
+      if (!sessionPath.startsWith(shotsRoot + sep) || !targetPath.startsWith(sessionPath + sep)) {
         sendText(res, 403, 'Forbidden')
         return true
       }
       try {
+        const dirInfo = await lstat(sessionPath)
+        const fileInfo = await lstat(targetPath)
+        if (!dirInfo.isDirectory() || !fileInfo.isFile()) {
+          sendText(res, 403, 'Forbidden')
+          return true
+        }
         const bytes = await readFile(targetPath)
         const mime = parts[1].endsWith('.png') ? 'image/png' : 'image/jpeg'
         res.writeHead(200, { 'Content-Type': mime, 'Cache-Control': 'no-store' }).end(bytes)
@@ -305,7 +425,7 @@ export function createDecisionAgentHandler(root: URL) {
       }
       sendJson(res, {
         ok: true,
-        logPath,
+        logPath: 'data/decisions.ndjson',
         summary: {
           totalDecisions: decisions.length,
           totalOutcomes: outcomes.length,
@@ -327,7 +447,8 @@ export function createDecisionAgentHandler(root: URL) {
         await appendDecisionLog({ kind: 'outcome', ...parsed })
         sendJson(res, { ok: true })
       } catch (error) {
-        res.writeHead(400, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' })
+        const status = error instanceof PayloadTooLargeError ? 413 : 400
+        res.writeHead(status, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' })
         res.end(JSON.stringify({ ok: false, error: error instanceof Error ? error.message : String(error) }))
       }
       return true
@@ -341,11 +462,11 @@ export function createDecisionAgentHandler(root: URL) {
         defaultProvider: hasAnyRemote ? resolved.provider : 'local',
         configuredProviders: { ...resolved.configuredProviders, local: true },
         defaultModels: {
-          jev: resolved.model ?? 'jev-latest',
-          typesafe: resolved.model ?? 'jev-latest',
-          clef: 'clef-flash',
-          openai: 'gpt-6-luna',
-          http: '',
+          jev: resolved.provider === 'jev' && resolved.model ? resolved.model : 'jev-latest',
+          typesafe: resolved.provider === 'typesafe' && resolved.model ? resolved.model : 'jev-latest',
+          clef: resolved.provider === 'clef' && resolved.model ? resolved.model : 'clef-flash',
+          openai: resolved.provider === 'openai' && resolved.model ? resolved.model : 'gpt-6-luna',
+          http: resolved.provider === 'http' && resolved.model ? resolved.model : '',
           local: 'local-heuristic-softmax'
         },
         session: { ...session }
@@ -360,15 +481,18 @@ export function createDecisionAgentHandler(root: URL) {
         if (!isRecord(parsed)) throw new Error('Expected JSON object')
         body = parsed
       } catch (error) {
-        res.writeHead(400, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' })
+        const status = error instanceof PayloadTooLargeError ? 413 : 400
+        res.writeHead(status, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' })
         res.end(JSON.stringify({ ok: false, error: error instanceof Error ? error.message : String(error) }))
         return true
       }
 
       const rawOptions = Array.isArray(body.options) ? body.options : []
       const options: DecisionAgentOptionPayload[] = []
+      const seenOptionIds = new Set<string>()
       for (const item of rawOptions) {
-        if (!isRecord(item) || typeof item.id !== 'string' || !item.id) continue
+        if (!isRecord(item) || typeof item.id !== 'string' || !item.id || seenOptionIds.has(item.id)) continue
+        seenOptionIds.add(item.id)
         options.push({
           id: item.id,
           label: typeof item.label === 'string' ? item.label : undefined,
@@ -424,7 +548,16 @@ export function createDecisionAgentHandler(root: URL) {
 
       const requestedRaw = typeof body.provider === 'string' ? body.provider.trim().toLowerCase() : undefined
       const requestedRemote = parseDecisionProviderName(requestedRaw)
-      const resolved = resolveDecisionEnv(process.env, root, requestedRemote)
+      if (requestedRaw && requestedRaw !== 'local' && !requestedRemote) {
+        res.writeHead(400, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' })
+        res.end(JSON.stringify({
+          ok: false,
+          error: `Unknown decision provider "${requestedRaw}". Choose local, http, openai, clef, jev, or typesafe`
+        }))
+        return true
+      }
+      const defaultResolved = resolveDecisionEnv(process.env, root)
+      const resolved = requestedRemote ? resolveDecisionEnv(process.env, root, requestedRemote) : defaultResolved
       const provider: DecisionAgentProvider = requestedRaw === 'local'
         ? 'local'
         : requestedRemote ?? (
@@ -460,48 +593,99 @@ export function createDecisionAgentHandler(root: URL) {
         return true
       }
 
-      const token = (typeof body.token === 'string' && body.token.trim()) ? body.token.trim() : resolved.token
+      const clientToken = typeof body.token === 'string' && body.token.trim() ? body.token.trim() : undefined
+      const clientEndpoint = typeof body.endpoint === 'string' && body.endpoint.trim() ? body.endpoint.trim() : undefined
+      let endpoint: string | undefined = resolved.endpoint
+      if (clientEndpoint) {
+        if (provider === 'http' && clientToken) {
+          endpoint = clientEndpoint
+        } else if (provider === 'http' && resolved.endpoint && clientEndpoint === resolved.endpoint) {
+          endpoint = resolved.endpoint
+        } else {
+          res.writeHead(403, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' })
+          res.end(JSON.stringify({
+            ok: false,
+            provider,
+            error: 'Custom endpoint override is not permitted with server-managed credentials'
+          } satisfies DecisionAgentServerResponse))
+          return true
+        }
+      }
+
+      const token = clientToken ?? resolved.token
       const accountId = (typeof body.accountId === 'string' && body.accountId.trim()) ? body.accountId.trim() : resolved.accountId
-      const endpoint = (typeof body.endpoint === 'string' && body.endpoint.trim()) ? body.endpoint.trim() : resolved.endpoint
-      const model = (typeof body.model === 'string' && body.model.trim()) ? body.model.trim() : resolved.model
+      const resolvedModel = provider === defaultResolved.provider ? defaultResolved.model : undefined
+      const model = (typeof body.model === 'string' && body.model.trim()) ? body.model.trim() : resolvedModel
       const labels = options.map(o => o.id)
       const criteria = Object.fromEntries(options.map(o => [o.id, o.description || o.label || o.id]))
 
       const checkForBug = body.checkForBug !== false
       const bugRubric = typeof body.bugRubric === 'string' && body.bugRubric.trim() ? body.bugRubric.trim() : undefined
       const useCache = body.useCache !== false
-      const cacheKey = JSON.stringify({ provider, model, rubric, criteria, checkForBug, bugRubric, state: body.state ?? null, evidence })
+      const cacheKey = JSON.stringify({
+        provider,
+        endpoint: endpoint ?? null,
+        accountId: accountId ?? null,
+        model: model ?? null,
+        rubric,
+        criteria,
+        checkForBug,
+        bugRubric: bugRubric ?? null,
+        state: body.state ?? null,
+        evidence
+      })
       const hit = useCache ? cache.get(cacheKey) : undefined
       if (hit) {
-        session.cacheHits++
-        await appendDecisionLog({
-          kind: 'decision', sessionId: metaSessionId, game: metaGame, screen: metaScreen, source: metaSource,
-          provider: hit.provider, model: hit.result.model ?? model, choice: hit.result.label,
-          choiceLabel: labelFor(hit.result.label), confidence: hit.result.confidence,
-          probabilities: hit.result.probabilities, evidence: hit.result.evidence,
-          evidenceProbabilities: hit.result.evidenceProbabilities,
-          bugProbability: hit.result.bugProbability, bugSuspected: hit.result.bugSuspected,
-          optionsCount: options.length, latencyMs: 0, cached: true
-        })
-        sendJson(res, {
-          ok: true,
-          provider: hit.provider,
-          model: hit.result.model ?? model,
-          choice: hit.result.label,
-          confidence: hit.result.confidence,
-          probabilities: hit.result.probabilities,
-          evidence: hit.result.evidence,
-          evidenceProbabilities: hit.result.evidenceProbabilities,
-          bugProbability: hit.result.bugProbability,
-          bugSuspected: hit.result.bugSuspected,
-          usage: hit.result.usage,
-          latencyMs: 0,
-          cached: true,
-          session: { ...session }
-        } satisfies DecisionAgentServerResponse)
+        try {
+          const result = await hit.promise
+          session.cacheHits++
+          await appendDecisionLog({
+            kind: 'decision', sessionId: metaSessionId, game: metaGame, screen: metaScreen, source: metaSource,
+            provider: hit.provider, model: result.model ?? hit.model ?? model, choice: result.label,
+            choiceLabel: labelFor(result.label), confidence: result.confidence,
+            probabilities: result.probabilities, evidence: result.evidence,
+            evidenceProbabilities: result.evidenceProbabilities,
+            bugProbability: result.bugProbability, bugSuspected: result.bugSuspected,
+            optionsCount: options.length, latencyMs: 0, cached: true
+          })
+          sendJson(res, {
+            ok: true,
+            provider: hit.provider,
+            model: result.model ?? hit.model ?? model,
+            choice: result.label,
+            confidence: result.confidence,
+            probabilities: result.probabilities,
+            evidence: result.evidence,
+            evidenceProbabilities: result.evidenceProbabilities,
+            bugProbability: result.bugProbability,
+            bugSuspected: result.bugSuspected,
+            usage: result.usage,
+            latencyMs: 0,
+            cached: true,
+            session: { ...session }
+          } satisfies DecisionAgentServerResponse)
+        } catch (error) {
+          const message = error instanceof Error ? error.message : String(error)
+          res.writeHead(502, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' })
+          res.end(JSON.stringify({ ok: false, provider: hit.provider, error: message, session: { ...session } } satisfies DecisionAgentServerResponse))
+        }
         return true
       }
 
+      const maxSessionRequests = resolveMaxSessionRequests()
+      if (session.requests >= maxSessionRequests) {
+        res.writeHead(429, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' })
+        res.end(JSON.stringify({
+          ok: false,
+          provider,
+          error: `Decision session request limit (${maxSessionRequests}) exceeded`,
+          session: { ...session }
+        } satisfies DecisionAgentServerResponse))
+        return true
+      }
+
+      session.requests++
+      let pending: Promise<DecisionDetailed<string>> | undefined
       try {
         const api = createDecisionApi({
           provider,
@@ -519,17 +703,17 @@ export function createDecisionAgentHandler(root: URL) {
           maxResponseBytes: 32_768,
           timeoutMs: 15_000
         })
-        const result = await api.decideDetailed({ input: body.state ?? null, evidence }, { useCache: false })
-        session.requests++
-        session.totalInputTokens += result.usage?.inputTokens ?? 0
-        session.totalOutputTokens += result.usage?.outputTokens ?? 0
+        pending = api.decideDetailed({ input: body.state ?? null, evidence }, { useCache: false })
         if (useCache) {
           if (cache.size >= MAX_CACHE_ENTRIES) {
             const oldestKey = cache.keys().next().value
             if (oldestKey !== undefined) cache.delete(oldestKey)
           }
-          cache.set(cacheKey, { provider, result })
+          cache.set(cacheKey, { provider, model: api.model, promise: pending })
         }
+        const result = await pending
+        session.totalInputTokens += result.usage?.inputTokens ?? 0
+        session.totalOutputTokens += result.usage?.outputTokens ?? 0
         await appendDecisionLog({
           kind: 'decision', sessionId: metaSessionId, game: metaGame, screen: metaScreen, source: metaSource,
           provider, model: result.model ?? api.model, choice: result.label, choiceLabel: labelFor(result.label),
@@ -555,6 +739,9 @@ export function createDecisionAgentHandler(root: URL) {
           session: { ...session }
         } satisfies DecisionAgentServerResponse)
       } catch (error) {
+        if (useCache && pending && cache.get(cacheKey)?.promise === pending) {
+          cache.delete(cacheKey)
+        }
         const message = error instanceof Error ? error.message : String(error)
         await appendDecisionLog({
           kind: 'anomaly', sessionId: metaSessionId, game: metaGame, screen: metaScreen, source: metaSource,

@@ -19,7 +19,13 @@ function bootPopout() {
 
   root.replaceChildren(header, body)
 
-  const bridge = createRemoteDecisionAgentBridge()
+  let targetHostId: string | undefined
+  try {
+    const rawHost = new URLSearchParams(window.location.search).get('host')?.trim()
+    if (rawHost) targetHostId = rawHost
+  } catch { /* Ignore invalid location search. */ }
+
+  const bridge = createRemoteDecisionAgentBridge(targetHostId)
   const handle = mountDecisionAgentPane(body, {
     bridge,
     onStatus(msg) {
@@ -27,10 +33,15 @@ function bootPopout() {
     }
   })
 
-  window.addEventListener('beforeunload', () => {
+  let cleanedUp = false
+  const cleanup = () => {
+    if (cleanedUp) return
+    cleanedUp = true
     handle.dispose()
     bridge.dispose()
-  })
+  }
+  window.addEventListener('pagehide', cleanup)
+  window.addEventListener('beforeunload', cleanup)
 }
 
 if (document.readyState === 'loading') {

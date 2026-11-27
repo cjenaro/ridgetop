@@ -9808,12 +9808,11 @@ export function executeAutoBattlePlan(state: GameState, plan: AutoBattleActionPl
   if (battle.units.some(u => u.path.length > 0)) return false
 
   const actor = getUnitByUid(battle, battle.activeUnitUid)
-  if (!actor || !actor.alive || actor.team !== 'ally') {
-    endPlayerTurn(state)
-    return true
-  }
+  if (!actor || !actor.alive || actor.team !== 'ally') return false
+  if (plan.actorUid !== actor.uid) return false
 
-  if (plan.kind === 'tactic' && plan.tacticUid && plan.targetCol !== undefined && plan.targetRow !== undefined) {
+  if (plan.kind === 'tactic') {
+    if (!plan.tacticUid || plan.targetCol === undefined || plan.targetRow === undefined) return false
     battle.armedSkillIndex = null
     battle.armedTacticUid = plan.tacticUid
     refreshHighlights(battle, state.campaign)
@@ -9824,22 +9823,29 @@ export function executeAutoBattlePlan(state: GameState, plan: AutoBattleActionPl
     }
     battle.armedTacticUid = null
     refreshHighlights(battle, state.campaign)
+    return false
   }
 
-  if (plan.kind === 'skill' && plan.skillIndex !== undefined && plan.targetCol !== undefined && plan.targetRow !== undefined) {
+  if (plan.kind === 'skill') {
+    if (actor.acted || actor.stunTurns > 0) return false
+    if (plan.skillIndex === undefined || plan.targetCol === undefined || plan.targetRow === undefined) return false
+    if (!battle.cells[plan.targetRow]?.[plan.targetCol]) return false
+    const skill = getHeroSkill(actor, plan.skillIndex)
+    if (!skill || actor.cooldowns[plan.skillIndex] > 0) return false
     const skillTarget = unitAt(battle, plan.targetCol, plan.targetRow)
-    if (!skillTarget || skillTarget.team !== 'enemy' || !isEnemyShrouded(battle, skillTarget)) {
-      executeHeroSkill(state, actor, plan.skillIndex, plan.targetCol, plan.targetRow)
-      battle.armedSkillIndex = null
-      if (battle.phase === 'player') {
-        refreshHighlights(battle, state.campaign)
-      }
-      battle.autoBattleDelay = AUTO_BATTLE_POST_ACT_DELAY
-      return true
+    if (skillTarget && skillTarget.team === 'enemy' && isEnemyShrouded(battle, skillTarget)) return false
+    executeHeroSkill(state, actor, plan.skillIndex, plan.targetCol, plan.targetRow)
+    battle.armedSkillIndex = null
+    if (battle.phase === 'player') {
+      refreshHighlights(battle, state.campaign)
     }
+    battle.autoBattleDelay = AUTO_BATTLE_POST_ACT_DELAY
+    return true
   }
 
-  if (plan.kind === 'attack' && plan.targetCol !== undefined && plan.targetRow !== undefined) {
+  if (plan.kind === 'attack') {
+    if (actor.acted || actor.stunTurns > 0) return false
+    if (plan.targetCol === undefined || plan.targetRow === undefined) return false
     const target = unitAt(battle, plan.targetCol, plan.targetRow)
     if (target && target.team === 'enemy' && !isEnemyShrouded(battle, target)) {
       executeBasicAttack(state, actor, target)
@@ -9853,63 +9859,70 @@ export function executeAutoBattlePlan(state: GameState, plan: AutoBattleActionPl
       battle.autoBattleDelay = AUTO_BATTLE_POST_ACT_DELAY
       return true
     }
+    return false
   }
 
-  if (
-    (plan.kind === 'move_and_skill' || plan.kind === 'move_and_attack') &&
-    plan.moveTo &&
-    plan.targetCol !== undefined &&
-    plan.targetRow !== undefined
-  ) {
-    const path = findGridPath(battle, actor, plan.moveTo.col, plan.moveTo.row)
-    if (path.length > 0) {
-      actor.path = path
-      actor.moveProgress = 0
-      actor.moved = true
-      actor.animState = 'run'
-      battle.selectedUnitUid = actor.uid
-      battle.moveUndo = null
-      battle.oaTriggeredUids = []
-      battle.pendingAction = {
-        col: plan.targetCol,
-        row: plan.targetRow,
-        skillIndex: plan.kind === 'move_and_skill' && plan.skillIndex !== undefined ? plan.skillIndex : null
-      }
-      battle.moveTiles = []
-      battle.targetTiles = []
-      battle.moveAttackTiles = []
-      battle.autoBattleDelay = AUTO_BATTLE_POST_ACT_DELAY
-      state.sounds.push({ kind: 'step' })
-      return true
+  if (plan.kind === 'move_and_skill' || plan.kind === 'move_and_attack') {
+    if (actor.moved || actor.acted || actor.stunTurns > 0) return false
+    if (!plan.moveTo || plan.targetCol === undefined || plan.targetRow === undefined) return false
+    if (plan.kind === 'move_and_skill') {
+      if (plan.skillIndex === undefined) return false
+      const skill = getHeroSkill(actor, plan.skillIndex)
+      if (!skill || actor.cooldowns[plan.skillIndex] > 0) return false
     }
-  }
-
-  if (plan.kind === 'move' && plan.moveTo) {
     const path = findGridPath(battle, actor, plan.moveTo.col, plan.moveTo.row)
-    if (path.length > 0) {
-      actor.path = path
-      actor.moveProgress = 0
-      actor.moved = true
-      actor.animState = 'run'
-      battle.selectedUnitUid = actor.uid
-      battle.moveUndo = null
-      battle.oaTriggeredUids = []
-      battle.pendingAction = null
-      battle.moveTiles = []
-      battle.targetTiles = []
-      battle.moveAttackTiles = []
-      battle.autoBattleDelay = AUTO_BATTLE_POST_ACT_DELAY
-      state.sounds.push({ kind: 'step' })
-      return true
+    if (path.length === 0) return false
+    actor.path = path
+    actor.moveProgress = 0
+    actor.moved = true
+    actor.animState = 'run'
+    battle.selectedUnitUid = actor.uid
+    battle.moveUndo = null
+    battle.oaTriggeredUids = []
+    battle.pendingAction = {
+      col: plan.targetCol,
+      row: plan.targetRow,
+      skillIndex: plan.kind === 'move_and_skill' && plan.skillIndex !== undefined ? plan.skillIndex : null
     }
+    battle.moveTiles = []
+    battle.targetTiles = []
+    battle.moveAttackTiles = []
+    battle.autoBattleDelay = AUTO_BATTLE_POST_ACT_DELAY
+    state.sounds.push({ kind: 'step' })
+    return true
   }
 
-  // End turn with optimal facing toward the nearest / highest-threat enemy
-  if (actor.alive && actor.stunTurns === 0) {
-    setUnitFacing(actor, plan.facing ?? chooseBestTurnEndFacing(battle, actor))
+  if (plan.kind === 'move') {
+    if (actor.moved || actor.stunTurns > 0) return false
+    if (!plan.moveTo) return false
+    const path = findGridPath(battle, actor, plan.moveTo.col, plan.moveTo.row)
+    if (path.length === 0) return false
+    actor.path = path
+    actor.moveProgress = 0
+    actor.moved = true
+    actor.animState = 'run'
+    battle.selectedUnitUid = actor.uid
+    battle.moveUndo = null
+    battle.oaTriggeredUids = []
+    battle.pendingAction = null
+    battle.moveTiles = []
+    battle.targetTiles = []
+    battle.moveAttackTiles = []
+    battle.autoBattleDelay = AUTO_BATTLE_POST_ACT_DELAY
+    state.sounds.push({ kind: 'step' })
+    return true
   }
-  endPlayerTurn(state)
-  return true
+
+  if (plan.kind === 'end_turn') {
+    // End turn with optimal facing toward the nearest / highest-threat enemy
+    if (actor.alive && actor.stunTurns === 0) {
+      setUnitFacing(actor, plan.facing ?? chooseBestTurnEndFacing(battle, actor))
+    }
+    endPlayerTurn(state)
+    return true
+  }
+
+  return false
 }
 
 /**

@@ -2,6 +2,7 @@ import type { Decision, DecisionDetailed, DecisionInput } from './types.ts'
 import type { DecisionProviderName } from './decision-providers.ts'
 import { existsSync, readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
+import process from 'node:process'
 import { fileURLToPath } from 'node:url'
 import { selectDecisionProvider } from './decision-providers.ts'
 
@@ -30,6 +31,13 @@ export function parseDotEnv(text: string): Record<string, string> {
       (value.startsWith("'") && value.endsWith("'") && value.length >= 2)
     ) {
       value = value.slice(1, -1)
+    } else {
+      const commentIdx = value.search(/\s#/)
+      if (commentIdx >= 0) {
+        value = value.slice(0, commentIdx).trimEnd()
+      } else if (value.startsWith('#')) {
+        value = ''
+      }
     }
     out[key] = value
   }
@@ -145,11 +153,29 @@ export function resolveDecisionEnv(
 async function readDecision(response: Response, maxResponseBytes: number) {
   if (!response.ok) {
     let detail = ''
-    try {
-      const text = await response.text()
-      detail = text ? ': ' + text.slice(0, 240) : ''
-    } catch {
-      await response.body?.cancel().catch(() => {})
+    const errorCap = Math.min(maxResponseBytes, 1024)
+    const reader = response.body?.getReader()
+    if (reader) {
+      const decoder = new TextDecoder('utf-8')
+      let text = ''
+      let bytes = 0
+      try {
+        while (bytes < errorCap) {
+          const { value, done } = await reader.read()
+          if (done) break
+          const remaining = errorCap - bytes
+          const slice = value.byteLength > remaining ? value.subarray(0, remaining) : value
+          bytes += slice.byteLength
+          text += decoder.decode(slice, { stream: true })
+        }
+        text += decoder.decode()
+        detail = text ? ': ' + text.slice(0, 240) : ''
+      } catch {
+        // Ignore error body read failures.
+      } finally {
+        await reader.cancel().catch(() => {})
+        reader.releaseLock()
+      }
     }
     throw new Error('Decision API returned HTTP ' + response.status + detail)
   }
@@ -180,6 +206,23 @@ async function readDecision(response: Response, maxResponseBytes: number) {
   }
 }
 
+export interface DecisionApiOptions<L extends string = string> {
+  provider?: DecisionProviderName
+  endpoint?: string | URL
+  token?: string
+  accountId?: string
+  model?: string
+  maxRequests?: number
+  maxRequestBytes?: number
+  maxResponseBytes?: number
+  timeoutMs?: number
+  labels: readonly L[]
+  rubric: string
+  criteria?: Readonly<Record<string, string>>
+  checkForBug?: boolean
+  bugRubric?: string
+}
+
 export function createDecisionApi<I, E, L extends string>({
   provider = 'http',
   endpoint,
@@ -195,22 +238,7 @@ export function createDecisionApi<I, E, L extends string>({
   criteria,
   checkForBug,
   bugRubric
-}: {
-  provider?: DecisionProviderName
-  endpoint?: string | URL
-  token?: string
-  accountId?: string
-  model?: string
-  maxRequests?: number
-  maxRequestBytes?: number
-  maxResponseBytes?: number
-  timeoutMs?: number
-  labels: readonly L[]
-  rubric: string
-  criteria?: Readonly<Record<string, string>>
-  checkForBug?: boolean
-  bugRubric?: string
-}) {
+}: DecisionApiOptions<L>) {
   const adapter = selectDecisionProvider(provider, { endpoint, model, accountId, labels })
   const url = new URL(adapter.endpoint)
   const local = ['localhost', '127.0.0.1', '[::1]'].includes(url.hostname)
@@ -220,6 +248,15 @@ export function createDecisionApi<I, E, L extends string>({
   if (provider !== 'http' && !token) throw new Error('Set RIDGETOP_DECISION_TOKEN (or TYPESAFE_API_KEY) for the selected provider')
   if (!Number.isSafeInteger(maxRequests) || maxRequests < 0) {
     throw new RangeError('Decision API request limit must be a nonnegative integer')
+  }
+  if (typeof maxRequestBytes !== 'number' || !Number.isFinite(maxRequestBytes) || maxRequestBytes <= 0) {
+    throw new RangeError('Decision API maxRequestBytes must be a positive finite number')
+  }
+  if (typeof maxResponseBytes !== 'number' || !Number.isFinite(maxResponseBytes) || maxResponseBytes <= 0) {
+    throw new RangeError('Decision API maxResponseBytes must be a positive finite number')
+  }
+  if (typeof timeoutMs !== 'number' || !Number.isFinite(timeoutMs) || timeoutMs <= 0) {
+    throw new RangeError('Decision API timeoutMs must be a positive finite number')
   }
   // Capture the rubric, criteria, and labels for consistency during this run.
   const scope = structuredClone({
@@ -236,12 +273,16 @@ export function createDecisionApi<I, E, L extends string>({
 
   async function decideDetailed(
     { input, evidence }: Omit<DecisionInput<I, E>, 'id'> & { id?: string },
-    options?: { useCache?: boolean }
+    options?: { useCache?: boolean; signal?: AbortSignal }
   ): Promise<DecisionDetailed<L>> {
     // Case IDs and answer keys stay local. Equivalent observations share one request.
     const context = { ...scope, input, evidence }
-    if (provider === 'clef' && evidence.length > 63) {
-      throw new RangeError('Cloudflare Clef supports up to 63 evidence items per decision')
+    const maxClefEvidence = scope.checkForBug ? 62 : 63
+    if (provider === 'clef' && evidence.length > maxClefEvidence) {
+      throw new RangeError(
+        `Cloudflare Clef supports up to ${maxClefEvidence} evidence items per decision` +
+        (scope.checkForBug ? ' when checkForBug is enabled' : '')
+      )
     }
     const body = JSON.stringify(adapter.encode(context))
     const bytes = textEncoder.encode(body).byteLength
@@ -253,6 +294,7 @@ export function createDecisionApi<I, E, L extends string>({
       const cachedResult = await cachedEntry
       return structuredClone({ ...cachedResult, cached: true })
     }
+    options?.signal?.throwIfAborted()
     if (usage.attempted >= maxRequests) {
       usage.overBudget++
       throw new Error('Decision API request budget exhausted')
@@ -260,8 +302,10 @@ export function createDecisionApi<I, E, L extends string>({
     usage.attempted++
     usage.requestBytes += bytes
     const startedAt = Date.now()
+    const timeoutSignal = AbortSignal.timeout(timeoutMs)
+    const signal = options?.signal ? AbortSignal.any([options.signal, timeoutSignal]) : timeoutSignal
     const request = fetch(url, {
-      method: 'POST', headers, body, redirect: 'error', signal: AbortSignal.timeout(timeoutMs)
+      method: 'POST', headers, body, redirect: 'error', signal
     })
       .then(res => readDecision(res, maxResponseBytes))
       .then(response => {
@@ -282,8 +326,11 @@ export function createDecisionApi<I, E, L extends string>({
     provider,
     model: adapter.model,
     decideDetailed,
-    async decide(observation: Omit<DecisionInput<I, E>, 'id'> & { id?: string }): Promise<Decision<L>> {
-      const detailed = await decideDetailed(observation)
+    async decide(
+      observation: Omit<DecisionInput<I, E>, 'id'> & { id?: string },
+      options?: { useCache?: boolean; signal?: AbortSignal }
+    ): Promise<Decision<L>> {
+      const detailed = await decideDetailed(observation, options)
       return { label: detailed.label, evidence: detailed.evidence }
     },
     report() { return { limit: maxRequests, ...usage } }

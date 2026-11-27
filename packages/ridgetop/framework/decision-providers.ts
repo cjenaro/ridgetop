@@ -136,7 +136,13 @@ function normalizeDetailed<L extends string>(
   if (request.checkForBug) {
     const bugAnswer = getAnswer('bug_suspected')
     const rawProb = bugAnswer?.[probabilityKey]
-    if (typeof rawProb === 'number' && Number.isFinite(rawProb) && rawProb >= 0 && rawProb <= 1) {
+    if (
+      bugAnswer?.type === predicateType &&
+      typeof rawProb === 'number' &&
+      Number.isFinite(rawProb) &&
+      rawProb >= 0 &&
+      rawProb <= 1
+    ) {
       bugProbability = rawProb
     }
   }
@@ -147,7 +153,7 @@ function normalizeDetailed<L extends string>(
     ...(confidence !== undefined ? { confidence } : {}),
     ...(probabilities ? { probabilities } : {}),
     ...(request.evidence.length > 0 ? { evidenceProbabilities } : {}),
-    ...(bugProbability !== undefined ? { bugProbability, bugSuspected: bugProbability >= 0.5 } : {}),
+    ...(bugProbability !== undefined ? { bugProbability, bugSuspected: bugProbability > 0.5 } : {}),
     ...(meta?.model ? { model: meta.model } : {}),
     ...(meta?.usage ? { usage: meta.usage } : {})
   }
@@ -165,7 +171,11 @@ const openai: DecisionProviderAdapter = {
       labels
         ? {
             ...question,
-            choices: labels.map(value => criteria?.[value] ? { value, description: criteria[value] } : { value })
+            choices: labels.map(value =>
+              criteria && Object.hasOwn(criteria, value) && criteria[value]
+                ? { value, description: criteria[value] }
+                : { value }
+            )
           }
         : question)
     const data = { input: request.input, evidence: request.evidence }
@@ -197,7 +207,9 @@ function encodeSystemOne(request: DecisionRequestContext, model?: string) {
       ? {
           type: 'choice',
           instructions,
-          criteria: Object.fromEntries(labels.map(label => [label, criteria?.[label] ?? label]))
+          criteria: Object.fromEntries(
+            labels.map(label => [label, (criteria && Object.hasOwn(criteria, label) ? criteria[label] : undefined) ?? label])
+          )
         }
       : { type: 'noul', instructions }
   ])
@@ -236,21 +248,38 @@ const httpAdapter: DecisionProviderAdapter = {
     const label = typeof response.label === 'string'
       ? request.labels.find(item => item === response.label)
       : undefined
-    if (label === undefined || !Array.isArray(response.evidence)) {
+    if (label === undefined) {
       throw new Error('Decision provider did not return an allowed label')
     }
+    if (!Array.isArray(response.evidence)) {
+      throw new Error('Decision provider did not return an evidence array')
+    }
+    const allowedEvidenceIds = new Set(request.evidence.map(item => item.id))
+    const seenEvidenceIds = new Set<string>()
     const evidence: string[] = []
     for (const item of response.evidence) {
-      if (typeof item !== 'string') {
+      if (typeof item !== 'string' || !allowedEvidenceIds.has(item)) {
         throw new Error('Decision provider did not return a valid evidence judgment')
       }
-      evidence.push(item)
+      if (!seenEvidenceIds.has(item)) {
+        seenEvidenceIds.add(item)
+        evidence.push(item)
+      }
     }
     const confidence = typeof response.confidence === 'number' && Number.isFinite(response.confidence)
       ? response.confidence
       : undefined
     const probabilities = extractProbabilities(response.probabilities)
     const evidenceProbabilities = extractProbabilities(response.evidenceProbabilities)
+    const bugProbability = typeof response.bugProbability === 'number' &&
+      Number.isFinite(response.bugProbability) &&
+      response.bugProbability >= 0 &&
+      response.bugProbability <= 1
+      ? response.bugProbability
+      : undefined
+    const bugSuspected = typeof response.bugSuspected === 'boolean'
+      ? response.bugSuspected
+      : bugProbability !== undefined ? bugProbability > 0.5 : undefined
     const model = typeof response.model === 'string' ? response.model : undefined
     const usage = extractUsage(response.usage)
     return {
@@ -259,6 +288,8 @@ const httpAdapter: DecisionProviderAdapter = {
       ...(confidence !== undefined ? { confidence } : {}),
       ...(probabilities ? { probabilities } : {}),
       ...(evidenceProbabilities ? { evidenceProbabilities } : {}),
+      ...(bugProbability !== undefined ? { bugProbability } : {}),
+      ...(bugSuspected !== undefined ? { bugSuspected } : {}),
       ...(model ? { model } : {}),
       ...(usage ? { usage } : {})
     }

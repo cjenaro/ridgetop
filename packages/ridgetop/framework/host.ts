@@ -209,7 +209,12 @@ export function createGameHost({
   async function handleTesting(req: IncomingMessage, res: ServerResponse, pathname: string): Promise<boolean> {
     if (!testingEnabled || !pathname.startsWith('/__testing/')) return false
     if (pathname.startsWith('/__testing/decision/') || pathname === '/__testing/agent') {
-      decisionHandlerPromise ??= import('./decision-server.ts').then(mod => mod.createDecisionAgentHandler(root))
+      decisionHandlerPromise ??= import('./decision-server.ts')
+        .then(mod => mod.createDecisionAgentHandler(root))
+        .catch(err => {
+          decisionHandlerPromise = undefined
+          throw err
+        })
       const decisionHandler = await decisionHandlerPromise
       return decisionHandler(req, res, pathname)
     }

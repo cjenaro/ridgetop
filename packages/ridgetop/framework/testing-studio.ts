@@ -338,7 +338,15 @@ export function mountTestingStudio(options: { store?: ReviewStorePort; session?:
   }
 
   function openAgentPopout() {
-    window.open('/__testing/agent', 'ridgetop-decision-agent', 'width=480,height=880')
+    const popoutUrl = decisionUi.hostId
+      ? `/__testing/agent?host=${encodeURIComponent(decisionUi.hostId)}`
+      : '/__testing/agent'
+    const win = window.open(popoutUrl, 'ridgetop-decision-agent', 'width=480,height=880')
+    if (!win) {
+      footerMsg.textContent = 'Pop-up blocked — allow pop-ups or open /__testing/agent manually'
+      return
+    }
+    win.focus()
     drawer.hidden = true
     setBarCollapsed(true)
   }
@@ -367,9 +375,20 @@ export function mountTestingStudio(options: { store?: ReviewStorePort; session?:
     agentPane.hidden = next !== 'agent'
     if (next === 'agent') {
       badge.textContent = 'AI Agent'
-      titleEl.textContent = 'Decision API Inspector'
+      titleEl.replaceChildren(badge, document.createTextNode('Decision API Inspector'))
       metaEl.textContent = 'Live action selection & probabilities'
       decisionUi.refresh()
+    } else {
+      const sel = session.getSelection()
+      if (sel) {
+        badge.textContent = surfaceLabel(sel.surface)
+        titleEl.replaceChildren(badge, document.createTextNode(sel.asset))
+        metaEl.textContent = [sel.instanceId, sel.part ? `part: ${sel.part}` : undefined, sel.source].filter(Boolean).join(' · ')
+      } else {
+        badge.textContent = 'Asset'
+        titleEl.textContent = 'Paused — Click viewport to pick'
+        metaEl.textContent = 'Click any 3D model, rig, mesh, 2D sprite, or HUD element.'
+      }
     }
   }
 

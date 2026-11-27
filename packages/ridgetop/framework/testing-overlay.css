@@ -13,7 +13,10 @@
 
 #ridgetop-testing-root *,
 #ridgetop-testing-root *::before,
-#ridgetop-testing-root *::after {
+#ridgetop-testing-root *::after,
+#rt-popout-root *,
+#rt-popout-root *::before,
+#rt-popout-root *::after {
   box-sizing: border-box;
 }
 
@@ -170,7 +173,8 @@
 
 .rt-drawer[hidden],
 .rt-highlight[hidden],
-#ridgetop-testing-root [hidden] {
+#ridgetop-testing-root [hidden],
+#rt-popout-root [hidden] {
   display: none;
 }
 
@@ -511,6 +515,7 @@
     bottom: 6px;
     width: auto;
     height: 62vh;
+    max-height: calc(100vh - 70px);
   }
 }
 
@@ -540,7 +545,7 @@
 
 .rt-da-grid-2 {
   display: grid;
-  grid-template-columns: 1fr 1fr;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 6px;
 }
 

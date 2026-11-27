@@ -8746,7 +8746,7 @@ export function drawWorldMapNode(
     : opts.compact
       ? ((!opts.unlocked && !hot && zoom < 1.42) ? 10.5 : 15.5)
       : stage.kind === 'boss' ? 23 : stage.kind !== 'story' ? 20 : 18
-  const cy = y + (opts.compact ? 19 : r + 5)
+  const cy = y + (opts.compact ? 19 : 25)
   const biomeCol = BIOME_MAP_COLOR[stage.biome]
   const diffMeta = DIFFICULTY_META[stage.difficulty]
 
@@ -8943,7 +8943,7 @@ export function drawWorldMapNode(
     const pillW = opts.compact ? 36 : 44
     const pillH = opts.compact ? 11.5 : 13.5
     const pillX = cx - pillW / 2
-    const pillY = plaqueY + plaqueH + 1.5
+    const pillY = shouldDrawLabel ? plaqueY + plaqueH + 1.5 : cy + r + 3
     rr(ctx, pillX, pillY, pillW, pillH, pillH / 2)
     ctx.fillStyle = opts.masteryChestReady ? '#3a2b0d' : 'rgba(13, 19, 36, 0.92)'
     ctx.fill()

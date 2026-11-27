@@ -1507,6 +1507,18 @@ export function planAutoBattleAction(state: GameState): AutoBattleActionPlan | n
   }
 }
 
+function planKey(plan: AutoBattleActionPlan): string {
+  return [
+    plan.kind,
+    plan.tacticUid ?? '',
+    plan.skillIndex ?? '',
+    plan.targetCol ?? '',
+    plan.targetRow ?? '',
+    plan.moveTo?.col ?? '',
+    plan.moveTo?.row ?? ''
+  ].join(':')
+}
+
 /**
  * Collect a diverse set of top legal tactical action plans for the active player hero.
  * Used by the Ridgetop Decision Agent to let a Decision API (e.g. Typesafe JEV, Clef, OpenAI)
@@ -1546,9 +1558,6 @@ export function collectAutoBattleCandidates(state: GameState, maxCandidates = 6)
 
   // Always include the heuristic planner's top recommendation first
   const primary = planAutoBattleAction(state)
-  if (primary) {
-    addCandidate(`primary:${primary.kind}:${primary.skillIndex ?? ''}:${primary.tacticUid ?? ''}:${primary.targetCol ?? ''},${primary.targetRow ?? ''}`, primary)
-  }
 
   // Best tactic card
   const tacticPlan = planBestTacticCard(state, actor, provokingTaunters)
@@ -1613,7 +1622,7 @@ export function collectAutoBattleCandidates(state: GameState, maxCandidates = 6)
           }
         }
       } else {
-        const indirect = skill.pattern !== 'single' || skill.range >= 3
+        const indirect = isSkillIndirect(skill)
         for (const stand of stands) {
           if (stand.oaLethal) continue
           for (const enemy of visibleEnemies) {
@@ -1648,6 +1657,9 @@ export function collectAutoBattleCandidates(state: GameState, maxCandidates = 6)
         const counterPen = estimateCounterPenalty(battle, actor, stand.col, stand.row, enemy, est.arc, false, null, lethal)
         let score = totalDmg * 2.2 - counterPen + stand.terrainScore * 0.7
         if (lethal) score += 95 + objectiveTargetPriorityBonus(battle, enemy)
+        if (provokingTaunters.length > 0 && !provokingTaunters.some(t => t.uid === enemy.uid)) {
+          score -= 480
+        }
         if (stand.requiresMove && stand.oaLethal) score -= 240
         const tag = lethal ? ` (~${totalDmg} dmg, KO!)` : ` (~${totalDmg} dmg)`
         addCandidate(`attack:${enemy.uid}`, stand.requiresMove
@@ -1701,7 +1713,19 @@ export function collectAutoBattleCandidates(state: GameState, maxCandidates = 6)
     facing: chooseBestTurnEndFacing(battle, actor)
   })
 
-  const sorted = Array.from(byKey.values()).sort((a, b) => b.score - a.score)
+  // Deduplicate primary and loop candidates by canonical action identity
+  const deduped = new Map<string, AutoBattleActionPlan>()
+  const mergeCandidate = (plan: AutoBattleActionPlan) => {
+    const key = planKey(plan)
+    const existing = deduped.get(key)
+    if (!existing || plan.score > existing.score) {
+      deduped.set(key, plan)
+    }
+  }
+  if (primary) mergeCandidate(primary)
+  for (const plan of byKey.values()) mergeCandidate(plan)
+
+  const sorted = Array.from(deduped.values()).sort((a, b) => b.score - a.score)
   const cap = Math.max(2, maxCandidates)
   return sorted.slice(0, cap)
 }

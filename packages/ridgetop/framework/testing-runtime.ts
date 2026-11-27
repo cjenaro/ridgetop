@@ -104,6 +104,12 @@ export interface DecisionAgentResult {
   readonly probabilities?: Readonly<Record<string, number>>
   readonly evidence?: readonly string[]
   readonly evidenceProbabilities?: Readonly<Record<string, number>>
+  readonly bugProbability?: number
+  readonly bugSuspected?: boolean
+  readonly usage?: {
+    readonly inputTokens?: number
+    readonly outputTokens?: number
+  }
   readonly latencyMs?: number
   readonly cached?: boolean
 }
@@ -466,16 +472,44 @@ export function getLastFrame(): CapturedFrame | undefined {
   return getState().lastFrame
 }
 
+function isDisconnectedCanvas(canvas: HTMLCanvasElement): boolean {
+  return typeof canvas.isConnected === 'boolean' && !canvas.isConnected
+}
+
+function pruneSpriteDraws(state: TestingRuntimeState): boolean {
+  let pruned = false
+  for (const canvas of Array.from(state.spriteDrawsByCanvas.keys())) {
+    if (isDisconnectedCanvas(canvas)) {
+      state.spriteDrawsByCanvas.delete(canvas)
+      pruned = true
+    }
+  }
+  return pruned
+}
+
+function pruneCanvasUiRegions(state: TestingRuntimeState): void {
+  for (const canvas of Array.from(state.canvasUiRegions.keys())) {
+    if (isDisconnectedCanvas(canvas)) {
+      state.canvasUiRegions.delete(canvas)
+    }
+  }
+}
+
 export function recordSpriteBegin(canvas: HTMLCanvasElement): void {
   const state = getState()
   if (!state.active) return
-  state.spriteDrawsByCanvas.set(canvas, [])
+  pruneSpriteDraws(state)
+  if (!isDisconnectedCanvas(canvas)) {
+    state.spriteDrawsByCanvas.set(canvas, [])
+  }
   rebuildLastSpriteDraws(state)
 }
 
 export function recordSpriteDraw(record: SpriteDrawRecord): void {
   const state = getState()
   if (!state.active) return
+  if (isDisconnectedCanvas(record.canvas)) return
+  if (pruneSpriteDraws(state)) rebuildLastSpriteDraws(state)
   let list = state.spriteDrawsByCanvas.get(record.canvas)
   if (!list) {
     list = []
@@ -487,14 +521,20 @@ export function recordSpriteDraw(record: SpriteDrawRecord): void {
 
 function rebuildLastSpriteDraws(state: TestingRuntimeState): void {
   const all: SpriteDrawRecord[] = []
-  for (const list of state.spriteDrawsByCanvas.values()) {
+  for (const [canvas, list] of state.spriteDrawsByCanvas.entries()) {
+    if (isDisconnectedCanvas(canvas)) {
+      state.spriteDrawsByCanvas.delete(canvas)
+      continue
+    }
     for (let i = 0; i < list.length; i++) all.push(list[i])
   }
   state.lastSpriteDraws = all
 }
 
 export function getLastSpriteDraws(): readonly SpriteDrawRecord[] {
-  return getState().lastSpriteDraws
+  const state = getState()
+  if (pruneSpriteDraws(state)) rebuildLastSpriteDraws(state)
+  return state.lastSpriteDraws
 }
 
 export function registerHudRegion(region: HudRegion): () => void {
@@ -506,11 +546,15 @@ export function registerHudRegion(region: HudRegion): () => void {
 export function recordCanvasUiRegions(canvas: HTMLCanvasElement, regions: HudRegion[]): void {
   const state = getState()
   if (!state.active) return
-  state.canvasUiRegions.set(canvas, regions)
+  pruneCanvasUiRegions(state)
+  if (!isDisconnectedCanvas(canvas)) {
+    state.canvasUiRegions.set(canvas, regions)
+  }
 }
 
 export function getHudRegions(): readonly HudRegion[] {
   const state = getState()
+  pruneCanvasUiRegions(state)
   const out: HudRegion[] = []
   for (const region of state.manualHudRegions.values()) out.push(region)
   for (const list of state.canvasUiRegions.values()) {

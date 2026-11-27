@@ -272,7 +272,7 @@ try {
   const remote = args.includes('--decision-api')
   const positional = args.filter(arg => arg !== '--json' && arg !== '--decision-api')
   if (positional.length && (remote || positional.length !== 2 || positional[0] !== '--replay')) {
-    throw new Error('Usage: node tools/verify-game.js [--json] [--decision-api | --replay file.json]')
+    throw new Error('Usage: node tools/verify-game.ts [--json] [--decision-api | --replay file.json]')
   }
   let api
   if (remote) {

@@ -12,7 +12,18 @@ import {
   getUnitByUid
 } from './simulation.ts'
 import { isUnitDowned } from './types.ts'
-import type { GameState } from './types.ts'
+import type { BattleState, GameState } from './types.ts'
+
+interface PlanSnapshotToken {
+  readonly battle: BattleState
+  readonly turn: number
+  readonly activeUnitUid: string | null
+  readonly col: number
+  readonly row: number
+  readonly moved: boolean
+  readonly acted: boolean
+  readonly ap: number
+}
 
 export interface CrownshardDecisionAgentHost {
   readonly state: GameState
@@ -43,12 +54,14 @@ function shortActionLabel(plan: AutoBattleActionPlan): string {
  */
 export function createCrownshardDecisionAgent(host: CrownshardDecisionAgentHost): DecisionAgentAdapter {
   let latestPlans = new Map<string, AutoBattleActionPlan>()
+  let latestSnapshot: PlanSnapshotToken | null = null
 
   return {
     name: 'Crownshard Tactical Agent',
     description: 'Turn-based grid tactics powered by the Ridgetop Decision API',
     stepIntervalMs: 850,
     ensurePlayable() {
+      cancelAutoBattle(host.state)
       const battle = host.state.battle
       const screen = host.getScreen?.()
       if (!battle || battle.phase === 'victory' || battle.phase === 'defeat' || (screen && screen !== 'battle')) {
@@ -56,6 +69,7 @@ export function createCrownshardDecisionAgent(host: CrownshardDecisionAgentHost)
         if (host.state.battle?.phase === 'deploy') {
           host.confirmDeployment()
         }
+        cancelAutoBattle(host.state)
         host.dismissOverlays?.()
         host.onActed()
         return
@@ -63,6 +77,7 @@ export function createCrownshardDecisionAgent(host: CrownshardDecisionAgentHost)
       if (battle.phase === 'deploy') {
         host.confirmDeployment()
       }
+      cancelAutoBattle(host.state)
       host.dismissOverlays?.()
       host.onActed()
     },
@@ -70,6 +85,8 @@ export function createCrownshardDecisionAgent(host: CrownshardDecisionAgentHost)
       const battle = host.state.battle
       const screen = host.getScreen?.()
       if (!battle || (screen && screen !== 'battle')) {
+        latestPlans.clear()
+        latestSnapshot = null
         return {
           ready: false,
           status: screen ? `On ${screen} screen` : 'Not in battle',
@@ -81,6 +98,8 @@ export function createCrownshardDecisionAgent(host: CrownshardDecisionAgentHost)
         }
       }
       if (battle.phase === 'victory' || battle.phase === 'defeat') {
+        latestPlans.clear()
+        latestSnapshot = null
         return {
           ready: false,
           status: battle.phase === 'victory' ? 'Battle Won!' : 'Battle Defeated',
@@ -93,6 +112,7 @@ export function createCrownshardDecisionAgent(host: CrownshardDecisionAgentHost)
       }
       if (battle.phase === 'deploy') {
         latestPlans = new Map()
+        latestSnapshot = null
         return {
           ready: true,
           status: 'Deployment phase',
@@ -106,6 +126,8 @@ export function createCrownshardDecisionAgent(host: CrownshardDecisionAgentHost)
         }
       }
       if (battle.phase !== 'player' || battle.units.some(u => u.path.length > 0)) {
+        latestPlans.clear()
+        latestSnapshot = null
         return {
           ready: false,
           status: battle.phase === 'enemy' ? 'Enemy turn…' : 'Animating move…',
@@ -119,6 +141,8 @@ export function createCrownshardDecisionAgent(host: CrownshardDecisionAgentHost)
 
       const actor = getUnitByUid(battle, battle.activeUnitUid)
       if (!actor || !actor.alive || actor.team !== 'ally') {
+        latestPlans.clear()
+        latestSnapshot = null
         return {
           ready: false,
           status: 'Advancing turn…',
@@ -132,6 +156,16 @@ export function createCrownshardDecisionAgent(host: CrownshardDecisionAgentHost)
 
       const candidates = collectAutoBattleCandidates(host.state, 6)
       latestPlans = new Map()
+      latestSnapshot = {
+        battle,
+        turn: battle.turn,
+        activeUnitUid: battle.activeUnitUid,
+        col: actor.col,
+        row: actor.row,
+        moved: actor.moved,
+        acted: actor.acted,
+        ap: battle.ap
+      }
       const options: DecisionAgentOption[] = candidates.map((plan, index) => {
         const id = `opt_${index}_${plan.kind}`
         latestPlans.set(id, plan)
@@ -190,18 +224,50 @@ export function createCrownshardDecisionAgent(host: CrownshardDecisionAgentHost)
       }
     },
     act(optionId: string): boolean {
+      const screen = host.getScreen?.()
+      if (screen !== undefined && screen !== 'battle') {
+        latestPlans.clear()
+        latestSnapshot = null
+        return false
+      }
       if (host.state.battle?.autoBattle) {
         cancelAutoBattle(host.state)
       }
       if (optionId === 'confirm_deploy') {
+        latestPlans.clear()
+        latestSnapshot = null
+        if (host.state.battle?.phase !== 'deploy') return false
         const ok = host.confirmDeployment()
-        host.onActed()
+        if (ok) host.onActed()
         return ok
       }
       const plan = latestPlans.get(optionId)
-      if (!plan) return false
+      const snapshot = latestSnapshot
+      latestPlans.clear()
+      latestSnapshot = null
+      if (!plan || !snapshot) return false
+
+      const battle = host.state.battle
+      if (!battle || battle !== snapshot.battle || battle.phase !== 'player') return false
+      if (battle.turn !== snapshot.turn || battle.activeUnitUid !== snapshot.activeUnitUid || battle.ap !== snapshot.ap) {
+        return false
+      }
+      const actor = getUnitByUid(battle, battle.activeUnitUid)
+      if (
+        !actor ||
+        !actor.alive ||
+        actor.team !== 'ally' ||
+        actor.uid !== plan.actorUid ||
+        actor.col !== snapshot.col ||
+        actor.row !== snapshot.row ||
+        actor.moved !== snapshot.moved ||
+        actor.acted !== snapshot.acted
+      ) {
+        return false
+      }
+
       const ok = executeAutoBattlePlan(host.state, plan)
-      host.onActed()
+      if (ok) host.onActed()
       return ok
     }
   }
