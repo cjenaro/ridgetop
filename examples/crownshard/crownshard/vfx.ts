@@ -586,6 +586,7 @@ export function createBattleVfx(pool: MeshPool, particles: Particles, onShake: (
         for (const c of cells) groundRing(c, C.frost, d + 0.1, 0.6, 0.2, 0.75, 2)
         later(d, () => { dust(from, 8, 1.2); onShake(0.1) })
         return d
+      case 'aegis_judgment':
       case 'solar_cleave':
         add(d - 0.06, 0.5, (u, t) => {
           const s = 1.2 + 0.4 * easeOut(u)
@@ -603,6 +604,7 @@ export function createBattleVfx(pool: MeshPool, particles: Particles, onShake: (
         cells.forEach((c, i) => later(d + 0.06 + i * 0.04, () => { sparks([c[0], c[1] + 0.8, c[2]], C.gold, 6, 1.8); groundRing([c[0], c[1] + 0.75, c[2]], C.gold, 0, 0.25, 0.1, 0.55) }))
         return d + 0.2
       }
+      case 'tempest_barrage':
       case 'volley_rain':
         for (let i = 0; i < 4; i++) {
           lance(hand, [from[0] + (i - 1.5) * 0.3, from[1] + 6, from[2] - 0.6], C.arrow, d + i * 0.04, 0.3, 'arrow', 0.9, 0)
@@ -639,6 +641,12 @@ export function createBattleVfx(pool: MeshPool, particles: Particles, onShake: (
           scorch(c, 1.4, 0.6)
         })
         return d
+      case 'astral_singularity':
+        converge([at[0], at[1] + 1.1, at[2]], C.arcane, Math.max(0.05, d), 1.4)
+        groundRing(at, C.arcane, d, 0.65, 0.3, TILE_SIZE * 1.9, 2)
+        cells.forEach((c, i) => spires(c, C.arcane, d + 0.06 + i * 0.04, { count: 4, radius: 0.35, height: 0.9, life: 0.65 }))
+        later(d, () => { onShake(0.2); sparks(chest, C.arcane, 12, 2.2) })
+        return d + 0.1
       case 'starfall':
         cells.forEach((c, i) => meteor(c, C.fire, d + 0.12 + i * 0.09, 0.4, i % 2 === 0 ? 1 : -0.6))
         converge([from[0], from[1] + 2.6, from[2]], C.arcane, Math.max(0.05, d), 1.2)
@@ -654,6 +662,7 @@ export function createBattleVfx(pool: MeshPool, particles: Particles, onShake: (
         dome(from, C.heal, d, TILE_SIZE * 1.2, 0.8)
         for (const c of cells) motes(c, C.heal, 5, 0.35, 1.4, d + 0.2)
         return d
+      case 'solar_lance':
       case 'dawns_judgment':
         cells.forEach((c, i) => beam(c, C.holy, d + i * 0.05, { radius: 0.5, life: 0.8 }))
         later(d, () => onShake(0.14))
@@ -671,6 +680,7 @@ export function createBattleVfx(pool: MeshPool, particles: Particles, onShake: (
           pool.add(slashWhirl, [from[0], from[1] + 0.9, from[2]], [1.1, 1, 1.1], t * 20, withAlpha(C.steel, 1 - u), 1, 'additive')
         })
         return d + 0.1
+      case 'venom_waltz':
       case 'phantom_exec':
         dashTrail(from, at, C.shadow, 0, 6, 'shadow')
         smoke(front, 0, undefined, 8)
@@ -685,6 +695,7 @@ export function createBattleVfx(pool: MeshPool, particles: Particles, onShake: (
         beam(at, C.gold, d, { radius: 0.22, height: 3.5, life: 0.45 })
         later(d, () => onShake(0.16))
         return d
+      case 'immortal_bastion':
       case 'aegis_vow':
         dome(from, C.gold, d, TILE_SIZE * 1.25, 1.3)
         motes(from, C.gold, 14, 0.6, 1.8, d)
@@ -710,6 +721,7 @@ export function createBattleVfx(pool: MeshPool, particles: Particles, onShake: (
         radialShards(from, C.ice, d, 8, 1.6, 0.35)
         cells.forEach((c, i) => spires(c, C.ice, d + 0.08 + i * 0.03, { count: 5, radius: 0.4, height: 0.8 }))
         return d + 0.1
+      case 'glacial_fortress':
       case 'absolute_zero':
         converge([from[0], from[1] + 1.2, from[2]], C.frost, Math.max(0.05, d), 1.4)
         later(d, () => onShake(0.24))
@@ -742,6 +754,7 @@ export function createBattleVfx(pool: MeshPool, particles: Particles, onShake: (
         })
         later(d, () => { onShake(0.2); sparks(chest, C.fireTip, 12, 2.4); groundRing(at, C.fire, 0, 0.45, 0.3, 1.5); embers(at, 10, 0.6) })
         return d
+      case 'radiant_tempest':
       case 'crownbreaker':
         slash(lerp3(hand, chest, 0.85), yaw, C.gold, d, { radius: 1.5, roll: Math.PI / 2, sweep: 0.3, life: 0.36, mesh: slashWide })
         later(d, () => {

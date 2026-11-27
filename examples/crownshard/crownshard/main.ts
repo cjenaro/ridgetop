@@ -40,14 +40,14 @@ import {
   createTurnBoundaryTracker, dismissDiscoveryTip, draftEndlessBlessing, effectiveSpeed, equipItem, evaluateAllFacingExposures, evaluateFacingExposure,
   findBestFitUpgrades, findEquipOwner, findGridPath, formatAbyssFloorLabel, formatBattleSpeedLabel, formatBossTelegraphHudSummary, formatCoverTooltip, formatEndlessBiomeLabel, formatEquipDisplayName, formatOpportunityWarning, formatWeatherHudLabel,
   getAct1StageMechanicStatus, getActiveDiscoveryTip, getActiveTacticDeckUids,
-  getBestiaryEntries, getChapterObjectiveSummary, getClaimableMasteryMilestones, getCodexProgress, getCoverHp, getCraftableEquipment, getCraftableHeroes, getCrownlessDeepFloorSpec, getEquipCodexEntries, getEquipCompatibilityReason, getEquipCraftCost, getEquipEffect, getEquipFamily,
+  getBestiaryEntries, getChapterObjectiveSummary, getClaimableMasteryMilestones, getCodexProgress, getCoverHp, getCraftableEquipment, getCraftableHeroes, getCrownlessDeepFloorSpec, getEffectiveHeroSkill, getEffectiveHeroTitle, getEquipCodexEntries, getEquipCompatibilityReason, getEquipCraftCost, getEquipEffect, getEquipFamily,
   getEquipSalvageDust, getEquipShortLockLabel, getEquipUpgradePreview, getEquipmentByUid, getHeroActiveGearSetIds, getHeroByUid, getHeroCodexEntries, getHeroCraftCost, getHeroEquipFamily, getHeroEquipFamilyMeta, getHeroGearSetProgress, getHeroPassive, getHeroSalvageShards,
-  getHeroSkill, getHighestClearedStageTier, getMaxCombatLogScroll, getMaxLivingBossPhase, getMaxMasteryStars, getMaxSelectableCrownlessDeepFloor, getMergeCandidates, getNextMasteryMilestone, getNextRecommendedStage, getOakhavenExchangeOffers, getObjectiveProgressText, getPackPityStatus,
+  getHeroSkill, getHeroSubSpecOptions, getHighestClearedStageTier, getMaxCombatLogScroll, getMaxLivingBossPhase, getMaxMasteryStars, getMaxSelectableCrownlessDeepFloor, getMergeCandidates, getNextMasteryMilestone, getNextRecommendedStage, getOakhavenExchangeOffers, getObjectiveProgressText, getPackPityStatus,
   getSelectedCrownlessDeepFloor, getStageMasteryChestReward, getStageMasteryObjectives, getStageMasteryRecord, getStageUnlockHint, getTacticByUid, getTelegraphsAtCell, getTotalMasteryStars, getUnitByUid, getUpgradedEquipSalvageYield, getWorldMapEventById, hasClaimedStageMasteryChest, hasMaxedHero, hasOakhavenPatronDiscount, heroLevelProgress, isChestClaimed,
   isCrownlessDeepStage, isDeployTile, isDestructibleCover, isEndlessBossWave, isEndlessUnlocked, isEnemyShrouded, isOakhavenExchangeUnlocked, isStageCleared, isStageUnlocked, loadSave, maxSquadSize, mergeHero,
-  moveDeployUnit, normalizeEquipUpgradeLevel, persistSave, previewBulkSalvageCommonDupes, previewPathOpportunityAttacks,
+  moveDeployUnit, needsSubSpecChoice, normalizeEquipUpgradeLevel, persistSave, previewBulkSalvageCommonDupes, previewPathOpportunityAttacks,
   previewTurnOrderAfterAction, previewWaitFacing, resetDiscoveryTips, resolveBattleAtmosphere, resolveStageChallenge, restoreBattleState, rotateDeployUnit, salvageEquipCard,
-  salvageHeroCard, selectEndlessWaveStage, selectHeroByUid, selectTile, serializeBattleState, setActionCameraEnabled, setAutoBattle, setBattleSpeed,
+  salvageHeroCard, selectEndlessWaveStage, selectHeroByUid, selectHeroSubSpec, selectTile, serializeBattleState, setActionCameraEnabled, setAutoBattle, setBattleSpeed,
   setDiscoveryTipsEnabled, setSelectedCrownlessDeepFloor, shouldAutoSaveOnTurnBoundary, skipAllDiscoveryTips, startChapterBattle, startEndlessRun, startWorldEventBattle, stepGame,
   swapDeployUnit, syncTurnBoundaryTracker, toggleAutoBattle, toggleBattleSpeed, toggleEquipLock, toggleHeroLock,
   toggleSquadMember, toggleTacticInDeck, undoMove, unequipItem, unitAt, upgradeEquipWithDuplicate, upgradeEquipWithGold, isActionCameraEnabled
@@ -56,7 +56,7 @@ import type { CodexTab, EquipUpgradePreview } from './simulation.ts'
 import { FACING_DIRS, cellHeightLevel, gridToWorld, isUnitDowned } from './types.ts'
 import type {
   BattleSaveSnapshot, BattleSpeedMultiplier, BattleUnit, ChapterSpec, CombatForecast, EndlessBlessingId, EnemyArchetypeId, FacingDir, GameState,
-  HeroClassId, OwnedEquipCard, OwnedHeroCard, PackId, PackRevealItem, PathOpportunityPreview, Rarity,
+  HeroClassId, HeroSubSpecId, OwnedEquipCard, OwnedHeroCard, PackId, PackRevealItem, PathOpportunityPreview, Rarity,
   StageDifficultyTier, StageMutatorId, TurnActionKind, TurnOrderActionPreview, WorldMapEvent
 } from './types.ts'
 import {
@@ -68,7 +68,7 @@ import {
   drawLootRow, drawModal, drawMutatorChipButton, drawObjectiveBadge, drawOverline, drawPackCeremonyBackdrop, drawPanel, drawPassiveBanner, drawPityBanner, drawPortraitTile,
   drawResultHeadlineAnimated, drawRevealCard, drawRewardRowAnimated, drawSegmentTrack,
   drawSettingRow, drawSheet, drawSkillRow, drawSkillTile, drawSpeakerPortrait, drawStageMasteryChecklist, drawStageTierSegment, drawStatStrip,
-  drawStoryHeading, drawTab, drawTacticCard, drawTacticDeckCard, drawTacticDeckHeader, drawText, drawTimelineBg, drawTitleCard,
+  drawStoryHeading, drawSubSpecCard, drawSubSpecHeader, drawTab, drawTacticCard, drawTacticDeckCard, drawTacticDeckHeader, drawText, drawTimelineBg, drawTitleCard,
   drawTitleLogo, drawToast, drawToolbarBg, drawTopFade, drawTurnOrderCallout,
   drawTurnOrderPreviewBanner, drawTurnTimelinePreviewOverlay, drawTurnToken, drawUnitCard,
   drawVictoryBackdrop, drawVictoryMasteryAnimated, drawWeatherDetailCard, drawWeatherHudPill, drawWeatherPreviewChip, drawWell, drawWorldMap3DOverlay, drawWorldMapEventNode, drawWorldMapNode,
@@ -328,18 +328,24 @@ async function start() {
 
   function startAscensionFanfare(hero: OwnedHeroCard) {
     const spec = HERO_SPECS[hero.heroId]
-    const unlocked = spec.skills[hero.stars - 1]
+    const unlocked = getEffectiveHeroSkill(hero.heroId, hero.stars - 1, hero.stars >= 3 ? hero.subSpecId : undefined) ?? spec.skills[hero.stars - 1]
+    const subSpecPrompt = hero.stars >= 3 && needsSubSpecChoice(hero)
     fanfare = {
       kind: 'ascend',
       elapsed: 0,
       title: `Ascended ${'★'.repeat(hero.stars)}`,
-      subtitle: `${spec.name}, ${spec.title} — Tier ${hero.stars}`,
+      subtitle: subSpecPrompt
+        ? `${spec.name} reached 3★ — Pick a Mastery Path in Camp!`
+        : `${spec.name}, ${getEffectiveHeroTitle(hero.heroId, hero.stars, hero.subSpecId)} — Tier ${hero.stars}`,
       accent: TIER_COLOR[hero.stars],
       portrait: heroCardPortrait(hero),
       stars: hero.stars,
       skill: unlocked
         ? { tier: unlocked.tier, name: unlocked.name, desc: unlocked.desc, vfx: unlocked.vfx, skillId: unlocked.id }
         : undefined
+    }
+    if (subSpecPrompt) {
+      showToast(`${spec.name} ascended to 3★! Pick a Mastery Path below.`)
     }
     uiDirty = true
   }
@@ -4247,7 +4253,7 @@ async function start() {
 
       const tiers: LayoutNode[] = []
       for (let i = 0; i < 3; i++) {
-        const sk = spec.skills[i]
+        const sk = getEffectiveHeroSkill(active.heroId, i, active.stars >= 3 ? active.subSpecId : undefined) ?? spec.skills[i]
         const unlocked = active.stars >= sk.tier
         const cd = active.cooldowns[i]
         const armed = battle.armedSkillIndex === i
@@ -4408,7 +4414,7 @@ async function start() {
     const activePortrait = battleUnitPortrait(inspected ?? undefined)
     const roleLabel = inspected
       ? (inspected.heroId
-          ? HERO_SPECS[inspected.heroId].title
+          ? getEffectiveHeroTitle(inspected.heroId, inspected.stars, inspected.subSpecId)
           : inspected.isBoss
             ? ((inspected.bossPhase ?? 1) >= 2 ? 'Boss · Phase II' : 'Boss')
             : 'Foe')
@@ -5867,14 +5873,19 @@ async function start() {
     const sheetW = Math.min(w - (isPhone ? 12 : 24), 1120)
     // Keep upper ~48% of viewport open on desktop so the live 3D campfire + squad shine!
     // On phone, allow collapsing the sheet down to the tab bar to inspect the 3D squad!
+    const squadSelHero: OwnedHeroCard | undefined =
+      campTab === 'squad' ? (getHeroByUid(camp, camp.selectedCampHeroUid) ?? camp.heroes[0]) : undefined
+    const has3StarSquadHero = Boolean(squadSelHero && squadSelHero.stars >= 3)
     const collapsed = isPhone && mobileCampCollapsed
     let sheetH = collapsed
       ? 62
       : mobile
-        ? Math.min(h - 118, 496)
+        ? (has3StarSquadHero ? Math.min(h - 112, 576) : Math.min(h - 118, 496))
         : shortH
           ? Math.min(h - 56, 326)
-          : Math.min(Math.max(326, Math.round(h * 0.49)), 376)
+          : wide
+            ? Math.min(Math.max(326, Math.round(h * 0.49)), 376)
+            : (has3StarSquadHero ? Math.min(h - 90, Math.max(368, Math.round(h * 0.52))) : Math.min(Math.max(326, Math.round(h * 0.49)), 376))
 
     let bodyNode: LayoutNode
     let activeArmoryDiff: EquipmentStatDiff | null = null
@@ -5902,6 +5913,9 @@ async function start() {
 
       const rosterButtons: LayoutNode[] = visibleHeroes.map((hero, idx) => {
         const spec = HERO_SPECS[hero.heroId]
+        const effectiveTitle = getEffectiveHeroTitle(hero.heroId, hero.stars, hero.subSpecId)
+        const subSpecTitle = hero.stars >= 3 && hero.subSpecId ? effectiveTitle : undefined
+        const needsSubSpec = needsSubSpecChoice(hero)
         const inSquad = camp.squadUids.includes(hero.uid)
         const copies = getMergeCandidates(camp, hero.uid).length
         const need = hero.stars === 1 ? MERGE_COPIES_REQUIRED[1] : hero.stars === 2 ? MERGE_COPIES_REQUIRED[2] : 0
@@ -5909,10 +5923,10 @@ async function start() {
         const portrait = heroCardPortrait(hero)
         return boxNode({
           id: `camp-hero-${idx}`,
-          style: mobile ? { grow: 1, height: 64 } : { height: 48 },
+          style: mobile ? { grow: 1, height: has3StarSquadHero ? 56 : 64 } : { height: 48 },
           widget: {
             type: 'button',
-            label: `${spec.name} (${spec.title})`,
+            label: `${spec.name} (${effectiveTitle})`,
             selected: selHero?.uid === hero.uid,
             onPress: () => {
               audio.unlock()
@@ -5920,7 +5934,7 @@ async function start() {
               uiDirty = true
             },
             draw: (ctx: CanvasRenderingContext2D, rect: LayoutRect, st: CanvasWidgetDrawState) => drawHeroRosterCard(ctx, rect, {
-              hero, spec, portrait, inSquad, copies, need, readyMerge, token: mobile
+              hero, spec, portrait, inSquad, copies, need, readyMerge, token: mobile, subSpecTitle, needsSubSpec
             }, st)
           }
         })
@@ -5985,13 +5999,17 @@ async function start() {
           { icon: 'crit', label: 'CRIT', value: `${Math.round(stats.crit * 100)}%`, color: '#ff8da1' }
         ]
 
+        const is3Star = selHero.stars >= 3
+        const heroTitle = getEffectiveHeroTitle(selHero.heroId, selHero.stars, selHero.subSpecId)
+        const needsSubSpec = needsSubSpecChoice(selHero)
+        const headerH = is3Star && shortH ? 38 : is3Star && mobile ? 44 : shortH ? 42 : 50
         const headerNode = boxNode({
-          id: 'ins-head', style: { height: shortH ? 42 : 50 },
+          id: 'ins-head', style: { height: headerH },
           widget: {
             type: 'panel',
             draw: (ctx: CanvasRenderingContext2D, rect: LayoutRect) => drawHeroHeader(ctx, rect, {
               name: spec.name,
-              title: spec.title,
+              title: heroTitle,
               stars: selHero.stars,
               level: selHero.level,
               xp: selHero.xp,
@@ -6001,20 +6019,23 @@ async function start() {
               inSquad,
               locked: Boolean(selHero.locked),
               equipFamily: getHeroEquipFamily(selHero.heroId),
-              gearSets: heroGearSets
+              gearSets: heroGearSets,
+              hasSubSpec: Boolean(is3Star && selHero.subSpecId),
+              needsSubSpec
             })
           }
         })
 
+        const statsH = is3Star && shortH ? 28 : is3Star && mobile ? 30 : shortH ? 30 : mobile ? 34 : 38
         const statsNode = boxNode({
-          id: 'ins-stats', style: { height: shortH ? 30 : mobile ? 34 : 38 },
+          id: 'ins-stats', style: { height: statsH },
           widget: {
             type: 'panel',
             draw: (ctx: CanvasRenderingContext2D, rect: LayoutRect) => drawStatStrip(ctx, rect, statItems)
           }
         })
 
-        const actRowH = shortH ? 32 : 36
+        const actRowH = is3Star && shortH ? 30 : is3Star && mobile ? 32 : shortH ? 32 : 36
         const actionsNode = row({ id: 'ins-actions', style: { height: actRowH, gap: 8 } }, [
           boxNode({
             id: 'cs-merge-hero', style: { grow: 1.4, height: actRowH },
@@ -6113,16 +6134,17 @@ async function start() {
             ? `Equipped Gear · 2/2 ${heroGearSets[0].spec.tag}: ${heroGearSets[0].spec.perkName}`
             : `Equipped Gear · 1/2 ${heroGearSets[0].spec.tag}`
           : 'Equipped Gear'
-        const gearHeaderRow = row({ id: 'ins-eq-head', style: { height: 24, gap: 8, align: 'center' } }, [
+        const gearHeaderH = is3Star && (shortH || mobile) ? 20 : 24
+        const gearHeaderRow = row({ id: 'ins-eq-head', style: { height: gearHeaderH, gap: 8, align: 'center' } }, [
           boxNode({
-            id: 'ins-eq-lbl', style: { grow: 1, height: 24 },
+            id: 'ins-eq-lbl', style: { grow: 1, height: gearHeaderH },
             widget: {
               type: 'panel',
-              draw: (ctx: CanvasRenderingContext2D, rect: LayoutRect) => drawOverline(ctx, gearHeaderLabel, rect.x, rect.y + 12, rect.width)
+              draw: (ctx: CanvasRenderingContext2D, rect: LayoutRect) => drawOverline(ctx, gearHeaderLabel, rect.x, rect.y + gearHeaderH * 0.5, rect.width)
             }
           }),
           boxNode({
-            id: 'cs-auto-equip', style: { width: bestFitCount > 0 ? 114 : 88, height: 24 },
+            id: 'cs-auto-equip', style: { width: bestFitCount > 0 ? 114 : 88, height: gearHeaderH },
             widget: {
               type: 'button',
               label: bestFitLabel,
@@ -6138,7 +6160,7 @@ async function start() {
           })
         ])
 
-        const gearH = shortH ? 40 : mobile ? 44 : 48
+        const gearH = is3Star && shortH ? 36 : is3Star && mobile ? 40 : shortH ? 40 : mobile ? 44 : 48
         const gearRow = row({ id: 'ins-eq-row', style: { height: gearH, gap: 6 } }, [
           boxNode({
             id: 'eq-slot-weapon', style: { grow: 1, height: gearH },
@@ -6182,16 +6204,65 @@ async function start() {
         const passiveNode: LayoutNode | null = passive
           ? boxNode({
               id: 'ins-passive',
-              style: { height: wide ? 40 : shortH ? 24 : 28 },
+              style: { height: is3Star && wide ? 32 : wide ? 40 : is3Star && mobile ? 24 : shortH ? 24 : 28 },
               widget: {
                 type: 'panel',
-                draw: (ctx: CanvasRenderingContext2D, rect: LayoutRect) => drawPassiveBanner(ctx, rect, passive, !wide)
+                draw: (ctx: CanvasRenderingContext2D, rect: LayoutRect) => drawPassiveBanner(ctx, rect, passive, !wide || is3Star)
               }
             })
           : null
 
-        const skillRowH = wide ? 42 : shortH ? 26 : mobile ? 28 : 34
-        const skillNodes: LayoutNode[] = spec.skills.map((sk, i) => {
+        const subSpecOptions = is3Star ? getHeroSubSpecOptions(selHero.heroId) : null
+        const subSpecHeaderH = 15
+        const subSpecCardH = wide ? 68 : shortH ? 58 : mobile ? 66 : 62
+        const subSpecPickerNode: LayoutNode | null = subSpecOptions
+          ? column({ id: 'sq-subspec-wrap', style: { height: subSpecHeaderH + 3 + subSpecCardH, gap: 3 } }, [
+              boxNode({
+                id: 'sq-subspec-hdr',
+                style: { height: subSpecHeaderH },
+                widget: {
+                  type: 'panel',
+                  draw: (ctx: CanvasRenderingContext2D, rect: LayoutRect) => drawSubSpecHeader(ctx, rect, {
+                    needsChoice: needsSubSpec,
+                    activeTitle: selHero.subSpecId ? heroTitle : undefined,
+                    animTime: state.time
+                  })
+                }
+              }),
+              row({ id: 'sq-subspec-row', style: { height: subSpecCardH, gap: 6 } }, subSpecOptions.map((opt, idx) => {
+                const isActivePath = selHero.subSpecId === opt.id
+                return boxNode({
+                  id: `sq-subspec-${idx}`,
+                  style: { grow: 1, height: subSpecCardH },
+                  widget: {
+                    type: 'button',
+                    label: `${opt.title} (${opt.statSummary}) — ${opt.ultimate.name}`,
+                    selected: isActivePath,
+                    onPress: () => {
+                      audio.unlock()
+                      if (selectHeroSubSpec(state, selHero.uid, opt.id)) {
+                        saveNow()
+                        scene.triggerCampEquipFlourish(selHero.uid, undefined, opt.accentHex)
+                        showToast(`${spec.name} mastered ${opt.title} (${opt.ultimate.name})!`)
+                        uiDirty = true
+                      }
+                    },
+                    draw: (ctx: CanvasRenderingContext2D, rect: LayoutRect, st: CanvasWidgetDrawState) => drawSubSpecCard(
+                      ctx,
+                      rect,
+                      opt,
+                      st,
+                      { active: isActivePath, needsChoice: needsSubSpec, animTime: state.time }
+                    )
+                  }
+                })
+              }))
+            ])
+          : null
+
+        const skillRowH = is3Star && wide ? 34 : wide ? 42 : is3Star && mobile ? 24 : shortH ? 26 : mobile ? 28 : 34
+        const skillNodes: LayoutNode[] = spec.skills.map((baseSkill, i) => {
+          const sk = getEffectiveHeroSkill(selHero.heroId, i, is3Star ? selHero.subSpecId : undefined) ?? baseSkill
           const unlocked = selHero.stars >= sk.tier
           return boxNode({
             id: `ins-sk-${i}`, style: { height: skillRowH },
@@ -6210,12 +6281,13 @@ async function start() {
         })
 
         if (mobile) {
-          bodyNode = column({ id: 'camp-squad-body', style: { grow: 1, gap: 6 } }, [
-            row({ id: 'camp-roster-row', style: { height: 60, gap: 6 } }, rosterButtons),
+          const mobileSkills = is3Star ? skillNodes.slice(0, h >= 760 ? 3 : 2) : skillNodes
+          bodyNode = column({ id: 'camp-squad-body', style: { grow: 1, gap: is3Star ? 5 : 6 } }, [
+            row({ id: 'camp-roster-row', style: { height: is3Star ? 56 : 60, gap: 6 } }, rosterButtons),
             pagerNode,
             column({
               id: 'camp-inspector-col',
-              style: { grow: 1, gap: 5, padding: 9 },
+              style: { grow: 1, gap: is3Star ? 4 : 5, padding: is3Star ? 8 : 9 },
               widget: { type: 'panel', draw: (ctx: CanvasRenderingContext2D, rect: LayoutRect) => drawWell(ctx, rect) }
             }, [
               headerNode,
@@ -6224,7 +6296,8 @@ async function start() {
               actionsNode,
               gearHeaderRow,
               gearRow,
-              ...skillNodes
+              ...(subSpecPickerNode ? [subSpecPickerNode] : []),
+              ...mobileSkills
             ])
           ])
         } else if (wide) {
@@ -6267,10 +6340,11 @@ async function start() {
             ]),
             column({
               id: 'camp-skills-col',
-              style: { grow: 0.95, gap: 5, padding: 10 },
+              style: { grow: 0.95, gap: is3Star ? 4 : 5, padding: 10 },
               widget: { type: 'panel', draw: (ctx: CanvasRenderingContext2D, rect: LayoutRect) => drawWell(ctx, rect) }
             }, [
               ...(passiveNode ? [passiveNode] : []),
+              ...(subSpecPickerNode ? [subSpecPickerNode] : []),
               boxNode({
                 id: 'ins-sk-lbl', style: { height: 13 },
                 widget: {
@@ -6279,16 +6353,18 @@ async function start() {
                 }
               }),
               ...skillNodes,
-              spacerNode(1),
-              boxNode({
-                id: 'ins-sk-tip', style: { height: 15 },
-                widget: {
-                  type: 'panel',
-                  draw: (ctx: CanvasRenderingContext2D, rect: LayoutRect) => drawLabel(
-                    ctx, rect, 'Merge 3 copies for Tier 2, 2 copies for Tier 3', { size: 10, color: COLOR.faint }
-                  )
-                }
-              })
+              ...(is3Star ? [] : [
+                spacerNode(1),
+                boxNode({
+                  id: 'ins-sk-tip', style: { height: 15 },
+                  widget: {
+                    type: 'panel',
+                    draw: (ctx: CanvasRenderingContext2D, rect: LayoutRect) => drawLabel(
+                      ctx, rect, 'Merge 3 copies for Tier 2, 2 copies for Tier 3', { size: 10, color: COLOR.faint }
+                    )
+                  }
+                })
+              ])
             ])
           ])
         } else {
@@ -6315,11 +6391,11 @@ async function start() {
             }, [
               headerNode,
               statsNode,
-              ...(passiveNode ? [passiveNode] : []),
+              ...(passiveNode && !is3Star ? [passiveNode] : []),
               actionsNode,
               gearHeaderRow,
               gearRow,
-              ...skillNodes.slice(0, shortH ? 1 : 2)
+              ...(subSpecPickerNode ? [subSpecPickerNode] : skillNodes.slice(0, shortH ? 1 : 2))
             ])
           ])
         }
@@ -9278,6 +9354,14 @@ async function start() {
         const h = getHeroByUid(state.campaign, state.campaign.selectedCampHeroUid) ?? state.campaign.heroes[0]
         return h ? getHeroActiveGearSetIds(state.campaign, h) : []
       })(),
+      selectedHeroSubSpecId: (() => {
+        const h = getHeroByUid(state.campaign, state.campaign.selectedCampHeroUid) ?? state.campaign.heroes[0]
+        return h?.subSpecId ?? null
+      })(),
+      selectedHeroNeedsSubSpec: (() => {
+        const h = getHeroByUid(state.campaign, state.campaign.selectedCampHeroUid) ?? state.campaign.heroes[0]
+        return h ? needsSubSpecChoice(h) : false
+      })(),
       armoryCompatibleFilter,
       turnOrder: state.battle?.turnOrder.map(t => t.name) ?? [],
       battleAlliesAlive: state.battle ? state.battle.units.filter(u => u.alive && u.team === 'ally').length : 0,
@@ -9364,6 +9448,13 @@ async function start() {
         const count = runBestFit(uid)
         renderUiNow()
         return count
+      },
+      selectHeroSubSpec: (subSpecId: HeroSubSpecId, heroUid?: string) => {
+        const uid = heroUid ?? state.campaign.selectedCampHeroUid ?? state.campaign.heroes[0]?.uid
+        if (!uid) return false
+        const ok = selectHeroSubSpec(state, uid, subSpecId)
+        if (ok) { saveNow(); uiDirty = true; renderUiNow() }
+        return ok
       },
       selectTile: (col: number, row: number) => {
         lockedForecastCell = null

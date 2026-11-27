@@ -132,6 +132,24 @@ export type HeroClassId =
   | 'cryomancer'
   | 'champion'
 
+export type HeroSubSpecId =
+  | 'knight_templar'
+  | 'knight_juggernaut'
+  | 'archer_sharpshooter'
+  | 'archer_stormwarden'
+  | 'mage_pyromancer'
+  | 'mage_archmage'
+  | 'cleric_oracle'
+  | 'cleric_inquisitor'
+  | 'rogue_nightblade'
+  | 'rogue_shadowdancer'
+  | 'paladin_crusader'
+  | 'paladin_sentinel'
+  | 'cryomancer_frostweaver'
+  | 'cryomancer_glacier_lord'
+  | 'champion_sunlord'
+  | 'champion_starforged'
+
 export type EnemyArchetypeId =
   | 'goblin'
   | 'bone_archer'
@@ -216,6 +234,8 @@ export interface SkillSpec {
   readonly flatBonus: number
   readonly healAmount: number
   readonly shieldAmount: number
+  readonly allyAuraHeal?: number
+  readonly allyAuraShield?: number
   readonly ignoreArmor: number
   readonly canRevive?: boolean
   readonly reviveHpRatio?: number
@@ -569,6 +589,7 @@ export interface OwnedHeroCard {
   readonly uid: string
   readonly heroId: HeroClassId
   stars: 1 | 2 | 3
+  subSpecId?: HeroSubSpecId
   level?: number
   xp?: number
   weaponUid: string | null
@@ -632,6 +653,7 @@ export interface BattleUnit {
   readonly team: 'ally' | 'enemy'
   readonly name: string
   readonly heroId?: HeroClassId
+  readonly subSpecId?: HeroSubSpecId
   readonly enemyId?: EnemyArchetypeId
   readonly stars: 1 | 2 | 3
   level: number
@@ -877,6 +899,7 @@ export interface TurnPreviewEntry {
   readonly team: 'ally' | 'enemy'
   readonly name: string
   readonly heroId?: HeroClassId
+  readonly subSpecId?: HeroSubSpecId
   readonly enemyId?: EnemyArchetypeId
   readonly stars: 1 | 2 | 3
   readonly speed: number
@@ -1235,6 +1258,7 @@ export interface BattleUnitSnapshot {
   readonly team: 'ally' | 'enemy'
   readonly name: string
   readonly heroId?: HeroClassId
+  readonly subSpecId?: HeroSubSpecId
   readonly enemyId?: EnemyArchetypeId
   readonly stars: 1 | 2 | 3
   readonly level?: number

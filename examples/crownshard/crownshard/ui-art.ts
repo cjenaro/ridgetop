@@ -28,6 +28,7 @@ import { heroLevelProgress } from './leveling.ts'
 import { STAGE_MUTATOR_SPECS, STAGE_TIER_SPECS, stageTierRank } from './mutators.ts'
 import { RECOMMENDED_MIN_TACTIC_DECK, getEquipEffect, getHeroPassive } from './passives.ts'
 import type { EquipEffectSpec, HeroPassiveSpec, TacticDeckCurve } from './passives.ts'
+import type { HeroSubSpec } from './sub-specializations.ts'
 import { TIME_OF_DAY_LABELS, WEATHER_SPECS, formatWeatherHudLabel } from './weather.ts'
 
 // ===========================================================================
@@ -3948,6 +3949,8 @@ export function drawHeroRosterCard(
     readyMerge: boolean
     token?: boolean
     locked?: boolean
+    subSpecTitle?: string
+    needsSubSpec?: boolean
   },
   st: CanvasWidgetDrawState
 ) {
@@ -3995,10 +3998,10 @@ export function drawHeroRosterCard(
       ctx.lineWidth = 1.6
       ctx.stroke()
     }
-    if (o.readyMerge) {
+    if (o.readyMerge || o.needsSubSpec) {
       ctx.beginPath()
       ctx.arc(x + w - 8, y + 20, 4.5, 0, Math.PI * 2)
-      ctx.fillStyle = COLOR.accent
+      ctx.fillStyle = o.needsSubSpec ? COLOR.accentHi : COLOR.accent
       ctx.fill()
       ctx.strokeStyle = COLOR.outline
       ctx.lineWidth = 1.6
@@ -4051,6 +4054,24 @@ export function drawHeroRosterCard(
     const bw = Math.max(0, right - bx - 30)
     if (bw > 16) drawBar(ctx, bx, y + faceH * 0.62 - 3, bw, 6, o.copies / o.need, o.readyMerge ? COLOR.accent : COLOR.ally)
     drawText(ctx, `${o.copies}/${o.need}`, right, y + faceH * 0.62 + 0.5, { size: 9.5, weight: 900, color: o.readyMerge ? COLOR.accentHi : COLOR.muted, align: 'right', display: true })
+  } else if (o.needsSubSpec) {
+    drawChip(ctx, right, y + faceH * 0.62 - 7, '3★ PICK!', {
+      h: 14,
+      size: 7.5,
+      color: COLOR.accentText,
+      bg: COLOR.accent,
+      border: COLOR.outline,
+      align: 'right'
+    })
+  } else if (o.subSpecTitle) {
+    drawText(ctx, o.subSpecTitle.toUpperCase(), right, y + faceH * 0.62 + 0.5, {
+      size: 8.5,
+      weight: 900,
+      color: COLOR.accentHi,
+      align: 'right',
+      maxW: Math.max(24, right - starCursor - 4),
+      display: true
+    })
   } else {
     drawText(ctx, 'MAX', right, y + faceH * 0.62 + 0.5, { size: 9.5, weight: 900, color: COLOR.accentHi, align: 'right', display: true })
   }
@@ -4065,7 +4086,7 @@ export function drawHeroRosterCard(
 export function drawHeroHeader(
   ctx: CanvasRenderingContext2D,
   rect: LayoutRect,
-  o: { name: string; title: string; stars: number; rarity: Rarity; power: number; portrait?: CanvasImageSource; inSquad: boolean; level?: number; xp?: number; locked?: boolean; equipFamily?: EquipFamily; gearSets?: readonly GearSetProgress[] }
+  o: { name: string; title: string; stars: number; rarity: Rarity; power: number; portrait?: CanvasImageSource; inSquad: boolean; level?: number; xp?: number; locked?: boolean; equipFamily?: EquipFamily; gearSets?: readonly GearSetProgress[]; hasSubSpec?: boolean; needsSubSpec?: boolean }
 ) {
   const meta = RARITY_META[o.rarity]
   const prog = heroLevelProgress(o.level, o.xp)
@@ -4090,7 +4111,13 @@ export function drawHeroHeader(
   drawText(ctx, o.name, tx, y + h * 0.24, { size: 18, weight: 900, maxW: Math.max(20, midRight - tx - lvW - 6), display: true, stroke: true, strokeWidth: 3 })
   const sw = drawStars(ctx, tx, y + h * 0.58, o.stars, 3, 12)
   let cx = tx + sw + 8
-  cx += drawChip(ctx, cx, y + h * 0.58 - 8.5, o.title, { h: 17, size: 9.5, color: '#ffffff', bg: '#2c3d66', border: COLOR.outline }) + 5
+  cx += drawChip(ctx, cx, y + h * 0.58 - 8.5, o.title, {
+    h: 17,
+    size: 9.5,
+    color: o.hasSubSpec ? COLOR.accentHi : '#ffffff',
+    bg: o.hasSubSpec ? '#3a2d14' : '#2c3d66',
+    border: o.hasSubSpec ? COLOR.accent : COLOR.outline
+  }) + 5
   if (o.equipFamily) {
     const fam = EQUIP_FAMILY_META[o.equipFamily]
     const famFullW = measureText(ctx, fam.shortLabel, 9, 800, true) + 14
@@ -5091,6 +5118,156 @@ export function drawSkillRow(ctx: CanvasRenderingContext2D, rect: LayoutRect, o:
     drawText(ctx, o.desc, tx + nw + 8, icy + 0.5, { size: 10.5, weight: 600, color: o.unlocked ? '#d0dbf5' : COLOR.faint, maxW: x + w - (tx + nw + 8) - sw - 6 })
   }
   drawStars(ctx, x + w - 8, twoLine ? y + 12 : icy, o.tier, o.tier, 8.5, 'right', o.unlocked ? color : '#55658a')
+}
+
+/** Header bar for the 3-Star Mastery Path Picker in Camp Squad. */
+export function drawSubSpecHeader(
+  ctx: CanvasRenderingContext2D,
+  rect: LayoutRect,
+  o: { needsChoice: boolean; activeTitle?: string; animTime?: number }
+) {
+  const { x, y, width: w, height: h } = rect
+  const cy = y + h * 0.5
+  if (o.needsChoice) {
+    const pulse = 0.5 + 0.5 * Math.sin((o.animTime ?? 0) * 4.5)
+    const badgeW = drawChip(ctx, x, y + (h - 15) * 0.5, 'PICK 3★ MASTERY!', {
+      h: 15,
+      size: 8.5,
+      color: COLOR.accentText,
+      bg: pulse > 0.5 ? COLOR.accentHi : COLOR.accent,
+      border: COLOR.outline
+    })
+    const hintX = x + badgeW + 6
+    const hintW = w - badgeW - 8
+    if (hintW > 52) {
+      drawText(ctx, 'Choose a 3★ specialization path', hintX, cy + 0.5, {
+        size: 9.5,
+        weight: 700,
+        color: '#ffe8a3',
+        maxW: hintW
+      })
+    }
+    return
+  }
+  drawOverline(ctx, '3★ Mastery Path', x, cy, w * 0.58)
+  if (o.activeTitle) {
+    drawText(ctx, `${o.activeTitle} · Switch anytime`, x + w, cy + 0.5, {
+      size: 9,
+      weight: 700,
+      color: COLOR.accentHi,
+      align: 'right',
+      maxW: w * 0.52
+    })
+  }
+}
+
+/** Selectable 3-Star Mastery Path Card (sq-subspec-0 / sq-subspec-1) for Camp Squad. */
+export function drawSubSpecCard(
+  ctx: CanvasRenderingContext2D,
+  rect: LayoutRect,
+  spec: HeroSubSpec,
+  st: CanvasWidgetDrawState,
+  o: { active: boolean; needsChoice: boolean; animTime?: number }
+) {
+  const { x, width: w, height: h } = rect
+  const pressed = st.pressed
+  const y = rect.y + (pressed ? 2 : 0)
+  const drawH = h - (pressed ? 2 : 0)
+  const hot = st.hovered || st.focused
+  const r = RADIUS.md
+  const pulse = o.needsChoice ? 0.5 + 0.5 * Math.sin((o.animTime ?? 0) * 4.5) : 0
+
+  ctx.save()
+  drawSurface(ctx, { x, y, width: w, height: drawH }, {
+    r,
+    lipH: pressed ? 1 : 3,
+    fill: o.active ? '#4a3d1f' : hot ? '#364a78' : '#253459',
+    fillBot: o.active ? '#2b2210' : '#18223d',
+    rim: o.active ? COLOR.accentHi : o.needsChoice ? (pulse > 0.45 ? COLOR.accentHi : spec.accentHex) : hot ? spec.accentHex + 'cc' : spec.accentHex + '66',
+    shadow: false
+  })
+
+  if (o.active) {
+    rr(ctx, x + 1.5, y + 1.5, w - 3, drawH - 3, Math.max(2, r - 1.5))
+    ctx.strokeStyle = COLOR.accent
+    ctx.lineWidth = 2.4
+    ctx.stroke()
+  } else if (o.needsChoice) {
+    rr(ctx, x + 2, y + 2, w - 4, drawH - 4, Math.max(2, r - 2))
+    ctx.strokeStyle = pulse > 0.5 ? COLOR.accent + 'cc' : spec.accentHex + '88'
+    ctx.lineWidth = 1.6
+    ctx.stroke()
+  }
+
+  const faceH = Math.max(12, drawH - (pressed ? 1 : 3))
+  // Left accent strip
+  rr(ctx, x + 3, y + 5, 3.5, Math.max(8, faceH - 10), 2)
+  ctx.fillStyle = o.active ? COLOR.accentHi : spec.accentHex
+  ctx.fill()
+
+  const padL = 11
+  const padR = 7
+  const tx = x + padL
+  const right = x + w - padR
+  const compact = faceH < 56
+
+  // Row 1: Mastery Title + ACTIVE badge (or roleTag on wide cards)
+  const topY = y + (compact ? 11 : 13)
+  let rightUsed = 0
+  if (o.active) {
+    rightUsed = drawChip(ctx, right, topY - 7, 'ACTIVE', {
+      h: 14,
+      size: 7.5,
+      color: COLOR.accentText,
+      bg: COLOR.accentHi,
+      border: COLOR.outline,
+      align: 'right'
+    }) + 4
+  } else if (w >= 210) {
+    rightUsed = drawChip(ctx, right, topY - 7, spec.roleTag.toUpperCase(), {
+      h: 14,
+      size: 7,
+      color: spec.accentHex,
+      bg: '#121b33',
+      border: spec.accentHex + '66',
+      align: 'right'
+    }) + 4
+  }
+  drawText(ctx, spec.title, tx, topY, {
+    size: compact ? 11 : 12,
+    weight: 900,
+    color: o.active ? '#fff5d1' : '#ffffff',
+    maxW: Math.max(28, right - tx - rightUsed),
+    display: true,
+    stroke: true,
+    strokeWidth: 2
+  })
+
+  // Row 2: Stat bonus pill
+  const midY = y + (compact ? faceH * 0.5 : faceH * 0.49)
+  const pillH = compact ? 14 : 15
+  drawChip(ctx, tx, midY - pillH * 0.5, spec.statSummary, {
+    h: pillH,
+    size: compact ? 7.5 : 8,
+    color: spec.accentHex,
+    bg: '#111a30',
+    border: spec.accentHex + '77'
+  })
+
+  // Row 3: Ultimate skill name & concise summary
+  const botY = y + faceH - (compact ? 8 : 10)
+  const ultLine = w >= 225
+    ? `★ ${spec.ultimate.name}: ${spec.summary}`
+    : `★ ${spec.ultimate.name}`
+  drawText(ctx, ultLine, tx, botY, {
+    size: compact ? 8.5 : 9.5,
+    weight: 700,
+    color: o.active ? '#ffe8a8' : '#cfe0ff',
+    maxW: Math.max(30, right - tx)
+  })
+
+  ctx.restore()
+  if (st.focused) drawFocusRing(ctx, x, y, w, drawH, r)
 }
 
 /** Innate Hero Passive banner for Camp Hero Inspector. */
@@ -6343,7 +6520,7 @@ function drawSkillIcon(
   r: number
 ) {
   ctx.save()
-  if (kind === 'strike' || skillId === 'solar_cleave' || skillId === 'solar_slash' || skillId === 'crownbreaker') {
+  if (kind === 'strike' || skillId === 'solar_cleave' || skillId === 'aegis_judgment' || skillId === 'solar_slash' || skillId === 'crownbreaker' || skillId === 'radiant_tempest') {
     // Diagonal steel/gold sword slash
     ctx.strokeStyle = kind === 'strike' ? '#e8f0f7' : '#ffe073'
     ctx.lineWidth = 2.6
