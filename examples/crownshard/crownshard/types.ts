@@ -677,6 +677,8 @@ export type SoundEvent =
   | { kind: 'victory' }
   | { kind: 'defeat' }
 
+export type ActionCameraCueKind = 'crit' | 'ultimate' | 'boss_special'
+
 export type VfxEvent =
   | { kind: 'projectile'; style: 'arrow' | 'arcane' | 'fire' | 'frost' | 'holy' | 'shadow'; from: Vec3; to: Vec3; uid?: string }
   | { kind: 'burst'; style: 'slash' | 'fire' | 'frost' | 'holy' | 'arcane' | 'shadow' | 'gold'; at: Vec3; radius?: number; uid?: string }
@@ -701,6 +703,8 @@ export type VfxEvent =
   | { kind: 'special'; uid: string; move: 'eclipse_nova' | 'shaman_mend' | 'lich_summon' | 'frostwyrm_breath' | 'titan_slam'; at: Vec3; cells: Vec3[] }
   /** Reactive elemental status combo detonation (Shatter, Freeze, Wildfire spread, Combust). */
   | { kind: 'combo'; combo: ElementalComboId; at: Vec3; cells: Vec3[]; bonusDamage: number }
+  /** Subtle dynamic camera focus/zoom cue for critical hits, 3-star hero ultimates, and boss specials. */
+  | { kind: 'camera_cue'; cue: ActionCameraCueKind; at: Vec3 }
   | { kind: 'heal'; at: Vec3 }
   | { kind: 'revive'; at: Vec3; uid?: string }
   | { kind: 'shield'; at: Vec3 }
@@ -716,6 +720,8 @@ export type VfxEvent =
       fallDrop?: number
       iceSlid?: boolean
     }
+
+export type BattleVfxEvent = VfxEvent
 
 export interface BattleHeroXpGain {
   readonly uid: string
@@ -1271,6 +1277,7 @@ export interface CampaignState {
   lastPackReveal: PackRevealItem[]
   seenTips: string[]
   tipsDisabled?: boolean
+  actionCameraEnabled: boolean
   discoveredEnemies: EnemyArchetypeId[]
   battleSpeed: BattleSpeedMultiplier
   oakhavenExchange?: OakhavenExchangeState
@@ -1292,6 +1299,7 @@ export type SavedCampaignState = Omit<
   | 'packsSinceEpic'
   | 'packsSinceLegendary'
   | 'seenTips'
+  | 'actionCameraEnabled'
   | 'discoveredEnemies'
   | 'battleSpeed'
   | 'crownlessDeepFloor'
@@ -1307,6 +1315,7 @@ export type SavedCampaignState = Omit<
   packsSinceLegendary?: number
   seenTips?: string[]
   tipsDisabled?: boolean
+  actionCameraEnabled?: boolean
   discoveredEnemies?: EnemyArchetypeId[]
   battleSpeed?: BattleSpeedMultiplier
   oakhavenExchange?: OakhavenExchangeState

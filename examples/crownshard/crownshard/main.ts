@@ -35,10 +35,10 @@ import {
   isCrownlessDeepStage, isDeployTile, isEndlessBossWave, isEndlessUnlocked, isEnemyShrouded, isOakhavenExchangeUnlocked, isStageCleared, isStageUnlocked, loadSave, maxSquadSize, mergeHero,
   moveDeployUnit, persistSave, previewBulkSalvageCommonDupes, previewPathOpportunityAttacks,
   previewTurnOrderAfterAction, previewWaitFacing, resetDiscoveryTips, resolveStageChallenge, restoreBattleState, rotateDeployUnit, salvageEquipCard,
-  salvageHeroCard, selectEndlessWaveStage, selectHeroByUid, selectTile, serializeBattleState, setAutoBattle, setBattleSpeed,
+  salvageHeroCard, selectEndlessWaveStage, selectHeroByUid, selectTile, serializeBattleState, setActionCameraEnabled, setAutoBattle, setBattleSpeed,
   setDiscoveryTipsEnabled, setSelectedCrownlessDeepFloor, shouldAutoSaveOnTurnBoundary, skipAllDiscoveryTips, startChapterBattle, startEndlessRun, startWorldEventBattle, stepGame,
   swapDeployUnit, syncTurnBoundaryTracker, toggleAutoBattle, toggleBattleSpeed, toggleEquipLock, toggleHeroLock,
-  toggleSquadMember, toggleTacticInDeck, undoMove, unequipItem, unitAt
+  toggleSquadMember, toggleTacticInDeck, undoMove, unequipItem, unitAt, isActionCameraEnabled
 } from './simulation.ts'
 import type { CodexTab } from './simulation.ts'
 import { FACING_DIRS, cellHeightLevel, gridToWorld, isUnitDowned } from './types.ts'
@@ -1006,6 +1006,17 @@ async function start() {
     if (nextEnabled && state.battle) {
       checkDiscoveryTipForBattle(state)
     }
+    state.sounds.push({ kind: 'card', pitch: nextEnabled ? 1.12 : 0.92 })
+    saveNow()
+    uiDirty = true
+    hudRev++
+  }
+
+  function toggleActionCameraSetting() {
+    audio.unlock()
+    const nextEnabled = !isActionCameraEnabled(state.campaign)
+    setActionCameraEnabled(state, nextEnabled)
+    scene.setActionCameraEnabled(nextEnabled)
     state.sounds.push({ kind: 'card', pitch: nextEnabled ? 1.12 : 0.92 })
     saveNow()
     uiDirty = true
@@ -7287,14 +7298,20 @@ async function start() {
   // =========================================================================
 
   function buildPausedTree(w: number, h: number): LayoutNode {
-    const shortH = h < 480
-    const rowH = shortH ? 34 : 42
-    const btnH = shortH ? 38 : 46
+    const ultraShortH = h < 420
+    const shortH = h < 520
+    const rowH = ultraShortH ? 32 : shortH ? 35 : 42
+    const btnH = ultraShortH ? 36 : shortH ? 40 : 46
     return overlay({ id: 'root', style: { anchor: 'fill' } }, [
       boxNode({ id: 'p-scrim', style: { anchor: 'fill' }, widget: { type: 'panel', scrim: true } }),
       column({
         id: 'p-card',
-        style: { anchor: 'center', width: Math.min(w - 24, 360), padding: shortH ? 14 : 22, gap: shortH ? 7 : 10 },
+        style: {
+          anchor: 'center',
+          width: Math.min(w - 24, 360),
+          padding: ultraShortH ? 12 : shortH ? 14 : 22,
+          gap: ultraShortH ? 6 : shortH ? 7 : 10
+        },
         widget: {
           type: 'panel',
           blocksPointer: true,
@@ -7302,7 +7319,7 @@ async function start() {
         }
       }, [
         boxNode({
-          id: 'p-title', style: { height: shortH ? 26 : 34 },
+          id: 'p-title', style: { height: ultraShortH ? 24 : shortH ? 26 : 34 },
           widget: {
             type: 'panel',
             draw: (ctx: CanvasRenderingContext2D, rect: LayoutRect) => drawLabel(
@@ -7343,6 +7360,15 @@ async function start() {
             type: 'button', label: 'Audio', onPress: toggleMute,
             draw: (ctx: CanvasRenderingContext2D, rect: LayoutRect, st: CanvasWidgetDrawState) => drawSettingRow(
               ctx, rect, 'Master Audio', audio.isMuted() ? 'mute' : 'volume', !audio.isMuted(), st
+            )
+          }
+        }),
+        boxNode({
+          id: 'cs-setting-action-camera', style: { height: rowH },
+          widget: {
+            type: 'button', label: 'Action Camera', onPress: toggleActionCameraSetting,
+            draw: (ctx: CanvasRenderingContext2D, rect: LayoutRect, st: CanvasWidgetDrawState) => drawSettingRow(
+              ctx, rect, 'Action Camera', 'target', isActionCameraEnabled(state.campaign), st
             )
           }
         }),

@@ -250,6 +250,13 @@ export {
 export type {
   DiscoveryTipCategory, DiscoveryTipIcon, DiscoveryTipSpec, DiscoveryTipTriggerContext
 } from './discovery-tips.ts'
+export {
+  ACTION_CAMERA_2X_RATE, ACTION_CAMERA_CUES, ACTION_CAMERA_EPS,
+  ACTION_CAMERA_MAX_FOCUS_X, ACTION_CAMERA_MAX_FOCUS_Y, ACTION_CAMERA_MAX_FOCUS_Z,
+  cancelActionCamera, createActionCameraState, isActionCameraActive,
+  isActionCameraEnabled, setActionCameraEnabled, stepActionCamera, triggerActionCameraCue
+} from './action-camera.ts'
+export type { ActionCameraCueConfig, ActionCameraCueKind, ActionCameraState } from './action-camera.ts'
 import {
   AUTO_BATTLE_POST_ACT_DELAY, AUTO_BATTLE_THINK_DELAY, DEFAULT_BATTLE_SPEED,
   chooseBestTurnEndFacing, findAutoBattleProvokingTaunters, formatBattleSpeedLabel,
@@ -1094,6 +1101,7 @@ export function createInitialCampaign(seed = 1337): CampaignState {
     lastPackReveal: [],
     seenTips: [],
     tipsDisabled: false,
+    actionCameraEnabled: true,
     discoveredEnemies: [],
     battleSpeed: DEFAULT_BATTLE_SPEED,
     oakhavenExchange: { cycle: 0, boughtIds: [] },
@@ -1285,6 +1293,7 @@ function cloneCampaignFromSave(c: SavedCampaignState, fallbackSeed: number): Cam
     lastPackReveal: [],
     seenTips: normalizeSeenTips(c.seenTips),
     tipsDisabled: c.tipsDisabled === true,
+    actionCameraEnabled: c.actionCameraEnabled !== false,
     discoveredEnemies: normalizeDiscoveredEnemies(c.discoveredEnemies, dedupCleared),
     battleSpeed: normalizeBattleSpeed(c.battleSpeed),
     oakhavenExchange: normalizeOakhavenExchange(
@@ -2292,6 +2301,7 @@ export function serializeSave(state: GameState): SaveData {
       lastPackReveal: [],
       seenTips: normalizeSeenTips(state.campaign.seenTips),
       tipsDisabled: state.campaign.tipsDisabled === true,
+      actionCameraEnabled: state.campaign.actionCameraEnabled !== false,
       discoveredEnemies: normalizeDiscoveredEnemies(state.campaign.discoveredEnemies),
       battleSpeed: normalizeBattleSpeed(state.campaign.battleSpeed),
       oakhavenExchange: normalizeOakhavenExchange(state.campaign.oakhavenExchange, state.campaign.battlesWon),
@@ -2394,6 +2404,7 @@ export function loadSave(storage: StorageLike | null | undefined): SaveData | nu
         lastPackReveal: [],
         seenTips: 'seenTips' in camp ? normalizeSeenTips(camp.seenTips) : [],
         tipsDisabled: 'tipsDisabled' in camp ? camp.tipsDisabled === true : false,
+        actionCameraEnabled: 'actionCameraEnabled' in camp ? camp.actionCameraEnabled !== false : true,
         discoveredEnemies: 'discoveredEnemies' in camp
           ? normalizeDiscoveredEnemies(camp.discoveredEnemies, clearedStageIds)
           : backfillDiscoveredEnemiesFromStages(clearedStageIds),
@@ -5851,6 +5862,13 @@ function applyDamageDetailed(
     absorbed,
     damage: finalDmg
   })
+  if (isCrit) {
+    state.vfx.push({
+      kind: 'camera_cue',
+      cue: 'crit',
+      at: [defender.x, defender.y, defender.z]
+    })
+  }
   defender.hitFlash = 0.28
   defender.animState = 'hit'
   defender.animTimer = 0.30
@@ -7121,6 +7139,13 @@ function executeHeroSkill(
     at: [tx, ty, tz],
     cells: cellCentres(battle, affected)
   })
+  if (caster.team === 'ally' && (skillIndex === 2 || skill.tier === 3)) {
+    state.vfx.push({
+      kind: 'camera_cue',
+      cue: 'ultimate',
+      at: [(caster.x + tx) * 0.5, (caster.y + ty) * 0.5, (caster.z + tz) * 0.5]
+    })
+  }
   let hitAny = false
   let supportXp = 0
 
@@ -7922,6 +7947,11 @@ function triggerFrontierBossPhaseIfReady(state: GameState, boss: BattleUnit): vo
     at: [boss.x, boss.y, boss.z],
     cells: [[boss.x, boss.y, boss.z]]
   })
+  state.vfx.push({
+    kind: 'camera_cue',
+    cue: 'boss_special',
+    at: [boss.x, boss.y, boss.z]
+  })
   appendCombatLog(
     battle,
     'system',
@@ -8319,6 +8349,13 @@ function executeEnemyUnitTurn(state: GameState, enemy: BattleUnit): void {
         at: [summoned.x, summoned.y, summoned.z],
         cells: [[summoned.x, summoned.y, summoned.z]]
       })
+      if (enemy.isBoss) {
+        state.vfx.push({
+          kind: 'camera_cue',
+          cue: 'boss_special',
+          at: [(enemy.x + summoned.x) * 0.5, (enemy.y + summoned.y) * 0.5, (enemy.z + summoned.z) * 0.5]
+        })
+      }
       addFloat(battle, summoned.x, summoned.y + 0.4, summoned.z, 'RAISE SKELETON!', '#68ffaa')
       appendCombatLog(battle, 'system', `${enemy.name} raises ${summoned.name}`, { accentHex: '#68ffaa' })
       battle.turnOrder = computeTurnOrderPreview(battle, 8)
@@ -8454,6 +8491,11 @@ function performEnemyAttack(state: GameState, enemy: BattleUnit, target: BattleU
         at: [tx, ty, tz],
         cells: cellCentres(battle, wyrmPlan.cells)
       })
+      state.vfx.push({
+        kind: 'camera_cue',
+        cue: 'boss_special',
+        at: [(enemy.x + tx) * 0.5, (enemy.y + ty) * 0.5, (enemy.z + tz) * 0.5]
+      })
       const hitUids = new Set<string>()
       const kbTargets: BattleUnit[] = []
       for (const c of wyrmPlan.cells) {
@@ -8523,6 +8565,11 @@ function performEnemyAttack(state: GameState, enemy: BattleUnit, target: BattleU
       move: lichNova.vfxMove,
       at: [target.x, target.y, target.z],
       cells: cellCentres(battle, affectedCells)
+    })
+    state.vfx.push({
+      kind: 'camera_cue',
+      cue: 'boss_special',
+      at: [(enemy.x + target.x) * 0.5, (enemy.y + target.y) * 0.5, (enemy.z + target.z) * 0.5]
     })
     for (const c of affectedCells) {
       const victim = unitAt(battle, c.col, c.row)
@@ -8601,6 +8648,13 @@ function performEnemyAttack(state: GameState, enemy: BattleUnit, target: BattleU
         move: special.vfxMove,
         at: [target.x, target.y, target.z],
         cells: cellCentres(battle, affectedCells)
+      })
+    }
+    if (enemy.isBoss) {
+      state.vfx.push({
+        kind: 'camera_cue',
+        cue: 'boss_special',
+        at: [(enemy.x + target.x) * 0.5, (enemy.y + target.y) * 0.5, (enemy.z + target.z) * 0.5]
       })
     }
 

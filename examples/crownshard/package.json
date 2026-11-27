@@ -22,6 +22,7 @@
     "staticFiles": ["game-ui.css"],
     "assetsModule": "dist/crownshard/package-assets.js",
     "godotEntries": [
+      "crownshard/action-camera.ts",
       "crownshard/armory-diff.ts",
       "crownshard/auto-battle.ts",
       "crownshard/codex.ts",
