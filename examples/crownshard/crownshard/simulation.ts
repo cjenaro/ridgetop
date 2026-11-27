@@ -101,6 +101,29 @@ export {
   totalXpForLevel, victoryXpBonus, xpRequiredForLevel
 }
 export type { GrantHeroXpResult, HeroLevelProgress, LevelStatBonuses } from './leveling.ts'
+import {
+  BIOME_ENEMY_ARCHETYPES, ICE_WRAITH_CHILLED_BONUS_MUL, MINIBOSS_SPECIAL_COOLDOWN,
+  NECROMANCER_SUMMON_CAP, NECROMANCER_SUMMON_COOLDOWN, PYROMANCER_NOVA_COOLDOWN,
+  REGIONAL_MINIBOSS_ARCHETYPES, RIVER_TROLL_REGEN_AMOUNT, RIVER_TROLL_SLAM_COOLDOWN,
+  canSummonerRaiseMinion, chooseEnemySpecialMove, computeEnemyArchetypeDamageMul,
+  countActiveSummonsFor, createSummonedEnemyUnit, evaluateTurnStartRegeneration,
+  findBestSummonTile, generateSummonUid, getEnemyAttackElement, getEnemyBasicAttackStatus,
+  getEnemyBiomeAffinity, getEnemyProjectileStyle, isRegeneratingArchetype,
+  isRegionalMiniBoss, isSummonerArchetype
+} from './enemy-archetypes.ts'
+export {
+  BIOME_ENEMY_ARCHETYPES, ICE_WRAITH_CHILLED_BONUS_MUL, MINIBOSS_SPECIAL_COOLDOWN,
+  NECROMANCER_SUMMON_CAP, NECROMANCER_SUMMON_COOLDOWN, PYROMANCER_NOVA_COOLDOWN,
+  REGIONAL_MINIBOSS_ARCHETYPES, RIVER_TROLL_REGEN_AMOUNT, RIVER_TROLL_SLAM_COOLDOWN,
+  canSummonerRaiseMinion, chooseEnemySpecialMove, computeEnemyArchetypeDamageMul,
+  countActiveSummonsFor, createSummonedEnemyUnit, evaluateTurnStartRegeneration,
+  findBestSummonTile, generateSummonUid, getEnemyAttackElement, getEnemyBasicAttackStatus,
+  getEnemyBiomeAffinity, getEnemyProjectileStyle, isRegeneratingArchetype,
+  isRegionalMiniBoss, isSummonerArchetype
+}
+export type {
+  EnemyBasicStatusEffect, EnemySpecialDecision, EnemySpecialMoveKind, TurnStartRegenResult
+} from './enemy-archetypes.ts'
 import { executeBulkSalvageCommonDupes } from './inventory-ops.ts'
 export {
   findBulkSalvageableCommonDupes, isEquipLocked, isHeroLocked,
@@ -895,7 +918,17 @@ const ENEMY_ID_LOOKUP: ReadonlyMap<string, EnemyArchetypeId> = new Map<string, E
   ['bog_shaman', 'bog_shaman'],
   ['crypt_knight', 'crypt_knight'],
   ['frost_golem', 'frost_golem'],
-  ['eclipse_archon', 'eclipse_archon']
+  ['eclipse_archon', 'eclipse_archon'],
+  ['ember_pyromancer', 'ember_pyromancer'],
+  ['ice_wraith', 'ice_wraith'],
+  ['bone_necromancer', 'bone_necromancer'],
+  ['bone_thrall', 'bone_thrall'],
+  ['river_troll', 'river_troll'],
+  ['briar_warlord', 'briar_warlord'],
+  ['mire_matriarch', 'mire_matriarch'],
+  ['ash_inquisitor', 'ash_inquisitor'],
+  ['frost_jarl', 'frost_jarl'],
+  ['magma_warden', 'magma_warden']
 ])
 
 function toDifficultyLevel(raw: number): DifficultyLevel {
@@ -1107,6 +1140,7 @@ export function serializeBattleState(
       stars: u.stars,
       level: normalizeHeroLevel(u.level),
       isBoss: u.isBoss,
+      ...(u.summonerUid !== undefined ? { summonerUid: u.summonerUid } : {}),
       ...(u.weaponId !== undefined ? { weaponId: u.weaponId } : {}),
       ...(u.armorId !== undefined ? { armorId: u.armorId } : {}),
       ...(u.relicId !== undefined ? { relicId: u.relicId } : {}),
@@ -1363,6 +1397,7 @@ export function validateBattleSnapshot(raw: unknown): BattleSaveSnapshot | null 
     const weaponId = typeof item.weaponId === 'string' && EQUIPMENT_BY_ID[item.weaponId] ? item.weaponId : undefined
     const armorId = typeof item.armorId === 'string' && EQUIPMENT_BY_ID[item.armorId] ? item.armorId : undefined
     const relicId = typeof item.relicId === 'string' && EQUIPMENT_BY_ID[item.relicId] ? item.relicId : undefined
+    const summonerUid = typeof item.summonerUid === 'string' && item.summonerUid.length > 0 ? item.summonerUid : undefined
 
     units.push({
       uid: item.uid,
@@ -1373,6 +1408,7 @@ export function validateBattleSnapshot(raw: unknown): BattleSaveSnapshot | null 
       stars,
       level: unitLevel,
       isBoss,
+      ...(summonerUid !== undefined ? { summonerUid } : {}),
       ...(weaponId !== undefined ? { weaponId } : {}),
       ...(armorId !== undefined ? { armorId } : {}),
       ...(relicId !== undefined ? { relicId } : {}),
@@ -1524,6 +1560,7 @@ export function restoreBattleState(state: GameState, snapshot: unknown): boolean
       stars: u.stars,
       level: normalizeHeroLevel(u.level),
       isBoss: u.isBoss,
+      ...(u.summonerUid !== undefined ? { summonerUid: u.summonerUid } : {}),
       ...(u.weaponId !== undefined ? { weaponId: u.weaponId } : {}),
       ...(u.armorId !== undefined ? { armorId: u.armorId } : {}),
       ...(u.relicId !== undefined ? { relicId: u.relicId } : {}),
@@ -5750,11 +5787,11 @@ function executeBasicAttackOnBarricade(state: GameState, attacker: BattleUnit, c
     state.sounds.push({ kind: 'slash' })
     state.vfx.push({ kind: 'burst', style: 'slash', at: [tx, ty + 0.65, tz], uid: attacker.uid })
   } else {
-    const style = attacker.heroId === 'archer' || attacker.enemyId === 'bone_archer'
-      ? 'arrow'
+    const style = attacker.team === 'enemy'
+      ? getEnemyProjectileStyle(attacker.enemyId)
+      : attacker.heroId === 'archer' ? 'arrow'
       : attacker.heroId === 'cryomancer' ? 'frost'
       : attacker.heroId === 'cleric' ? 'holy'
-      : attacker.enemyId === 'eclipse_archon' || attacker.enemyId === 'bog_shaman' ? 'shadow'
       : 'arcane'
     state.sounds.push({ kind: style === 'arrow' ? 'arrow' : 'magic' })
     state.vfx.push({
@@ -5966,11 +6003,11 @@ function executeBasicAttack(state: GameState, attacker: BattleUnit, target: Batt
     state.sounds.push({ kind: 'slash' })
     state.vfx.push({ kind: 'burst', style: 'slash', at: [target.x, target.y + 0.75, target.z], uid: attacker.uid })
   } else {
-    const style = attacker.heroId === 'archer' || attacker.enemyId === 'bone_archer'
-      ? 'arrow'
+    const style = attacker.team === 'enemy'
+      ? getEnemyProjectileStyle(attacker.enemyId)
+      : attacker.heroId === 'archer' ? 'arrow'
       : attacker.heroId === 'cryomancer' ? 'frost'
       : attacker.heroId === 'cleric' ? 'holy'
-      : attacker.enemyId === 'eclipse_archon' || attacker.enemyId === 'bog_shaman' ? 'shadow'
       : 'arcane'
     state.sounds.push({ kind: style === 'arrow' ? 'arrow' : 'magic' })
     state.vfx.push({
@@ -5982,7 +6019,11 @@ function executeBasicAttack(state: GameState, attacker: BattleUnit, target: Batt
     })
   }
 
-  const dmgRes = applyDamageDetailed(state, attacker, target, attacker.atk, 0, true, false)
+  const archMul = attacker.team === 'enemy' ? computeEnemyArchetypeDamageMul(attacker, target) : 1
+  if (archMul > 1) {
+    addFloat(battle, target.x, target.y + 0.62, target.z, 'FROSTBITE!', '#80e8ff')
+  }
+  const dmgRes = applyDamageDetailed(state, attacker, target, attacker.atk * archMul, 0, true, false)
   // Frostguard Plate (`frostguard_plate`): chills adjacent melee attackers with slowTurns = 1
   if (!isRanged && attacker.alive && attacker.team !== target.team && shouldChillMeleeAttacker(target)) {
     attacker.slowTurns = Math.max(attacker.slowTurns, 1)
@@ -5994,11 +6035,20 @@ function executeBasicAttack(state: GameState, attacker: BattleUnit, target: Batt
     )
     state.vfx.push({ kind: 'burst', style: 'frost', at: [attacker.x, attacker.y + 0.65, attacker.z], radius: 0.75 })
   }
+  if (attacker.team === 'enemy') {
+    const atkElement = getEnemyAttackElement(attacker.enemyId)
+    if (atkElement) {
+      triggerElementalCombo(state, attacker, atkElement, target.alive ? target : null, target.col, target.row, handleUnitDefeat)
+    }
+  }
   if (target.alive) {
     if (attacker.team === 'ally') {
       applyEquipmentOnHitStatus(battle, attacker, target)
-    } else if (attacker.enemyId === 'bog_shaman') {
-      applyStatus(battle, target, 'poison', 2)
+    } else {
+      const enemyStatus = getEnemyBasicAttackStatus(attacker.enemyId)
+      if (enemyStatus) {
+        applyStatus(battle, target, enemyStatus.status, enemyStatus.stacks)
+      }
     }
     executePincerFollowUp(state, attacker, target)
   }
@@ -6900,6 +6950,8 @@ function advanceToNextUnitTurn(state: GameState, initial = false): void {
     for (let i = 0; i < 3; i++) {
       if (next.cooldowns[i] > 0) next.cooldowns[i] -= 1
     }
+    const hadBurnAtTurnStart = next.burnTurns > 0
+    const hadPoisonAtTurnStart = next.poisonStacks > 0
     if (next.burnTurns > 0) {
       next.burnTurns -= 1
       const burnRes = applyDamageDetailed(state, null, next, 8, 1, false, false, { suppressLog: true })
@@ -6933,6 +6985,22 @@ function advanceToNextUnitTurn(state: GameState, initial = false): void {
       applyLavaGeyserHazard(state, next, startCell)
       if (!next.alive) {
         continue
+      }
+    }
+    if (next.team === 'enemy' && next.alive) {
+      const regen = evaluateTurnStartRegeneration({
+        alive: next.alive,
+        enemyId: next.enemyId,
+        hp: next.hp,
+        maxHp: next.maxHp,
+        burnTurns: hadBurnAtTurnStart ? 1 : 0,
+        poisonStacks: hadPoisonAtTurnStart ? 1 : 0
+      })
+      if (regen.amount > 0) {
+        applyHealAndShield(state, next, regen.amount, 0)
+        addFloat(battle, next.x, next.y + 0.45, next.z, `REGEN +${regen.amount}`, '#62f58e')
+      } else if (regen.suppressedBy !== 'none' && next.hp < next.maxHp) {
+        addFloat(battle, next.x, next.y + 0.45, next.z, 'REGEN BLOCKED', '#ff8e47')
       }
     }
     if (next.slowTurns > 0) next.slowTurns -= 1
@@ -7055,9 +7123,15 @@ function chooseEnemyTarget(
 
   const pool = requireInRangeNow ? allies.filter(canHitNow) : allies.slice()
   if (pool.length === 0) return { target: null, provoked: false }
+  const exploitsChill = enemy.enemyId === 'ice_wraith' || enemy.enemyId === 'frost_jarl'
   const picked = pool.sort((a, b) => {
     const da = manhattan(enemy.col, enemy.row, a.col, a.row)
     const db = manhattan(enemy.col, enemy.row, b.col, b.row)
+    if (exploitsChill && da <= enemy.range && db <= enemy.range) {
+      const aSlow = a.slowTurns > 0 ? 1 : 0
+      const bSlow = b.slowTurns > 0 ? 1 : 0
+      if (aSlow !== bSlow) return bSlow - aSlow
+    }
     if (ai === 'ranged' && da <= enemy.range && db <= enemy.range) return a.hp - b.hp
     return da - db
   })[0]
@@ -7080,8 +7154,33 @@ function executeEnemyUnitTurn(state: GameState, enemy: BattleUnit): void {
   const spec = enemy.enemyId ? ENEMY_SPECS[enemy.enemyId] : ENEMY_SPECS.goblin
   const { target, provoked } = chooseEnemyTarget(battle, enemy, allies, spec.ai, false)
 
-  // Support shaman heals injured comrade if NOT provoked by a nearby Taunting tank
-  if (spec.ai === 'support' && !provoked) {
+  // Crypt summoners (Bone Necromancer, Ash Inquisitor) raise a Bone Thrall onto an adjacent open tile
+  if (!provoked && canSummonerRaiseMinion(battle, enemy)) {
+    const summonTile = findBestSummonTile(battle, enemy, target)
+    if (summonTile) {
+      const summoned = createSummonedEnemyUnit(battle, enemy, 'bone_thrall', summonTile.col, summonTile.row)
+      battle.units.push(summoned)
+      enemy.cooldowns[0] = NECROMANCER_SUMMON_COOLDOWN
+      enemy.acted = true
+      faceToward(enemy, summoned.x, summoned.z)
+      enemy.animState = 'cast'
+      enemy.animTimer = 0.50
+      state.sounds.push({ kind: 'magic', pitch: 0.78 })
+      state.vfx.push({
+        kind: 'special',
+        uid: enemy.uid,
+        move: 'lich_summon',
+        at: [summoned.x, summoned.y, summoned.z],
+        cells: [[summoned.x, summoned.y, summoned.z]]
+      })
+      addFloat(battle, summoned.x, summoned.y + 0.4, summoned.z, 'RAISE SKELETON!', '#68ffaa')
+      battle.turnOrder = computeTurnOrderPreview(battle, 8)
+      return
+    }
+  }
+
+  // Support shaman / Mire Matriarch heals injured comrade if NOT provoked by a nearby Taunting tank
+  if ((spec.ai === 'support' || enemy.enemyId === 'mire_matriarch') && !isSummonerArchetype(enemy.enemyId) && !provoked) {
     const hurt = battle.units
       .filter(u => u.alive && u.team === 'enemy' && u.hp < u.maxHp * 0.8)
       .sort((a, b) => (a.hp / a.maxHp) - (b.hp / b.maxHp))[0]
@@ -7089,6 +7188,7 @@ function executeEnemyUnitTurn(state: GameState, enemy: BattleUnit): void {
       faceToward(enemy, hurt.x, hurt.z)
       enemy.animState = 'cast'
       enemy.animTimer = 0.42
+      enemy.acted = true
       state.vfx.push({ kind: 'special', uid: enemy.uid, move: 'shaman_mend', at: [hurt.x, hurt.y, hurt.z], cells: [[hurt.x, hurt.y, hurt.z]] })
       applyHealAndShield(state, hurt, 22, 6, enemy, { sourceLabel: 'Totem Mend' })
       return
@@ -7180,28 +7280,80 @@ function performEnemyAttack(state: GameState, enemy: BattleUnit, target: BattleU
   if (manhattan(enemy.col, enemy.row, target.col, target.row) > effRange) return
   if (!enemy.isBoss && !hasLineOfSight(battle, enemy.col, enemy.row, target.col, target.row, false)) return
 
-  // Boss special every odd/even turn: Eclipse Nova cross AoE!
-  if (enemy.isBoss && battle.turn % 2 === 0) {
+  const special = chooseEnemySpecialMove(battle, enemy)
+  if (special) {
     faceToward(enemy, target.x, target.z)
     enemy.animState = 'cast'
     enemy.animTimer = 0.50
     enemy.acted = true
-    state.sounds.push({ kind: 'magic', pitch: 0.72 })
-    const novaCells = getPatternCells(target.col, target.row, 'cross', battle.cols, battle.rows)
-    state.vfx.push({
-      kind: 'special',
-      uid: enemy.uid,
-      move: 'eclipse_nova',
-      at: [target.x, target.y, target.z],
-      cells: cellCentres(battle, novaCells)
-    })
-    for (const c of novaCells) {
+    if (special.cooldownTurns > 0) {
+      enemy.cooldowns[0] = special.cooldownTurns
+    }
+    state.sounds.push({ kind: special.knockbackDistance ? 'slash' : 'magic', pitch: 0.78 })
+    addFloat(battle, enemy.x, enemy.y + 0.52, enemy.z, special.label, '#ffd166')
+    const affectedCells = getPatternCells(target.col, target.row, special.pattern, battle.cols, battle.rows)
+    if (special.vfxMove === 'fire_nova') {
+      state.vfx.push({
+        kind: 'projectile',
+        style: 'fire',
+        from: [enemy.x, enemy.y + 0.95, enemy.z],
+        to: [target.x, target.y + 0.75, target.z],
+        uid: enemy.uid
+      })
+      for (const c of affectedCells) {
+        const cell = battle.cells[c.row]?.[c.col]
+        if (!cell) continue
+        const [cx, cy, cz] = gridToWorld(c.col, c.row, cell.elevation, battle.cols, battle.rows)
+        state.vfx.push({ kind: 'burst', style: 'fire', at: [cx, cy + 0.55, cz], radius: 0.95, uid: enemy.uid })
+      }
+    } else {
+      state.vfx.push({
+        kind: 'special',
+        uid: enemy.uid,
+        move: special.vfxMove,
+        at: [target.x, target.y, target.z],
+        cells: cellCentres(battle, affectedCells)
+      })
+    }
+
+    const targetsHit: BattleUnit[] = []
+    for (const c of affectedCells) {
       const victim = unitAt(battle, c.col, c.row)
-      if (victim && victim.team === 'ally') {
-        applyDamage(state, enemy, victim, enemy.atk * 1.15, 0.35, false, true, { skillName: 'Eclipse Nova' })
-        if (victim.alive) applyStatus(battle, victim, 'burn')
+      if (!victim) {
+        if (special.element) {
+          triggerElementalCombo(state, enemy, special.element, null, c.col, c.row, handleUnitDefeat)
+        }
+        continue
+      }
+      if (victim.team === 'ally') {
+        const archMul = computeEnemyArchetypeDamageMul(enemy, victim)
+        applyDamage(state, enemy, victim, enemy.atk * special.powerMul * archMul, special.ignoreArmor, false, true, { skillName: special.name })
+        if (special.element) {
+          triggerElementalCombo(state, enemy, special.element, victim.alive ? victim : null, c.col, c.row, handleUnitDefeat)
+        }
+        if (victim.alive && special.status) {
+          applyStatus(battle, victim, special.status, special.statusStacks)
+        }
+        if (victim.alive && special.knockbackDistance && special.knockbackDistance > 0) {
+          targetsHit.push(victim)
+        }
       }
     }
+
+    if (special.knockbackDistance && special.knockbackDistance > 0 && targetsHit.length > 0) {
+      const ordered = orderDisplacementTargets(targetsHit, enemy.col, enemy.row, 'knockback')
+      for (const victim of ordered) {
+        if (!victim.alive) continue
+        applyDisplacement(
+          state,
+          enemy,
+          victim,
+          { kind: 'knockback', distance: special.knockbackDistance }
+        )
+        if (victim.alive) checkTileObjectiveInteractions(state, victim)
+      }
+    }
+
     checkBattleOutcome(state)
     return
   }

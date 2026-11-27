@@ -723,7 +723,7 @@ export function createCrownshardScene(renderer: LowPolyRenderer) {
         prevPoison: unit?.poisonStacks ?? 0,
         auraTimer: seed,
         deathClip: initialDowned ? 'death_kneel' : 'death',
-        pos: [0, 0, 0],
+        pos: unit ? [unit.x, unit.y, unit.z] : [0, 0, 0],
         scl: [1, 1, 1],
         additive
       }
@@ -1324,6 +1324,12 @@ export function createCrownshardScene(renderer: LowPolyRenderer) {
     if (fx.deathClip === 'death_crumble' && crossed(0.55)) {
       localShake = Math.max(localShake, 0.12)
       const ice = unit.enemyId === 'frost_golem'
+      const magma = unit.enemyId === 'magma_warden'
+      const troll = unit.enemyId === 'river_troll'
+      const chunkCol: Color = ice ? [0.74, 0.90, 1.0, 1]
+        : magma ? [0.96, 0.38, 0.14, 1]
+        : troll ? [0.28, 0.56, 0.44, 1]
+        : [0.42, 0.36, 0.30, 1]
       for (let i = 0; i < 9; i++) {
         const a = (i / 9) * Math.PI * 2
         particles.spawn({
@@ -1334,8 +1340,8 @@ export function createCrownshardScene(renderer: LowPolyRenderer) {
           spin: 6,
           scale: [0.16, 0.13, 0.16],
           endScale: 0.5,
-          color: ice ? [0.74, 0.90, 1.0, 1] : [0.42, 0.36, 0.30, 1],
-          unlit: ice ? 0.4 : 0.1,
+          color: chunkCol,
+          unlit: ice ? 0.4 : magma ? 0.85 : 0.1,
           life: 0.8
         })
       }
@@ -1374,9 +1380,10 @@ export function createCrownshardScene(renderer: LowPolyRenderer) {
         })
       : ENEMY_RIGS[unit.enemyId ?? 'goblin']
 
-    const scale = unit.isBoss ? 1.38
-      : unit.enemyId === 'frost_golem' ? 1.24
-      : unit.enemyId === 'goblin' ? 0.92
+    const scale = unit.enemyId === 'eclipse_archon' ? 1.38
+      : unit.isBoss ? 1.32
+      : unit.enemyId === 'frost_golem' || unit.enemyId === 'river_troll' ? 1.24
+      : unit.enemyId === 'goblin' || unit.enemyId === 'bone_thrall' ? 0.90
       : unit.stars === 3 ? 1.12
       : unit.stars === 2 ? 1.05
       : 1.0
@@ -1691,9 +1698,10 @@ export function createCrownshardScene(renderer: LowPolyRenderer) {
       }
     }
 
+    const hoverY = unit.enemyId === 'ice_wraith' ? 0.14 + Math.sin(time * 3.4 + fx.seed * 6) * 0.08 : 0
     const px = unit.x + unit.lungeX + fx.kbX + slideOffX
     const pz = unit.z + unit.lungeZ + fx.kbZ + slideOffZ
-    const py = unit.y + extraY + slideOffY
+    const py = unit.y + extraY + slideOffY + hoverY
     const flash = fx.flashT > 0
     fx.pos[0] = px
     fx.pos[1] = py
@@ -1764,6 +1772,11 @@ export function createCrownshardScene(renderer: LowPolyRenderer) {
       }
     }
     if (unit.isBoss) {
+      const bossCrystalCol = unit.enemyId === 'magma_warden' ? C_FIRE_CORE
+        : unit.enemyId === 'frost_jarl' ? C_FROST
+        : unit.enemyId === 'mire_matriarch' ? C_POISON
+        : unit.enemyId === 'briar_warlord' ? C_STAR2_GOLD
+        : C_SHADOW
       for (let i = 0; i < 3; i++) {
         const a = time * 1.6 + (i / 3) * Math.PI * 2
         pool.add(
@@ -1771,14 +1784,14 @@ export function createCrownshardScene(renderer: LowPolyRenderer) {
           [px + Math.cos(a) * 0.94, py + 1.18 + Math.sin(time * 3 + i) * 0.14, pz + Math.sin(a) * 0.94],
           [0.20, 0.30, 0.20],
           a,
-          C_SHADOW,
+          bossCrystalCol,
           0.95
         )
       }
     }
   }
 
-  /** Detect battle swaps and new active units (ready bounce) from sim state. */
+  /** Detect battle swaps, prune removed unit FX, and mark new active units (ready bounce) from sim state. */
   function trackBattleEvents(battle: BattleState) {
     if (battle !== lastBattle) {
       lastBattle = battle
@@ -1799,6 +1812,13 @@ export function createCrownshardScene(renderer: LowPolyRenderer) {
       cameraPanX = 0
       cameraPanZ = 0
       for (const fn of battle.floatingNumbers) lastFloatId = Math.max(lastFloatId, fn.id)
+    } else if (unitFx.size > battle.units.length + 12) {
+      const activeUids = new Set(battle.units.map(u => u.uid))
+      for (const key of unitFx.keys()) {
+        if (!key.startsWith('camp_') && !activeUids.has(key)) {
+          unitFx.delete(key)
+        }
+      }
     }
     for (const fn of battle.floatingNumbers) lastFloatId = Math.max(lastFloatId, fn.id)
     if (battle.activeUnitUid !== lastActiveUid) {
