@@ -504,6 +504,7 @@ export type BattlePhase = 'deploy' | 'player' | 'enemy' | 'victory' | 'defeat'
 export type BattleSpeedMultiplier = 1 | 2
 
 export type DiscoveryTipId =
+  // Battle tips (original 11)
   | 'deploy'
   | 'move_attack'
   | 'high_ground'
@@ -515,6 +516,36 @@ export type DiscoveryTipId =
   | 'status_combos'
   | 'ko_revive'
   | 'objective_special'
+  // Battle tips (expanded 9)
+  | 'pincer'
+  | 'forced_movement'
+  | 'destructible_cover'
+  | 'counter_attack'
+  | 'ct_timeline'
+  | 'weather'
+  | 'boss_telegraph'
+  | 'stage_mechanic'
+  | 'bond_assist'
+  // World Map tips (8)
+  | 'map_overview'
+  | 'map_mastery'
+  | 'map_oakhaven'
+  | 'map_world_event'
+  | 'map_challenge_tiers'
+  | 'map_boss_rematch'
+  | 'map_crownless_deep'
+  | 'map_endless'
+  // Camp tips (8)
+  | 'camp_squad_merge'
+  | 'camp_subspec'
+  | 'camp_armory_diff'
+  | 'camp_temper_sets'
+  | 'camp_forge'
+  | 'camp_tactic_deck'
+  | 'camp_packs_pity'
+  | 'camp_bonds'
+  // Codex tips (1)
+  | 'codex_overview'
 
 export type BattleObjectiveKind = 'rout' | 'assassinate' | 'defend' | 'seize'
 
@@ -1440,6 +1471,8 @@ export interface CampaignState {
   lastPackReveal: PackRevealItem[]
   seenTips: string[]
   tipsDisabled?: boolean
+  activeScreenTipId?: DiscoveryTipId | null
+  screenTipQueue?: DiscoveryTipId[]
   actionCameraEnabled: boolean
   discoveredEnemies: EnemyArchetypeId[]
   battleSpeed: BattleSpeedMultiplier

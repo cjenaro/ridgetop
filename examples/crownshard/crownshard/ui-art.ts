@@ -2009,7 +2009,8 @@ export function drawAutoBattlePill(
   rect: LayoutRect,
   speed: 1 | 2,
   st: CanvasWidgetDrawState = { hovered: false, pressed: false, focused: false, selected: true, disabled: false },
-  compact = false
+  compact = false,
+  isTouch = false
 ) {
   const { x, width: w, height: h } = rect
   const pressed = st.pressed && !st.disabled
@@ -2038,7 +2039,11 @@ export function drawAutoBattlePill(
 
   const cy = y + faceH / 2
   drawIcon(ctx, 'auto', x + 14, cy, compact ? 11 : 12.5, '#07241a')
-  const label = compact ? `AUTO ${speed}x · TAP STOP` : `AUTO-BATTLE ${speed}x · B / ESC STOP`
+  const label = compact
+    ? `AUTO ${speed}x · TAP STOP`
+    : isTouch
+      ? `AUTO-BATTLE ${speed}x · TAP TO STOP`
+      : `AUTO-BATTLE ${speed}x · B / ESC STOP`
   drawText(ctx, label, x + 25, cy + 0.5, {
     size: compact ? 9.5 : 10.5,
     weight: 900,
@@ -2777,7 +2782,8 @@ export function drawSkillTile(
   o: {
     name: string
     subtitle: string
-    keycap: string
+    keycap?: string
+    hideKeycap?: boolean
     vfx: 'strike' | SkillSpec['vfx']
     skillId: string
     tier?: 1 | 2 | 3
@@ -2884,7 +2890,7 @@ export function drawSkillTile(
       strokeWidth: 2
     })
   }
-  if (w >= 62) {
+  if (w >= 62 && !o.hideKeycap && o.keycap) {
     drawKeycap(ctx, x + 5, y + 5, o.keycap, w < 78 ? 13 : 15, dim)
   }
   if (o.tier) {
@@ -3051,11 +3057,14 @@ export function drawEndTurnButton(
     isPlayerTurn: boolean
     ctBonus: number
     facingPicker?: { facing: FacingDir; exposureLevel: FacingExposureLevel } | null
+    hideKeycap?: boolean
+    isTouch?: boolean
   },
   st: CanvasWidgetDrawState
 ) {
   const { x, width: w, height: h } = rect
   const r = RADIUS.lg
+  const showKeycap = !o.hideKeycap && !o.isTouch
   if (!o.isPlayerTurn) {
     drawSurface(ctx, rect, { r, lipH: 4, fill: '#6e2233', fillBot: '#471522', lip: '#2b0b14' })
     const cx = x + w / 2
@@ -3110,7 +3119,7 @@ export function drawEndTurnButton(
       color: txtColor,
       align: 'center'
     })
-    if (tall) drawKeycap(ctx, x + w - 45, y + 6, 'Space', 15)
+    if (tall && showKeycap) drawKeycap(ctx, x + w - 45, y + 6, 'Space', 15)
     return
   }
 
@@ -3134,7 +3143,7 @@ export function drawEndTurnButton(
     const cy = tall ? y + faceH * 0.80 : y + faceH / 2 + 11
     drawChip(ctx, cx, cy - 8.5, `+${o.ctBonus} CT`, { h: 17, size: 10, bg: '#2b160030', border: '#2b160066', color: COLOR.accentText, align: 'center' })
   }
-  if (tall) drawKeycap(ctx, x + w - 45, y + 6, 'Space', 15)
+  if (tall && showKeycap) drawKeycap(ctx, x + w - 45, y + 6, 'Space', 15)
 }
 
 export function drawHintPill(ctx: CanvasRenderingContext2D, rect: LayoutRect, text: string, accent: string) {
@@ -3153,6 +3162,7 @@ export function drawHintPill(ctx: CanvasRenderingContext2D, rect: LayoutRect, te
 export interface DiscoveryTipCardOpts {
   readonly compact?: boolean
   readonly queuedCount?: number
+  readonly isTouch?: boolean
 }
 
 /**
@@ -3223,7 +3233,7 @@ export function drawDiscoveryTipCard(
   })
 
   // Optional compact hotkey chip in top-right corner when space allows
-  if (tip.hotkeyHint && !compact && w >= 280) {
+  if (tip.hotkeyHint && !compact && !o.isTouch && w >= 280) {
     drawChip(ctx, x + w - 10, iconY - 1, tip.hotkeyHint, {
       h: 16,
       size: 9,
@@ -3301,6 +3311,7 @@ export function drawCombatForecast(
     targetPortrait?: CanvasImageSource
     compact?: boolean
     locked?: boolean
+    isTouch?: boolean
   } = {}
 ) {
   const isRevive = Boolean(fc.isRevive)
@@ -3599,7 +3610,14 @@ export function drawCombatForecast(
       align: 'right',
       display: true
     })
-    drawText(ctx, 'Click to cast on empty ground anyway (spends action & cooldown)', innerX, wellY + wellH - 11, {
+    drawText(
+      ctx,
+      o.isTouch
+        ? 'Tap to cast on empty ground anyway (spends action & cooldown)'
+        : 'Click to cast on empty ground anyway (spends action & cooldown)',
+      innerX,
+      wellY + wellH - 11,
+      {
       size: 9.5,
       weight: 700,
       color: COLOR.faint,
@@ -3839,7 +3857,8 @@ export function drawForecastAltChip(
   ctx: CanvasRenderingContext2D,
   rect: LayoutRect,
   alt: CombatForecastAlt,
-  st: CanvasWidgetDrawState
+  st: CanvasWidgetDrawState,
+  opts?: { readonly hideKeycap?: boolean }
 ) {
   const active = alt.active
   const hot = st.hovered || st.focused
@@ -3866,7 +3885,10 @@ export function drawForecastAltChip(
 
   const faceH = drawH - (pressed ? 1 : 2.5)
   const cy = y + faceH / 2
-  drawKeycap(ctx, x + 5, cy - 7.5, alt.keycap, 15)
+  const showKeycap = !opts?.hideKeycap && Boolean(alt.keycap)
+  if (showKeycap) {
+    drawKeycap(ctx, x + 5, cy - 7.5, alt.keycap, 15)
+  }
 
   const valStr = alt.isRevive
     ? `REV +${alt.healAmount}`
@@ -3879,12 +3901,13 @@ export function drawForecastAltChip(
           : `${alt.normalDmg}`
   const valCol = alt.isRevive ? '#ffe88a' : alt.healAmount > 0 ? COLOR.good : alt.lethalNormal ? '#ff7c89' : COLOR.accentHi
   const valW = Math.min(w * 0.44, measureText(ctx, valStr, 10.5, 900, true) + 6)
+  const nameX = showKeycap ? x + 24 : x + 8
 
-  drawText(ctx, alt.name, x + 24, cy + 0.5, {
+  drawText(ctx, alt.name, nameX, cy + 0.5, {
     size: 10.5,
     weight: 900,
     color: active ? '#ffffff' : '#d2ddf7',
-    maxW: Math.max(24, w - 30 - valW),
+    maxW: Math.max(24, w - (nameX - x) - 6 - valW),
     display: true,
     shadow: true
   })
@@ -10279,6 +10302,8 @@ export interface CombatLogToggleOpts {
   readonly unreadCount: number
   readonly totalCount: number
   readonly compact?: boolean
+  readonly hideKeycap?: boolean
+  readonly isTouch?: boolean
 }
 
 /** Compact HUD toggle pill for the collapsible Combat Log with unread/entry count badge. */
@@ -10338,7 +10363,7 @@ export function drawCombatLogToggleButton(
   const badgeVal = opts.unreadCount > 0 ? opts.unreadCount : opts.totalCount
   const badgeText = badgeVal > 99 ? '99+' : String(badgeVal)
   const badgeW = showBadge ? Math.max(18, Math.round(measureText(ctx, badgeText, 9.5, 900, true) + 10)) : 0
-  const label = opts.compact ? 'Log' : 'Log L'
+  const label = opts.compact || opts.hideKeycap || opts.isTouch ? 'Log' : 'Log L'
   const labelX = iconX + iconSize * 0.55 + 6
   const maxLabelW = Math.max(20, w - (labelX - x) - (showBadge ? badgeW + 10 : 8))
   drawText(ctx, label, labelX, cy + 0.5, {

@@ -1,3 +1,10 @@
+:root {
+  --sat: env(safe-area-inset-top, 0px);
+  --sar: env(safe-area-inset-right, 0px);
+  --sab: env(safe-area-inset-bottom, 0px);
+  --sal: env(safe-area-inset-left, 0px);
+}
+
 body.crownshard-page, body.ridgetop-game, body:has(> main.game-viewport) {
   margin: 0;
   overflow: hidden;

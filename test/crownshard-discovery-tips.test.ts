@@ -7,10 +7,17 @@ import {
   DISCOVERY_TIP_IDS,
   areDiscoveryTipsEnabled,
   checkDiscoveryTipForBattle,
+  checkDiscoveryTipForCamp,
+  checkDiscoveryTipForCodex,
+  checkDiscoveryTipForWorldMap,
   detectBattleDiscoveryTips,
   dismissDiscoveryTip,
+  dismissScreenDiscoveryTip,
   enqueueDiscoveryTip,
   getActiveDiscoveryTip,
+  getActiveScreenDiscoveryTip,
+  getDiscoveryTipBody,
+  getDiscoveryTipHotkey,
   getDiscoveryTipSpec,
   hasSeenDiscoveryTip,
   isDiscoveryTipId,
@@ -135,8 +142,9 @@ function fakeCanvas2dContext() {
   return { ctx, texts, get ops() { return ops } }
 }
 
-test('catalog covers all 11 mechanics/terrains and simulation re-exports helpers', () => {
+test('catalog covers all 37 cross-screen mechanics/terrains and simulation re-exports helpers', () => {
   const expected: DiscoveryTipId[] = [
+    // Original 11 battle tips
     'deploy',
     'move_attack',
     'high_ground',
@@ -147,7 +155,37 @@ test('catalog covers all 11 mechanics/terrains and simulation re-exports helpers
     'tactic_cards',
     'status_combos',
     'ko_revive',
-    'objective_special'
+    'objective_special',
+    // Expanded 9 battle tips
+    'pincer',
+    'forced_movement',
+    'destructible_cover',
+    'counter_attack',
+    'ct_timeline',
+    'weather',
+    'boss_telegraph',
+    'stage_mechanic',
+    'bond_assist',
+    // 8 World Map tips
+    'map_overview',
+    'map_mastery',
+    'map_oakhaven',
+    'map_world_event',
+    'map_challenge_tiers',
+    'map_boss_rematch',
+    'map_crownless_deep',
+    'map_endless',
+    // 8 Camp tips
+    'camp_squad_merge',
+    'camp_subspec',
+    'camp_armory_diff',
+    'camp_temper_sets',
+    'camp_forge',
+    'camp_tactic_deck',
+    'camp_packs_pity',
+    'camp_bonds',
+    // 1 Codex tip
+    'codex_overview'
   ]
   assert.deepEqual(DISCOVERY_TIP_IDS, expected)
   assert.equal(DISCOVERY_TIPS.length, expected.length)
@@ -157,8 +195,10 @@ test('catalog covers all 11 mechanics/terrains and simulation re-exports helpers
     const spec = DISCOVERY_TIP_BY_ID[id]
     assert.ok(spec, `Missing tip spec for ${id}`)
     assert.equal(getDiscoveryTipSpec(id)?.id, id)
+    assert.ok(['battle', 'world_map', 'camp', 'codex'].includes(spec.screen), `Invalid screen for ${id}`)
     assert.ok(spec.title.length >= 4)
     assert.ok(spec.body.length >= 20 && spec.body.length <= 180)
+    assert.ok(spec.touchBody && spec.touchBody.length >= 20 && spec.touchBody.length <= 180, `Missing/bad touchBody for ${id}`)
     assert.match(spec.accentHex, /^#[0-9a-fA-F]{6}$/)
   }
 
@@ -553,4 +593,254 @@ test('drawDiscoveryTipCard renders every tip cleanly on a Canvas 2D context (ful
   const tiny = fakeCanvas2dContext()
   drawDiscoveryTipCard(tiny.ctx, { x: 0, y: 0, width: 10, height: 10 }, DISCOVERY_TIPS[0])
   assert.equal(tiny.ops, 0)
+})
+
+test('expanded 9 battle tips trigger on first encounter and do not repeat', () => {
+  // 1. pincer (forecast pincerDmg / pincerAssisterUid OR board bracket)
+  {
+    const state = createInitialState(701)
+    startChapterBattle(state, 0, 0, { deployPhase: false })
+    flattenBoardToGrass(state)
+    markSeenExcept(state, 'pincer')
+    assert.equal(checkDiscoveryTipForBattle(state), null)
+
+    const pincerForecast = { pincerAssisterUid: 'ally_1', pincerDmg: 9, highGround: false, attackArc: 'front' } as unknown as CombatForecast
+    assert.equal(checkDiscoveryTipForBattle(state, { forecast: pincerForecast })?.id, 'pincer')
+    dismissDiscoveryTip(state)
+    assert.equal(checkDiscoveryTipForBattle(state, { forecast: pincerForecast }), null)
+  }
+
+  // 2. forced_movement (forecast displacementPreview OR active unit with push/pull/swap skill)
+  {
+    const state = createInitialState(702)
+    startChapterBattle(state, 0, 0, { deployPhase: false })
+    flattenBoardToGrass(state)
+    markSeenExcept(state, 'forced_movement')
+    // Active unit on Border Watch is a starter hero (Archer or Knight) with a Tier 1 displacement skill
+    assert.equal(checkDiscoveryTipForBattle(state)?.id, 'forced_movement')
+    dismissDiscoveryTip(state)
+    assert.equal(checkDiscoveryTipForBattle(state), null)
+  }
+
+  // 3. destructible_cover (barricade / cracked_pillar on map or forecast coverDamage)
+  {
+    const state = createInitialState(703)
+    startChapterBattle(state, 0, 0, { deployPhase: false })
+    flattenBoardToGrass(state)
+    markSeenExcept(state, 'destructible_cover')
+    assert.equal(checkDiscoveryTipForBattle(state), null)
+
+    state.battle!.cells[2][3] = { col: 3, row: 2, terrain: 'cracked_pillar', elevation: 0, walkable: false, heightLevel: 0 }
+    assert.equal(checkDiscoveryTipForBattle(state)?.id, 'destructible_cover')
+    dismissDiscoveryTip(state)
+    assert.equal(checkDiscoveryTipForBattle(state), null)
+  }
+
+  // 4. counter_attack (forecast canCounter / counterDmg > 0)
+  {
+    const state = createInitialState(704)
+    startChapterBattle(state, 0, 0, { deployPhase: false })
+    flattenBoardToGrass(state)
+    markSeenExcept(state, 'counter_attack')
+    assert.equal(checkDiscoveryTipForBattle(state), null)
+
+    const counterForecast = { canCounter: true, counterDmg: 11, highGround: false, attackArc: 'front' } as unknown as CombatForecast
+    assert.equal(checkDiscoveryTipForBattle(state, { forecast: counterForecast })?.id, 'counter_attack')
+    dismissDiscoveryTip(state)
+    assert.equal(checkDiscoveryTipForBattle(state, { forecast: counterForecast }), null)
+  }
+
+  // 5. ct_timeline (turn >= 2)
+  {
+    const state = createInitialState(705)
+    startChapterBattle(state, 0, 0, { deployPhase: false })
+    flattenBoardToGrass(state)
+    markSeenExcept(state, 'ct_timeline')
+    state.battle!.turn = 1
+    assert.equal(checkDiscoveryTipForBattle(state), null)
+
+    state.battle!.turn = 2
+    assert.equal(checkDiscoveryTipForBattle(state)?.id, 'ct_timeline')
+    dismissDiscoveryTip(state)
+    assert.equal(checkDiscoveryTipForBattle(state), null)
+  }
+
+  // 6. weather (non-clear weather or non-day timeOfDay)
+  {
+    const state = createInitialState(706)
+    startChapterBattle(state, 0, 0, { deployPhase: false })
+    flattenBoardToGrass(state)
+    markSeenExcept(state, 'weather')
+    assert.equal(checkDiscoveryTipForBattle(state), null)
+
+    ;(state.battle as { weather: string }).weather = 'rain'
+    assert.equal(checkDiscoveryTipForBattle(state)?.id, 'weather')
+    dismissDiscoveryTip(state)
+    assert.equal(checkDiscoveryTipForBattle(state), null)
+  }
+
+  // 7. boss_telegraph (bossTelegraphs non-empty)
+  {
+    const state = createInitialState(707)
+    startChapterBattle(state, 0, 0, { deployPhase: false })
+    flattenBoardToGrass(state)
+    markSeenExcept(state, 'boss_telegraph')
+    assert.equal(checkDiscoveryTipForBattle(state), null)
+
+    state.battle!.bossTelegraphs.push({
+      id: 'tele_1',
+      casterUid: 'boss_1',
+      casterName: 'Frostwyrm',
+      moveId: 'frostwyrm_breath',
+      label: 'Glacial Breath',
+      element: 'frost',
+      cells: [{ col: 2, row: 2 }],
+      damageMul: 1.5,
+      flatDamage: 10,
+      turnsRemaining: 1,
+      phase: 1
+    })
+    assert.equal(checkDiscoveryTipForBattle(state)?.id, 'boss_telegraph')
+    dismissDiscoveryTip(state)
+    assert.equal(checkDiscoveryTipForBattle(state), null)
+  }
+
+  // 8. stage_mechanic (stageMechanic active on battle)
+  {
+    const state = createInitialState(708)
+    startChapterBattle(state, 0, 0, { deployPhase: false })
+    flattenBoardToGrass(state)
+    markSeenExcept(state, 'stage_mechanic')
+    assert.equal(checkDiscoveryTipForBattle(state), null)
+
+    state.battle!.stageMechanic = { tideHigh: true }
+    assert.equal(checkDiscoveryTipForBattle(state)?.id, 'stage_mechanic')
+    dismissDiscoveryTip(state)
+    assert.equal(checkDiscoveryTipForBattle(state), null)
+  }
+
+  // 9. bond_assist (active bond pair within 2 tiles)
+  {
+    const state = createInitialState(709)
+    startChapterBattle(state, 0, 0, { deployPhase: false })
+    flattenBoardToGrass(state)
+    markSeenExcept(state, 'bond_assist')
+    assert.equal(checkDiscoveryTipForBattle(state), null)
+
+    const allies = state.battle!.units.filter(u => u.team === 'ally' && u.alive && u.heroId)
+    assert.ok(allies.length >= 2)
+    allies[0].col = 1
+    allies[0].row = 1
+    allies[1].col = 2
+    allies[1].row = 1
+    state.battle!.bondPairsActive = [
+      { key: `${allies[0].heroId}:${allies[1].heroId}`, heroA: allies[0].heroId!, heroB: allies[1].heroId!, battles: 5, rank: 1 }
+    ]
+    assert.equal(checkDiscoveryTipForBattle(state)?.id, 'bond_assist')
+    dismissDiscoveryTip(state)
+    assert.equal(checkDiscoveryTipForBattle(state), null)
+  }
+})
+
+test('cross-screen tips (World Map, Camp, Codex) trigger once, persist in seenTips, respect tipsDisabled, and dismiss cleanly', () => {
+  const state = createInitialState(808)
+  const campaign = state.campaign
+
+  // World Map: map_overview fires first, then contextual tips as unlocked
+  assert.equal(checkDiscoveryTipForWorldMap(campaign)?.id, 'map_overview')
+  assert.equal(getActiveScreenDiscoveryTip(campaign, 'world_map')?.id, 'map_overview')
+  assert.equal(getActiveScreenDiscoveryTip(campaign, 'camp'), null, 'world_map tip must not show on camp screen')
+  assert.equal(dismissScreenDiscoveryTip(campaign, 'world_map'), 'map_overview')
+  assert.equal(hasSeenDiscoveryTip(campaign, 'map_overview'), true)
+  assert.equal(getActiveScreenDiscoveryTip(campaign, 'world_map'), null)
+
+  // Contextual world map tips
+  const mapChecks: Array<[Parameters<typeof checkDiscoveryTipForWorldMap>[1], DiscoveryTipId]> = [
+    [{ hasWorldEvent: true }, 'map_world_event'],
+    [{ oakhavenUnlocked: true }, 'map_oakhaven'],
+    [{ masteryUnlocked: true }, 'map_mastery'],
+    [{ challengeUnlocked: true }, 'map_challenge_tiers'],
+    [{ isBossRematch: true }, 'map_boss_rematch'],
+    [{ crownlessDeepUnlocked: true }, 'map_crownless_deep'],
+    [{ endlessUnlocked: true }, 'map_endless']
+  ]
+  for (const [ctx, expectedId] of mapChecks) {
+    assert.equal(checkDiscoveryTipForWorldMap(campaign, ctx)?.id, expectedId)
+    assert.equal(dismissScreenDiscoveryTip(campaign, 'world_map'), expectedId)
+    assert.equal(hasSeenDiscoveryTip(campaign, expectedId), true)
+    assert.equal(checkDiscoveryTipForWorldMap(campaign, ctx), null)
+  }
+
+  // Camp tips across all 5 tabs
+  const campChecks: Array<[Parameters<typeof checkDiscoveryTipForCamp>[1], DiscoveryTipId]> = [
+    [{ activeTab: 'squad' }, 'camp_squad_merge'],
+    [{ activeTab: 'squad', has3StarHero: true }, 'camp_subspec'],
+    [{ activeTab: 'squad', bondsUnlocked: true }, 'camp_bonds'],
+    [{ activeTab: 'armory' }, 'camp_armory_diff'],
+    [{ activeTab: 'armory', temperingUnlocked: true }, 'camp_temper_sets'],
+    [{ activeTab: 'forge' }, 'camp_forge'],
+    [{ activeTab: 'deck' }, 'camp_tactic_deck'],
+    [{ activeTab: 'packs' }, 'camp_packs_pity']
+  ]
+  for (const [ctx, expectedId] of campChecks) {
+    assert.equal(checkDiscoveryTipForCamp(campaign, ctx)?.id, expectedId)
+    assert.equal(getActiveScreenDiscoveryTip(campaign, 'camp')?.id, expectedId)
+    assert.equal(dismissScreenDiscoveryTip(campaign, 'camp'), expectedId)
+    assert.equal(hasSeenDiscoveryTip(campaign, expectedId), true)
+  }
+
+  // Codex tip
+  assert.equal(checkDiscoveryTipForCodex(campaign)?.id, 'codex_overview')
+  assert.equal(getActiveScreenDiscoveryTip(campaign, 'codex')?.id, 'codex_overview')
+  assert.equal(dismissScreenDiscoveryTip(campaign, 'codex'), 'codex_overview')
+  assert.equal(checkDiscoveryTipForCodex(campaign), null)
+
+  // Queue promotion & skipAllDiscoveryTips / resetDiscoveryTips clear screen tips too
+  resetDiscoveryTips(state)
+  assert.equal(campaign.activeScreenTipId, null)
+  assert.deepEqual(campaign.screenTipQueue, [])
+
+  assert.equal(checkDiscoveryTipForWorldMap(campaign)?.id, 'map_overview')
+  campaign.screenTipQueue = ['map_mastery']
+  assert.equal(dismissScreenDiscoveryTip(campaign, 'world_map'), 'map_overview')
+  assert.equal(getActiveScreenDiscoveryTip(campaign, 'world_map')?.id, 'map_mastery')
+
+  skipAllDiscoveryTips(state)
+  assert.equal(campaign.activeScreenTipId, null)
+  assert.deepEqual(campaign.screenTipQueue, [])
+  assert.equal(checkDiscoveryTipForWorldMap(campaign, { hasWorldEvent: true }), null)
+  assert.equal(checkDiscoveryTipForCamp(campaign, { activeTab: 'squad' }), null)
+  assert.equal(checkDiscoveryTipForCodex(campaign), null)
+})
+
+test('modality-aware tip helpers return touch-clean copy and omit hotkeys on touch', () => {
+  for (const spec of DISCOVERY_TIPS) {
+    const desktopBody = getDiscoveryTipBody(spec, false)
+    const touchBody = getDiscoveryTipBody(spec, true)
+
+    assert.equal(desktopBody, spec.body)
+    assert.ok(touchBody.length >= 20, `Expected non-empty touchBody for ${spec.id}`)
+    assert.equal(
+      /click/i.test(touchBody),
+      false,
+      `Touch body for ${spec.id} must not mention "Click": ${touchBody}`
+    )
+    assert.equal(
+      /\bpress\s/i.test(touchBody),
+      false,
+      `Touch body for ${spec.id} must not mention "Press ": ${touchBody}`
+    )
+    assert.equal(
+      /\(space\)/i.test(touchBody),
+      false,
+      `Touch body for ${spec.id} must not mention "(Space)": ${touchBody}`
+    )
+
+    assert.equal(getDiscoveryTipHotkey(spec, true), undefined, `Touch hotkey for ${spec.id} must be undefined`)
+    assert.equal(getDiscoveryTipHotkey(spec, false), spec.hotkeyHint)
+  }
+
+  // Verify specific desktop tips retain their hotkeys on desktop
+  assert.ok(getDiscoveryTipHotkey(DISCOVERY_TIP_BY_ID.deploy, false))
+  assert.ok(getDiscoveryTipHotkey(DISCOVERY_TIP_BY_ID.move_attack, false))
 })

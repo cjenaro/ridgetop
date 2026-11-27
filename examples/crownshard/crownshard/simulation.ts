@@ -50,19 +50,40 @@ import {
   discoverBattleEnemiesInCodex, discoverEnemyInCodex, getBestiaryEntries, getBestiaryEntry,
   getCodexProgress, getEnemyEncounterStages, getEquipCodexEntries, getEquipCodexEntry,
   getEquipmentDropStages, getHeroCodexEntries, getHeroCodexEntry, getHeroRecruitmentStages,
-  getPackSourcesForRarity, isEnemyDiscovered, isValidEnemyArchetypeId, normalizeDiscoveredEnemies
+  getPackSourcesForRarity, isEnemyDiscovered, isEquipDiscovered, isHeroDiscovered,
+  isValidEnemyArchetypeId, normalizeDiscoveredEnemies
 } from './codex.ts'
 export {
   ALL_ENEMY_IDS, ENEMY_CODEX_META, HERO_CODEX_META, backfillDiscoveredEnemiesFromStages,
   discoverBattleEnemiesInCodex, discoverEnemyInCodex, getBestiaryEntries, getBestiaryEntry,
   getCodexProgress, getEnemyEncounterStages, getEquipCodexEntries, getEquipCodexEntry,
   getEquipmentDropStages, getHeroCodexEntries, getHeroCodexEntry, getHeroRecruitmentStages,
-  getPackSourcesForRarity, isEnemyDiscovered, isValidEnemyArchetypeId, normalizeDiscoveredEnemies
+  getPackSourcesForRarity, isEnemyDiscovered, isEquipDiscovered, isHeroDiscovered,
+  isValidEnemyArchetypeId, normalizeDiscoveredEnemies
 }
 export type {
   CodexProgress, CodexStageRef, CodexTab, EnemyCodexCategory, EnemyCodexEntry, EnemyCodexMeta,
   EquipCodexEntry, HeroCodexEntry, HeroCodexMeta
 } from './codex.ts'
+import {
+  BOSS_REMATCH_REWARD_SCALE, EARLY_STANDARD_ONLY_STAGE_IDS,
+  areAdvancedBattleToolsUnlocked, areMutatorsUnlockedForStage, areSecondaryCurrenciesVisible,
+  buildBossRematchEnemies, getAllowedChallengeTiers, getCampaignWins, getUnlockedCampTabs,
+  isBossArchetypeId, isBossRematchSkirmish, isBulkSalvageUnlocked, isCampTabUnlocked,
+  isCampUnlocked, isCodexUnlocked, isGearTemperingUnlocked, isMasteryUnlocked,
+  isSquadBondsUnlocked, isStageBossEncounter, isWorldMapRevealed,
+  shouldLaunchDirectlyIntoBattle1
+} from './progression-unlocks.ts'
+export {
+  BOSS_REMATCH_REWARD_SCALE, EARLY_STANDARD_ONLY_STAGE_IDS,
+  areAdvancedBattleToolsUnlocked, areMutatorsUnlockedForStage, areSecondaryCurrenciesVisible,
+  buildBossRematchEnemies, getAllowedChallengeTiers, getCampaignWins, getUnlockedCampTabs,
+  isBossArchetypeId, isBossRematchSkirmish, isBulkSalvageUnlocked, isCampTabUnlocked,
+  isCampUnlocked, isCodexUnlocked, isGearTemperingUnlocked, isMasteryUnlocked,
+  isSquadBondsUnlocked, isStageBossEncounter, isWorldMapRevealed,
+  shouldLaunchDirectlyIntoBattle1
+}
+export type { CampTabId } from './progression-unlocks.ts'
 import {
   COMBAT_LOG_ACCENT, COMBAT_LOG_CATEGORIES, MAX_COMBAT_LOG_ENTRIES, appendCombatLog,
   formatCombatLogLine, formatComboLog, formatDamageLog, formatHazardLog, formatHealLog,
@@ -3522,7 +3543,7 @@ function launchBattleInternal(
         : getSelectedCrownlessDeepFloor(campaign))
     : undefined
   const abyssSpec = resolvedAbyssFloor !== undefined ? getCrownlessDeepFloorSpec(resolvedAbyssFloor) : null
-  const chapter: ChapterSpec = worldEvent
+  const resolvedChapter: ChapterSpec = worldEvent
     ? buildWorldEventChapterSpec(worldEvent)
     : endlessSelection
       ? {
@@ -3542,6 +3563,21 @@ function launchBattleInternal(
           enemies: abyssSpec.enemies
         }
       : baseChapter
+  const bossRematch = !worldEvent && endlessWave === 0 && !isAbyss && isBossRematchSkirmish(campaign, resolvedChapter)
+  const chapter: ChapterSpec = bossRematch
+    ? {
+        ...resolvedChapter,
+        enemies: buildBossRematchEnemies(resolvedChapter),
+        objective: resolvedChapter.objective?.kind === 'assassinate'
+          ? {
+              kind: 'rout',
+              label: 'Rout Remaining Garrison',
+              description: 'The boss has already fallen. Clear the remaining garrison to win.',
+              ...(resolvedChapter.objective.turnLimit !== undefined ? { turnLimit: resolvedChapter.objective.turnLimit } : {})
+            }
+          : resolvedChapter.objective
+      }
+    : resolvedChapter
   const resolvedChapterIndex = worldEvent ? safeIdx : chapter.index
 
   const challenge: { readonly tier: StageDifficultyTier; readonly mutators: readonly StageMutatorId[] } = worldEvent
@@ -7099,12 +7135,14 @@ function awardBattleVictory(state: GameState): void {
   const firstClear = !isWorldEvent && battle.endlessWave === 0 && (
     abyssPlan ? abyssPlan.firstFloorClear : !isStageCleared(campaign, chapter.id)
   )
+  const bossRematch = !isWorldEvent && battle.endlessWave === 0 && !abyssPlan && !firstClear && isStageBossEncounter(chapter)
   const challengeRewards = !isWorldEvent && battle.endlessWave === 0 && !firstClear && !abyssPlan
     ? computeChallengeRewards(chapter.replayGold, chapter.difficulty, battle.difficultyTier, battle.mutators)
     : null
   const starfallBonus = !isWorldEvent && battle.endlessWave === 0
     ? getStarfallFirstClearBonus(chapter.id, firstClear)
     : { bonusDust: 0, bonusShards: 0 }
+  const baseReplayGold = challengeRewards?.replayGold ?? chapter.replayGold
   const gold = worldEventPlan
     ? worldEventPlan.gold
     : battle.endlessWave > 0
@@ -7113,7 +7151,9 @@ function awardBattleVictory(state: GameState): void {
         ? abyssPlan.gold
         : firstClear
           ? chapter.rewardGold
-          : (challengeRewards?.replayGold ?? chapter.replayGold)
+          : bossRematch
+            ? Math.round(baseReplayGold * BOSS_REMATCH_REWARD_SCALE)
+            : baseReplayGold
   const bonusDust = worldEventPlan
     ? worldEventPlan.bonusDust
     : (abyssPlan?.bonusDust ?? 0) + (challengeRewards?.bonusDust ?? 0) + starfallBonus.bonusDust
@@ -7280,8 +7320,13 @@ function awardBattleVictory(state: GameState): void {
     }
   } else {
     // Replaying an already-cleared stage: awards replay gold + repeatable drop scaled by difficulty tier & mutators
-    const repWeights = challengeRewards?.dropWeights ?? replayWeightsForDifficulty(chapter.difficulty)
-    const minDropRarity = challengeRewards?.minDropRarity ?? 'common'
+    // Boss-less rematch skirmishes skip boss-exclusive drop guarantees.
+    const repWeights = bossRematch
+      ? { ...replayWeightsForDifficulty(chapter.difficulty), legendary: 0 }
+      : (challengeRewards?.dropWeights ?? replayWeightsForDifficulty(chapter.difficulty))
+    const minDropRarity: Rarity = bossRematch
+      ? 'common'
+      : (challengeRewards?.minDropRarity ?? 'common')
     const rarity = rollRarity(campaign, repWeights, minDropRarity)
     const kindRoll = randFloat(campaign)
     if (kindRoll < 0.45) {

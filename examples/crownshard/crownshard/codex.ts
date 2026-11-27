@@ -92,6 +92,9 @@ export interface HeroCodexMeta {
 
 export interface HeroCodexEntry {
   readonly id: HeroClassId
+  readonly discovered: boolean
+  readonly masked: boolean
+  readonly displayName: string
   readonly spec: HeroSpec
   readonly role: string
   readonly lore: string
@@ -110,6 +113,9 @@ export interface HeroCodexEntry {
 
 export interface EquipCodexEntry {
   readonly id: string
+  readonly discovered: boolean
+  readonly masked: boolean
+  readonly displayName: string
   readonly spec: EquipmentSpec
   readonly effect: EquipEffectSpec | null
   readonly starterGear: boolean
@@ -710,9 +716,86 @@ export function getBestiaryEntries(
   return out
 }
 
+function isStageUnlockedForCodex(
+  clearedStageIds: readonly string[],
+  stageId: string
+): boolean {
+  const ch = CHAPTER_BY_ID[stageId]
+  if (!ch || ch.comingSoon) return false
+  if (ch.requires.length === 0) return true
+  if (ch.unlockMode === 'any') {
+    for (const reqId of ch.requires) {
+      if (clearedStageIds.includes(reqId)) return true
+    }
+    return false
+  }
+  for (const reqId of ch.requires) {
+    if (!clearedStageIds.includes(reqId)) return false
+  }
+  return true
+}
+
+function isRegionReachedInCodex(
+  clearedStageIds: readonly string[],
+  region: string
+): boolean {
+  for (const stageId of clearedStageIds) {
+    const ch = CHAPTER_BY_ID[stageId]
+    if (ch && ch.region === region) return true
+  }
+  return false
+}
+
+/**
+ * True when `heroId` has been discovered in the Hero Archive:
+ * starter hero, owned in `campaign.heroes`, recruitment chapter cleared,
+ * or recruitment chapter / region already reached.
+ */
+export function isHeroDiscovered(
+  campaign: Pick<CampaignState, 'heroes'> & Partial<Pick<CampaignState, 'clearedStageIds'>>,
+  heroId: HeroClassId
+): boolean {
+  const meta = HERO_CODEX_META[heroId]
+  if (meta && meta.starterHero) return true
+  for (const h of campaign.heroes) {
+    if (h.heroId === heroId) return true
+  }
+  const cleared = Array.isArray(campaign.clearedStageIds) ? campaign.clearedStageIds : []
+  if (cleared.length === 0) return false
+  for (const ch of CHAPTERS) {
+    if (ch.rewardHeroId !== heroId) continue
+    if (cleared.includes(ch.id)) return true
+    if (isStageUnlockedForCodex(cleared, ch.id)) return true
+    if (isRegionReachedInCodex(cleared, ch.region)) return true
+  }
+  return false
+}
+
+/**
+ * True when `equipId` has been discovered in the Armory Compendium:
+ * starter gear, owned in `campaign.equipment` (or equipped), or chapter drop source cleared.
+ */
+export function isEquipDiscovered(
+  campaign: Pick<CampaignState, 'equipment' | 'heroes'> & Partial<Pick<CampaignState, 'clearedStageIds'>>,
+  equipId: string
+): boolean {
+  if (STARTER_EQUIP_IDS.includes(equipId)) return true
+  for (const e of campaign.equipment) {
+    if (e.equipId === equipId) return true
+  }
+  const cleared = Array.isArray(campaign.clearedStageIds) ? campaign.clearedStageIds : []
+  if (cleared.length === 0) return false
+  for (const ch of CHAPTERS) {
+    if (ch.rewardEquipId === equipId && cleared.includes(ch.id)) {
+      return true
+    }
+  }
+  return false
+}
+
 /** Resolve a full Hero Archive entry for `heroId`. */
 export function getHeroCodexEntry(
-  campaign: Pick<CampaignState, 'heroes'>,
+  campaign: Pick<CampaignState, 'heroes'> & Partial<Pick<CampaignState, 'clearedStageIds'>>,
   heroId: HeroClassId
 ): HeroCodexEntry {
   const spec = HERO_SPECS[heroId]
@@ -727,9 +810,13 @@ export function getHeroCodexEntry(
     const lvl = typeof h.level === 'number' && h.level > 0 ? Math.floor(h.level) : 1
     if (lvl > highestLevel) highestLevel = lvl
   }
+  const discovered = isHeroDiscovered(campaign, heroId)
 
   return {
     id: heroId,
+    discovered,
+    masked: !discovered,
+    displayName: discovered ? spec.name : '???',
     spec,
     role: meta.role,
     lore: meta.lore,
@@ -749,7 +836,7 @@ export function getHeroCodexEntry(
 
 /** Resolve all 8 Hero Archive entries in canonical order. */
 export function getHeroCodexEntries(
-  campaign: Pick<CampaignState, 'heroes'>
+  campaign: Pick<CampaignState, 'heroes'> & Partial<Pick<CampaignState, 'clearedStageIds'>>
 ): HeroCodexEntry[] {
   const out: HeroCodexEntry[] = []
   for (const spec of HERO_LIST) {
@@ -760,7 +847,7 @@ export function getHeroCodexEntries(
 
 /** Resolve a full Armory & Drop Compendium entry for `equipId`. */
 export function getEquipCodexEntry(
-  campaign: Pick<CampaignState, 'equipment' | 'heroes'>,
+  campaign: Pick<CampaignState, 'equipment' | 'heroes'> & Partial<Pick<CampaignState, 'clearedStageIds'>>,
   equipId: string
 ): EquipCodexEntry {
   const spec = EQUIPMENT_BY_ID[equipId] ?? EQUIPMENT_LIST[0]
@@ -777,9 +864,13 @@ export function getEquipCodexEntry(
     ownedCount += 1
     if (equippedUidSet[e.uid]) equippedCount += 1
   }
+  const discovered = isEquipDiscovered(campaign, spec.id)
 
   return {
     id: spec.id,
+    discovered,
+    masked: !discovered,
+    displayName: discovered ? spec.name : '???',
     spec,
     effect: getEquipEffect(spec.id),
     starterGear: STARTER_EQUIP_IDS.includes(spec.id),
@@ -794,7 +885,7 @@ export function getEquipCodexEntry(
 
 /** Resolve all 18 Armory & Drop Compendium entries in canonical order. */
 export function getEquipCodexEntries(
-  campaign: Pick<CampaignState, 'equipment' | 'heroes'>
+  campaign: Pick<CampaignState, 'equipment' | 'heroes'> & Partial<Pick<CampaignState, 'clearedStageIds'>>
 ): EquipCodexEntry[] {
   const out: EquipCodexEntry[] = []
   for (const spec of EQUIPMENT_LIST) {
