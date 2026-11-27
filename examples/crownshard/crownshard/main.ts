@@ -16,34 +16,34 @@ import {
 } from './data.ts'
 import { cameraAlignedFacing, cameraCardinalHeading, createCrownshardScene, facingPickerAnchor } from './scene.ts'
 import {
-  CROWNLESS_DEEP_MAX_FLOOR, MAX_TACTIC_DECK, MIN_TACTIC_DECK, OAKHAVEN_STAGE_ID,
+  CROWNLESS_DEEP_MAX_FLOOR, ENDLESS_BLESSING_BY_ID, MAX_TACTIC_DECK, MIN_TACTIC_DECK, OAKHAVEN_STAGE_ID,
   STARFALL_ATOLL_FIRST_CLEAR_DUST, STARFALL_ATOLL_FIRST_CLEAR_SHARDS,
   STAGE_DIFFICULTY_TIERS, STAGE_MUTATOR_IDS, STAGE_MUTATOR_SPECS, STAGE_TIER_SPECS,
-  abandonBattle, areDiscoveryTipsEnabled, armSkill, armTacticCard, autoBuildTacticDeck, autoEquipBestFit, beginWaitFacingPicker,
+  abandonBattle, abandonEndlessRun, areDiscoveryTipsEnabled, armSkill, armTacticCard, autoBuildTacticDeck, autoEquipBestFit, beginWaitFacingPicker,
   bulkSalvageCommonDupes, buyOakhavenDeal, buyPack, canBuyPack, canClaimStageMasteryChest, canCraftEquipment, canCraftHero, canMergeHero, canUndoMove,
   cancelAutoBattle, cancelWaitFacingPicker, checkDiscoveryTipForBattle, claimMasteryMilestone, claimStageMasteryChest, clearSave, computeChallengeRewards,
   computeCombatForecast, computeDangerZone, computeDeckValue,
   computeEnemyThreat, computeHeroStats, computeSquadPower, computeTacticDeckCurve, computeZocPerimeterTiles,
   confirmDeployment, confirmWaitFacingPicker, craftEquipment, craftHero, createInitialState,
-  createTurnBoundaryTracker, dismissDiscoveryTip, effectiveSpeed, equipItem, evaluateAllFacingExposures, evaluateFacingExposure,
-  findBestFitUpgrades, findEquipOwner, findGridPath, formatAbyssFloorLabel, formatBattleSpeedLabel, formatOpportunityWarning,
+  createTurnBoundaryTracker, dismissDiscoveryTip, draftEndlessBlessing, effectiveSpeed, equipItem, evaluateAllFacingExposures, evaluateFacingExposure,
+  findBestFitUpgrades, findEquipOwner, findGridPath, formatAbyssFloorLabel, formatBattleSpeedLabel, formatEndlessBiomeLabel, formatOpportunityWarning,
   getAct1StageMechanicStatus, getActiveDiscoveryTip, getActiveTacticDeckUids,
   getBestiaryEntries, getChapterObjectiveSummary, getClaimableMasteryMilestones, getCodexProgress, getCraftableEquipment, getCraftableHeroes, getCrownlessDeepFloorSpec, getEquipCodexEntries, getEquipCraftCost, getEquipEffect,
   getEquipSalvageDust, getEquipmentByUid, getHeroByUid, getHeroCodexEntries, getHeroCraftCost, getHeroPassive, getHeroSalvageShards,
   getHeroSkill, getHighestClearedStageTier, getMaxCombatLogScroll, getMaxMasteryStars, getMaxSelectableCrownlessDeepFloor, getMergeCandidates, getNextMasteryMilestone, getNextRecommendedStage, getOakhavenExchangeOffers, getObjectiveProgressText, getPackPityStatus,
   getSelectedCrownlessDeepFloor, getStageMasteryChestReward, getStageMasteryObjectives, getStageMasteryRecord, getStageUnlockHint, getTacticByUid, getTotalMasteryStars, getUnitByUid, hasClaimedStageMasteryChest, hasMaxedHero, hasOakhavenPatronDiscount, heroLevelProgress, isChestClaimed,
-  isCrownlessDeepStage, isDeployTile, isEndlessUnlocked, isEnemyShrouded, isOakhavenExchangeUnlocked, isStageCleared, isStageUnlocked, loadSave, maxSquadSize, mergeHero,
+  isCrownlessDeepStage, isDeployTile, isEndlessBossWave, isEndlessUnlocked, isEnemyShrouded, isOakhavenExchangeUnlocked, isStageCleared, isStageUnlocked, loadSave, maxSquadSize, mergeHero,
   moveDeployUnit, persistSave, previewBulkSalvageCommonDupes, previewPathOpportunityAttacks,
   previewTurnOrderAfterAction, previewWaitFacing, resetDiscoveryTips, resolveStageChallenge, restoreBattleState, rotateDeployUnit, salvageEquipCard,
-  salvageHeroCard, selectHeroByUid, selectTile, serializeBattleState, setAutoBattle, setBattleSpeed,
-  setDiscoveryTipsEnabled, setSelectedCrownlessDeepFloor, shouldAutoSaveOnTurnBoundary, skipAllDiscoveryTips, startChapterBattle, stepGame,
+  salvageHeroCard, selectEndlessWaveStage, selectHeroByUid, selectTile, serializeBattleState, setAutoBattle, setBattleSpeed,
+  setDiscoveryTipsEnabled, setSelectedCrownlessDeepFloor, shouldAutoSaveOnTurnBoundary, skipAllDiscoveryTips, startChapterBattle, startEndlessRun, stepGame,
   swapDeployUnit, syncTurnBoundaryTracker, toggleAutoBattle, toggleBattleSpeed, toggleEquipLock, toggleHeroLock,
   toggleSquadMember, toggleTacticInDeck, undoMove, unequipItem, unitAt
 } from './simulation.ts'
 import type { CodexTab } from './simulation.ts'
 import { FACING_DIRS, cellHeightLevel, gridToWorld, isUnitDowned } from './types.ts'
 import type {
-  BattleSaveSnapshot, BattleSpeedMultiplier, BattleUnit, ChapterSpec, CombatForecast, EnemyArchetypeId, FacingDir, GameState,
+  BattleSaveSnapshot, BattleSpeedMultiplier, BattleUnit, ChapterSpec, CombatForecast, EndlessBlessingId, EnemyArchetypeId, FacingDir, GameState,
   HeroClassId, OwnedEquipCard, OwnedHeroCard, PackId, PackRevealItem, PathOpportunityPreview, Rarity,
   StageDifficultyTier, StageMutatorId, TurnActionKind, TurnOrderActionPreview
 } from './types.ts'
@@ -51,7 +51,7 @@ import {
   COLOR, RADIUS, TIER_COLOR, TYPE, UI_THEME_PALETTE, WORLD_MAP_H, WORLD_MAP_W,
   drawAnimatedRevealCard, drawApMeter, drawArmoryStatDiffPanel, drawAutoBattlePill, drawBattleInfo, drawBoosterPack, drawButton, drawCameraCompassButton, drawCampHeader,
   drawChallengeHudBadges, drawChapterPicker, drawChip, drawCodexEnemyDetail, drawCodexEntryCard, drawCodexEquipDetail, drawCodexHeader, drawCodexHeroDetail, drawCombatForecast, drawCombatLogPanel, drawCombatLogToggleButton, drawControlHints, drawDefeatBackdrop, drawDeployHeroChip,
-  drawDifficultyBadge, drawDiscoveryTipCard, drawEmptyNote, drawEndTurnButton, drawEquipCard, drawForecastAltChip,
+  drawDifficultyBadge, drawDiscoveryTipCard, drawEmptyNote, drawEndTurnButton, drawEndlessBlessingCard, drawEndlessBlessingsHudPill, drawEquipCard, drawForecastAltChip,
   drawForgeBalanceBanner, drawForgeRecipeCard, drawHeroHeader, drawHeroRosterCard, drawHeroXpSummaryAnimated, drawHintPill, drawIconButton, drawLabel, drawLetterbox,
   drawLootRow, drawModal, drawMutatorChipButton, drawObjectiveBadge, drawOverline, drawPackCeremonyBackdrop, drawPanel, drawPassiveBanner, drawPityBanner, drawPortraitTile,
   drawResultHeadlineAnimated, drawRevealCard, drawRewardRowAnimated, drawSegmentTrack,
@@ -494,7 +494,7 @@ async function start() {
   function formatResumableBattleLabel(snap: BattleSaveSnapshot, compact = false): string {
     const ch = CHAPTER_BY_ID[snap.stageId] ?? CHAPTERS[snap.chapterIndex] ?? CHAPTERS[0]
     const stageLabel = snap.endlessWave > 0
-      ? `Endless W${snap.endlessWave}`
+      ? `Endless W${snap.endlessWave} · ${formatEndlessBiomeLabel(snap.biome)}`
       : snap.abyssFloor
         ? `${ch.title} F${snap.abyssFloor}/${CROWNLESS_DEEP_MAX_FLOOR}`
         : snap.gauntletMaxRounds
@@ -980,9 +980,42 @@ async function start() {
     hudRev++
   }
 
+  function pickEndlessBlessingAndAdvance(blessingId: EndlessBlessingId) {
+    audio.unlock()
+    if (!draftEndlessBlessing(state, blessingId)) return
+    saveNow()
+    const run = state.campaign.endlessRun
+    const nextWave = run ? run.currentWave : ((state.battle?.endlessWave ?? 0) + 1)
+    const sel = run
+      ? selectEndlessWaveStage(run.seed, nextWave, run.lastBiome)
+      : selectEndlessWaveStage(state.campaign.seed, nextWave)
+    pendingChapter = sel.chapter.index
+    pendingEndless = nextWave
+    launchBattle()
+  }
+
+  function retryAfterDefeat() {
+    if ((state.battle?.endlessWave ?? 0) > 0) {
+      const run = startEndlessRun(state, 1)
+      saveNow()
+      const sel = selectEndlessWaveStage(run.seed, 1)
+      pendingChapter = sel.chapter.index
+      pendingEndless = 1
+    }
+    launchBattle()
+  }
+
   function advanceAfterVictory() {
     if (isEndlessUnlocked(state.campaign) && (state.battle?.endlessWave ?? 0) > 0) {
-      openStory(CHAPTER_BY_ID.eclipse_throne.index, (state.battle?.endlessWave ?? 0) + 1)
+      const run = state.campaign.endlessRun ?? startEndlessRun(state, (state.battle?.endlessWave ?? 0) + 1)
+      const nextWave = Math.max(run.currentWave, (state.battle?.endlessWave ?? 0) + 1)
+      run.currentWave = nextWave
+      run.pendingDraft = []
+      saveNow()
+      const sel = selectEndlessWaveStage(run.seed, nextWave, run.lastBiome)
+      pendingChapter = sel.chapter.index
+      pendingEndless = nextWave
+      launchBattle()
     } else if (state.battle?.abyssFloor && state.battle.abyssFloor < CROWNLESS_DEEP_MAX_FLOOR) {
       setSelectedCrownlessDeepFloor(state.campaign, state.battle.abyssFloor + 1)
       openStory(CHAPTER_BY_ID.abyssal_deep.index, 0)
@@ -2811,14 +2844,24 @@ async function start() {
           style: { width: endlessBtnW, height: topH },
           widget: {
             type: 'button',
-            label: `Endless W${camp.endlessBest + 1}`,
+            label: camp.endlessRun
+              ? `Endless W${camp.endlessRun.currentWave}`
+              : camp.endlessBest > 0 ? `Endless (Best W${camp.endlessBest})` : 'Endless W1',
             onPress: () => {
               audio.unlock()
-              openStory(CHAPTER_BY_ID.eclipse_throne.index, camp.endlessBest + 1)
+              const run = state.campaign.endlessRun ?? startEndlessRun(state, 1)
+              const wave = Math.max(1, run.currentWave)
+              const sel = selectEndlessWaveStage(run.seed, wave, run.lastBiome && wave > 1 ? run.lastBiome : undefined)
+              saveNow()
+              openStory(sel.chapter.index, wave)
             },
-            draw: (ctx: CanvasRenderingContext2D, rect: LayoutRect, st: CanvasWidgetDrawState) => drawButton(
-              ctx, rect, narrowPhone ? `W${camp.endlessBest + 1}` : mobile ? `Wave ${camp.endlessBest + 1}` : `Endless W${camp.endlessBest + 1}`, st, { variant: 'danger', icon: 'skull', size: narrowPhone ? 11 : 12 }
-            )
+            draw: (ctx: CanvasRenderingContext2D, rect: LayoutRect, st: CanvasWidgetDrawState) => {
+              const run = camp.endlessRun
+              const btnLabel = run
+                ? (narrowPhone ? `W${run.currentWave}` : mobile ? `Wave ${run.currentWave}` : `Endless W${run.currentWave}`)
+                : (narrowPhone ? `W${camp.endlessBest + 1}` : mobile ? 'Endless' : camp.endlessBest > 0 ? `Endless · B${camp.endlessBest}` : 'Endless W1')
+              drawButton(ctx, rect, btnLabel, st, { variant: 'danger', icon: 'skull', size: narrowPhone ? 11 : 12 })
+            }
           }
         })] : []),
         boxNode({
@@ -2899,8 +2942,10 @@ async function start() {
     const storyAbyssSpec = pendingEndless === 0 && isCrownlessDeepStage(ch.id)
       ? getCrownlessDeepFloorSpec(getSelectedCrownlessDeepFloor(state.campaign))
       : null
+    const endlessBiomeLabel = formatEndlessBiomeLabel(ch.biome)
+    const endlessBlessingCount = state.campaign.endlessRun?.activeBlessings.length ?? 0
     const header = pendingEndless > 0
-      ? `Endless Arena - Wave ${pendingEndless}`
+      ? `Endless Wave ${pendingEndless} · ${endlessBiomeLabel}`
       : storyAbyssSpec
         ? `${ch.title} — ${formatAbyssFloorLabel(storyAbyssSpec.floor)}`
         : ch.title
@@ -2908,12 +2953,14 @@ async function start() {
       ? ` · ${storyTierSpec.label.toUpperCase()}${storyChallenge.mutators.length > 0 ? ` +${storyChallenge.mutators.length} MUT` : ''}`
       : ''
     const kicker = pendingEndless > 0
-      ? `${ch.subtitle} · ${gridCols}x${gridRows}`
+      ? `${ch.title} · ${gridCols}x${gridRows}${isEndlessBossWave(pendingEndless) ? ' · BOSS WAVE' : ''}${endlessBlessingCount > 0 ? ` · ${endlessBlessingCount} Blessings` : ''}`
       : storyAbyssSpec
         ? `${storyAbyssSpec.title} · ${storyAbyssSpec.modifierSummary}`
         : `${ch.subtitle} · ${gridCols}x${gridRows} · Diff ${diffMeta.short}${challengeTag}`
     const desc = pendingEndless > 0
-      ? `Eclipse remnants surge back into ${ch.subtitle}. Every wave scales foes and awards richer gold and weighted loot.`
+      ? (isEndlessBossWave(pendingEndless)
+          ? `A ${endlessBiomeLabel} Boss commands this Endless wave! Vanquish the host to draft a temporary Run Blessing for Wave ${pendingEndless + 1}.`
+          : `Rotating Roguelite Endless wave across the ${endlessBiomeLabel}. Clear the wave to draft 1 of 3 Run Blessings.`)
       : `"${ch.introText}"`
 
     const lootItems: { icon: IconName; text: string; color?: string }[] = []
@@ -3341,7 +3388,9 @@ async function start() {
     const inspectedXpProgress = inspectedOwned ? heroLevelProgress(inspectedOwned.level, inspectedOwned.xp) : undefined
     const fpsShort = `${Math.round(perf.snapshot().fps || 60)}`
     const chapterShort = battle.endlessWave > 0
-      ? `Endless Wave ${battle.endlessWave}`
+      ? (isPhone
+          ? `W${battle.endlessWave} · ${formatEndlessBiomeLabel(battle.biome)}`
+          : `Endless Wave ${battle.endlessWave} · ${formatEndlessBiomeLabel(battle.biome)}`)
       : battle.abyssFloor
         ? `${ch.title} · ${formatAbyssFloorLabel(battle.abyssFloor)}`
         : battle.gauntletMaxRounds
@@ -4043,11 +4092,14 @@ async function start() {
     const objBadgeW = mobilePortrait ? Math.min(w - 64, 240) : mobileLandscape ? 208 : 264
     const hasChallengeBadge = battle.difficultyTier !== 'normal' || battle.mutators.length > 0
     const challengeBadgeH = isPhone ? 24 : 27
+    const activeEndlessBlessings = battle.endlessWave > 0 ? (battle.endlessBlessings ?? []) : []
+    const hasEndlessBlessingsHud = activeEndlessBlessings.length > 0
+    const endlessBlessingsH = isPhone ? 24 : 27
     const stageMechanicHud = getAct1StageMechanicStatus(battle)
     const stageMechanicH = isPhone ? 24 : 26
     const autoPillH = isPhone ? 24 : 26
 
-    // Single unified top-left vertical stack cursor so Objective, Stage Mechanic, Challenge, Auto-Battle,
+    // Single unified top-left vertical stack cursor so Objective, Stage Mechanic, Challenge, Blessings, Auto-Battle,
     // Combat Log, and Discovery Tips NEVER overlap each other or the turn timeline!
     let leftStackY = singleTopRow
       ? edgeX + topBarH + 6
@@ -4058,6 +4110,8 @@ async function start() {
     if (stageMechanicHud) leftStackY += stageMechanicH + 6
     const challengeBadgeY = leftStackY
     if (hasChallengeBadge) leftStackY += challengeBadgeH + 6
+    const endlessBlessingsY = leftStackY
+    if (hasEndlessBlessingsHud) leftStackY += endlessBlessingsH + 6
     const autoPillY = leftStackY
     if (battle.autoBattle) leftStackY += autoPillH + 6
 
@@ -4253,6 +4307,28 @@ async function start() {
             rect,
             battle.difficultyTier,
             battle.mutators,
+            isPhone
+          )
+        }
+      })] : []),
+
+      // Active Roguelite Endless Run Blessings summary pill
+      ...(hasEndlessBlessingsHud ? [boxNode({
+        id: 'battle-endless-blessings',
+        style: {
+          anchor: 'top-left',
+          width: mobilePortrait ? Math.min(w - 64, 244) : Math.min(w - 16, Math.max(objBadgeW, isPhone ? 244 : 336)),
+          height: endlessBlessingsH,
+          inset: [edgeX, endlessBlessingsY],
+          respectSafeArea: true
+        },
+        widget: {
+          type: 'panel',
+          blocksPointer: false,
+          draw: (ctx: CanvasRenderingContext2D, rect: LayoutRect) => drawEndlessBlessingsHudPill(
+            ctx,
+            rect,
+            activeEndlessBlessings,
             isPhone
           )
         }
@@ -6371,24 +6447,45 @@ async function start() {
       ? state.campaign.heroes.filter(h => h.heroId === reward.heroCard?.heroId && h.stars === 1).length
       : 0
 
+    const endlessWaveNum = battle?.endlessWave ?? 0
+    const isEndlessResult = endlessWaveNum > 0
+    const endlessBiomeLabel = battle ? formatEndlessBiomeLabel(battle.biome) : 'Throne'
+    const pendingEndlessDraft = won && isEndlessResult
+      ? (state.campaign.endlessRun?.pendingDraft ?? [])
+      : []
+    const hasBlessingDraft = pendingEndlessDraft.length > 0
     const title = won
-      ? (reward?.campaignWon ? 'Sunstone Crown Reforged' : reward?.abyssCompleted ? 'Crownless Deep Conquered!' : 'Victory!')
+      ? (reward?.campaignWon
+          ? 'Sunstone Crown Reforged'
+          : reward?.abyssCompleted
+            ? 'Crownless Deep Conquered!'
+            : isEndlessResult
+              ? `Wave ${endlessWaveNum} Cleared!`
+              : 'Victory!')
       : 'Vanguard Defeated'
     const rewardTier = reward?.difficultyTier ?? battle?.difficultyTier ?? 'normal'
     const rewardMutCount = (reward?.mutators ?? battle?.mutators ?? []).length
     const challengeSubTag = rewardTier !== 'normal' || rewardMutCount > 0
       ? ` · ${STAGE_TIER_SPECS[rewardTier].label}${rewardMutCount > 0 ? ` +${rewardMutCount} Mut` : ''}`
-      : (reward && !reward.firstClear && (battle?.endlessWave ?? 0) === 0 && !battle?.abyssFloor ? ' · Replay' : '')
+      : (reward && !reward.firstClear && endlessWaveNum === 0 && !battle?.abyssFloor ? ' · Replay' : '')
     const abyssSubTag = battle?.abyssFloor ? ` · ${formatAbyssFloorLabel(battle.abyssFloor)}` : ''
     const gauntletSubTag = battle?.gauntletMaxRounds ? ` · All ${battle.gauntletMaxRounds} Rounds Cleared` : ''
-    const sub = won
-      ? `${ch.title}${abyssSubTag}${gauntletSubTag}${challengeSubTag}`
-      : `${ch.title}${abyssSubTag} · Regroup & Adapt`
-    const quote = won
-      ? `${ch.outroSpeaker}: "${ch.outroText}"`
-      : 'Return to Vanguard Camp to equip stronger gear, open booster decks, or merge 3 identical heroes to unlock Tier 2 skills.'
+    const sub = isEndlessResult
+      ? (won
+          ? `Endless Wave ${endlessWaveNum} · ${endlessBiomeLabel}${isEndlessBossWave(endlessWaveNum) ? ' · Boss Cleared' : ''}`
+          : `Endless Wave ${endlessWaveNum} · ${endlessBiomeLabel} · Best W${state.campaign.endlessBest}`)
+      : won
+        ? `${ch.title}${abyssSubTag}${gauntletSubTag}${challengeSubTag}`
+        : `${ch.title}${abyssSubTag} · Regroup & Adapt`
+    const quote = isEndlessResult
+      ? (won
+          ? `Draft 1 of ${pendingEndlessDraft.length || 3} Run Blessings to carry into Wave ${endlessWaveNum + 1}.`
+          : 'Your temporary Run Blessings have faded, but your Endless Best record remains. Regroup and begin a fresh ascent!')
+      : won
+        ? `${ch.outroSpeaker}: "${ch.outroText}"`
+        : 'Return to Vanguard Camp to equip stronger gear, open booster decks, or merge 3 identical heroes to unlock Tier 2 skills.'
 
-    const rowH = shortH ? 35 : 44
+    const rowH = hasBlessingDraft ? (shortH ? 30 : 36) : (shortH ? 35 : 44)
     const rewardRows: LayoutNode[] = []
     if (won && reward) {
       const goldRollU = Math.max(0, Math.min(1, (resultAnimTime - 0.22) / 0.6))
@@ -6545,6 +6642,43 @@ async function start() {
     }
 
     const btnH = shortH ? 38 : 44
+    const blessingCardH = shortH ? 132 : 164
+    const blessingDraftNodes: LayoutNode[] = hasBlessingDraft
+      ? [
+          boxNode({
+            id: 'res-blessing-header',
+            style: { height: 18 },
+            widget: {
+              type: 'panel',
+              draw: (ctx: CanvasRenderingContext2D, rect: LayoutRect) => drawLabel(
+                ctx,
+                rect,
+                `DRAFT 1 OF ${pendingEndlessDraft.length} RUN BLESSINGS · WAVE ${(battle?.endlessWave ?? 1) + 1}`,
+                { size: 10.5, weight: 900, color: COLOR.accentHi, align: 'center', display: true, spacing: 0.8 }
+              )
+            }
+          }),
+          row(
+            { id: 'res-blessings', style: { height: blessingCardH, gap: shortH ? 6 : 8 } },
+            pendingEndlessDraft.slice(0, 3).map((bId, idx) => {
+              const spec = ENDLESS_BLESSING_BY_ID[bId]
+              return boxNode({
+                id: `cs-blessing-${idx}`,
+                style: { grow: 1, height: blessingCardH },
+                widget: {
+                  type: 'button',
+                  label: `${spec.name}: ${spec.desc}`,
+                  onPress: () => pickEndlessBlessingAndAdvance(bId),
+                  draw: (ctx: CanvasRenderingContext2D, rect: LayoutRect, st: CanvasWidgetDrawState) =>
+                    drawEndlessBlessingCard(ctx, rect, spec, st, shortH || w < 560)
+                }
+              })
+            })
+          )
+        ]
+      : []
+
+    const displayRewardRows = hasBlessingDraft ? rewardRows.slice(0, shortH ? 1 : 2) : rewardRows
     return overlay({ id: 'root', style: { anchor: 'fill' } }, [
       boxNode({
         id: 'res-scrim',
@@ -6558,7 +6692,12 @@ async function start() {
       }),
       column({
         id: 'res-modal',
-        style: { anchor: 'center', width: Math.min(w - 24, 512), padding: shortH ? 14 : 24, gap: shortH ? 7 : 12 },
+        style: {
+          anchor: 'center',
+          width: Math.min(w - 24, hasBlessingDraft ? 592 : 512),
+          padding: shortH ? 12 : hasBlessingDraft ? 18 : 24,
+          gap: shortH ? 6 : hasBlessingDraft ? 9 : 12
+        },
         widget: {
           type: 'panel',
           blocksPointer: true,
@@ -6566,13 +6705,13 @@ async function start() {
         }
       }, [
         boxNode({
-          id: 'res-title', style: { height: shortH ? 48 : 62 },
+          id: 'res-title', style: { height: shortH ? 44 : 58 },
           widget: {
             type: 'panel',
             draw: (ctx: CanvasRenderingContext2D, rect: LayoutRect) => drawResultHeadlineAnimated(ctx, rect, title, sub, won, resultAnimTime)
           }
         }),
-        ...(shortH && won ? [] : [boxNode({
+        ...((shortH && won) || hasBlessingDraft ? [] : [boxNode({
           id: 'res-story', style: { height: shortH ? 40 : 50 },
           widget: {
             type: 'panel',
@@ -6581,8 +6720,32 @@ async function start() {
             )
           }
         })]),
-        ...rewardRows,
-        row({ id: 'res-btns', style: { height: btnH, gap: 8 } }, won ? [
+        ...displayRewardRows,
+        ...blessingDraftNodes,
+        row({ id: 'res-btns', style: { height: btnH, gap: 8 } }, won ? (hasBlessingDraft ? [
+          boxNode({
+            id: 'cs-victory-camp', style: { grow: 1, height: btnH },
+            widget: {
+              type: 'button', label: 'Camp', onPress: () => openCamp('squad'),
+              draw: (ctx: CanvasRenderingContext2D, rect: LayoutRect, st: CanvasWidgetDrawState) => drawButton(
+                ctx, rect, 'Camp', st, { variant: 'secondary', icon: 'camp', size: 13 }
+              )
+            }
+          }),
+          boxNode({
+            id: 'cs-victory-abandon-run', style: { grow: 1, height: btnH },
+            widget: {
+              type: 'button', label: 'End Run', onPress: () => {
+                abandonEndlessRun(state)
+                saveNow()
+                openWorldMap()
+              },
+              draw: (ctx: CanvasRenderingContext2D, rect: LayoutRect, st: CanvasWidgetDrawState) => drawButton(
+                ctx, rect, 'End Run', st, { variant: 'secondary', icon: 'map', size: 13 }
+              )
+            }
+          })
+        ] : [
           boxNode({
             id: 'cs-victory-camp', style: { grow: 1, height: btnH },
             widget: {
@@ -6616,7 +6779,7 @@ async function start() {
               }
             }
           })
-        ] : [
+        ]) : [
           boxNode({
             id: 'cs-world-map', style: { grow: 1, height: btnH },
             widget: {
@@ -6638,9 +6801,9 @@ async function start() {
           boxNode({
             id: 'cs-defeat-retry', style: { grow: 1.2, height: btnH },
             widget: {
-              type: 'button', label: 'Retry', primary: true, onPress: launchBattle,
+              type: 'button', label: isEndlessResult ? 'New Run' : 'Retry', primary: true, onPress: retryAfterDefeat,
               draw: (ctx: CanvasRenderingContext2D, rect: LayoutRect, st: CanvasWidgetDrawState) => drawButton(
-                ctx, rect, 'Retry', st, { variant: 'primary', icon: 'play', size: 13.5 }
+                ctx, rect, isEndlessResult ? 'New Run' : 'Retry', st, { variant: 'primary', icon: 'play', size: 13.5 }
               )
             }
           })

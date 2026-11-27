@@ -27,6 +27,7 @@
       "crownshard/codex.ts",
       "crownshard/combat-log.ts",
       "crownshard/discovery-tips.ts",
+      "crownshard/endless-roguelite.ts",
       "crownshard/expansion-act1.ts",
       "crownshard/simulation.ts",
       "crownshard/expansion-act2.ts",
