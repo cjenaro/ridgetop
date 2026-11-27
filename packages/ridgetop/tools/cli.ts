@@ -2,7 +2,7 @@
 import { readFile } from 'node:fs/promises'
 import { resolve } from 'node:path'
 import { loadGodotCompiler } from '../framework/export-godot.ts'
-import { runArtLibraryCli, runPackageGameCli, runPreviewArtCli } from '../framework/server.ts'
+import { runArtLibraryCli, runOtaKeygenCli, runOtaServeCli, runPackageGameCli, runPreviewArtCli } from '../framework/server.ts'
 import { createGame } from './create-game.ts'
 
 function printHelp() {
@@ -13,7 +13,9 @@ function printHelp() {
     '',
     'Commands:',
     '  create <dir>                          Scaffold a new standalone Ridgetop game project',
-    '  package [options]                     Package a game for web, steam, mobile, godot, player, or all',
+    '  package [options]                     Package a game for web, steam, mobile, ota, godot, player, or all',
+    '  ota-serve [options]                   Serve a local LAN OTA bundle for testing on iOS/Android',
+    '  ota-keygen                            Generate an Ed25519 keypair for signing OTA manifests',
     '  compile-godot <out-dir> <entry...>    Compile TypeScript game modules to Godot 4 GDScript',
     '  preview-art <recipe.art.json> [dir]   Render directional sprite sheet & 8-view preview PNGs',
     '  art-library <list|start> [args...]    Browse or derive starter art recipes from the library',
@@ -57,6 +59,14 @@ async function main(argv: readonly string[]) {
   }
   if (command === 'package') {
     await runPackageGameCli(rest)
+    return
+  }
+  if (command === 'ota-serve') {
+    await runOtaServeCli(rest)
+    return
+  }
+  if (command === 'ota-keygen') {
+    runOtaKeygenCli()
     return
   }
   if (command === 'compile-godot') {

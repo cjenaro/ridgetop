@@ -22,14 +22,16 @@ import {
   shakeModuleGraph
 } from './module-bundle.ts'
 import { encodePng } from './png.ts'
+import type { OtaChannel } from './ota.ts'
+import { buildOtaRelease, parseOtaChannel } from './ota.ts'
 import { color } from './renderer.ts'
-import { MOBILE_EXTRA_HEAD, emitMobileShell } from './target-mobile.ts'
+import { MOBILE_EXTRA_HEAD, emitMobileShell, renderMobileBridgeJs } from './target-mobile.ts'
 import { emitSteamShell } from './target-steam.ts'
 
 export { bundleStandaloneHtml, shakeModuleGraph }
 export type { BundleStandaloneHtmlOptions, EmbeddedAssetEntry, ShakeModuleGraphOptions }
 
-export type PackageTarget = 'web' | 'steam' | 'mobile' | 'godot' | 'player' | 'all'
+export type PackageTarget = 'web' | 'steam' | 'mobile' | 'ota' | 'godot' | 'player' | 'all'
 export type PackageOrientation = 'landscape' | 'portrait' | 'any'
 
 export interface RidgetopProjectConfig {
@@ -57,6 +59,12 @@ export interface RidgetopProjectConfig {
   godotEntries?: readonly string[]
   /** Optional relative path inside the web bundle to reset to `{}\n` (e.g. `art/overrides.json`). */
   overridesReset?: string
+  /** Optional base URL for Over-the-Air mobile updates (e.g. `https://cjenaro.github.io/ridgetop/ota/crownshard`). */
+  otaUrl?: string
+  /** Optional default OTA release channel (`local`, `dev`, or `prod`). */
+  otaChannel?: OtaChannel
+  /** Optional base64-encoded raw 32-byte Ed25519 public key pinned in native mobile builds. */
+  otaPublicKey?: string
 }
 
 export interface PackageGameOptions {
@@ -82,14 +90,26 @@ export interface PackageGameOptions {
   iconBatches?: { batches: readonly InstanceBatch[]; span: number; centerY: number }
   /** Optional hex background color for app icons and splash screens. */
   backgroundColor?: string
+  /** Base URL for Over-the-Air mobile updates (used by `--target mobile` and `--target ota`). */
+  otaUrl?: string
+  /** OTA channel (`local`, `dev`, or `prod`). Defaults to config or `prod`. */
+  otaChannel?: OtaChannel
+  /** Minimum native store app version required for an OTA bundle (defaults to semver core of `version`). */
+  minNativeVersion?: string
+  /** Optional base64-encoded raw 32-byte Ed25519 public key pinned in native mobile builds. */
+  otaPublicKey?: string
+  /** Optional PKCS#8 PEM Ed25519 private key (or path) used to sign `--target ota` manifests. */
+  otaSigningKeyPem?: string
 }
 
 export interface PackagedOutput {
-  target: 'web' | 'steam' | 'mobile' | 'godot' | 'player'
+  target: 'web' | 'steam' | 'mobile' | 'ota' | 'godot' | 'player'
   dir: string
   wwwDir?: string
   iconPath?: string
   playerPath?: string
+  manifestPath?: string
+  bundlePath?: string
   files: number
   totalBytes: number
 }
@@ -278,10 +298,13 @@ async function resolveTargetProjectDir(options: PackageGameOptions): Promise<str
   if (!options.game) {
     throw new Error('Specify --project <directory> (or --game <example-name> inside a Ridgetop monorepo).')
   }
+  if (!/^[a-z0-9][a-z0-9._-]*$/i.test(options.game) || options.game.includes('..')) {
+    throw new Error(`Invalid --game name "${options.game}".`)
+  }
   const candidates: string[] = []
-  if (options.repoRoot) candidates.push(join(resolve(options.repoRoot), 'examples', options.game))
-  candidates.push(join(process.cwd(), 'examples', options.game))
-  candidates.push(resolve(resolvePackageRootDir(), '..', '..', 'examples', options.game))
+  if (options.repoRoot) candidates.push(resolveContained(join(resolve(options.repoRoot), 'examples'), options.game, 'game'))
+  candidates.push(resolveContained(join(process.cwd(), 'examples'), options.game, 'game'))
+  candidates.push(resolveContained(resolve(resolvePackageRootDir(), '..', '..', 'examples'), options.game, 'game'))
   for (const dir of candidates) {
     if (existsSync(dir)) return dir
   }
@@ -672,13 +695,22 @@ async function tryCompileGodotScripts(projectDir: string, config: RidgetopProjec
 }
 
 export async function packageGame(options: PackageGameOptions): Promise<PackageResult> {
-  const targets: ('web' | 'steam' | 'mobile' | 'godot' | 'player')[] = options.target === 'all'
+  const targets: ('web' | 'steam' | 'mobile' | 'ota' | 'godot' | 'player')[] = options.target === 'all'
     ? ['web', 'steam', 'mobile', 'godot']
     : [options.target]
   const outRoot = resolve(options.outDir)
   const projectDir = await resolveTargetProjectDir(options)
   const { config, version: detectedVersion } = await loadProjectConfig(projectDir)
   const projectVersion = options.version ?? detectedVersion ?? '1.0.0'
+  const otaBaseUrl = options.otaUrl ?? config.otaUrl
+  const otaChannel: OtaChannel = options.otaChannel ?? config.otaChannel ?? 'prod'
+  const otaPublicKey = options.otaPublicKey ?? config.otaPublicKey
+  const otaSigningKeyPem = options.otaSigningKeyPem ?? process.env.RIDGETOP_OTA_SIGNING_KEY
+  const otaConfig = {
+    baseUrl: otaBaseUrl ?? '',
+    channel: otaChannel,
+    publicKeyBase64: otaPublicKey
+  }
 
   const assets = await resolveProjectAssets(projectDir, config)
 
@@ -778,10 +810,35 @@ export async function packageGame(options: PackageGameOptions): Promise<PackageR
         themeColor,
         orientation,
         iconPng: getIconPng(1024),
-        splashPng: getIconPng(1024, 0.44)
+        splashPng: getIconPng(1024, 0.44),
+        ota: otaConfig
       })
       const stats = await measureDirectory(wwwDir)
       outputs.push({ target, dir, wwwDir, iconPath, ...stats })
+    } else if (target === 'ota') {
+      const stageDir = join(dir, '.ota-stage-www')
+      const { detectedName } = await populateWebBundle(stageDir, MOBILE_EXTRA_HEAD)
+      applyResolvedIdentity(detectedName)
+      await writeFile(join(stageDir, 'ridgetop-mobile-bridge.js'), renderMobileBridgeJs(orientation, otaConfig))
+      const release = await buildOtaRelease({
+        wwwDir: stageDir,
+        outDir: dir,
+        appId: resolvedAppId,
+        channel: otaChannel,
+        version: projectVersion,
+        minNativeVersion: options.minNativeVersion,
+        baseUrl: otaBaseUrl,
+        signingKeyPem: otaSigningKeyPem
+      })
+      await rm(stageDir, { recursive: true, force: true })
+      outputs.push({
+        target,
+        dir: release.channelDir,
+        manifestPath: release.manifestPath,
+        bundlePath: release.bundlePath,
+        files: release.files,
+        totalBytes: release.manifest.bytes
+      })
     } else if (target === 'player') {
       // Pure in-memory standalone bundling — zero temp-directory staging round-trip!
       const prepared = await prepareWebProject(projectDir, config, { themeColor })
@@ -856,6 +913,7 @@ function parsePackageTarget(value: string): PackageTarget | null {
     case 'web':
     case 'steam':
     case 'mobile':
+    case 'ota':
     case 'godot':
     case 'player':
     case 'all':
@@ -881,6 +939,7 @@ export function parsePackageArgs(argv: readonly string[]) {
   const values: Record<string, string> = {}
   for (let i = 0; i < argv.length; i++) {
     const token = argv[i]
+    if (token === '--') continue
     if (token === '--help' || token === '-h') return { help: true as const }
     if (!token.startsWith('--')) throw new Error('Unexpected argument: ' + token)
     const eq = token.indexOf('=')
@@ -894,12 +953,17 @@ export function parsePackageArgs(argv: readonly string[]) {
   const rawTarget = values.target ?? 'all'
   const target = parsePackageTarget(rawTarget)
   if (!target) {
-    throw new Error('Unknown --target "' + rawTarget + '". Choose web, steam, mobile, godot, player, or all.')
+    throw new Error('Unknown --target "' + rawTarget + '". Choose web, steam, mobile, ota, godot, player, or all.')
   }
   const rawOrientation = values.orientation ?? 'landscape'
   const orientation = parsePackageOrientation(rawOrientation)
   if (!orientation) {
     throw new Error('Unknown --orientation "' + rawOrientation + '". Choose landscape, portrait, or any.')
+  }
+  const rawOtaChannel = values['ota-channel'] ?? values.channel
+  const otaChannel = rawOtaChannel ? parseOtaChannel(rawOtaChannel) : undefined
+  if (rawOtaChannel && !otaChannel) {
+    throw new Error('Unknown --ota-channel "' + rawOtaChannel + '". Choose local, dev, or prod.')
   }
   return {
     help: false as const,
@@ -912,7 +976,12 @@ export function parsePackageArgs(argv: readonly string[]) {
     version: values.version,
     steamAppId: values['steam-app-id'],
     orientation,
-    backgroundColor: values.background
+    backgroundColor: values.background,
+    otaUrl: values['ota-url'],
+    otaChannel: otaChannel ?? undefined,
+    minNativeVersion: values['min-native-version'],
+    otaPublicKey: values['ota-public-key'],
+    otaSigningKeyPem: values['ota-signing-key']
   }
 }
 

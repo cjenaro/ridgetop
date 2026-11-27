@@ -1,5 +1,27 @@
 export type PlatformKind = 'web' | 'desktop' | 'ios' | 'android'
 export type LifecycleReason = 'visibility' | 'page' | 'native'
+export type PlatformOtaChannel = 'local' | 'dev' | 'prod'
+
+export interface PlatformOtaStatus {
+  readonly appId: string
+  readonly channel: PlatformOtaChannel
+  readonly baseUrl: string
+  readonly nativeVersion: string
+  readonly nativeBuild: string
+  readonly activeVersion: string | null
+  readonly stagedVersion: string | null
+  readonly lastGoodVersion: string | null
+  readonly failedVersion: string | null
+  readonly isOtaActive: boolean
+  readonly signatureRequired: boolean
+}
+
+export interface PlatformOtaCheckResult {
+  readonly available: boolean
+  readonly staged: boolean
+  readonly version: string | null
+  readonly reason?: string
+}
 
 export interface PlatformLifecycleHandlers {
   pause?(reason: LifecycleReason): void
@@ -34,6 +56,18 @@ export interface RidgetopNativeBridge {
     setRichPresence?(key: string, value: string): void
     activateOverlay?(dialog?: string): void
   }
+  ota?: {
+    available?(): boolean
+    getChannel?(): PlatformOtaChannel
+    getBaseUrl?(): string
+    getStatus?(): Promise<PlatformOtaStatus>
+    checkForUpdate?(): Promise<PlatformOtaCheckResult>
+    applyUpdate?(options?: { reload?: boolean }): Promise<boolean>
+    confirmReady?(): Promise<boolean>
+    setChannel?(channel: PlatformOtaChannel, customBaseUrl?: string): Promise<void>
+    reset?(): Promise<void>
+    onUpdateReady?(listener: (info: { version: string; channel: PlatformOtaChannel }) => void): (() => void) | void
+  }
 }
 
 export interface RidgetopPlatform {
@@ -51,6 +85,18 @@ export interface RidgetopPlatform {
     unlockAchievement(id: string): Promise<boolean>
     setRichPresence(key: string, value: string): void
     activateOverlay(dialog?: string): void
+  }
+  readonly ota: {
+    readonly available: boolean
+    readonly channel: PlatformOtaChannel
+    readonly baseUrl: string
+    getStatus(): Promise<PlatformOtaStatus>
+    checkForUpdate(): Promise<PlatformOtaCheckResult>
+    applyUpdate(options?: { reload?: boolean }): Promise<boolean>
+    confirmReady(): Promise<boolean>
+    setChannel(channel: PlatformOtaChannel, customBaseUrl?: string): Promise<void>
+    reset(): Promise<void>
+    onUpdateReady(listener: (info: { version: string; channel: PlatformOtaChannel }) => void): () => void
   }
 }
 
@@ -232,6 +278,68 @@ export function createPlatform(): RidgetopPlatform {
       },
       activateOverlay(dialog = 'Achievements') {
         try { bridge?.steam?.activateOverlay?.(dialog) } catch { /* Optional Steam overlay. */ }
+      }
+    },
+    ota: {
+      get available() {
+        return Boolean(bridge?.ota?.available?.())
+      },
+      get channel(): PlatformOtaChannel {
+        return bridge?.ota?.getChannel?.() ?? 'prod'
+      },
+      get baseUrl() {
+        return bridge?.ota?.getBaseUrl?.() ?? ''
+      },
+      async getStatus(): Promise<PlatformOtaStatus> {
+        if (bridge?.ota?.getStatus) return bridge.ota.getStatus()
+        return {
+          appId: '',
+          channel: 'prod',
+          baseUrl: '',
+          nativeVersion: '0.0.0',
+          nativeBuild: '0',
+          activeVersion: null,
+          stagedVersion: null,
+          lastGoodVersion: null,
+          failedVersion: null,
+          isOtaActive: false,
+          signatureRequired: false
+        }
+      },
+      async checkForUpdate(): Promise<PlatformOtaCheckResult> {
+        if (!bridge?.ota?.checkForUpdate) {
+          return { available: false, staged: false, version: null, reason: 'unsupported' }
+        }
+        try {
+          return await bridge.ota.checkForUpdate()
+        } catch (error) {
+          return {
+            available: false,
+            staged: false,
+            version: null,
+            reason: error instanceof Error ? error.message : String(error)
+          }
+        }
+      },
+      async applyUpdate(options?: { reload?: boolean }): Promise<boolean> {
+        if (!bridge?.ota?.applyUpdate) return false
+        try { return Boolean(await bridge.ota.applyUpdate(options)) } catch { return false }
+      },
+      async confirmReady(): Promise<boolean> {
+        if (!bridge?.ota?.confirmReady) return false
+        try { return Boolean(await bridge.ota.confirmReady()) } catch { return false }
+      },
+      async setChannel(channel: PlatformOtaChannel, customBaseUrl?: string): Promise<void> {
+        if (!bridge?.ota?.setChannel) return
+        await bridge.ota.setChannel(channel, customBaseUrl)
+      },
+      async reset(): Promise<void> {
+        if (!bridge?.ota?.reset) return
+        await bridge.ota.reset()
+      },
+      onUpdateReady(listener: (info: { version: string; channel: PlatformOtaChannel }) => void): () => void {
+        const unsub = bridge?.ota?.onUpdateReady?.(listener)
+        return typeof unsub === 'function' ? unsub : () => {}
       }
     }
   }

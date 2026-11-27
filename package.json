@@ -26,6 +26,8 @@
     "test:player": "node tools/player-smoke.ts",
     "create-game": "node packages/ridgetop/dist/tools/cli.js create",
     "package": "node packages/ridgetop/dist/tools/cli.js package",
+    "ota:serve": "node packages/ridgetop/dist/tools/cli.js ota-serve",
+    "ota:keygen": "node packages/ridgetop/dist/tools/cli.js ota-keygen",
     "compile:godot": "node packages/ridgetop/dist/tools/cli.js compile-godot",
     "generate:sprites": "node tools/generate-sprites.ts",
     "verify": "node tools/verify-game.ts",

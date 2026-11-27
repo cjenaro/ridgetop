@@ -30,7 +30,17 @@ export {
   resolveGodotRuntimeTemplatePath
 } from './export-godot.ts'
 export { encodePng } from './png.ts'
-export { runArtLibraryCli, runPackageGameCli, runPreviewArtCli } from './tooling.ts'
+export {
+  buildOtaRelease, canonicalOtaSigningPayload, compareSemverCore, crc32, createZipBuffer,
+  generateOtaSigningKeyPair, isNativeVersionCompatible, listLanIpv4Addresses,
+  normalizeOtaBaseUrl, parseOtaChannel, sanitizeOtaVersion, signOtaManifest,
+  startOtaDevServer, verifyOtaManifestSignature
+} from './ota.ts'
+export type {
+  BuildOtaReleaseOptions, OtaChannel, OtaDevServerHandle, OtaDevServerOptions,
+  OtaManifest, OtaReleaseResult, OtaSigningKeyPair, ZipFileEntry
+} from './ota.ts'
+export { runArtLibraryCli, runOtaKeygenCli, runOtaServeCli, runPackageGameCli, runPreviewArtCli } from './tooling.ts'
 export type { ArtLibraryCliOptions, PackageGameCliOptions, PreviewArtCliOptions } from './tooling.ts'
 export type {
   GodotCompileProjectOptions,

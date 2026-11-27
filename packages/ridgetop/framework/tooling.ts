@@ -1,4 +1,5 @@
-import { access, mkdir, readFile, writeFile } from 'node:fs/promises'
+import { access, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
 import process from 'node:process'
 import { fileURLToPath, pathToFileURL } from 'node:url'
@@ -7,6 +8,8 @@ import { createArtBuilder } from './art-builder.ts'
 import { modelFromArtRecipe } from './art-recipe.ts'
 import type { ArtRecipe } from './art-recipe.ts'
 import { spritePartVisibility } from './art-review.ts'
+import { generateOtaSigningKeyPair, parseOtaChannel, startOtaDevServer } from './ota.ts'
+import type { OtaChannel, OtaManifest } from './ota.ts'
 import { formatPackageSummary, packageGame, parsePackageArgs } from './packager.ts'
 import { encodePng } from './png.ts'
 import { bakeSpritePixels } from './low-poly.ts'
@@ -189,7 +192,7 @@ function formatPackageUsage(command: string, fixedProject: boolean): string {
     `Usage: ${command} [options]`,
     '',
     'Options:',
-    '  --target <web|steam|mobile|godot|player|all>  Target platform(s) (default: all)'
+    '  --target <web|steam|mobile|ota|godot|player|all>  Target platform(s) (default: all)'
   ]
   if (!fixedProject) {
     lines.push(
@@ -205,9 +208,14 @@ function formatPackageUsage(command: string, fixedProject: boolean): string {
   lines.push(
     '  --name <title>                     Override app display name',
     '  --app-id <com.example.game>        Reverse-DNS bundle / application ID',
+    '  --version <semver>                 Override package/OTA version',
     '  --steam-app-id <id>                Steam App ID written to steam_appid.txt (default: 480)',
     '  --orientation <landscape|portrait|any>  Mobile orientation lock (default: landscape)',
-    '  --background <#rrggbb>             Background color for app icons and splash screen'
+    '  --background <#rrggbb>             Background color for app icons and splash screen',
+    '  --ota-url <https://...>            Base URL for mobile Over-the-Air update manifests',
+    '  --ota-channel <local|dev|prod>     OTA release channel (default: prod)',
+    '  --min-native-version <semver>      Minimum native store version required for OTA bundle',
+    '  --ota-public-key <base64>          Base64 raw 32-byte Ed25519 public key pinned in mobile builds'
   )
   return lines.join('\n')
 }
@@ -264,7 +272,130 @@ export async function runPackageGameCli(
     version: parsed.version,
     steamAppId: parsed.steamAppId,
     orientation: parsed.orientation,
-    backgroundColor: parsed.backgroundColor
+    backgroundColor: parsed.backgroundColor,
+    otaUrl: parsed.otaUrl,
+    otaChannel: parsed.otaChannel,
+    minNativeVersion: parsed.minNativeVersion,
+    otaPublicKey: parsed.otaPublicKey,
+    otaSigningKeyPem: parsed.otaSigningKeyPem
   })
   console.log(formatPackageSummary(result, cwd))
+}
+
+/** Layer-1 local OTA HTTP dev server CLI for testing mobile OTA updates straight from your computer over Wi-Fi. */
+export async function runOtaServeCli(
+  argv: readonly string[],
+  options: PackageGameCliOptions = {}
+): Promise<void> {
+  const cwd = options.cwd ?? process.cwd()
+  const command = options.command ?? 'ridgetop ota-serve'
+  const values: Record<string, string> = {}
+  for (let i = 0; i < argv.length; i++) {
+    const token = argv[i]
+    if (token === '--') continue
+    if (token === '--help' || token === '-h') {
+      console.log([
+        `Usage: ${command} [options]`,
+        '',
+        'Serve a local Layer-1 Over-the-Air (OTA) manifest + bundle over LAN Wi-Fi.',
+        '',
+        'Options:',
+        '  --game <name>                Monorepo example game (e.g. crownshard)',
+        '  --project <directory>        Standalone Ridgetop game project directory',
+        '  --port <number>              HTTP port (default: 4321)',
+        '  --channel <local|dev|prod>   OTA channel path (default: local)',
+        '  --version <semver>           Base version prefix (default: 1.0.0)'
+      ].join('\n'))
+      return
+    }
+    if (!token.startsWith('--')) throw new Error('Unexpected argument: ' + token)
+    const eq = token.indexOf('=')
+    if (eq > 0) values[token.slice(2, eq)] = token.slice(eq + 1)
+    else {
+      const next = argv[++i]
+      if (!next || next.startsWith('--')) throw new Error('Missing value for ' + token)
+      values[token.slice(2)] = next
+    }
+  }
+
+  const channel: OtaChannel = values.channel ? (parseOtaChannel(values.channel) ?? (() => {
+    throw new Error('Unknown --channel "' + values.channel + '". Choose local, dev, or prod.')
+  })()) : 'local'
+  if (values.port !== undefined && !/^\d+$/.test(values.port)) {
+    throw new Error('Invalid --port value: ' + values.port)
+  }
+  const port = values.port ? Number.parseInt(values.port, 10) : 4321
+  if (!Number.isFinite(port) || port < 0 || port > 65535) {
+    throw new Error('Invalid --port value: ' + values.port)
+  }
+
+  let projectDir = options.projectDir
+    ? (values.project ? resolve(cwd, values.project) : resolve(options.projectDir))
+    : (values.project ? resolve(cwd, values.project) : undefined)
+  const game = projectDir ? undefined : values.game
+  if (!projectDir && !game) {
+    const hasLocalIndex = await access(join(cwd, 'index.html')).then(() => true, () => false)
+      || await access(join(cwd, 'game', 'index.html')).then(() => true, () => false)
+    if (hasLocalIndex) {
+      projectDir = cwd
+    } else {
+      throw new Error('Specify --project <directory> or --game <name> (or run inside a Ridgetop game directory).')
+    }
+  }
+
+  const handle = await startOtaDevServer({
+    port,
+    channel,
+    baseVersion: values.version ?? '1.0.0',
+    buildBundle: async version => {
+      const stageRoot = await mkdtemp(join(tmpdir(), 'ridgetop-ota-serve-'))
+      try {
+        const res = await packageGame({
+          target: 'ota',
+          game,
+          projectDir,
+          repoRoot: cwd,
+          outDir: stageRoot,
+          version,
+          otaChannel: channel
+        })
+        const out = res.outputs[0]
+        if (!out?.manifestPath || !out?.bundlePath) {
+          throw new Error('OTA package output missing manifest or bundle path')
+        }
+        const manifest: OtaManifest = JSON.parse(await readFile(out.manifestPath, 'utf8'))
+        const zipData = await readFile(out.bundlePath)
+        return { manifest, zipData }
+      } finally {
+        await rm(stageRoot, { recursive: true, force: true })
+      }
+    }
+  })
+
+  console.log(`Ridgetop Local OTA Server (${channel}) listening on port ${handle.port}:`)
+  for (const url of handle.urls) {
+    console.log(`  - ${url}/${channel}/manifest.json`)
+  }
+  console.log(`\nTrigger a rebuild anytime with:\n  curl -X POST -H "Authorization: Bearer ${handle.rebuildToken}" ${handle.urls[0]}/rebuild`)
+  console.log('Press Ctrl+C to stop.')
+
+  await new Promise<void>(resolveStop => {
+    const stop = () => {
+      process.off('SIGINT', stop)
+      process.off('SIGTERM', stop)
+      void handle.close().finally(resolveStop)
+    }
+    process.on('SIGINT', stop)
+    process.on('SIGTERM', stop)
+  })
+}
+
+/** Generate a fresh Ed25519 keypair for signing OTA manifests. */
+export function runOtaKeygenCli(): void {
+  const { publicKeyBase64, privateKeyPem } = generateOtaSigningKeyPair()
+  console.log('# Put this public key in your game package.json -> ridgetop.otaPublicKey:')
+  console.log(publicKeyBase64)
+  console.log('')
+  console.log('# Store this private key as GitHub Actions secret RIDGETOP_OTA_SIGNING_KEY (never commit it):')
+  console.log(privateKeyPem.trim())
 }

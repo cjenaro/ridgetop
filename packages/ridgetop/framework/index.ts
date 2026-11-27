@@ -8,7 +8,11 @@ export type { GamepadBinding, VirtualStickState } from './input.ts'
 export { createGamePage } from './page.ts'
 export type { GamePage, GamePageOptions, MediaQueryLike } from './page.ts'
 export { createPlatform, resolveStorage } from './platform.ts'
-export type { LifecycleReason, PlatformKind, PlatformLifecycleHandlers, RidgetopNativeBridge, RidgetopPlatform } from './platform.ts'
+export type {
+  LifecycleReason, PlatformKind, PlatformLifecycleHandlers,
+  PlatformOtaChannel, PlatformOtaCheckResult, PlatformOtaStatus,
+  RidgetopNativeBridge, RidgetopPlatform
+} from './platform.ts'
 export { BACKUP_FORMAT, BACKUP_SCHEMA_VERSION, createSaveBackup } from './backup.ts'
 export type {
   SaveBackupEnvelope, SaveBackupInspectResult, SaveBackupManager, SaveBackupOptions,

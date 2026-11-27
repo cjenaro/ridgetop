@@ -1,0 +1,234 @@
+name: OTA Mobile Release (GitHub Pages)
+
+on:
+  push:
+    branches:
+      - main
+      - prod
+    paths:
+      - 'packages/ridgetop/**'
+      - 'examples/crownshard/**'
+      - 'package.json'
+      - 'pnpm-lock.yaml'
+      - 'pnpm-workspace.yaml'
+      - '.github/workflows/ota-release.yml'
+  workflow_dispatch:
+    inputs:
+      game:
+        description: 'Monorepo game name under examples/'
+        required: true
+        type: choice
+        options:
+          - crownshard
+          - signal-drift
+          - beacon-run
+          - lighthouse
+          - starter
+        default: 'crownshard'
+      channel:
+        description: 'OTA release channel'
+        required: true
+        type: choice
+        options:
+          - dev
+          - prod
+        default: 'dev'
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    outputs:
+      game: ${{ steps.meta.outputs.game }}
+      channel: ${{ steps.meta.outputs.channel }}
+      ota_version: ${{ steps.meta.outputs.ota_version }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 9
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Validate and compute OTA metadata
+        id: meta
+        shell: bash
+        env:
+          INPUT_GAME: ${{ inputs.game }}
+          INPUT_CHANNEL: ${{ inputs.channel }}
+          REF_NAME: ${{ github.ref_name }}
+          COMMIT_SHA: ${{ github.sha }}
+          REPO_OWNER: ${{ github.repository_owner }}
+          REPO_NAME: ${{ github.event.repository.name }}
+        run: |
+          set -euo pipefail
+          GAME="${INPUT_GAME:-crownshard}"
+          if [[ ! "$GAME" =~ ^[a-z0-9][a-z0-9-]*$ ]]; then
+            echo "Invalid game name: $GAME" >&2
+            exit 1
+          fi
+          if [[ ! -f "examples/${GAME}/package.json" ]]; then
+            echo "Missing examples/${GAME}/package.json" >&2
+            exit 1
+          fi
+
+          if [[ -n "$INPUT_CHANNEL" ]]; then
+            CHANNEL="$INPUT_CHANNEL"
+          elif [[ "$REF_NAME" == "prod" ]]; then
+            CHANNEL="prod"
+          else
+            CHANNEL="dev"
+          fi
+          if [[ "$CHANNEL" != "dev" && "$CHANNEL" != "prod" ]]; then
+            echo "Invalid channel: $CHANNEL" >&2
+            exit 1
+          fi
+
+          BASE_VER=$(GAME="$GAME" node -e '
+            const fs = require("node:fs");
+            const path = require("node:path");
+            const pkg = JSON.parse(fs.readFileSync(path.join("examples", process.env.GAME, "package.json"), "utf8"));
+            process.stdout.write(String(pkg.version || "1.0.0"));
+          ')
+          if [[ ! "$BASE_VER" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "Invalid semver version in package.json: $BASE_VER" >&2
+            exit 1
+          fi
+
+          HAS_PINNED_KEY=$(GAME="$GAME" node -e '
+            const fs = require("node:fs");
+            const path = require("node:path");
+            const pkg = JSON.parse(fs.readFileSync(path.join("examples", process.env.GAME, "package.json"), "utf8"));
+            process.stdout.write(pkg.ridgetop && pkg.ridgetop.otaPublicKey ? "true" : "false");
+          ')
+
+          STAMP=$(date -u +%Y%m%d%H%M%S)
+          SHORT_SHA="${COMMIT_SHA:0:7}"
+          OTA_VERSION="${BASE_VER}+${CHANNEL}.${STAMP}.${SHORT_SHA}"
+          OWNER_LOWER=$(printf '%s' "$REPO_OWNER" | tr '[:upper:]' '[:lower:]')
+          OTA_BASE_URL="https://${OWNER_LOWER}.github.io/${REPO_NAME}/ota/${GAME}"
+
+          {
+            echo "game=${GAME}"
+            echo "channel=${CHANNEL}"
+            echo "base_ver=${BASE_VER}"
+            echo "has_pinned_key=${HAS_PINNED_KEY}"
+            echo "ota_version=${OTA_VERSION}"
+            echo "ota_base_url=${OTA_BASE_URL}"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Build framework and target game
+        shell: bash
+        env:
+          GAME: ${{ steps.meta.outputs.game }}
+        run: |
+          set -euo pipefail
+          pnpm run build:framework
+          pnpm exec tsc -p "examples/${GAME}/tsconfig.build.json"
+
+      - name: Package OTA bundle
+        shell: bash
+        env:
+          GAME: ${{ steps.meta.outputs.game }}
+          CHANNEL: ${{ steps.meta.outputs.channel }}
+          OTA_BASE_URL: ${{ steps.meta.outputs.ota_base_url }}
+          OTA_VERSION: ${{ steps.meta.outputs.ota_version }}
+          BASE_VER: ${{ steps.meta.outputs.base_ver }}
+          HAS_PINNED_KEY: ${{ steps.meta.outputs.has_pinned_key }}
+          RIDGETOP_OTA_SIGNING_KEY: ${{ secrets.RIDGETOP_OTA_SIGNING_KEY }}
+        run: |
+          set -euo pipefail
+          if [[ "$HAS_PINNED_KEY" == "true" && -z "${RIDGETOP_OTA_SIGNING_KEY:-}" ]]; then
+            echo "Error: examples/${GAME}/package.json pins otaPublicKey, so RIDGETOP_OTA_SIGNING_KEY secret is required." >&2
+            exit 1
+          fi
+          pnpm run package \
+            --target ota \
+            --game "$GAME" \
+            --ota-channel "$CHANNEL" \
+            --ota-url "$OTA_BASE_URL" \
+            --version "$OTA_VERSION" \
+            --min-native-version "$BASE_VER" \
+            --out /tmp/ota-staging
+
+      - name: Upload OTA bundle artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ota-bundle
+          path: /tmp/ota-staging
+          retention-days: 1
+
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    concurrency:
+      group: ota-gh-pages
+      cancel-in-progress: false
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Download OTA bundle artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: ota-bundle
+          path: /tmp/ota-staging
+
+      - name: Publish channel to gh-pages (preserving other channels)
+        shell: bash
+        env:
+          GAME: ${{ needs.build.outputs.game }}
+          CHANNEL: ${{ needs.build.outputs.channel }}
+          OTA_VERSION: ${{ needs.build.outputs.ota_version }}
+        run: |
+          set -euo pipefail
+          if [[ ! "$GAME" =~ ^[a-z0-9][a-z0-9-]*$ ]]; then
+            echo "Invalid game name" >&2
+            exit 1
+          fi
+          if [[ "$CHANNEL" != "dev" && "$CHANNEL" != "prod" ]]; then
+            echo "Invalid channel" >&2
+            exit 1
+          fi
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          if git ls-remote --exit-code --heads origin gh-pages >/dev/null 2>&1; then
+            git fetch --depth=1 origin gh-pages:gh-pages
+            git worktree add /tmp/gh-pages gh-pages
+          else
+            git worktree add --orphan -b gh-pages /tmp/gh-pages
+          fi
+
+          mkdir -p "/tmp/gh-pages/ota/${GAME}"
+          rm -rf "/tmp/gh-pages/ota/${GAME}/${CHANNEL}"
+          cp -r "/tmp/ota-staging/${CHANNEL}" "/tmp/gh-pages/ota/${GAME}/${CHANNEL}"
+          touch /tmp/gh-pages/.nojekyll
+
+          cd /tmp/gh-pages
+          git add -A
+          if git diff --cached --quiet; then
+            echo "No OTA changes to publish."
+          else
+            git commit -m "ota(${GAME}/${CHANNEL}): ${OTA_VERSION}"
+            git push origin gh-pages
+          fi

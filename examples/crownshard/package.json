@@ -16,6 +16,9 @@
   "ridgetop": {
     "name": "Crownshard",
     "appId": "com.ridgetop.crownshard",
+    "otaUrl": "https://cjenaro.github.io/ridgetop/ota/crownshard",
+    "otaChannel": "prod",
+    "otaPublicKey": "xfs25PIDLKnxz0USCgyy0N48M9R2mBPCuISyLERJOhY=",
     "html": "index.html",
     "moduleRoot": "dist",
     "entry": "crownshard/main.js",
