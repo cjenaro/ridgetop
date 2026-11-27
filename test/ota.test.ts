@@ -104,6 +104,8 @@ test('Ed25519 manifest signing and verification detects tampering', () => {
   }
   const sig = signOtaManifest(manifest, privateKeyPem)
   assert.equal(verifyOtaManifestSignature(manifest, sig, publicKeyBase64), true)
+  assert.equal(verifyOtaManifestSignature(manifest, signOtaManifest(manifest, privateKeyPem.replace(/\n/g, '\\n')), publicKeyBase64), true)
+  assert.equal(verifyOtaManifestSignature(manifest, signOtaManifest(manifest, privateKeyPem.replace(/\n/g, ' ')), publicKeyBase64), true)
   assert.equal(verifyOtaManifestSignature({ ...manifest, sha256: 'b'.repeat(64) }, sig, publicKeyBase64), false)
   assert.equal(verifyOtaManifestSignature({ ...manifest, channel: 'dev' }, sig, publicKeyBase64), false)
   assert.equal(verifyOtaManifestSignature(manifest, 'invalid', publicKeyBase64), false)

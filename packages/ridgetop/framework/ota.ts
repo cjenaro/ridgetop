@@ -112,12 +112,26 @@ export function canonicalOtaSigningPayload(manifest: Pick<OtaManifest, 'appId' |
   )
 }
 
-/** Sign an OTA manifest with a PKCS#8 PEM Ed25519 private key. */
+function parseOtaPrivateKey(privateKeyInput: string) {
+  const normalized = privateKeyInput.trim().replace(/\\n/g, '\n').replace(/\r\n/g, '\n')
+  const pemMatch = /-----BEGIN PRIVATE KEY-----([\s\S]*?)-----END PRIVATE KEY-----/.exec(normalized)
+  const b64Body = (pemMatch ? pemMatch[1] : normalized).replace(/\s+/g, '')
+  if (!b64Body) {
+    throw new Error('Invalid OTA signing key: empty key. Generate one with "pnpm run ota:keygen" and paste the full PRIVATE KEY block.')
+  }
+  try {
+    return createPrivateKey({ key: Buffer.from(b64Body, 'base64'), format: 'der', type: 'pkcs8' })
+  } catch {
+    throw new Error('Invalid OTA signing key: expected an Ed25519 PKCS#8 private key (from "pnpm run ota:keygen", including the -----BEGIN PRIVATE KEY----- block).')
+  }
+}
+
+/** Sign an OTA manifest with a PKCS#8 PEM (or base64 DER) Ed25519 private key. */
 export function signOtaManifest(
   manifest: Pick<OtaManifest, 'appId' | 'channel' | 'version' | 'minNativeVersion' | 'sha256'>,
   privateKeyPem: string
 ): string {
-  const key = createPrivateKey(privateKeyPem)
+  const key = parseOtaPrivateKey(privateKeyPem)
   const payload = canonicalOtaSigningPayload(manifest)
   return sign(null, payload, key).toString('base64')
 }
