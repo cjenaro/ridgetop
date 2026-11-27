@@ -5,6 +5,17 @@ import {
   MERGE_COPIES_REQUIRED, PACK_BY_ID, PLAYABLE_CHAPTERS, RARITY_META, RARITY_ORDER, TACTIC_BY_ID, TACTIC_LIST
 } from './data.ts'
 import {
+  EQUIP_FAMILY_META, EQUIP_FAMILY_ORDER, HERO_EQUIP_FAMILY,
+  canHeroEquipItem, getEquipCompatibilityReason, getEquipFamily, getEquipFamilyMeta,
+  getEquipShortLockLabel, getHeroEquipFamily, getHeroEquipFamilyMeta, sanitizeHeroEquipmentFamilies
+} from './equip-families.ts'
+export {
+  EQUIP_FAMILY_META, EQUIP_FAMILY_ORDER, HERO_EQUIP_FAMILY,
+  canHeroEquipItem, getEquipCompatibilityReason, getEquipFamily, getEquipFamilyMeta,
+  getEquipShortLockLabel, getHeroEquipFamily, getHeroEquipFamilyMeta, sanitizeHeroEquipmentFamilies
+}
+export type { EquipFamilyMeta } from './equip-families.ts'
+import {
   EPIC_PITY_THRESHOLD, EQUIP_CRAFT_COST, EQUIP_SALVAGE_DUST, HERO_CRAFT_COST, HERO_SALVAGE_SHARDS,
   LEGENDARY_PITY_THRESHOLD, MAX_HERO_OVERFLOW_SHARDS, canCraftEquipment, canCraftHero, craftEquipment,
   craftHero, getCraftableEquipment, getCraftableHeroes, getDuplicateMaxHeroShards, getEquipCraftCost,
@@ -694,6 +705,7 @@ export function equipItem(state: GameState, heroUid: string, equipUid: string): 
   const hero = getHeroByUid(campaign, heroUid)
   const item = getEquipmentByUid(campaign, equipUid)
   if (!hero || !item) return false
+  if (!canHeroEquipItem(hero.heroId, item.equipId)) return false
 
   // Remove from previous owner if equipped elsewhere
   const prevOwner = findEquipOwner(campaign, equipUid)
@@ -787,7 +799,10 @@ export function findBestFitUpgrades(campaign: CampaignState, heroUid: string): O
   for (const slot of slots) {
     const currentUid = slot === 'weapon' ? hero.weaponUid : slot === 'armor' ? hero.armorUid : hero.relicUid
     const currentItem = getEquipmentByUid(campaign, currentUid)
-    const currentSpec = currentItem ? EQUIPMENT_BY_ID[currentItem.equipId] : undefined
+    const currentSpec =
+      currentItem && canHeroEquipItem(hero.heroId, currentItem.equipId)
+        ? EQUIPMENT_BY_ID[currentItem.equipId]
+        : undefined
     const currentScore = currentSpec ? scoreEquipmentForHero(hero.heroId, currentSpec) : -1
 
     let bestItem: OwnedEquipCard | null = null
@@ -795,6 +810,7 @@ export function findBestFitUpgrades(campaign: CampaignState, heroUid: string): O
     for (const item of campaign.equipment) {
       if (item.slot !== slot) continue
       if (item.uid === currentUid || ownedByOther.has(item.uid)) continue
+      if (!canHeroEquipItem(hero.heroId, item.equipId)) continue
       const spec = EQUIPMENT_BY_ID[item.equipId]
       if (!spec) continue
       const score = scoreEquipmentForHero(hero.heroId, spec)
@@ -1127,10 +1143,12 @@ export function createInitialCampaign(seed = 1337): CampaignState {
   const sword: OwnedEquipCard = { uid: allocUid(campaign, 'eq'), equipId: 'iron_sword', slot: 'weapon' }
   const bow: OwnedEquipCard = { uid: allocUid(campaign, 'eq'), equipId: 'hunter_bow', slot: 'weapon' }
   const leather: OwnedEquipCard = { uid: allocUid(campaign, 'eq'), equipId: 'leather_jerkin', slot: 'armor' }
-  campaign.equipment.push(sword, bow, leather)
+  const staff: OwnedEquipCard = { uid: allocUid(campaign, 'eq'), equipId: 'apprentice_staff', slot: 'weapon' }
+  campaign.equipment.push(sword, bow, leather, staff)
   starterKnight.weaponUid = sword.uid
-  starterKnight.armorUid = leather.uid
   starterArcher.weaponUid = bow.uid
+  starterArcher.armorUid = leather.uid
+  starterMage.weaponUid = staff.uid
 
   const starterTactics = [
     'rally_banner', 'healing_draught', 'iron_ward',
@@ -1302,6 +1320,7 @@ function cloneCampaignFromSave(c: SavedCampaignState, fallbackSeed: number): Cam
     ),
     worldEvents: sanitizeWorldMapEvents(c.worldEvents)
   }
+  sanitizeHeroEquipmentFamilies(cloned)
   if (!isStageUnlocked(cloned, cloned.selectedStageId)) {
     cloned.selectedStageId = getNextRecommendedStage(cloned).id
   }
@@ -2330,6 +2349,19 @@ export function loadSave(storage: StorageLike | null | undefined): SaveData | nu
       ? camp.selectedStageId
       : CHAPTERS[0].id
     const activeBattle = 'activeBattle' in parsed ? validateBattleSnapshot(parsed.activeBattle) : null
+    const loadedHeroes: OwnedHeroCard[] = camp.heroes
+      .filter((h): h is OwnedHeroCard => typeof h === 'object' && h !== null && 'uid' in h && 'heroId' in h)
+      .map(h => {
+        const level = normalizeHeroLevel(h.level)
+        const xp = normalizeHeroXp(level, h.xp)
+        return { ...h, level, xp, locked: h.locked === true }
+      })
+    const loadedEquipment: OwnedEquipCard[] = 'equipment' in camp && Array.isArray(camp.equipment)
+      ? camp.equipment
+        .filter((e): e is OwnedEquipCard => typeof e === 'object' && e !== null && 'uid' in e && 'equipId' in e)
+        .map(e => ({ ...e, locked: e.locked === true }))
+      : []
+    sanitizeHeroEquipmentFamilies({ heroes: loadedHeroes, equipment: loadedEquipment })
     return {
       version: 1,
       campaign: {
@@ -2377,18 +2409,8 @@ export function loadSave(storage: StorageLike | null | undefined): SaveData | nu
         packsOpened: 'packsOpened' in camp && typeof camp.packsOpened === 'number' ? camp.packsOpened : 0,
         packsSinceEpic: 'packsSinceEpic' in camp && isFiniteNum(camp.packsSinceEpic) && camp.packsSinceEpic >= 0 ? Math.floor(camp.packsSinceEpic) : 0,
         packsSinceLegendary: 'packsSinceLegendary' in camp && isFiniteNum(camp.packsSinceLegendary) && camp.packsSinceLegendary >= 0 ? Math.floor(camp.packsSinceLegendary) : 0,
-        heroes: camp.heroes
-          .filter((h): h is OwnedHeroCard => typeof h === 'object' && h !== null && 'uid' in h && 'heroId' in h)
-          .map(h => {
-            const level = normalizeHeroLevel(h.level)
-            const xp = normalizeHeroXp(level, h.xp)
-            return { ...h, level, xp, locked: h.locked === true }
-          }),
-        equipment: 'equipment' in camp && Array.isArray(camp.equipment)
-          ? camp.equipment
-            .filter((e): e is OwnedEquipCard => typeof e === 'object' && e !== null && 'uid' in e && 'equipId' in e)
-            .map(e => ({ ...e, locked: e.locked === true }))
-          : [],
+        heroes: loadedHeroes,
+        equipment: loadedEquipment,
         tactics: 'tactics' in camp && Array.isArray(camp.tactics)
           ? camp.tactics.filter((t): t is OwnedTacticCard => typeof t === 'object' && t !== null && 'uid' in t && 'tacticId' in t)
           : [],

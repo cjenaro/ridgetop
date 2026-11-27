@@ -189,8 +189,8 @@ test('computeEquipmentStatDiff accurately computes positive, negative, zero, and
   // 4. Equip top-tier gear on knight, then compare downgrades across weapon, armor, and relic
   const crownblade = addEquip(campaign, 'solis_crownblade')
   const aegis = addEquip(campaign, 'aegis_of_dawn')
+  const ironPlate = addEquip(campaign, 'iron_plate')
   const ironSwordUid = knight.weaponUid!
-  const leatherUid = knight.armorUid!
   const signet = addEquip(campaign, 'copper_signet')
 
   assert.equal(equipItem(state, knight.uid, crownblade.uid), true)
@@ -218,11 +218,11 @@ test('computeEquipmentStatDiff accurately computes positive, negative, zero, and
   assert.equal(relicDowngrade.stats.crit.delta, -13)
   assert.ok(relicDowngrade.netPowerDelta < 0)
 
-  // Downgrade armor: Aegis of Dawn -> Scout Brigandine
-  const armorDowngrade = assertExactEquipParity(state, knight.uid, leatherUid)
+  // Downgrade armor: Aegis of Dawn -> Watchman Plate (both Vanguard plate)
+  const armorDowngrade = assertExactEquipParity(state, knight.uid, ironPlate.uid)
   assert.equal(armorDowngrade.stats.atk.delta, -4)
-  assert.equal(armorDowngrade.stats.def.delta, -9)
-  assert.equal(armorDowngrade.stats.maxHp.delta, -48)
+  assert.equal(armorDowngrade.stats.def.delta, -7)
+  assert.equal(armorDowngrade.stats.maxHp.delta, -40)
   assert.equal(armorDowngrade.stats.speed.delta, -2)
   assert.ok(armorDowngrade.netPowerDelta < 0)
 
@@ -264,22 +264,44 @@ test('computeEquipmentStatDiff preserves hero level and xp when computing hypoth
   assert.equal(diff.netPowerDelta > 0, true, 'Net power delta must be positive on a leveled hero')
 })
 
-test('computeEquipmentStatDiff identifies cross-hero ownership and respects stat clamps', () => {
+test('computeEquipmentStatDiff identifies cross-hero ownership, class compatibility, and respects stat clamps', () => {
   const state = createInitialState(9001)
   const { campaign } = state
   const knight = campaign.heroes[0]
   const archer = campaign.heroes[1] // Starts wearing Yew Longbow (hunter_bow)
 
-  // Knight inspecting Archer's Yew Longbow -> currentOwnerName must be 'Lyra'
-  const swapDiff = assertExactEquipParity(state, knight.uid, archer.weaponUid!)
+  // Compatible cross-hero swap: Knight inspecting Paladin's Sunsteel Blade
+  const paladin = {
+    uid: 'hero_paladin_swap',
+    heroId: 'paladin' as const,
+    stars: 1 as const,
+    weaponUid: null as string | null,
+    armorUid: null as string | null,
+    relicUid: null as string | null
+  }
+  campaign.heroes.push(paladin)
+  const sunsteel = addEquip(campaign, 'sunsteel_blade')
+  assert.equal(equipItem(state, paladin.uid, sunsteel.uid), true)
+
+  const swapDiff = assertExactEquipParity(state, knight.uid, sunsteel.uid)
+  assert.equal(swapDiff.compatible, true)
+  assert.equal(swapDiff.incompatibilityReason, null)
   assert.equal(swapDiff.isAlreadyEquipped, false)
-  assert.equal(swapDiff.currentOwnerUid, archer.uid)
-  assert.equal(swapDiff.currentOwnerName, HERO_SPECS.archer.name)
-  assert.equal(swapDiff.candidateName, 'Yew Longbow')
+  assert.equal(swapDiff.currentOwnerUid, paladin.uid)
+  assert.equal(swapDiff.currentOwnerName, HERO_SPECS.paladin.name)
+  assert.equal(swapDiff.candidateName, 'Sunsteel Blade')
   assert.equal(swapDiff.currentItemName, 'Iron Broadsword')
-  assert.equal(swapDiff.stats.atk.delta, -1)
+  assert.equal(swapDiff.stats.atk.delta, 6)
   assert.equal(swapDiff.stats.speed.delta, 1)
-  assert.equal(swapDiff.stats.crit.delta, 6)
+  assert.equal(swapDiff.stats.crit.delta, 10)
+
+  // Incompatible cross-family inspection: Knight inspecting Archer's Yew Longbow
+  const lockedDiff = computeEquipmentStatDiff(campaign, knight.uid, archer.weaponUid!)!
+  assert.equal(lockedDiff.compatible, false)
+  assert.ok(lockedDiff.incompatibilityReason && lockedDiff.incompatibilityReason.includes('Bows/Light'))
+  assert.equal(lockedDiff.currentOwnerUid, archer.uid)
+  assert.equal(lockedDiff.currentOwnerName, HERO_SPECS.archer.name)
+  assert.equal(lockedDiff.netPowerDelta, 0)
 
   // Invalid lookups return null safely
   assert.equal(computeEquipmentStatDiff(campaign, 'nonexistent_hero', archer.weaponUid!), null)

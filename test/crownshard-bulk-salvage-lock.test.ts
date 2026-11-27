@@ -218,17 +218,26 @@ test('findBulkSalvageableCommonDupes & bulkSalvageCommonDupes salvage only exces
   const leg1: OwnedEquipCard = { uid: 'eq_leg_1', equipId: 'solis_crownblade', slot: 'weapon' }
   const leg2: OwnedEquipCard = { uid: 'eq_leg_2', equipId: 'solis_crownblade', slot: 'weapon' }
 
-  // 5) Equip another iron_sword copy onto Mage so we also confirm equipped copies are NEVER touched
-  const swEquippedOnMage: OwnedEquipCard = { uid: 'eq_sw_mage', equipId: 'iron_sword', slot: 'weapon' }
+  // 5) Equip another iron_sword copy onto a Paladin (Vanguard) so we also confirm equipped copies are NEVER touched
+  const paladin = {
+    uid: 'hero_paladin_bulk',
+    heroId: 'paladin' as const,
+    stars: 1 as const,
+    weaponUid: null as string | null,
+    armorUid: null as string | null,
+    relicUid: null as string | null
+  }
+  campaign.heroes.push(paladin)
+  const swEquippedOnPaladin: OwnedEquipCard = { uid: 'eq_sw_paladin', equipId: 'iron_sword', slot: 'weapon' }
 
   campaign.equipment.push(
-    swDupe1, swDupe2, swLocked, swEquippedOnMage,
+    swDupe1, swDupe2, swLocked, swEquippedOnPaladin,
     plate1, plate2, plate3,
     sig1, sigLocked, sig2,
     unc1, unc2, rare1, rare2, epic1, epic2, leg1, leg2
   )
-  equipItem(state, campaign.heroes[2].uid, swEquippedOnMage.uid)
-  assert.ok(findEquipOwner(campaign, swEquippedOnMage.uid))
+  assert.equal(equipItem(state, paladin.uid, swEquippedOnPaladin.uid), true)
+  assert.ok(findEquipOwner(campaign, swEquippedOnPaladin.uid))
 
   // Verify rarities in data.ts match expectations
   assert.equal(EQUIPMENT_BY_ID.ember_wand.rarity, 'uncommon')
@@ -272,7 +281,7 @@ test('findBulkSalvageableCommonDupes & bulkSalvageCommonDupes salvage only exces
 
   // Verify protected items remain untouched
   for (const keepUid of [
-    swLocked.uid, swEquippedOnMage.uid,
+    swLocked.uid, swEquippedOnPaladin.uid,
     plate1.uid, sigLocked.uid,
     unc1.uid, unc2.uid, rare1.uid, rare2.uid, epic1.uid, epic2.uid, leg1.uid, leg2.uid
   ]) {

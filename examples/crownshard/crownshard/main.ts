@@ -32,7 +32,7 @@ import {
   STARFALL_ATOLL_FIRST_CLEAR_DUST, STARFALL_ATOLL_FIRST_CLEAR_SHARDS,
   STAGE_DIFFICULTY_TIERS, STAGE_MUTATOR_IDS, STAGE_MUTATOR_SPECS, STAGE_TIER_SPECS,
   abandonBattle, abandonEndlessRun, areDiscoveryTipsEnabled, armSkill, armTacticCard, autoBuildTacticDeck, autoEquipBestFit, beginWaitFacingPicker,
-  bulkSalvageCommonDupes, buyOakhavenDeal, buyPack, buyWorldEventOffer, canBuyPack, canClaimStageMasteryChest, canCraftEquipment, canCraftHero, canMergeHero, canUndoMove,
+  bulkSalvageCommonDupes, buyOakhavenDeal, buyPack, buyWorldEventOffer, canBuyPack, canClaimStageMasteryChest, canCraftEquipment, canCraftHero, canHeroEquipItem, canMergeHero, canUndoMove,
   cancelAutoBattle, cancelWaitFacingPicker, checkDiscoveryTipForBattle, claimMasteryMilestone, claimStageMasteryChest, clearSave, computeChallengeRewards,
   computeCombatForecast, computeDangerZone, computeDeckValue,
   computeEnemyThreat, computeHeroStats, computeSquadPower, computeTacticDeckCurve, computeZocPerimeterTiles,
@@ -40,8 +40,8 @@ import {
   createTurnBoundaryTracker, dismissDiscoveryTip, draftEndlessBlessing, effectiveSpeed, equipItem, evaluateAllFacingExposures, evaluateFacingExposure,
   findBestFitUpgrades, findEquipOwner, findGridPath, formatAbyssFloorLabel, formatBattleSpeedLabel, formatEndlessBiomeLabel, formatOpportunityWarning,
   getAct1StageMechanicStatus, getActiveDiscoveryTip, getActiveTacticDeckUids,
-  getBestiaryEntries, getChapterObjectiveSummary, getClaimableMasteryMilestones, getCodexProgress, getCraftableEquipment, getCraftableHeroes, getCrownlessDeepFloorSpec, getEquipCodexEntries, getEquipCraftCost, getEquipEffect,
-  getEquipSalvageDust, getEquipmentByUid, getHeroByUid, getHeroCodexEntries, getHeroCraftCost, getHeroPassive, getHeroSalvageShards,
+  getBestiaryEntries, getChapterObjectiveSummary, getClaimableMasteryMilestones, getCodexProgress, getCraftableEquipment, getCraftableHeroes, getCrownlessDeepFloorSpec, getEquipCodexEntries, getEquipCompatibilityReason, getEquipCraftCost, getEquipEffect, getEquipFamily,
+  getEquipSalvageDust, getEquipShortLockLabel, getEquipmentByUid, getHeroByUid, getHeroCodexEntries, getHeroCraftCost, getHeroEquipFamily, getHeroEquipFamilyMeta, getHeroPassive, getHeroSalvageShards,
   getHeroSkill, getHighestClearedStageTier, getMaxCombatLogScroll, getMaxMasteryStars, getMaxSelectableCrownlessDeepFloor, getMergeCandidates, getNextMasteryMilestone, getNextRecommendedStage, getOakhavenExchangeOffers, getObjectiveProgressText, getPackPityStatus,
   getSelectedCrownlessDeepFloor, getStageMasteryChestReward, getStageMasteryObjectives, getStageMasteryRecord, getStageUnlockHint, getTacticByUid, getTotalMasteryStars, getUnitByUid, getWorldMapEventById, hasClaimedStageMasteryChest, hasMaxedHero, hasOakhavenPatronDiscount, heroLevelProgress, isChestClaimed,
   isCrownlessDeepStage, isDeployTile, isEndlessBossWave, isEndlessUnlocked, isEnemyShrouded, isOakhavenExchangeUnlocked, isStageCleared, isStageUnlocked, loadSave, maxSquadSize, mergeHero,
@@ -63,7 +63,7 @@ import {
   COLOR, RADIUS, TIER_COLOR, TYPE, UI_THEME_PALETTE,
   drawAnimatedRevealCard, drawApMeter, drawArmoryStatDiffPanel, drawAutoBattlePill, drawBattleInfo, drawBoosterPack, drawButton, drawCameraCompassButton, drawCampHeader,
   drawChallengeHudBadges, drawChapterPicker, drawChip, drawCodexEnemyDetail, drawCodexEntryCard, drawCodexEquipDetail, drawCodexHeader, drawCodexHeroDetail, drawCombatForecast, drawCombatLogPanel, drawCombatLogToggleButton, drawControlHints, drawDefeatBackdrop, drawDeployHeroChip,
-  drawDifficultyBadge, drawDiscoveryTipCard, drawEmptyNote, drawEndTurnButton, drawEndlessBlessingCard, drawEndlessBlessingsHudPill, drawEquipCard, drawForecastAltChip,
+  drawDifficultyBadge, drawDiscoveryTipCard, drawEmptyNote, drawEndTurnButton, drawEndlessBlessingCard, drawEndlessBlessingsHudPill, drawEquipCard, drawEquipFamilyPill, drawForecastAltChip,
   drawForgeBalanceBanner, drawForgeRecipeCard, drawHeroHeader, drawHeroRosterCard, drawHeroXpSummaryAnimated, drawHintPill, drawIconButton, drawLabel, drawLetterbox,
   drawLootRow, drawModal, drawMutatorChipButton, drawObjectiveBadge, drawOverline, drawPackCeremonyBackdrop, drawPanel, drawPassiveBanner, drawPityBanner, drawPortraitTile,
   drawResultHeadlineAnimated, drawRevealCard, drawRewardRowAnimated, drawSegmentTrack,
@@ -279,6 +279,7 @@ async function start() {
     uiDirty = true
   }
   let armorySlotFilter: ArmoryFilter = 'all'
+  let armoryCompatibleFilter: 'all' | 'compatible' = 'all'
   let forgeCategory: ForgeCategory = 'heroes'
   let rosterPage = 0
   let armoryPage = 0
@@ -5852,7 +5853,8 @@ async function start() {
               power: stats.powerScore,
               portrait: heroPortrait,
               inSquad,
-              locked: Boolean(selHero.locked)
+              locked: Boolean(selHero.locked),
+              equipFamily: getHeroEquipFamily(selHero.heroId)
             })
           }
         })
@@ -6182,6 +6184,11 @@ async function start() {
       const equipArmoryItem = (item: OwnedEquipCard) => {
         if (!selHero) return
         const spec = EQUIPMENT_BY_ID[item.equipId]
+        if (!canHeroEquipItem(selHero.heroId, item.equipId)) {
+          const reason = getEquipCompatibilityReason(selHero.heroId, item.equipId)
+          showToast(reason ?? `Cannot equip ${spec?.name ?? 'item'} on ${HERO_SPECS[selHero.heroId].name}.`)
+          return
+        }
         const wasOnSel = findEquipOwner(camp, item.uid)?.uid === selHero.uid
         if (equipItem(state, selHero.uid, item.uid)) {
           inspectedArmoryEquipUid = null
@@ -6199,7 +6206,7 @@ async function start() {
 
       if (inspectedArmoryEquipUid && selHero) {
         const inspectedItem = getEquipmentByUid(camp, inspectedArmoryEquipUid)
-        if (inspectedItem) {
+        if (inspectedItem && canHeroEquipItem(selHero.heroId, inspectedItem.equipId)) {
           confirmInspectedArmoryEquip = () => {
             audio.unlock()
             equipArmoryItem(inspectedItem)
@@ -6210,11 +6217,34 @@ async function start() {
       const squadHeroes = camp.squadUids
         .map(uid => getHeroByUid(camp, uid))
         .filter((hero): hero is OwnedHeroCard => Boolean(hero))
-      const filtered: OwnedEquipCard[] = camp.equipment.filter(
+      const slotMatched: OwnedEquipCard[] = camp.equipment.filter(
         e => armorySlotFilter === 'all' || e.slot === armorySlotFilter
       )
+      const compatibleCount = selHero
+        ? slotMatched.filter(e => canHeroEquipItem(selHero.heroId, e.equipId)).length
+        : slotMatched.length
+      const filtered: OwnedEquipCard[] = (
+        armoryCompatibleFilter === 'compatible' && selHero
+          ? slotMatched.filter(e => canHeroEquipItem(selHero.heroId, e.equipId))
+          : slotMatched.slice()
+      ).sort((a, b) => {
+        if (selHero) {
+          const aCompat = canHeroEquipItem(selHero.heroId, a.equipId) ? 0 : 1
+          const bCompat = canHeroEquipItem(selHero.heroId, b.equipId) ? 0 : 1
+          if (aCompat !== bCompat) return aCompat - bCompat
+          const aOn = findEquipOwner(camp, a.uid)?.uid === selHero.uid ? 0 : 1
+          const bOn = findEquipOwner(camp, b.uid)?.uid === selHero.uid ? 0 : 1
+          if (aOn !== bOn) return aOn - bOn
+        }
+        const aSpec = EQUIPMENT_BY_ID[a.equipId]
+        const bSpec = EQUIPMENT_BY_ID[b.equipId]
+        const aRank = aSpec ? RARITY_ORDER.indexOf(aSpec.rarity) : -1
+        const bRank = bSpec ? RARITY_ORDER.indexOf(bSpec.rarity) : -1
+        if (bRank !== aRank) return bRank - aRank
+        return a.equipId.localeCompare(b.equipId)
+      })
       const cols = mobile ? 1 : 2
-      const rowsPerPage = mobile ? 4 : shortH ? 2 : 3
+      const rowsPerPage = mobile ? 3 : shortH ? 2 : 3
       const perPage = cols * rowsPerPage
       const maxPage = Math.max(0, Math.ceil(filtered.length / perPage) - 1)
       armoryPage = Math.min(armoryPage, maxPage)
@@ -6233,17 +6263,22 @@ async function start() {
           const owner = findEquipOwner(camp, item.uid)
           const equippedOnSel = owner?.uid === selHero?.uid
           const isInspected = inspectedArmoryEquipUid === item.uid
+          const compatible = selHero ? canHeroEquipItem(selHero.heroId, item.equipId) : true
+          const shortLockLabel = !compatible ? getEquipShortLockLabel(item.equipId) : undefined
           const ownerLabel = owner ? HERO_SPECS[owner.heroId].name : 'Bag'
-          return row({ id: `arm-card-${i + j}`, style: { grow: 1, gap: 6 } }, [
+          return row({ id: `arm-card-${i + j}`, style: { grow: 1, gap: mobile ? 5 : 6 } }, [
             boxNode({
               id: widgetId, style: { grow: 1, height: cardH },
               widget: {
                 type: 'button',
-                label: spec?.name ?? item.equipId,
-                selected: equippedOnSel || isInspected,
+                label: compatible
+                  ? (spec?.name ?? item.equipId)
+                  : `${spec?.name ?? item.equipId} (${shortLockLabel ?? 'Locked'})`,
+                disabled: !compatible,
+                selected: compatible && (equippedOnSel || isInspected),
                 onPress: () => {
                   audio.unlock()
-                  if (!selHero) return
+                  if (!selHero || !compatible) return
                   if (lastPointerType === 'touch' && !equippedOnSel && !isInspected) {
                     inspectedArmoryEquipUid = item.uid
                     uiDirty = true
@@ -6257,7 +6292,9 @@ async function start() {
                   effect: spec ? getEquipEffect(spec.id) ?? undefined : undefined,
                   ownerText: equippedOnSel ? undefined : ownerLabel,
                   equippedOnSelected: equippedOnSel,
-                  locked: Boolean(item.locked)
+                  locked: Boolean(item.locked),
+                  incompatible: !compatible,
+                  incompatibleLabel: shortLockLabel
                 }, st)
               }
             }),
@@ -6280,7 +6317,7 @@ async function start() {
               }
             }),
             boxNode({
-              id: `arm-sell-${i + j}`, style: { width: mobile ? 64 : 74, height: cardH },
+              id: `arm-sell-${i + j}`, style: { width: mobile ? 58 : 74, height: cardH },
               widget: {
                 type: 'button',
                 label: item.locked
@@ -6305,7 +6342,7 @@ async function start() {
                     : {
                         variant: 'danger',
                         sub: `+${spec ? getEquipSalvageDust(spec.rarity) : 0} Dust`,
-                        size: 10.5
+                        size: mobile ? 10 : 10.5
                       }
                 )
               }
@@ -6317,11 +6354,14 @@ async function start() {
       }
 
       if (itemRows.length === 0) {
+        const emptyMsg = armoryCompatibleFilter === 'compatible' && selHero
+          ? `No compatible ${getHeroEquipFamilyMeta(selHero.heroId).shortLabel} gear in this slot. Switch to All Gear or Forge.`
+          : 'No equipment in this slot yet. Win battles or open Card Decks.'
         itemRows.push(boxNode({
           id: 'arm-empty', style: { height: 76 },
           widget: {
             type: 'panel',
-            draw: (ctx: CanvasRenderingContext2D, rect: LayoutRect) => drawEmptyNote(ctx, rect, 'No equipment in this slot yet. Win battles or open Card Decks.')
+            draw: (ctx: CanvasRenderingContext2D, rect: LayoutRect) => drawEmptyNote(ctx, rect, emptyMsg)
           }
         }))
       }
@@ -6329,9 +6369,10 @@ async function start() {
       const armBestCount = selHero ? findBestFitUpgrades(camp, selHero.uid).length : 0
       const armBestLabel = armBestCount > 0 ? `Best Fit (+${armBestCount})` : 'Best Fit'
       const armPortrait = heroCardPortrait(selHero)
+      const selHeroFamily = selHero ? getHeroEquipFamily(selHero.heroId) : 'universal'
       const armHeroPortraitNode = boxNode({
         id: 'arm-sel-portrait',
-        style: { width: 34, height: 34 },
+        style: { width: shortH ? 32 : 34, height: shortH ? 32 : 34 },
         widget: {
           type: 'panel',
           draw: (ctx: CanvasRenderingContext2D, rect: LayoutRect) => drawPortraitTile(
@@ -6345,29 +6386,35 @@ async function start() {
       })
       const armHeroStrip = row({
         id: 'arm-hero-strip',
-        style: { grow: 1.2, height: 34, padding: 3, gap: 4 },
+        style: { grow: mobile ? 1 : 1.15, height: shortH ? 32 : 34, padding: 3, gap: 4 },
         widget: { type: 'panel', draw: (ctx: CanvasRenderingContext2D, rect: LayoutRect) => drawSegmentTrack(ctx, rect) }
       }, squadHeroes.map((hero, idx) => {
         const label = HERO_SPECS[hero.heroId].name.split(' ').pop() ?? HERO_SPECS[hero.heroId].name
         return boxNode({
-          id: `arm-h-${idx}`, style: { grow: 1, height: 28 },
+          id: `arm-h-${idx}`, style: { grow: 1, height: shortH ? 26 : 28 },
           widget: {
             type: 'button',
             label,
             selected: selHero?.uid === hero.uid,
-            onPress: () => { camp.selectedCampHeroUid = hero.uid; uiDirty = true },
+            onPress: () => { camp.selectedCampHeroUid = hero.uid; armoryPage = 0; clearArmoryHover(true); uiDirty = true },
             draw: (ctx: CanvasRenderingContext2D, rect: LayoutRect, st: CanvasWidgetDrawState) => drawTab(ctx, rect, label, st)
           }
         })
       }))
+      const narrowPhone = w < 430
+      const shortSlotTabs = narrowPhone || shortH
       const armFilterStrip = row({
         id: 'arm-filters',
-        style: { grow: 1, height: 34, padding: 3, gap: 4 },
+        style: { grow: 1, height: shortH ? 32 : mobile ? 32 : 34, padding: 3, gap: 4 },
         widget: { type: 'panel', draw: (ctx: CanvasRenderingContext2D, rect: LayoutRect) => drawSegmentTrack(ctx, rect) }
       }, ARMORY_FILTERS.map(slot => {
-        const label = slot === 'all' ? 'All' : slot[0].toUpperCase() + slot.slice(1)
+        const label = slot === 'all'
+          ? 'All'
+          : shortSlotTabs
+            ? (slot === 'weapon' ? 'Wep' : slot === 'armor' ? 'Arm' : 'Rel')
+            : slot[0].toUpperCase() + slot.slice(1)
         return boxNode({
-          id: `arm-f-${slot}`, style: { grow: 1, height: 28 },
+          id: `arm-f-${slot}`, style: { grow: 1, height: shortH || mobile ? 26 : 28 },
           widget: {
             type: 'button',
             label,
@@ -6377,8 +6424,43 @@ async function start() {
           }
         })
       }))
+      const compatActive = armoryCompatibleFilter === 'compatible'
+      const compatLabel = compatActive ? 'Compatible' : (mobile || shortH ? 'All Gear' : 'All Gear')
+      const armCompatToggleBtn = boxNode({
+        id: 'arm-compat-toggle',
+        style: { width: mobile ? 96 : shortH ? 84 : 96, height: shortH ? 32 : mobile ? 32 : 34 },
+        widget: {
+          type: 'button',
+          label: compatLabel,
+          selected: compatActive,
+          onPress: () => {
+            audio.unlock()
+            armoryCompatibleFilter = compatActive ? 'all' : 'compatible'
+            armoryPage = 0
+            clearArmoryHover(true)
+            uiDirty = true
+          },
+          draw: (ctx: CanvasRenderingContext2D, rect: LayoutRect, st: CanvasWidgetDrawState) => drawButton(
+            ctx, rect, compatLabel, st, { variant: compatActive ? 'primary' : 'secondary', size: mobile || shortH ? 10 : 10.5 }
+          )
+        }
+      })
+      const armHeroFamilyNode = boxNode({
+        id: 'arm-hero-family',
+        style: mobile
+          ? { grow: 1, height: 28 }
+          : { width: shortH ? 96 : 112, height: shortH ? 32 : 34 },
+        widget: {
+          type: 'panel',
+          draw: (ctx: CanvasRenderingContext2D, rect: LayoutRect) => drawEquipFamilyPill(ctx, rect, selHeroFamily, {
+            prefix: mobile ? 'Gear: ' : undefined,
+            countText: mobile ? `${compatibleCount}/${slotMatched.length}` : undefined,
+            compact: isPhone
+          })
+        }
+      })
       const armBestBtn = boxNode({
-        id: 'cs-auto-equip', style: { width: armBestCount > 0 ? 114 : 88, height: 34 },
+        id: 'cs-auto-equip', style: { width: mobile ? (armBestCount > 0 ? 94 : 74) : shortH ? (armBestCount > 0 ? 96 : 74) : (armBestCount > 0 ? 114 : 88), height: shortH ? 32 : 34 },
         widget: {
           type: 'button',
           label: armBestLabel,
@@ -6391,19 +6473,30 @@ async function start() {
             }
           },
           draw: (ctx: CanvasRenderingContext2D, rect: LayoutRect, st: CanvasWidgetDrawState) => drawButton(
-            ctx, rect, armBestLabel, st, { variant: armBestCount > 0 ? 'success' : 'secondary', icon: 'sparkle', size: 11 }
+            ctx, rect, armBestLabel, st, { variant: armBestCount > 0 ? 'success' : 'secondary', icon: 'sparkle', size: mobile || shortH ? 10 : 11 }
           )
         }
       })
       const bulkPreview = previewBulkSalvageCommonDupes(camp)
       const bulkLabel = bulkPreview.count > 0
-        ? mobile
-          ? `Salvage ${bulkPreview.count} (+${bulkPreview.totalGold}g/+${bulkPreview.totalDust}D)`
+        ? mobile || shortH
+          ? `Salvage ${bulkPreview.count} (+${bulkPreview.totalGold}g)`
           : `Salvage ${bulkPreview.count} (+${bulkPreview.totalGold}g +${bulkPreview.totalDust} Dust)`
-        : 'Salvage Common Dupes'
+        : mobile || shortH
+          ? 'Salvage Dupes'
+          : 'Salvage Common Dupes'
       const armBulkSalvageBtn = boxNode({
         id: 'cs-bulk-salvage',
-        style: { width: mobile ? (bulkPreview.count > 0 ? 172 : 138) : wide ? (bulkPreview.count > 0 ? 218 : 162) : (bulkPreview.count > 0 ? 196 : 146), height: 34 },
+        style: {
+          width: mobile
+            ? (bulkPreview.count > 0 ? 148 : 114)
+            : shortH
+              ? (bulkPreview.count > 0 ? 132 : 104)
+              : wide
+                ? (bulkPreview.count > 0 ? 210 : 156)
+                : (bulkPreview.count > 0 ? 182 : 138),
+          height: mobile ? 28 : shortH ? 32 : 34
+        },
         widget: {
           type: 'button',
           label: bulkLabel,
@@ -6427,13 +6520,13 @@ async function start() {
             }
           },
           draw: (ctx: CanvasRenderingContext2D, rect: LayoutRect, st: CanvasWidgetDrawState) => drawButton(
-            ctx, rect, bulkLabel, st, { variant: bulkPreview.count > 0 ? 'danger' : 'secondary', icon: 'sell', size: mobile ? 10 : 10.5 }
+            ctx, rect, bulkLabel, st, { variant: bulkPreview.count > 0 ? 'danger' : 'secondary', icon: 'sell', size: mobile || shortH ? 9.5 : 10.5 }
           )
         }
       })
 
       const armHeroStats = selHero ? computeHeroStats(camp, selHero) : null
-      const liveDiff = activeArmoryDiff && !activeArmoryDiff.isAlreadyEquipped ? activeArmoryDiff : null
+      const liveDiff = activeArmoryDiff && activeArmoryDiff.compatible && !activeArmoryDiff.isAlreadyEquipped ? activeArmoryDiff : null
       const armStatItems: StatStripItem[] = armHeroStats
         ? [
             {
@@ -6476,7 +6569,7 @@ async function start() {
       const armHeroStatsNode = armStatItems.length > 0
         ? [boxNode({
             id: 'arm-hero-stats',
-            style: { height: shortH ? 28 : mobile ? 32 : 34 },
+            style: { height: shortH ? 28 : mobile ? 30 : 34 },
             widget: {
               type: 'panel',
               draw: (ctx: CanvasRenderingContext2D, rect: LayoutRect) => drawStatStrip(ctx, rect, armStatItems)
@@ -6484,14 +6577,15 @@ async function start() {
           })]
         : []
 
-      bodyNode = column({ id: 'camp-armory-body', style: { grow: 1, gap: shortH ? 5 : 6 } }, [
+      bodyNode = column({ id: 'camp-armory-body', style: { grow: 1, gap: shortH ? 5 : mobile ? 5 : 6 } }, [
         ...(mobile
           ? [
-              row({ id: 'arm-top-m1', style: { height: 34, gap: 6, align: 'center' } }, [armHeroPortraitNode, armHeroStrip, armBestBtn]),
-              row({ id: 'arm-top-m2', style: { height: 34, gap: 6, align: 'center' } }, [armFilterStrip, armBulkSalvageBtn])
+              row({ id: 'arm-top-m1', style: { height: 34, gap: 5, align: 'center' } }, [armHeroPortraitNode, armHeroStrip, armBestBtn]),
+              row({ id: 'arm-top-m2', style: { height: 32, gap: 5, align: 'center' } }, [armFilterStrip, armCompatToggleBtn]),
+              row({ id: 'arm-top-m3', style: { height: 28, gap: 5, align: 'center' } }, [armHeroFamilyNode, armBulkSalvageBtn])
             ]
           : [
-              row({ id: 'arm-top-controls', style: { height: 34, gap: 6, align: 'center' } }, [armHeroPortraitNode, armHeroStrip, armFilterStrip, armBestBtn, armBulkSalvageBtn])
+              row({ id: 'arm-top-controls', style: { height: shortH ? 32 : 34, gap: shortH ? 5 : 6, align: 'center' } }, [armHeroPortraitNode, armHeroStrip, armHeroFamilyNode, armFilterStrip, armCompatToggleBtn, armBestBtn, armBulkSalvageBtn])
             ]),
         ...armHeroStatsNode,
         ...itemRows,
@@ -6709,7 +6803,8 @@ async function start() {
                     maxed,
                     cost,
                     currency: 'shards',
-                    affordable
+                    affordable,
+                    equipFamily: getHeroEquipFamily(spec.id)
                   })
                 }
               }),
@@ -6766,7 +6861,8 @@ async function start() {
                     ownedCount,
                     cost,
                     currency: 'dust',
-                    affordable
+                    affordable,
+                    equipFamily: getEquipFamily(spec.id)
                   })
                 }
               }),
@@ -7080,7 +7176,7 @@ async function start() {
         }
         const dockW = Math.min(sheetW, mobile ? sheetW : 780)
         const showTouchConfirm = Boolean(
-          inspectedArmoryEquipUid && !diff.isAlreadyEquipped && armorySelectedHero && confirmInspectedArmoryEquip
+          inspectedArmoryEquipUid && diff.compatible && !diff.isAlreadyEquipped && armorySelectedHero && confirmInspectedArmoryEquip
         )
         const confirmAction = confirmInspectedArmoryEquip
         const confirmLabel = diff.currentOwnerName ? 'Swap' : 'Equip'
@@ -8722,6 +8818,11 @@ async function start() {
       hoveredTurnUnitUid,
       hoveredArmoryEquipUid,
       inspectedArmoryEquipUid,
+      selectedHeroEquipFamily: (() => {
+        const h = getHeroByUid(state.campaign, state.campaign.selectedCampHeroUid) ?? state.campaign.heroes[0]
+        return h ? getHeroEquipFamily(h.heroId) : null
+      })(),
+      armoryCompatibleFilter,
       turnOrder: state.battle?.turnOrder.map(t => t.name) ?? [],
       battleAlliesAlive: state.battle ? state.battle.units.filter(u => u.alive && u.team === 'ally').length : 0,
       battleAlliesDowned: state.battle ? state.battle.units.filter(u => isUnitDowned(u)).length : 0,

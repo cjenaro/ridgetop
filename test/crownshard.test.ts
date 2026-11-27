@@ -69,27 +69,42 @@ test('Equipment cards equip, swap owners, boost stats, and salvage for rarity-sc
   const state = createInitialState(99)
   const knight = state.campaign.heroes[0]
   const mage = state.campaign.heroes[2]
+  state.campaign.heroes.push({
+    uid: 'hero_cleric_swap',
+    heroId: 'cleric',
+    stars: 1,
+    weaponUid: null,
+    armorUid: null,
+    relicUid: null
+  })
+  const cleric = state.campaign.heroes[3]
 
+  // Unequip starter apprentice_staff from Mage first for clean baseline stat delta check
+  assert.equal(unequipItem(state, mage.uid, 'weapon'), true)
   const beforeMage = computeHeroStats(state.campaign, mage)
-  // Add a Legendary weapon & Rare armor
+  // Add a Legendary Arcane weapon & Rare Arcane armor
   state.campaign.equipment.push(
-    { uid: 'eq_leg', equipId: 'solis_crownblade', slot: 'weapon' },
-    { uid: 'eq_rare', equipId: 'runed_mail', slot: 'armor' }
+    { uid: 'eq_leg', equipId: 'celestial_staff', slot: 'weapon' },
+    { uid: 'eq_rare', equipId: 'astral_vestments', slot: 'armor' }
   )
   assert.equal(equipItem(state, mage.uid, 'eq_leg'), true)
   assert.equal(equipItem(state, mage.uid, 'eq_rare'), true)
   const afterMage = computeHeroStats(state.campaign, mage)
-  assert.equal(afterMage.atk, beforeMage.atk + EQUIPMENT_BY_ID.solis_crownblade.atk)
-  assert.equal(afterMage.maxHp, beforeMage.maxHp + EQUIPMENT_BY_ID.solis_crownblade.hp + EQUIPMENT_BY_ID.runed_mail.hp)
-  assert.equal(afterMage.shieldStart, EQUIPMENT_BY_ID.runed_mail.shieldStart)
+  assert.equal(afterMage.atk, beforeMage.atk + EQUIPMENT_BY_ID.celestial_staff.atk + EQUIPMENT_BY_ID.astral_vestments.atk)
+  assert.equal(afterMage.maxHp, beforeMage.maxHp + EQUIPMENT_BY_ID.celestial_staff.hp + EQUIPMENT_BY_ID.astral_vestments.hp)
+  assert.equal(afterMage.shieldStart, EQUIPMENT_BY_ID.astral_vestments.shieldStart)
 
-  // Equipping same weapon on Knight cleanly transfers it away from Mage
-  assert.equal(equipItem(state, knight.uid, 'eq_leg'), true)
-  assert.equal(knight.weaponUid, 'eq_leg')
+  // Knight (Vanguard) cannot equip Arcane staff
+  assert.equal(equipItem(state, knight.uid, 'eq_leg'), false)
+  assert.equal(mage.weaponUid, 'eq_leg')
+
+  // Equipping same Arcane weapon on Cleric cleanly transfers it away from Mage
+  assert.equal(equipItem(state, cleric.uid, 'eq_leg'), true)
+  assert.equal(cleric.weaponUid, 'eq_leg')
   assert.equal(mage.weaponUid, null)
 
   // Unequip & salvage: Legendary sells for way more than Common
-  assert.equal(unequipItem(state, knight.uid, 'weapon'), true)
+  assert.equal(unequipItem(state, cleric.uid, 'weapon'), true)
   const commonGold = salvageEquipCard(state, state.campaign.equipment[0].uid)
   const legGold = salvageEquipCard(state, 'eq_leg')
   assert.ok(legGold >= commonGold * 10, `Legendary salvage (${legGold}g) should far exceed Common (${commonGold}g)`)
@@ -492,21 +507,22 @@ test('Best Fit auto-equip picks best unequipped upgrades and NEVER steals from o
     { uid: 'eq_knight_leg', equipId: 'solis_crownblade', slot: 'weapon' },
     { uid: 'eq_bag_rare_wep', equipId: 'frostbite_staff', slot: 'weapon' },
     { uid: 'eq_bag_common_wep', equipId: 'iron_sword', slot: 'weapon' },
-    { uid: 'eq_bag_rare_arm', equipId: 'runed_mail', slot: 'armor' },
+    { uid: 'eq_bag_vanguard_arm', equipId: 'runed_mail', slot: 'armor' },
+    { uid: 'eq_bag_rare_arm', equipId: 'astral_vestments', slot: 'armor' },
     { uid: 'eq_bag_relic', equipId: 'blood_amulet', slot: 'relic' }
   )
   equipItem(state, knight.uid, 'eq_knight_leg')
   const archerWeaponBefore = archer.weaponUid
 
-  // Mage currently has all 3 slots empty -> should pick best unequipped item per slot
+  // Mage starts with Common apprentice_staff and empty armor/relic -> should pick 3 class-compatible upgrades
   const pending = findBestFitUpgrades(state.campaign, mage.uid)
-  assert.equal(pending.length, 3, 'Mage should detect 3 unequipped upgrades')
+  assert.equal(pending.length, 3, 'Mage should detect 3 unequipped class-compatible upgrades')
   const equipped = autoEquipBestFit(state, mage.uid)
   assert.equal(equipped.length, 3)
 
-  // Must choose the Rare Sunforged Blade over the Common Iron Sword, and NEVER steal Knight's Solis Crownblade!
-  assert.equal(mage.weaponUid, 'eq_bag_rare_wep', 'Should pick highest-scoring unequipped weapon')
-  assert.equal(mage.armorUid, 'eq_bag_rare_arm')
+  // Must choose Frostbite Staff & Astral Vestments (ignoring Vanguard gear), and NEVER steal Knight's Solis Crownblade!
+  assert.equal(mage.weaponUid, 'eq_bag_rare_wep', 'Should pick highest-scoring unequipped Arcane weapon')
+  assert.equal(mage.armorUid, 'eq_bag_rare_arm', 'Should pick highest-scoring unequipped Arcane armor')
   assert.equal(mage.relicUid, 'eq_bag_relic')
   assert.equal(knight.weaponUid, 'eq_knight_leg', 'Must never steal equipment from Knight')
   assert.equal(archer.weaponUid, archerWeaponBefore, 'Must never steal equipment from Archer')

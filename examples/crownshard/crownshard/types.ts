@@ -126,6 +126,8 @@ export type EnemyArchetypeId =
 
 export type EquipSlot = 'weapon' | 'armor' | 'relic'
 
+export type EquipFamily = 'vanguard' | 'arcane' | 'skirmisher' | 'universal'
+
 export type CardKind = 'hero' | 'weapon' | 'armor' | 'relic' | 'tactic'
 
 export type PackId = 'recruit' | 'vanguard' | 'sovereign'
@@ -203,6 +205,7 @@ export interface EquipmentSpec {
   readonly id: string
   readonly name: string
   readonly slot: EquipSlot
+  readonly family: EquipFamily
   readonly rarity: Rarity
   readonly desc: string
   readonly atk: number

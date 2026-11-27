@@ -2253,4 +2253,385 @@ export function registerCrownshardWeapons(builder: CharacterBuilder): void {
       { name: 'shield_aegis_core', mesh: m.aegisCore, color: C_SUN_GLOW, unlit: 0.96 }
     ], [-0.05, -0.82, 0.04])
   })
+
+  // =========================================================================
+  // CLASS-FAMILY ARSENAL WEAPONS (Arcane Staves & Skirmisher Bows)
+  // =========================================================================
+
+  builder.registerPart('mainHand', 'weapon_apprentice_staff', () => {
+    const m = getClassFamilyWeaponMeshes()
+    return orientParts([
+      { name: 'apprentice_staff_shaft', mesh: m.apprenticeShaft, color: C_BOW_WOOD },
+      { name: 'apprentice_staff_ferrule', mesh: m.apprenticeFerrule, color: C_BRONZE },
+      { name: 'apprentice_staff_crystal', mesh: m.apprenticeCrystal, color: [0.46, 0.78, 0.98, 1], unlit: 0.88 }
+    ], [0.20, 0.05, -0.06])
+  })
+
+  builder.registerPart('mainHand', 'weapon_solis_archstaff', () => {
+    const m = getClassFamilyWeaponMeshes()
+    return orientParts([
+      { name: 'archstaff_shaft', mesh: m.archstaffShaft, color: C_DRAGON_DARK },
+      { name: 'archstaff_rings', mesh: m.archstaffRings, color: C_SUN_GOLD },
+      { name: 'archstaff_prism', mesh: m.archstaffPrism, color: C_DRAGON_AMETHYST, unlit: 0.94 },
+      { name: 'archstaff_core', mesh: m.archstaffCore, color: C_SUN_GLOW, unlit: 0.96 }
+    ], [0.18, 0.05, -0.06])
+  })
+
+  builder.registerPart('mainHand', 'weapon_celestial_staff', () => {
+    const m = getClassFamilyWeaponMeshes()
+    return orientParts([
+      { name: 'celestial_shaft', mesh: m.celestialShaft, color: C_PALADIN_IVORY },
+      { name: 'celestial_halo', mesh: m.celestialHalo, color: C_SUN_GOLD },
+      { name: 'celestial_star', mesh: m.celestialStar, color: C_ARCANE_CYAN, unlit: 0.98 },
+      { name: 'celestial_moons', mesh: m.celestialMoons, color: C_SUN_GLOW, unlit: 0.94 }
+    ], [0.16, 0.04, -0.06])
+  })
+
+  builder.registerPart('mainHand', 'weapon_falcon_arrow', () => {
+    const m = getClassFamilyWeaponMeshes()
+    return orientParts([
+      { name: 'falcon_arrow_shaft', mesh: m.falconArrowShaft, color: C_BOW_WOOD },
+      { name: 'falcon_arrow_fletch', mesh: m.falconArrowFletch, color: [0.34, 0.82, 0.56, 1] },
+      { name: 'falcon_arrow_head', mesh: m.falconArrowHead, color: C_SUN_GOLD }
+    ], [1.22, 0.14, -0.06])
+  })
+
+  builder.registerPart('offHand', 'offhand_bow_falcon', () => {
+    const m = getClassFamilyWeaponMeshes()
+    return orientParts([
+      { name: 'falcon_bow_limbs', mesh: m.falconBowLimbs, color: [0.24, 0.62, 0.42, 1] },
+      { name: 'falcon_bow_grip', mesh: m.falconBowGrip, color: C_DARK_WOOD },
+      { name: 'falcon_bow_tips', mesh: m.falconBowTips, color: C_SUN_GOLD },
+      { name: 'falcon_bow_string', mesh: m.falconBowString, color: C_PARCHMENT }
+    ], [0.12, -0.22, 0.22], [-0.012, 0.010, 0.020])
+  })
+
+  builder.registerPart('mainHand', 'weapon_gale_arrow', () => {
+    const m = getClassFamilyWeaponMeshes()
+    return orientParts([
+      { name: 'gale_arrow_shaft', mesh: m.galeArrowShaft, color: C_BRIGHT_STEEL },
+      { name: 'gale_arrow_fletch', mesh: m.galeArrowFletch, color: C_ARCANE_CYAN, unlit: 0.72 },
+      { name: 'gale_arrow_head', mesh: m.galeArrowHead, color: C_FROST_GLOW, unlit: 0.88 }
+    ], [1.22, 0.14, -0.06])
+  })
+
+  builder.registerPart('offHand', 'offhand_bow_gale', () => {
+    const m = getClassFamilyWeaponMeshes()
+    return orientParts([
+      { name: 'gale_bow_limbs', mesh: m.galeBowLimbs, color: [0.26, 0.68, 0.88, 1] },
+      { name: 'gale_bow_fins', mesh: m.galeBowFins, color: C_FROST_GLOW, unlit: 0.55 },
+      { name: 'gale_bow_grip', mesh: m.galeBowGrip, color: C_PALADIN_COBALT },
+      { name: 'gale_bow_string', mesh: m.galeBowString, color: C_ARCANE_CYAN, unlit: 0.80 }
+    ], [0.12, -0.22, 0.22], [-0.012, 0.010, 0.020])
+  })
+
+  builder.registerPart('mainHand', 'weapon_shadowfang_arrow', () => {
+    const m = getClassFamilyWeaponMeshes()
+    return orientParts([
+      { name: 'shadowfang_arrow_shaft', mesh: m.shadowfangArrowShaft, color: C_OBSIDIAN },
+      { name: 'shadowfang_arrow_fletch', mesh: m.shadowfangArrowFletch, color: C_VIOLET_GLOW, unlit: 0.80 },
+      { name: 'shadowfang_arrow_head', mesh: m.shadowfangArrowHead, color: [0.64, 0.94, 0.36, 1], unlit: 0.92 }
+    ], [1.22, 0.14, -0.06])
+  })
+
+  builder.registerPart('offHand', 'offhand_bow_shadowfang', () => {
+    const m = getClassFamilyWeaponMeshes()
+    return orientParts([
+      { name: 'shadowfang_bow_limbs', mesh: m.shadowfangBowLimbs, color: C_DRAGON_DARK },
+      { name: 'shadowfang_bow_spurs', mesh: m.shadowfangBowSpurs, color: C_BONE },
+      { name: 'shadowfang_bow_gem', mesh: m.shadowfangBowGem, color: C_VIOLET_GLOW, unlit: 0.94 },
+      { name: 'shadowfang_bow_string', mesh: m.shadowfangBowString, color: C_DRAGON_AMETHYST, unlit: 0.72 }
+    ], [0.12, -0.22, 0.22], [-0.012, 0.010, 0.020])
+  })
+
+  builder.registerPart('mainHand', 'weapon_windrunner_arrow', () => {
+    const m = getClassFamilyWeaponMeshes()
+    return orientParts([
+      { name: 'windrunner_arrow_shaft', mesh: m.windrunnerArrowShaft, color: C_SUN_GOLD },
+      { name: 'windrunner_arrow_fletch', mesh: m.windrunnerArrowFletch, color: [0.44, 0.96, 0.72, 1], unlit: 0.85 },
+      { name: 'windrunner_arrow_head', mesh: m.windrunnerArrowHead, color: C_SUN_GLOW, unlit: 0.96 }
+    ], [1.22, 0.14, -0.06])
+  })
+
+  builder.registerPart('offHand', 'offhand_bow_windrunner', () => {
+    const m = getClassFamilyWeaponMeshes()
+    return orientParts([
+      { name: 'windrunner_bow_limbs', mesh: m.windrunnerBowLimbs, color: [0.22, 0.78, 0.56, 1] },
+      { name: 'windrunner_bow_wings', mesh: m.windrunnerBowWings, color: C_SUN_GOLD },
+      { name: 'windrunner_bow_gem', mesh: m.windrunnerBowGem, color: [0.58, 1.0, 0.82, 1], unlit: 0.96 },
+      { name: 'windrunner_bow_string', mesh: m.windrunnerBowString, color: C_SUN_GLOW, unlit: 0.90 }
+    ], [0.12, -0.22, 0.22], [-0.012, 0.010, 0.020])
+  })
+}
+
+interface ClassFamilyWeaponMeshes {
+  readonly apprenticeShaft: Mesh
+  readonly apprenticeFerrule: Mesh
+  readonly apprenticeCrystal: Mesh
+  readonly archstaffShaft: Mesh
+  readonly archstaffRings: Mesh
+  readonly archstaffPrism: Mesh
+  readonly archstaffCore: Mesh
+  readonly celestialShaft: Mesh
+  readonly celestialHalo: Mesh
+  readonly celestialStar: Mesh
+  readonly celestialMoons: Mesh
+  readonly falconBowLimbs: Mesh
+  readonly falconBowGrip: Mesh
+  readonly falconBowTips: Mesh
+  readonly falconBowString: Mesh
+  readonly falconArrowShaft: Mesh
+  readonly falconArrowFletch: Mesh
+  readonly falconArrowHead: Mesh
+  readonly galeBowLimbs: Mesh
+  readonly galeBowFins: Mesh
+  readonly galeBowGrip: Mesh
+  readonly galeBowString: Mesh
+  readonly galeArrowShaft: Mesh
+  readonly galeArrowFletch: Mesh
+  readonly galeArrowHead: Mesh
+  readonly shadowfangBowLimbs: Mesh
+  readonly shadowfangBowSpurs: Mesh
+  readonly shadowfangBowGem: Mesh
+  readonly shadowfangBowString: Mesh
+  readonly shadowfangArrowShaft: Mesh
+  readonly shadowfangArrowFletch: Mesh
+  readonly shadowfangArrowHead: Mesh
+  readonly windrunnerBowLimbs: Mesh
+  readonly windrunnerBowWings: Mesh
+  readonly windrunnerBowGem: Mesh
+  readonly windrunnerBowString: Mesh
+  readonly windrunnerArrowShaft: Mesh
+  readonly windrunnerArrowFletch: Mesh
+  readonly windrunnerArrowHead: Mesh
+}
+
+let cachedClassFamilyWeapons: ClassFamilyWeaponMeshes | null = null
+
+function getClassFamilyWeaponMeshes(): ClassFamilyWeaponMeshes {
+  if (cachedClassFamilyWeapons) return cachedClassFamilyWeapons
+
+  const baseEq = getEquipmentWeaponMeshes()
+
+  // 1. Apprentice Staff (oak stave + brass collar + sky-blue crystal finial)
+  const apprenticeShaft = sculptLoft([
+    { y: -0.36, rx: 0.022, rz: 0.022 },
+    { y: 0.00, rx: 0.027, rz: 0.027 },
+    { y: 0.44, rx: 0.030, rz: 0.030 },
+    { y: 0.62, rx: 0.038, rz: 0.038 }
+  ], { sides: 6, aoStrength: 0.16, aoGradient: 0.08 })
+  const apprenticeFerrule = mergeMeshes([
+    sculptLoft([
+      { y: 0.56, rx: 0.044, rz: 0.044 },
+      { y: 0.65, rx: 0.056, rz: 0.056 },
+      { y: 0.69, rx: 0.042, rz: 0.042 }
+    ], { sides: 6 }),
+    transformMesh(ringTube(0.068, 0.011, 8, 4), [0, 0.72, 0])
+  ])
+  const apprenticeCrystal = transformMesh(octahedron, [0, 0.80, 0], ZERO_ROT, [0.062, 0.118, 0.062])
+
+  // 2. Solis Archstaff (ornate twin-ringed violet-gold archstaff)
+  const archstaffShaft = sculptLoft([
+    { y: -0.39, rx: 0.020, rz: 0.020 },
+    { y: 0.00, rx: 0.030, rz: 0.030 },
+    { y: 0.54, rx: 0.038, rz: 0.038 },
+    { y: 0.66, rx: 0.052, rz: 0.052 }
+  ], { sides: 6, aoStrength: 0.18, aoGradient: 0.10 })
+  const archstaffRings = bakeVertexAO(mergeMeshes([
+    transformMesh(ringTube(0.145, 0.017, 12, 5), [0, 0.84, 0], [Math.PI * 0.5, 0.35, 0]),
+    transformMesh(ringTube(0.145, 0.017, 12, 5), [0, 0.84, 0], [Math.PI * 0.5, -0.35, 0]),
+    sculptLoft([
+      { y: 0.62, rx: 0.062, rz: 0.062 },
+      { y: 0.70, rx: 0.044, rz: 0.044 }
+    ], { sides: 8 })
+  ]), { strength: 0.14, verticalGradient: 0.08 })
+  const archstaffPrism = transformMesh(octahedron, [0, 0.84, 0], [0, Math.PI * 0.25, 0], [0.068, 0.132, 0.068])
+  const archstaffCore = mergeMeshes([
+    transformMesh(octahedron, [0, 1.03, 0], ZERO_ROT, [0.032, 0.054, 0.032]),
+    transformMesh(octahedron, [0, 0.67, 0], ZERO_ROT, [0.036, 0.036, 0.036])
+  ])
+
+  // 3. Celestial Staff (mythic crescent halo + twin orbiting star crystals)
+  const celestialShaft = sculptLoft([
+    { y: -0.40, rx: 0.018, rz: 0.018 },
+    { y: -0.05, rx: 0.031, rz: 0.031 },
+    { y: 0.56, rx: 0.040, rz: 0.040 },
+    { y: 0.68, rx: 0.058, rz: 0.058 }
+  ], { sides: 8, aoStrength: 0.16, aoGradient: 0.08 })
+  const celestialHalo = bakeVertexAO(mergeMeshes([
+    transformMesh(ringTube(0.182, 0.018, 14, 5), [0, 0.88, 0], [Math.PI * 0.5, 0, 0]),
+    transformMesh(ringTube(0.118, 0.012, 12, 4), [0, 0.88, 0], [0.35, 0.25, 0]),
+    sculptLoft([
+      { y: 0.66, rx: 0.068, rz: 0.068 },
+      { y: 0.74, rx: 0.038, rz: 0.038 }
+    ], { sides: 8 })
+  ]), { strength: 0.12, verticalGradient: 0.06 })
+  const celestialStar = mergeMeshes([
+    transformMesh(octahedron, [0, 0.88, 0], ZERO_ROT, [0.072, 0.156, 0.072]),
+    transformMesh(octahedron, [0, 0.88, 0], ZERO_ROT, [0.145, 0.048, 0.048]),
+    transformMesh(octahedron, [0, 0.88, 0], ZERO_ROT, [0.048, 0.048, 0.145])
+  ])
+  const celestialMoons = mergeMeshes([
+    transformMesh(octahedron, [0, 0.88, 0.185], ZERO_ROT, [0.032, 0.052, 0.032]),
+    transformMesh(octahedron, [0, 0.88, -0.185], ZERO_ROT, [0.032, 0.052, 0.032]),
+    transformMesh(octahedron, [0, 1.07, 0], ZERO_ROT, [0.038, 0.060, 0.038])
+  ])
+
+  // 4. Falcon Recurve (`recurved_bow`)
+  const falconBowLimbs = bakeVertexAO(
+    tubeMesh([
+      [0, -0.44, -0.06],
+      [0, -0.26, 0.10],
+      [0, 0.00, 0.14],
+      [0, 0.26, 0.10],
+      [0, 0.44, -0.06]
+    ], [0.014, 0.024, 0.030, 0.024, 0.014], 6),
+    { strength: 0.14, verticalGradient: 0.08 }
+  )
+  const falconBowGrip = sculptLoft([
+    { y: -0.09, rx: 0.032, rz: 0.036, zOffset: 0.14 },
+    { y: 0.00, rx: 0.035, rz: 0.040, zOffset: 0.14 },
+    { y: 0.09, rx: 0.032, rz: 0.036, zOffset: 0.14 }
+  ], { sides: 6 })
+  const falconBowTips = mergeMeshes([
+    transformMesh(octahedron, [0, 0.46, -0.08], [0.35, 0, 0], [0.026, 0.068, 0.034]),
+    transformMesh(octahedron, [0, -0.46, -0.08], [-0.35, 0, 0], [0.026, 0.068, 0.034])
+  ])
+  const falconBowString = tubeMesh([[0, -0.43, -0.06], [0, 0, -0.09], [0, 0.43, -0.06]], [0.006, 0.006, 0.006], 4)
+  const falconArrowShaft = transformMesh(baseEq.yewArrowShaft, [0, 0, 0], ZERO_ROT, [1.05, 1.02, 1.05])
+  const falconArrowFletch = transformMesh(baseEq.yewArrowFletch, [0, -0.01, 0], ZERO_ROT, [1.18, 1.10, 1.18])
+  const falconArrowHead = diamondBladeLoft([
+    [0.45, 0.028, 0.072],
+    [0.51, 0.034, 0.088],
+    [0.69, 0.004, 0.004]
+  ], 0.14)
+
+  // 5. Gale Longbow (`gale_longbow`)
+  const galeBowLimbs = bakeVertexAO(
+    tubeMesh([
+      [0, -0.50, -0.04],
+      [0, -0.28, 0.12],
+      [0, 0.00, 0.16],
+      [0, 0.28, 0.12],
+      [0, 0.50, -0.04]
+    ], [0.012, 0.022, 0.028, 0.022, 0.012], 6),
+    { strength: 0.14, verticalGradient: 0.08 }
+  )
+  const galeBowFins = mergeMeshes([
+    extrudeYZ([[0.09, 0.22], [0.22, 0.34], [0.16, 0.48], [0.02, 0.42]], 0.020, 0.10),
+    extrudeYZ([[0.09, -0.22], [0.22, -0.34], [0.16, -0.48], [0.02, -0.42]], 0.020, 0.10)
+  ])
+  const galeBowGrip = sculptLoft([
+    { y: -0.08, rx: 0.030, rz: 0.038, zOffset: 0.16 },
+    { y: 0.08, rx: 0.030, rz: 0.038, zOffset: 0.16 }
+  ], { sides: 6 })
+  const galeBowString = tubeMesh([[0, -0.49, -0.04], [0, 0, -0.08], [0, 0.49, -0.04]], [0.006, 0.006, 0.006], 4)
+  const galeArrowShaft = transformMesh(baseEq.yewArrowShaft, [0, 0, 0], ZERO_ROT, [0.95, 1.06, 0.95])
+  const galeArrowFletch = transformMesh(baseEq.yewArrowFletch, [0, 0.02, 0], [0, 0.5, 0], [1.26, 1.18, 1.26])
+  const galeArrowHead = diamondBladeLoft([
+    [0.47, 0.022, 0.068],
+    [0.54, 0.028, 0.082],
+    [0.73, 0.003, 0.003]
+  ], 0.12)
+
+  // 6. Shadowfang Bow (`shadowfang_bow`)
+  const shadowfangBowLimbs = bakeVertexAO(
+    tubeMesh([
+      [0, -0.40, -0.07],
+      [0, -0.22, 0.13],
+      [0, 0.00, 0.17],
+      [0, 0.22, 0.13],
+      [0, 0.42, -0.07]
+    ], [0.015, 0.028, 0.034, 0.028, 0.015], 5),
+    { strength: 0.18, verticalGradient: 0.10 }
+  )
+  const shadowfangBowSpurs = mergeMeshes([
+    extrudeYZ([[0.12, 0.16], [0.25, 0.26], [0.16, 0.32], [0.08, 0.26]], 0.024, 0.12),
+    extrudeYZ([[0.12, -0.16], [0.25, -0.26], [0.16, -0.32], [0.08, -0.26]], 0.024, 0.12),
+    transformMesh(octahedron, [0, 0.43, -0.09], [0.55, 0, 0], [0.024, 0.056, 0.028]),
+    transformMesh(octahedron, [0, -0.41, -0.09], [-0.55, 0, 0], [0.024, 0.052, 0.028])
+  ])
+  const shadowfangBowGem = transformMesh(octahedron, [0, 0, 0.205], ZERO_ROT, [0.036, 0.060, 0.036])
+  const shadowfangBowString = tubeMesh([[0, -0.39, -0.07], [0, 0, -0.09], [0, 0.41, -0.07]], [0.007, 0.007, 0.007], 4)
+  const shadowfangArrowShaft = transformMesh(baseEq.yewArrowShaft, [0, 0, 0], ZERO_ROT, [1.10, 1.04, 1.10])
+  const shadowfangArrowFletch = transformMesh(baseEq.yewArrowFletch, [0, -0.02, 0], [0, 1.0, 0], [1.22, 1.14, 1.22])
+  const shadowfangArrowHead = diamondBladeLoft([
+    [0.44, 0.032, 0.086],
+    [0.52, 0.038, 0.098],
+    [0.71, 0.004, 0.004]
+  ], 0.16)
+
+  // 7. Windrunner Greatbow (`windrunner_bow`)
+  const windrunnerBowLimbs = bakeVertexAO(
+    tubeMesh([
+      [0, -0.44, -0.05],
+      [0, -0.24, 0.14],
+      [0, 0.00, 0.19],
+      [0, 0.24, 0.14],
+      [0, 0.46, -0.05]
+    ], [0.015, 0.028, 0.036, 0.028, 0.015], 6),
+    { strength: 0.14, verticalGradient: 0.08 }
+  )
+  const windrunnerBowWings = mergeMeshes([
+    extrudeYZ([[0.12, 0.14], [0.28, 0.28], [0.22, 0.44], [0.04, 0.40]], 0.026, 0.12),
+    extrudeYZ([[0.12, -0.14], [0.28, -0.28], [0.22, -0.44], [0.04, -0.40]], 0.026, 0.12),
+    transformMesh(octahedron, [0, 0.47, -0.07], [0.42, 0, 0], [0.028, 0.064, 0.034]),
+    transformMesh(octahedron, [0, -0.45, -0.07], [-0.42, 0, 0], [0.028, 0.058, 0.034])
+  ])
+  const windrunnerBowGem = mergeMeshes([
+    transformMesh(octahedron, [0, 0, 0.228], ZERO_ROT, [0.046, 0.074, 0.042]),
+    transformMesh(octahedron, [0, 0.24, 0.175], ZERO_ROT, [0.026, 0.040, 0.026]),
+    transformMesh(octahedron, [0, -0.24, 0.175], ZERO_ROT, [0.026, 0.040, 0.026])
+  ])
+  const windrunnerBowString = tubeMesh([[0, -0.43, -0.05], [0, 0, -0.09], [0, 0.45, -0.05]], [0.008, 0.008, 0.008], 4)
+  const windrunnerArrowShaft = transformMesh(baseEq.yewArrowShaft, [0, 0, 0], ZERO_ROT, [1.15, 1.08, 1.15])
+  const windrunnerArrowFletch = transformMesh(baseEq.yewArrowFletch, [0, 0.02, 0], [0, 0.25, 0], [1.34, 1.24, 1.34])
+  const windrunnerArrowHead = diamondBladeLoft([
+    [0.46, 0.034, 0.092],
+    [0.56, 0.040, 0.104],
+    [0.76, 0.004, 0.004]
+  ], 0.14)
+
+  cachedClassFamilyWeapons = {
+    apprenticeShaft,
+    apprenticeFerrule,
+    apprenticeCrystal,
+    archstaffShaft,
+    archstaffRings,
+    archstaffPrism,
+    archstaffCore,
+    celestialShaft,
+    celestialHalo,
+    celestialStar,
+    celestialMoons,
+    falconBowLimbs,
+    falconBowGrip,
+    falconBowTips,
+    falconBowString,
+    falconArrowShaft,
+    falconArrowFletch,
+    falconArrowHead,
+    galeBowLimbs,
+    galeBowFins,
+    galeBowGrip,
+    galeBowString,
+    galeArrowShaft,
+    galeArrowFletch,
+    galeArrowHead,
+    shadowfangBowLimbs,
+    shadowfangBowSpurs,
+    shadowfangBowGem,
+    shadowfangBowString,
+    shadowfangArrowShaft,
+    shadowfangArrowFletch,
+    shadowfangArrowHead,
+    windrunnerBowLimbs,
+    windrunnerBowWings,
+    windrunnerBowGem,
+    windrunnerBowString,
+    windrunnerArrowShaft,
+    windrunnerArrowFletch,
+    windrunnerArrowHead
+  }
+  return cachedClassFamilyWeapons
 }

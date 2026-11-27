@@ -1,7 +1,7 @@
 import type { CanvasWidgetDrawState, LayoutRect } from 'ridgetop/ui'
 import type {
   BattleHeroXpGain, BattleMasteryEvaluation, BattleUnit, ChapterSpec, CombatForecast, CombatForecastAlt, CombatLogEntry, DifficultyLevel,
-  ElementalComboPreview, EndlessBlessingId, EquipSlot, EquipmentSpec, FacingDir, FacingExposureLevel, HeroSpec,
+  ElementalComboPreview, EndlessBlessingId, EquipFamily, EquipSlot, EquipmentSpec, FacingDir, FacingExposureLevel, HeroSpec,
   LandmarkKind, OwnedHeroCard, PackPityStatus, PackRevealItem, PackSpec, Rarity, SkillSpec,
   StageDifficultyTier, StageMasteryChestReward, StageMasteryObjectiveSpec, StageMasteryRecord, StageMasteryStars, StageMutatorId, StatusKind,
   TacticCardSpec, TurnOrderActionPreview, TurnPreviewEntry, WorldMapEvent
@@ -14,6 +14,7 @@ import type { DiscoveryTipSpec } from './discovery-tips.ts'
 import { ENDLESS_BLESSING_BY_ID, ENDLESS_BLESSING_RARITY_META } from './endless-roguelite.ts'
 import type { EndlessBlessingSpec } from './endless-roguelite.ts'
 import { DIFFICULTY_META, RARITY_META, RARITY_ORDER } from './data.ts'
+import { EQUIP_FAMILY_META, getEquipFamily, getHeroEquipFamily } from './equip-families.ts'
 import { EPIC_PITY_THRESHOLD, LEGENDARY_PITY_THRESHOLD } from './forge.ts'
 import { heroLevelProgress } from './leveling.ts'
 import { STAGE_MUTATOR_SPECS, STAGE_TIER_SPECS, stageTierRank } from './mutators.ts'
@@ -3901,8 +3902,21 @@ export function drawHeroRosterCard(
   }) + 4
   drawText(ctx, o.spec.name, tx, y + faceH * 0.28, { size: 13, weight: 900, maxW: Math.max(12, right - tx - rightUsed), display: true, stroke: true, strokeWidth: 2 })
   const sw = drawStars(ctx, tx, y + faceH * 0.62, o.hero.stars, 3, 9)
+  const famMeta = EQUIP_FAMILY_META[getHeroEquipFamily(o.spec.id)]
+  let starCursor = tx + sw + 6
+  const famLabel = w >= 245 ? famMeta.shortLabel : famMeta.compactLabel
+  const famEstW = measureText(ctx, famLabel, 7.5, 900, true) + 12
+  if (starCursor + famEstW + 34 < right) {
+    starCursor += drawChip(ctx, starCursor, y + faceH * 0.62 - 7, famLabel, {
+      h: 14,
+      size: 7.5,
+      color: famMeta.accentHex,
+      bg: famMeta.bgHex,
+      border: famMeta.accentHex + '88'
+    }) + 5
+  }
   if (o.hero.stars < 3 && o.need > 0) {
-    const bx = tx + sw + 7
+    const bx = starCursor + 2
     const bw = Math.max(0, right - bx - 30)
     if (bw > 16) drawBar(ctx, bx, y + faceH * 0.62 - 3, bw, 6, o.copies / o.need, o.readyMerge ? COLOR.accent : COLOR.ally)
     drawText(ctx, `${o.copies}/${o.need}`, right, y + faceH * 0.62 + 0.5, { size: 9.5, weight: 900, color: o.readyMerge ? COLOR.accentHi : COLOR.muted, align: 'right', display: true })
@@ -3920,7 +3934,7 @@ export function drawHeroRosterCard(
 export function drawHeroHeader(
   ctx: CanvasRenderingContext2D,
   rect: LayoutRect,
-  o: { name: string; title: string; stars: number; rarity: Rarity; power: number; portrait?: CanvasImageSource; inSquad: boolean; level?: number; xp?: number; locked?: boolean }
+  o: { name: string; title: string; stars: number; rarity: Rarity; power: number; portrait?: CanvasImageSource; inSquad: boolean; level?: number; xp?: number; locked?: boolean; equipFamily?: EquipFamily }
 ) {
   const meta = RARITY_META[o.rarity]
   const prog = heroLevelProgress(o.level, o.xp)
@@ -3946,6 +3960,16 @@ export function drawHeroHeader(
   const sw = drawStars(ctx, tx, y + h * 0.58, o.stars, 3, 12)
   let cx = tx + sw + 8
   cx += drawChip(ctx, cx, y + h * 0.58 - 8.5, o.title, { h: 17, size: 9.5, color: '#ffffff', bg: '#2c3d66', border: COLOR.outline }) + 5
+  if (o.equipFamily) {
+    const fam = EQUIP_FAMILY_META[o.equipFamily]
+    const famFullW = measureText(ctx, fam.shortLabel, 9, 800, true) + 14
+    const famCompactW = measureText(ctx, fam.compactLabel, 8.5, 800, true) + 12
+    if (cx + famFullW < midRight) {
+      cx += drawChip(ctx, cx, y + h * 0.58 - 8.5, fam.shortLabel, { h: 17, size: 9, color: fam.accentHex, bg: fam.bgHex, border: fam.accentHex + '99' }) + 5
+    } else if (cx + famCompactW < midRight) {
+      cx += drawChip(ctx, cx, y + h * 0.58 - 8.5, fam.compactLabel, { h: 17, size: 8.5, color: fam.accentHex, bg: fam.bgHex, border: fam.accentHex + '99' }) + 5
+    }
+  }
   if (cx + 64 < midRight) {
     cx += drawChip(ctx, cx, y + h * 0.58 - 8.5, meta.label, { h: 17, size: 9.5, color: meta.hex, bg: COLOR.wellDeep, border: COLOR.outline }) + 5
   }
@@ -4052,18 +4076,77 @@ export function drawStatStrip(ctx: CanvasRenderingContext2D, rect: LayoutRect, s
   })
 }
 
+export function drawEquipFamilyPill(
+  ctx: CanvasRenderingContext2D,
+  rect: LayoutRect,
+  family: EquipFamily,
+  o: { prefix?: string; countText?: string; compact?: boolean } = {}
+) {
+  const fam = EQUIP_FAMILY_META[family]
+  const { x, y, width: w, height: h } = rect
+  ctx.save()
+  rr(ctx, x, y, w, h, RADIUS.sm)
+  ctx.fillStyle = fam.bgHex
+  ctx.fill()
+  ctx.strokeStyle = fam.accentHex + 'aa'
+  ctx.lineWidth = 1.6
+  ctx.stroke()
+
+  const label = o.compact && w < 126 ? fam.compactLabel : fam.shortLabel
+  const mainText = o.prefix ? `${o.prefix}${label}` : label
+  if (o.countText && w >= 120) {
+    const cntW = measureText(ctx, o.countText, 9, 800, true) + 10
+    drawText(ctx, mainText, x + 8, y + h / 2 + 0.5, {
+      size: o.compact ? 9.5 : 10,
+      weight: 900,
+      color: fam.accentHex,
+      maxW: Math.max(24, w - cntW - 12),
+      display: true
+    })
+    drawText(ctx, o.countText, x + w - 8, y + h / 2 + 0.5, {
+      size: 9,
+      weight: 800,
+      color: COLOR.muted,
+      align: 'right',
+      maxW: cntW,
+      display: true
+    })
+  } else {
+    drawText(ctx, mainText, x + w / 2, y + h / 2 + 0.5, {
+      size: o.compact ? 9.5 : 10,
+      weight: 900,
+      color: fam.accentHex,
+      align: 'center',
+      maxW: Math.max(20, w - 10),
+      display: true
+    })
+  }
+  ctx.restore()
+}
+
 export function drawEquipCard(
   ctx: CanvasRenderingContext2D,
   rect: LayoutRect,
-  o: { slot: EquipSlot; spec?: EquipmentSpec; effect?: EquipEffectSpec; ownerText?: string; equippedOnSelected?: boolean; locked?: boolean },
+  o: {
+    slot: EquipSlot
+    spec?: EquipmentSpec
+    effect?: EquipEffectSpec
+    ownerText?: string
+    equippedOnSelected?: boolean
+    locked?: boolean
+    incompatible?: boolean
+    incompatibleLabel?: string
+    showFamilyBadge?: boolean
+  },
   st: CanvasWidgetDrawState
 ) {
   const spec = o.spec
   const effect = o.effect ?? (spec ? getEquipEffect(spec.id) ?? undefined : undefined)
   const meta = spec ? RARITY_META[spec.rarity] : undefined
   const isLocked = Boolean(o.locked)
+  const isIncompatible = Boolean(o.incompatible)
   const { x, width: w, height: h } = rect
-  const pressed = st.pressed
+  const pressed = st.pressed && !isIncompatible
   const y = rect.y + (pressed ? 2 : 0)
   const drawH = h - (pressed ? 2 : 0)
   const hot = st.hovered || st.focused
@@ -4107,14 +4190,14 @@ export function drawEquipCard(
   drawSurface(ctx, { x, y, width: w, height: drawH }, {
     r,
     lipH: pressed ? 1 : 3,
-    fill: on ? '#4a5f94' : hot ? '#3d507d' : '#2c3a61',
-    fillBot: on ? '#2d3f6b' : '#1d2745',
-    rim: isLocked ? COLOR.accent + '99' : '#ffffff24',
+    fill: isIncompatible ? (hot ? '#242b42' : '#1c2236') : on ? '#4a5f94' : hot ? '#3d507d' : '#2c3a61',
+    fillBot: isIncompatible ? '#141828' : on ? '#2d3f6b' : '#1d2745',
+    rim: isIncompatible ? '#ff6b7a44' : isLocked ? COLOR.accent + '99' : '#ffffff24',
     shadow: false
   })
   if (on || isLocked) {
     rr(ctx, x + 2, y + 2, w - 4, drawH - 4, Math.max(1, r - 2))
-    ctx.strokeStyle = on ? COLOR.accent : COLOR.accent + '88'
+    ctx.strokeStyle = isIncompatible ? '#ff6b7a66' : on ? COLOR.accent : COLOR.accent + '88'
     ctx.lineWidth = on ? 2 : 1.5
     ctx.stroke()
   }
@@ -4153,49 +4236,51 @@ export function drawEquipCard(
   const is = Math.min(faceH - 10, 38)
   const ix = x + 6
   const iy = y + (faceH - is) / 2
+  ctx.save()
+  if (isIncompatible) ctx.globalAlpha = 0.58
   rr(ctx, ix, iy, is, is, RADIUS.sm)
   const ig = ctx.createLinearGradient(0, iy, 0, iy + is)
   ig.addColorStop(0, (meta?.hex ?? '#888888') + 'aa')
   ig.addColorStop(1, '#141c33')
   ctx.fillStyle = ig
   ctx.fill()
-  ctx.strokeStyle = isLocked ? COLOR.accent : COLOR.outline
+  ctx.strokeStyle = isIncompatible ? '#ff6b7a88' : isLocked ? COLOR.accent : COLOR.outline
   ctx.lineWidth = 1.8
   ctx.stroke()
   drawEquipIcon(ctx, spec.slot, spec.id, spec.accentHex, ix + is / 2, iy + is / 2, is * 0.36)
+  ctx.restore()
   if (isLocked) {
     drawLockMedallion(ctx, ix + is - 3, iy + is - 3, 7)
   }
 
   const tx = ix + is + 9
   const right = x + w - 9
-  const tagW = o.ownerText ? Math.min(72, measureText(ctx, o.ownerText, 9.5, 800, true) + 16) : on ? 22 : 0
   const twoLine = faceH >= 38
   const threeLine = Boolean(effect) && faceH >= 47
-  const nameY = threeLine ? y + 11.5 : y + faceH / 2 - (twoLine ? 8 : 0)
-  drawText(ctx, spec.name, tx, nameY, { size: 12, weight: 900, maxW: right - tx - tagW - 4, display: true, shadow: true })
-  if (threeLine && effect) {
-    drawText(ctx, spec.desc, tx, y + 25.5, { size: 9.5, weight: 600, color: COLOR.muted, maxW: right - tx })
-    drawText(ctx, `★ ${effect.name}: ${effect.shortLabel}`, tx, y + 38.5, {
-      size: 9.5,
-      weight: 800,
-      color: effect.accentHex,
-      maxW: right - tx,
-      display: true
-    })
-  } else if (twoLine) {
-    const subText = effect ? `${spec.desc} · ★ ${effect.shortLabel}` : spec.desc
-    drawText(ctx, subText, tx, y + faceH / 2 + 8.5, { size: 10, weight: 600, color: effect ? effect.accentHex : COLOR.muted, maxW: right - tx })
-  }
-  if (o.ownerText) {
-    drawChip(ctx, right, threeLine ? y + 4 : y + faceH / 2 - (twoLine ? 16 : 8.5), fitWithin(ctx, o.ownerText, 56, 9.5), {
-      h: 17,
-      size: 9.5,
+  const chipY = threeLine ? y + 4 : y + faceH / 2 - (twoLine ? 16 : 8.5)
+  const famMeta = EQUIP_FAMILY_META[getEquipFamily(spec.id)]
+
+  let rightUsed = 0
+  if (isIncompatible) {
+    const lockText = w < 248 ? famMeta.compactLabel : (o.incompatibleLabel ?? `${famMeta.shortLabel} only`)
+    rightUsed += drawChip(ctx, right, chipY, lockText, {
+      h: 16,
+      size: 8.5,
+      icon: 'lock',
+      color: '#ff9ca6',
+      bg: '#381622',
+      border: '#ff576899',
+      align: 'right'
+    }) + 4
+  } else if (o.ownerText) {
+    rightUsed += drawChip(ctx, right, chipY, fitWithin(ctx, o.ownerText, 56, 9.5), {
+      h: 16,
+      size: 9,
       color: o.ownerText === 'Bag' ? COLOR.muted : '#ffffff',
       bg: o.ownerText === 'Bag' ? COLOR.wellDeep : COLOR.allyDark,
       border: COLOR.outline,
       align: 'right'
-    })
+    }) + 4
   } else if (on) {
     const chkY = threeLine ? y + 12 : y + faceH / 2 - (twoLine ? 8 : 0)
     ctx.beginPath()
@@ -4206,8 +4291,55 @@ export function drawEquipCard(
     ctx.lineWidth = 1.6
     ctx.stroke()
     drawIcon(ctx, 'check', right - 8, chkY, 9, COLOR.accentText)
+    rightUsed += 22
   }
-  drawCornerRibbon(ctx, x, y, w, faceH + 1, r, meta?.hex ?? '#888', 13)
+
+  const showFam = o.showFamilyBadge !== false && !isIncompatible
+  if (showFam) {
+    const famLabel = w >= 290 ? famMeta.shortLabel : famMeta.compactLabel
+    const famEstW = measureText(ctx, famLabel, 8, 800, true) + 14
+    if (right - rightUsed - tx - famEstW >= 78) {
+      rightUsed += drawChip(ctx, right - rightUsed, chipY, famLabel, {
+        h: 16,
+        size: 8,
+        color: famMeta.accentHex,
+        bg: famMeta.bgHex,
+        border: famMeta.accentHex + '88',
+        align: 'right'
+      }) + 4
+    }
+  }
+
+  const nameY = threeLine ? y + 11.5 : y + faceH / 2 - (twoLine ? 8 : 0)
+  drawText(ctx, spec.name, tx, nameY, {
+    size: 12,
+    weight: 900,
+    color: isIncompatible ? '#9eb0cf' : COLOR.text,
+    maxW: Math.max(36, right - tx - rightUsed - 2),
+    display: true,
+    shadow: true
+  })
+  if (threeLine && effect) {
+    drawText(ctx, spec.desc, tx, y + 25.5, { size: 9.5, weight: 600, color: isIncompatible ? COLOR.faint : COLOR.muted, maxW: right - tx })
+    drawText(ctx, `★ ${effect.name}: ${effect.shortLabel}`, tx, y + 38.5, {
+      size: 9.5,
+      weight: 800,
+      color: isIncompatible ? COLOR.faint : effect.accentHex,
+      maxW: right - tx,
+      display: true
+    })
+  } else if (twoLine) {
+    const subText = isIncompatible && o.ownerText && o.ownerText !== 'Bag'
+      ? `${spec.desc} · Held by ${o.ownerText}`
+      : effect ? `${spec.desc} · ★ ${effect.shortLabel}` : spec.desc
+    drawText(ctx, subText, tx, y + faceH / 2 + 8.5, {
+      size: 10,
+      weight: 600,
+      color: isIncompatible ? COLOR.faint : effect ? effect.accentHex : COLOR.muted,
+      maxW: right - tx
+    })
+  }
+  drawCornerRibbon(ctx, x, y, w, faceH + 1, r, isIncompatible ? '#5c6a88' : (meta?.hex ?? '#888'), 13)
   ctx.restore()
   if (st.focused) drawFocusRing(ctx, x, y, w, drawH, r)
 }
@@ -4225,20 +4357,23 @@ export function drawArmoryStatDiffPanel(
   if (w < 40 || h < 34) return
 
   const candMeta = RARITY_META[diff.candidateRarity]
-  const rimColor = diff.isAlreadyEquipped
-    ? COLOR.accent
-    : diff.netPowerDelta > 0
-      ? COLOR.good
-      : diff.netPowerDelta < 0
-        ? COLOR.danger
-        : COLOR.borderHi
+  const isLockedClass = !diff.compatible
+  const rimColor = isLockedClass
+    ? COLOR.danger
+    : diff.isAlreadyEquipped
+      ? COLOR.accent
+      : diff.netPowerDelta > 0
+        ? COLOR.good
+        : diff.netPowerDelta < 0
+          ? COLOR.danger
+          : COLOR.borderHi
 
   ctx.save()
   drawSurface(ctx, rect, {
     r: RADIUS.md,
     lipH: 3,
-    fill: '#233054',
-    fillBot: '#151d36',
+    fill: isLockedClass ? '#2b1c2e' : '#233054',
+    fillBot: isLockedClass ? '#1b1222' : '#151d36',
     rim: rimColor + '88',
     border: COLOR.outline,
     glow: diff.isAlreadyEquipped ? undefined : rimColor + '33'
@@ -4258,38 +4393,45 @@ export function drawArmoryStatDiffPanel(
 
   // Right-aligned Power delta badge (+ optional cross-hero swap pill)
   let rightCursor = x + w - padX
-  const pwrText = diff.isAlreadyEquipped
-    ? 'EQUIPPED'
-    : diff.netPowerDelta > 0
-      ? `▲ +${diff.netPowerDelta} PWR`
-      : diff.netPowerDelta < 0
-        ? `▼ ${diff.netPowerDelta} PWR`
-        : '±0 PWR'
-  const pwrColor = diff.isAlreadyEquipped
-    ? COLOR.accentHi
-    : diff.netPowerDelta > 0
-      ? '#52f598'
-      : diff.netPowerDelta < 0
-        ? '#ff6b7a'
-        : COLOR.muted
-  const pwrBg = diff.isAlreadyEquipped
-    ? '#382a14'
-    : diff.netPowerDelta > 0
-      ? '#123824'
-      : diff.netPowerDelta < 0
-        ? '#3f1520'
-        : COLOR.wellDeep
+  const pwrText = isLockedClass
+    ? 'CLASS LOCKED'
+    : diff.isAlreadyEquipped
+      ? 'EQUIPPED'
+      : diff.netPowerDelta > 0
+        ? `▲ +${diff.netPowerDelta} PWR`
+        : diff.netPowerDelta < 0
+          ? `▼ ${diff.netPowerDelta} PWR`
+          : '±0 PWR'
+  const pwrColor = isLockedClass
+    ? '#ff8e9b'
+    : diff.isAlreadyEquipped
+      ? COLOR.accentHi
+      : diff.netPowerDelta > 0
+        ? '#52f598'
+        : diff.netPowerDelta < 0
+          ? '#ff6b7a'
+          : COLOR.muted
+  const pwrBg = isLockedClass
+    ? '#3f1520'
+    : diff.isAlreadyEquipped
+      ? '#382a14'
+      : diff.netPowerDelta > 0
+        ? '#123824'
+        : diff.netPowerDelta < 0
+          ? '#3f1520'
+          : COLOR.wellDeep
   const pwrW = drawChip(ctx, rightCursor, headerCy - 9, pwrText, {
     h: 18,
     size: 9.5,
+    icon: isLockedClass ? 'lock' : undefined,
     color: pwrColor,
     bg: pwrBg,
-    border: diff.isAlreadyEquipped ? COLOR.accent : diff.netPowerDelta !== 0 ? pwrColor : COLOR.outline,
+    border: isLockedClass ? COLOR.danger : diff.isAlreadyEquipped ? COLOR.accent : diff.netPowerDelta !== 0 ? pwrColor : COLOR.outline,
     align: 'right'
   })
   rightCursor -= pwrW + 6
 
-  if (diff.currentOwnerName && w >= 420) {
+  if (!isLockedClass && diff.currentOwnerName && w >= 420) {
     const swapLabel = `⇄ Held by ${diff.currentOwnerName}`
     const swapW = drawChip(ctx, rightCursor, headerCy - 9, swapLabel, {
       h: 18,
@@ -4314,24 +4456,45 @@ export function drawArmoryStatDiffPanel(
   leftCursor += slotW + 7
 
   const vsLabel = diff.currentItemName ?? 'Empty Slot'
-  const headerText = diff.isAlreadyEquipped
-    ? `Equipped: ${diff.candidateName} (${diff.heroName})`
-    : diff.currentOwnerName && w < 420
-      ? `${diff.candidateName} vs ${vsLabel} (⇄ ${diff.currentOwnerName})`
-      : `Comparing: ${diff.candidateName} vs ${vsLabel}`
+  const headerText = isLockedClass
+    ? `${diff.candidateName} — Cannot equip on ${diff.heroName}`
+    : diff.isAlreadyEquipped
+      ? `Equipped: ${diff.candidateName} (${diff.heroName})`
+      : diff.currentOwnerName && w < 420
+        ? `${diff.candidateName} vs ${vsLabel} (⇄ ${diff.currentOwnerName})`
+        : `Comparing: ${diff.candidateName} vs ${vsLabel}`
   const headerMaxW = Math.max(40, rightCursor - leftCursor)
   drawText(ctx, headerText, leftCursor, headerCy + 0.5, {
     size: w < 420 ? 10.5 : 11.5,
     weight: 800,
-    color: COLOR.text,
+    color: isLockedClass ? '#ffd0d6' : COLOR.text,
     maxW: headerMaxW,
     display: true,
     shadow: true
   })
 
-  // Stat-diff grid across all 7 stats: ATK, DEF, HP, SPD, MOVE, RANGE, CRIT
+  // Stat-diff grid across all 7 stats (or Lock Banner when class-incompatible)
   const statsY = y + padY + headerH + (h < 60 ? 3 : 4)
   const statsH = Math.max(20, y + h - 5 - statsY)
+  if (isLockedClass) {
+    rr(ctx, x + padX, statsY, innerW, statsH, RADIUS.sm)
+    ctx.fillStyle = '#331522'
+    ctx.fill()
+    ctx.strokeStyle = '#ff576888'
+    ctx.lineWidth = 1.4
+    ctx.stroke()
+    const reasonText = diff.incompatibilityReason ?? 'Incompatible class family'
+    drawText(ctx, reasonText, x + w / 2, statsY + statsH / 2 + 0.5, {
+      size: w < 420 ? 10 : 11,
+      weight: 800,
+      color: '#ff9ca6',
+      align: 'center',
+      maxW: innerW - 18,
+      display: true
+    })
+    ctx.restore()
+    return
+  }
   const twoRow = w < 520 && statsH >= 38
 
   const drawStatRow = (
@@ -5114,6 +5277,7 @@ export function drawForgeRecipeCard(
     cost: number
     currency: 'dust' | 'shards'
     affordable: boolean
+    equipFamily?: EquipFamily
   },
   st?: CanvasWidgetDrawState
 ) {
@@ -5157,25 +5321,34 @@ export function drawForgeRecipeCard(
   const statusText = o.maxed ? 'MAX ★' : o.ownedCount > 0 ? `Owned x${o.ownedCount}` : 'Unowned'
   const statusColor = o.maxed ? '#7ae7ff' : o.ownedCount > 0 ? '#b8ffd6' : COLOR.accentHi
   const statusBg = o.maxed ? '#13314a' : o.ownedCount > 0 ? '#143627' : '#362712'
-  const statusW = Math.min(72, measureText(ctx, statusText, 9, 800, true) + 14)
 
   const twoLine = faceH >= 40
+  const chipY = y + faceH / 2 - (twoLine ? 16 : 8)
+  let rightUsed = 0
+  rightUsed += drawChip(ctx, right, chipY, statusText, {
+    h: 16, size: 8.5, color: statusColor, bg: statusBg, border: COLOR.outline, align: 'right'
+  }) + 4
+  rightUsed += drawChip(ctx, right - rightUsed, chipY, meta.short, {
+    h: 16, size: 8.5, color: meta.hex, bg: COLOR.wellDeep, border: COLOR.outline, align: 'right'
+  }) + 4
+  if (o.equipFamily) {
+    const fam = EQUIP_FAMILY_META[o.equipFamily]
+    const famLabel = w >= 340 ? fam.shortLabel : fam.compactLabel
+    const famEstW = measureText(ctx, famLabel, 8, 800, true) + 12
+    if (right - rightUsed - tx - famEstW >= 72) {
+      rightUsed += drawChip(ctx, right - rightUsed, chipY, famLabel, {
+        h: 16, size: 8, color: fam.accentHex, bg: fam.bgHex, border: fam.accentHex + '88', align: 'right'
+      }) + 4
+    }
+  }
+
   drawText(ctx, o.name, tx, y + faceH / 2 - (twoLine ? 8 : 0), {
     size: 12,
     weight: 900,
     color: '#ffffff',
-    maxW: Math.max(30, right - tx - statusW - 44),
+    maxW: Math.max(30, right - tx - rightUsed - 2),
     display: true,
     shadow: true
-  })
-
-  // Rarity pill right next to status chip
-  const chipY = y + faceH / 2 - (twoLine ? 16 : 8)
-  const sw = drawChip(ctx, right, chipY, statusText, {
-    h: 16, size: 8.5, color: statusColor, bg: statusBg, border: COLOR.outline, align: 'right'
-  })
-  drawChip(ctx, right - sw - 4, chipY, meta.short, {
-    h: 16, size: 8.5, color: meta.hex, bg: COLOR.wellDeep, border: COLOR.outline, align: 'right'
   })
 
   if (twoLine) {
@@ -5944,8 +6117,8 @@ export function drawEquipIcon(
       ctx.stroke()
     }
   } else if (slot === 'armor') {
-    if (equipId.includes('cloak')) {
-      // Flowing ranger cloak
+    if (equipId.includes('cloak') || equipId.includes('garb')) {
+      // Flowing ranger cloak / shroud
       ctx.beginPath()
       ctx.moveTo(cx, cy - r * 0.72)
       ctx.lineTo(cx + r * 0.62, cy + r * 0.65)
@@ -5956,8 +6129,31 @@ export function drawEquipIcon(
       ctx.strokeStyle = '#ffe6a3'
       ctx.lineWidth = 1.4
       ctx.stroke()
+    } else if (equipId.includes('robe') || equipId.includes('vestment') || equipId.includes('raiment') || equipId.includes('mantle')) {
+      // Arcane robe with flared sleeves and gold collar trim
+      ctx.beginPath()
+      ctx.moveTo(cx - r * 0.28, cy - r * 0.72)
+      ctx.lineTo(cx + r * 0.28, cy - r * 0.72)
+      ctx.lineTo(cx + r * 0.72, cy - r * 0.15)
+      ctx.lineTo(cx + r * 0.46, cy - r * 0.02)
+      ctx.lineTo(cx + r * 0.56, cy + r * 0.76)
+      ctx.lineTo(cx - r * 0.56, cy + r * 0.76)
+      ctx.lineTo(cx - r * 0.46, cy - r * 0.02)
+      ctx.lineTo(cx - r * 0.72, cy - r * 0.15)
+      ctx.closePath()
+      ctx.fillStyle = accentHex
+      ctx.fill()
+      ctx.strokeStyle = '#ffe6a3'
+      ctx.lineWidth = 1.3
+      ctx.stroke()
+      ctx.strokeStyle = '#fff1b8'
+      ctx.lineWidth = 1.6
+      ctx.beginPath()
+      ctx.moveTo(cx, cy - r * 0.58)
+      ctx.lineTo(cx, cy + r * 0.72)
+      ctx.stroke()
     } else {
-      // Cuirass / Breastplate
+      // Cuirass / Breastplate / Light Jerkin
       ctx.beginPath()
       ctx.moveTo(cx - r * 0.55, cy - r * 0.65)
       ctx.lineTo(cx - r * 0.2, cy - r * 0.45)
@@ -10336,15 +10532,21 @@ export function drawCodexHeroDetail(
   let bx = infoX
   const badgeY = cy + (compact ? 25 : 32)
   bx += drawChip(ctx, bx, badgeY, rMeta.label.toUpperCase(), { h: 18, size: 9.5, color: rMeta.hex, bg: '#121a30' }) + 5
+  const heroFam = EQUIP_FAMILY_META[getHeroEquipFamily(entry.id)]
+  bx += drawChip(ctx, bx, badgeY, compact ? heroFam.compactLabel : heroFam.shortLabel, {
+    h: 18, size: 9, color: heroFam.accentHex, bg: heroFam.bgHex, border: heroFam.accentHex + '88'
+  }) + 5
   const ownLabel = entry.owned
     ? `OWNED x${entry.ownedCount} · ${entry.highestStars}★ LV.${entry.highestLevel}`
     : 'NOT RECRUITED'
-  bx += drawChip(ctx, bx, badgeY, ownLabel, {
-    h: 18,
-    size: 9.5,
-    color: entry.owned ? COLOR.accentHi : COLOR.faint,
-    bg: '#121a30'
-  }) + 5
+  if (bx + 80 <= innerX + innerW) {
+    bx += drawChip(ctx, bx, badgeY, ownLabel, {
+      h: 18,
+      size: 9.5,
+      color: entry.owned ? COLOR.accentHi : COLOR.faint,
+      bg: '#121a30'
+    }) + 5
+  }
   if (entry.starterHero && bx + 68 <= innerX + innerW) {
     drawChip(ctx, bx, badgeY, 'STARTER', { h: 18, size: 9, color: COLOR.good, bg: '#142a22' })
   }
@@ -10498,15 +10700,21 @@ export function drawCodexEquipDetail(
   const badgeY = cy + (compact ? 26 : 34)
   bx += drawChip(ctx, bx, badgeY, rMeta.label.toUpperCase(), { h: 18, size: 9.5, color: rMeta.hex, bg: '#121a30' }) + 5
   bx += drawChip(ctx, bx, badgeY, slotLabel.toUpperCase(), { h: 18, size: 9.5, color: COLOR.ally, bg: '#121a30' }) + 5
+  const eqFam = EQUIP_FAMILY_META[getEquipFamily(entry.id)]
+  bx += drawChip(ctx, bx, badgeY, compact ? eqFam.compactLabel : eqFam.shortLabel, {
+    h: 18, size: 9, color: eqFam.accentHex, bg: eqFam.bgHex, border: eqFam.accentHex + '88'
+  }) + 5
   const ownText = entry.owned
     ? `OWNED x${entry.ownedCount}${entry.equippedCount > 0 ? ` (${entry.equippedCount} EQ)` : ''}`
     : 'UNOWNED'
-  drawChip(ctx, bx, badgeY, ownText, {
-    h: 18,
-    size: 9.5,
-    color: entry.owned ? COLOR.good : COLOR.faint,
-    bg: '#121a30'
-  })
+  if (bx + 68 <= innerX + innerW) {
+    drawChip(ctx, bx, badgeY, ownText, {
+      h: 18,
+      size: 9.5,
+      color: entry.owned ? COLOR.good : COLOR.faint,
+      bg: '#121a30'
+    })
+  }
 
   drawText(ctx, entry.spec.desc, infoX, cy + (compact ? 49 : 60), {
     size: compact ? 10 : 11.5,

@@ -2901,4 +2901,445 @@ function registerEquipmentArmorAndRelics(builder: CharacterBuilder): void {
       { name: 'solis_belt_core', mesh: m.aegisCore, position: [0, 0.004, 0.208], rotation: [Math.PI * 0.5, 0, 0], color: DAWN_GLOW, unlit: 0.96 }
     ]
   })
+
+  // =========================================================================
+  // CLASS-FAMILY ARMORS (Arcane Robes & Skirmisher Light Armor)
+  // =========================================================================
+
+  // --- 12. Acolyte Robe (`acolyte_robe`) ---
+  builder.registerPart('chest', 'chest_acolyte_robe', () => {
+    const m = getClassFamilyArmorMeshes()
+    return [
+      { name: 'acolyte_robe_body', mesh: m.acolyteRobeBody, color: [0.34, 0.42, 0.74, 1] },
+      { name: 'acolyte_robe_stole', mesh: m.acolyteStole, color: [0.80, 0.85, 0.94, 1] },
+      { name: 'acolyte_robe_clasp', mesh: m.crestGem, position: [0, 0.108, 0.190], color: [0.58, 0.82, 1.0, 1], unlit: 0.84 }
+    ]
+  })
+  builder.registerPart('pauldrons', 'pauldrons_acolyte_robe', () => {
+    const m = getClassFamilyArmorMeshes()
+    return [
+      { name: 'acolyte_mantle_l', mesh: m.robeMantleL, color: [0.28, 0.35, 0.64, 1] },
+      { name: 'acolyte_mantle_r', mesh: m.robeMantleR, color: [0.28, 0.35, 0.64, 1] }
+    ]
+  })
+
+  // --- 13. Sunweave Vestment (`sunweave_robe`) ---
+  builder.registerPart('chest', 'chest_sunweave_robe', () => {
+    const m = getClassFamilyArmorMeshes()
+    return [
+      { name: 'sunweave_body', mesh: m.sunweaveBody, color: [0.86, 0.68, 0.30, 1] },
+      { name: 'sunweave_stole', mesh: m.sunweaveStole, color: IVORY },
+      { name: 'sunweave_emblem', mesh: m.sunweaveEmblem, position: [0, 0.082, 0.194], color: DAWN_GLOW, unlit: 0.90 }
+    ]
+  })
+  builder.registerPart('pauldrons', 'pauldrons_sunweave_robe', () => {
+    const m = getClassFamilyArmorMeshes()
+    return [
+      { name: 'sunweave_pad_l', mesh: m.sunweavePadL, color: [0.76, 0.56, 0.22, 1] },
+      { name: 'sunweave_pad_r', mesh: m.sunweavePadR, color: [0.76, 0.56, 0.22, 1] },
+      { name: 'sunweave_trim_l', mesh: m.crestGem, position: [-0.328, 0.024, 0.112], color: DAWN_GOLD, unlit: 0.72 },
+      { name: 'sunweave_trim_r', mesh: m.crestGem, position: [0.328, 0.024, 0.112], color: DAWN_GOLD, unlit: 0.72 }
+    ]
+  })
+
+  // --- 14. Astral Vestments (`astral_vestments`) ---
+  builder.registerPart('chest', 'chest_astral_vestments', () => {
+    const m = getClassFamilyArmorMeshes()
+    return [
+      { name: 'astral_body', mesh: m.astralBody, color: [0.18, 0.32, 0.68, 1] },
+      { name: 'astral_sash', mesh: m.astralSash, color: RADIANT_GOLD },
+      { name: 'astral_star', mesh: m.astralStar, position: [0, 0.076, 0.198], rotation: [Math.PI * 0.5, 0, 0], color: [0.56, 0.88, 1.0, 1], unlit: 0.94 }
+    ]
+  })
+  builder.registerPart('pauldrons', 'pauldrons_astral_vestments', () => {
+    const m = getClassFamilyArmorMeshes()
+    return [
+      { name: 'astral_pad_l', mesh: m.astralPadL, color: [0.22, 0.40, 0.78, 1] },
+      { name: 'astral_pad_r', mesh: m.astralPadR, color: [0.22, 0.40, 0.78, 1] },
+      { name: 'astral_orb_l', mesh: m.crestGem, position: [-0.342, 0.048, 0.106], color: RUNED_GLOW, unlit: 0.92 },
+      { name: 'astral_orb_r', mesh: m.crestGem, position: [0.342, 0.048, 0.106], color: RUNED_GLOW, unlit: 0.92 }
+    ]
+  })
+
+  // --- 15. Glacier Raiment (`glacier_raiment`) ---
+  builder.registerPart('chest', 'chest_glacier_raiment', () => {
+    const m = getClassFamilyArmorMeshes()
+    return [
+      { name: 'glacier_body', mesh: m.glacierBody, color: [0.24, 0.52, 0.78, 1] },
+      { name: 'glacier_trim', mesh: m.glacierTrim, color: FROST_FUR },
+      { name: 'glacier_crystal', mesh: m.glacierCrystal, position: [0, 0.084, 0.198], color: FROST_CRYSTAL, unlit: 0.94 }
+    ]
+  })
+  builder.registerPart('pauldrons', 'pauldrons_glacier_raiment', () => {
+    const m = getClassFamilyArmorMeshes()
+    return [
+      { name: 'glacier_pad_l', mesh: m.glacierPadL, color: FROST_PLATE },
+      { name: 'glacier_pad_r', mesh: m.glacierPadR, color: FROST_PLATE },
+      { name: 'glacier_shard_l', mesh: m.glacierShard, position: [-0.360, 0.056, 0.02], rotation: [0, 0, 0.52], color: FROST_CRYSTAL, unlit: 0.72 },
+      { name: 'glacier_shard_r', mesh: m.glacierShard, position: [0.360, 0.056, 0.02], rotation: [0, 0, -0.52], color: FROST_CRYSTAL, unlit: 0.72 }
+    ]
+  })
+  builder.registerPart('collar', 'collar_glacier_raiment', () => {
+    const m = getClassFamilyArmorMeshes()
+    return [
+      { name: 'glacier_cowl', mesh: m.glacierCowl, color: FROST_FUR },
+      { name: 'glacier_cowl_gem', mesh: m.crestGem, position: [0, -0.020, 0.198], color: FROST_ICE, unlit: 0.92 }
+    ]
+  })
+
+  // --- 16. Starweaver Mantle (`starweaver_mantle`) ---
+  builder.registerPart('chest', 'chest_starweaver_mantle', () => {
+    const m = getClassFamilyArmorMeshes()
+    return [
+      { name: 'starweaver_body', mesh: m.starweaverBody, color: [0.34, 0.18, 0.58, 1] },
+      { name: 'starweaver_gold', mesh: m.starweaverGold, color: DAWN_GOLD },
+      { name: 'starweaver_core', mesh: m.astralStar, position: [0, 0.078, 0.202], rotation: [Math.PI * 0.5, 0, 0], color: SKYHAWK_GLOW, unlit: 0.96 }
+    ]
+  })
+  builder.registerPart('pauldrons', 'pauldrons_starweaver_mantle', () => {
+    const m = getClassFamilyArmorMeshes()
+    return [
+      { name: 'starweaver_pad_l', mesh: m.starweaverPadL, color: [0.46, 0.24, 0.76, 1] },
+      { name: 'starweaver_pad_r', mesh: m.starweaverPadR, color: [0.46, 0.24, 0.76, 1] },
+      { name: 'starweaver_fin_l', mesh: m.glacierShard, position: [-0.365, 0.068, 0.02], rotation: [0, 0, 0.42], color: DAWN_GOLD, unlit: 0.62 },
+      { name: 'starweaver_fin_r', mesh: m.glacierShard, position: [0.365, 0.068, 0.02], rotation: [0, 0, -0.42], color: DAWN_GOLD, unlit: 0.62 }
+    ]
+  })
+  builder.registerPart('back', 'cape_starweaver', () => {
+    const m = getClassFamilyArmorMeshes()
+    return [
+      { name: 'cape_starweaver_body', mesh: m.starweaverCape, color: [0.28, 0.14, 0.50, 1] },
+      { name: 'cape_starweaver_hem', mesh: m.starweaverCapeHem, color: DAWN_GOLD, unlit: 0.45 },
+      { name: 'cape_starweaver_sigil', mesh: m.astralStar, position: [0, -0.24, -0.175], rotation: [Math.PI * 0.5, 0, 0], color: SKYHAWK_GLOW, unlit: 0.94 }
+    ]
+  })
+
+  // --- 17. Stalker Leathers (`stalker_leathers`) ---
+  builder.registerPart('chest', 'chest_stalker_leathers', () => {
+    const m = getClassFamilyArmorMeshes()
+    return [
+      { name: 'stalker_body', mesh: m.stalkerBody, color: [0.28, 0.42, 0.58, 1] },
+      { name: 'stalker_strap', mesh: m.stalkerStrap, color: [0.22, 0.20, 0.26, 1] },
+      { name: 'stalker_buckle', mesh: m.crestGem, position: [0.02, 0.072, 0.194], color: WATCHMAN_STEEL }
+    ]
+  })
+  builder.registerPart('pauldrons', 'pauldrons_stalker_leathers', () => {
+    const m = getClassFamilyArmorMeshes()
+    return [
+      { name: 'stalker_pad_l', mesh: m.stalkerPadL, color: [0.22, 0.34, 0.48, 1] },
+      { name: 'stalker_pad_r', mesh: m.stalkerPadR, color: [0.34, 0.48, 0.64, 1] }
+    ]
+  })
+
+  // --- 18. Shadowsilk Vest (`shadowsilk_vest`) ---
+  builder.registerPart('chest', 'chest_shadowsilk_vest', () => {
+    const m = getClassFamilyArmorMeshes()
+    return [
+      { name: 'shadowsilk_body', mesh: m.shadowsilkBody, color: [0.20, 0.16, 0.32, 1] },
+      { name: 'shadowsilk_trim', mesh: m.shadowsilkTrim, color: VIOLET_RUNE, unlit: 0.52 },
+      { name: 'shadowsilk_brooch', mesh: m.crestGem, position: [0, 0.086, 0.196], color: SKYHAWK_GLOW, unlit: 0.92 }
+    ]
+  })
+  builder.registerPart('pauldrons', 'pauldrons_shadowsilk_vest', () => {
+    const m = getClassFamilyArmorMeshes()
+    return [
+      { name: 'shadowsilk_pad_l', mesh: m.shadowsilkPadL, color: OBSIDIAN },
+      { name: 'shadowsilk_pad_r', mesh: m.shadowsilkPadR, color: OBSIDIAN },
+      { name: 'shadowsilk_edge_l', mesh: m.glacierShard, position: [-0.348, 0.044, 0.04], rotation: [0.2, 0, 0.66], color: VIOLET_RUNE, unlit: 0.72 },
+      { name: 'shadowsilk_edge_r', mesh: m.glacierShard, position: [0.348, 0.044, 0.04], rotation: [0.2, 0, -0.66], color: VIOLET_RUNE, unlit: 0.72 }
+    ]
+  })
+  builder.registerPart('collar', 'collar_shadowsilk_vest', () => {
+    const m = getClassFamilyArmorMeshes()
+    return [
+      { name: 'shadowsilk_collar', mesh: m.shadowsilkCollar, color: [0.26, 0.18, 0.42, 1] }
+    ]
+  })
+
+  // --- 19. Nightwind Shroud (`nightwind_garb`) ---
+  builder.registerPart('chest', 'chest_nightwind_garb', () => {
+    const m = getClassFamilyArmorMeshes()
+    return [
+      { name: 'nightwind_body', mesh: m.nightwindBody, color: [0.12, 0.24, 0.26, 1] },
+      { name: 'nightwind_sash', mesh: m.nightwindSash, color: GALE_JADE, unlit: 0.42 },
+      { name: 'nightwind_gem', mesh: m.crestGem, position: [0, 0.088, 0.200], color: GALE_MINT, unlit: 0.96 }
+    ]
+  })
+  builder.registerPart('pauldrons', 'pauldrons_nightwind_garb', () => {
+    const m = getClassFamilyArmorMeshes()
+    return [
+      { name: 'nightwind_pad_l', mesh: m.nightwindPadL, color: [0.14, 0.30, 0.30, 1] },
+      { name: 'nightwind_pad_r', mesh: m.nightwindPadR, color: [0.14, 0.30, 0.30, 1] },
+      { name: 'nightwind_blade_l', mesh: m.glacierShard, position: [-0.354, 0.052, 0.03], rotation: [0.15, 0, 0.58], color: GALE_MINT, unlit: 0.80 },
+      { name: 'nightwind_blade_r', mesh: m.glacierShard, position: [0.354, 0.052, 0.03], rotation: [0.15, 0, -0.58], color: GALE_MINT, unlit: 0.80 }
+    ]
+  })
+  builder.registerPart('back', 'cape_nightwind', () => {
+    const m = getClassFamilyArmorMeshes()
+    return [
+      { name: 'cape_nightwind_main', mesh: m.nightwindCape, color: [0.10, 0.26, 0.26, 1] },
+      { name: 'cape_nightwind_tail_l', mesh: m.nightwindTailL, color: GALE_JADE, unlit: 0.38 },
+      { name: 'cape_nightwind_tail_r', mesh: m.nightwindTailR, color: GALE_JADE, unlit: 0.38 }
+    ]
+  })
+}
+
+interface ClassFamilyArmorMeshes {
+  readonly crestGem: Mesh
+  readonly acolyteRobeBody: Mesh
+  readonly acolyteStole: Mesh
+  readonly robeMantleL: Mesh
+  readonly robeMantleR: Mesh
+  readonly sunweaveBody: Mesh
+  readonly sunweaveStole: Mesh
+  readonly sunweaveEmblem: Mesh
+  readonly sunweavePadL: Mesh
+  readonly sunweavePadR: Mesh
+  readonly astralBody: Mesh
+  readonly astralSash: Mesh
+  readonly astralStar: Mesh
+  readonly astralPadL: Mesh
+  readonly astralPadR: Mesh
+  readonly glacierBody: Mesh
+  readonly glacierTrim: Mesh
+  readonly glacierCrystal: Mesh
+  readonly glacierPadL: Mesh
+  readonly glacierPadR: Mesh
+  readonly glacierShard: Mesh
+  readonly glacierCowl: Mesh
+  readonly starweaverBody: Mesh
+  readonly starweaverGold: Mesh
+  readonly starweaverPadL: Mesh
+  readonly starweaverPadR: Mesh
+  readonly starweaverCape: Mesh
+  readonly starweaverCapeHem: Mesh
+  readonly stalkerBody: Mesh
+  readonly stalkerStrap: Mesh
+  readonly stalkerPadL: Mesh
+  readonly stalkerPadR: Mesh
+  readonly shadowsilkBody: Mesh
+  readonly shadowsilkTrim: Mesh
+  readonly shadowsilkPadL: Mesh
+  readonly shadowsilkPadR: Mesh
+  readonly shadowsilkCollar: Mesh
+  readonly nightwindBody: Mesh
+  readonly nightwindSash: Mesh
+  readonly nightwindPadL: Mesh
+  readonly nightwindPadR: Mesh
+  readonly nightwindCape: Mesh
+  readonly nightwindTailL: Mesh
+  readonly nightwindTailR: Mesh
+}
+
+let cachedClassFamilyArmor: ClassFamilyArmorMeshes | null = null
+
+function getClassFamilyArmorMeshes(): ClassFamilyArmorMeshes {
+  if (cachedClassFamilyArmor) return cachedClassFamilyArmor
+
+  const crestGem = createCrestDiamondMesh(0.036, 0.048, 0.022)
+  const glacierShard = createSpikeCone(0.118, 0.030)
+
+  const makeShoulderShell = (side: Side, rx: number, ry: number, rz: number, flareY = 0): Mesh =>
+    sculptLoft([
+      { y: -ry * 0.45, rx: rx * 0.96, rz: rz * 0.92, xOffset: side * 0.305 },
+      { y: 0.02 + flareY * 0.4, rx, rz, xOffset: side * 0.312 },
+      { y: ry * 0.65 + flareY, rx: rx * 0.56, rz: rz * 0.62, xOffset: side * 0.278 }
+    ], { sides: 7, aoStrength: 0.14, aoGradient: 0.08 })
+
+  // Acolyte Robe
+  const acolyteRobeBody = sculptLoft([
+    { y: -0.20, rx: 0.240, rz: 0.172, frontFlat: 0.06, backFlat: 0.06 },
+    { y: 0.02, rx: 0.256, rz: 0.184, frontFlat: 0.06, backFlat: 0.06 },
+    { y: 0.21, rx: 0.242, rz: 0.168, frontFlat: 0.05, backFlat: 0.05 }
+  ], { sides: 8, aoStrength: 0.14, aoGradient: 0.08 })
+  const acolyteStole = sculptLoft([
+    { y: -0.19, rx: 0.082, rz: 0.030, zOffset: 0.168 },
+    { y: 0.02, rx: 0.098, rz: 0.034, zOffset: 0.176 },
+    { y: 0.20, rx: 0.120, rz: 0.032, zOffset: 0.158 }
+  ], { sides: 6, aoStrength: 0.10, aoGradient: 0.05 })
+  const robeMantleL = makeShoulderShell(-1, 0.116, 0.090, 0.128)
+  const robeMantleR = makeShoulderShell(1, 0.116, 0.090, 0.128)
+
+  // Sunweave Vestment
+  const sunweaveBody = sculptLoft([
+    { y: -0.21, rx: 0.246, rz: 0.176, frontFlat: 0.06, backFlat: 0.06 },
+    { y: 0.03, rx: 0.264, rz: 0.188, frontFlat: 0.06, backFlat: 0.06 },
+    { y: 0.22, rx: 0.248, rz: 0.172, frontFlat: 0.05, backFlat: 0.05 }
+  ], { sides: 8, aoStrength: 0.14, aoGradient: 0.08 })
+  const sunweaveStole = sculptLoft([
+    { y: -0.20, rx: 0.104, rz: 0.032, zOffset: 0.172 },
+    { y: 0.04, rx: 0.132, rz: 0.034, zOffset: 0.180 },
+    { y: 0.21, rx: 0.148, rz: 0.032, zOffset: 0.162 }
+  ], { sides: 6, aoStrength: 0.10, aoGradient: 0.05 })
+  const sunweaveEmblem = createCrestDiamondMesh(0.052, 0.068, 0.026)
+  const sunweavePadL = makeShoulderShell(-1, 0.132, 0.104, 0.140, 0.012)
+  const sunweavePadR = makeShoulderShell(1, 0.132, 0.104, 0.140, 0.012)
+
+  // Astral Vestments
+  const astralBody = sculptLoft([
+    { y: -0.21, rx: 0.248, rz: 0.178, frontFlat: 0.06, backFlat: 0.06 },
+    { y: 0.04, rx: 0.268, rz: 0.192, frontFlat: 0.06, backFlat: 0.06 },
+    { y: 0.22, rx: 0.254, rz: 0.176, frontFlat: 0.05, backFlat: 0.05 }
+  ], { sides: 8, aoStrength: 0.14, aoGradient: 0.08 })
+  const astralSash = sculptLoft([
+    { y: -0.18, rx: 0.258, rz: 0.186 },
+    { y: -0.10, rx: 0.264, rz: 0.190 }
+  ], { sides: 8, aoStrength: 0.12, aoGradient: 0.06 })
+  const astralStar = sculptLoft([
+    makeStarRing(-0.014, 6, 0.064, 0.064, 0.032, 0.032),
+    makeStarRing(0.014, 6, 0.058, 0.058, 0.028, 0.028)
+  ], { aoStrength: 0.08, aoGradient: 0.04 })
+  const astralPadL = makeShoulderShell(-1, 0.144, 0.118, 0.148, 0.026)
+  const astralPadR = makeShoulderShell(1, 0.144, 0.118, 0.148, 0.026)
+
+  // Glacier Raiment
+  const glacierBody = sculptLoft([
+    { y: -0.21, rx: 0.252, rz: 0.180, frontFlat: 0.06, backFlat: 0.06 },
+    { y: 0.04, rx: 0.272, rz: 0.194, frontFlat: 0.06, backFlat: 0.06 },
+    { y: 0.23, rx: 0.258, rz: 0.178, frontFlat: 0.05, backFlat: 0.05 }
+  ], { sides: 8, aoStrength: 0.14, aoGradient: 0.08 })
+  const glacierTrim = sculptLoft([
+    { y: -0.21, rx: 0.090, rz: 0.036, zOffset: 0.174 },
+    { y: 0.05, rx: 0.108, rz: 0.038, zOffset: 0.184 },
+    { y: 0.22, rx: 0.162, rz: 0.036, zOffset: 0.164 }
+  ], { sides: 6, aoStrength: 0.10, aoGradient: 0.05 })
+  const glacierCrystal = createCrestDiamondMesh(0.058, 0.078, 0.030)
+  const glacierPadL = makeShoulderShell(-1, 0.150, 0.124, 0.154, 0.028)
+  const glacierPadR = makeShoulderShell(1, 0.150, 0.124, 0.154, 0.028)
+  const glacierCowl = sculptLoft([
+    { y: -0.052, rx: 0.236, rz: 0.188 },
+    { y: 0.004, rx: 0.258, rz: 0.204 },
+    { y: 0.052, rx: 0.218, rz: 0.174 }
+  ], { sides: 8, aoStrength: 0.14, aoGradient: 0.08 })
+
+  // Starweaver Mantle
+  const starweaverBody = sculptLoft([
+    { y: -0.22, rx: 0.256, rz: 0.182, frontFlat: 0.06, backFlat: 0.06 },
+    { y: 0.04, rx: 0.278, rz: 0.198, frontFlat: 0.06, backFlat: 0.06 },
+    { y: 0.23, rx: 0.264, rz: 0.182, frontFlat: 0.05, backFlat: 0.05 }
+  ], { sides: 8, aoStrength: 0.14, aoGradient: 0.08 })
+  const starweaverGold = sculptLoft([
+    { y: 0.12, rx: 0.268, rz: 0.194 },
+    { y: 0.22, rx: 0.276, rz: 0.198 }
+  ], { sides: 8, aoStrength: 0.10, aoGradient: 0.05 })
+  const starweaverPadL = makeShoulderShell(-1, 0.158, 0.132, 0.160, 0.038)
+  const starweaverPadR = makeShoulderShell(1, 0.158, 0.132, 0.160, 0.038)
+  const starweaverCape = sculptLoft([
+    makeCapeRing(-0.54, 0.34, -0.15, 0.028, 0.06),
+    makeCapeRing(-0.20, 0.29, -0.14, 0.030, 0.05),
+    makeCapeRing(0.14, 0.24, -0.11, 0.032, 0.04)
+  ], { aoStrength: 0.14, aoGradient: 0.08 })
+  const starweaverCapeHem = sculptLoft([
+    makeCapeRing(-0.56, 0.35, -0.15, 0.032, 0.06),
+    makeCapeRing(-0.48, 0.33, -0.15, 0.030, 0.06)
+  ], { aoStrength: 0.10, aoGradient: 0.04 })
+
+  // Stalker Leathers
+  const stalkerBody = sculptLoft([
+    { y: -0.19, rx: 0.234, rz: 0.168, frontFlat: 0.08, backFlat: 0.08 },
+    { y: 0.03, rx: 0.254, rz: 0.182, frontFlat: 0.08, backFlat: 0.08 },
+    { y: 0.20, rx: 0.240, rz: 0.168, frontFlat: 0.07, backFlat: 0.07 }
+  ], { sides: 8, aoStrength: 0.16, aoGradient: 0.08 })
+  const stalkerStrap = sculptLoft([
+    { y: -0.17, rx: 0.048, rz: 0.030, xOffset: -0.13, zOffset: 0.164 },
+    { y: 0.02, rx: 0.052, rz: 0.032, xOffset: 0.00, zOffset: 0.180 },
+    { y: 0.19, rx: 0.048, rz: 0.030, xOffset: 0.13, zOffset: 0.162 }
+  ], { sides: 6 })
+  const stalkerPadL = makeShoulderShell(-1, 0.112, 0.088, 0.122)
+  const stalkerPadR = makeShoulderShell(1, 0.134, 0.108, 0.138, 0.018)
+
+  // Shadowsilk Vest
+  const shadowsilkBody = sculptLoft([
+    { y: -0.19, rx: 0.238, rz: 0.170, frontFlat: 0.08, backFlat: 0.08 },
+    { y: 0.03, rx: 0.260, rz: 0.186, frontFlat: 0.08, backFlat: 0.08 },
+    { y: 0.21, rx: 0.246, rz: 0.172, frontFlat: 0.07, backFlat: 0.07 }
+  ], { sides: 8, aoStrength: 0.16, aoGradient: 0.08 })
+  const shadowsilkTrim = sculptLoft([
+    { y: -0.18, rx: 0.074, rz: 0.028, zOffset: 0.172 },
+    { y: 0.04, rx: 0.112, rz: 0.032, zOffset: 0.184 },
+    { y: 0.20, rx: 0.138, rz: 0.030, zOffset: 0.168 }
+  ], { sides: 6 })
+  const shadowsilkPadL = makeShoulderShell(-1, 0.138, 0.110, 0.142, 0.022)
+  const shadowsilkPadR = makeShoulderShell(1, 0.138, 0.110, 0.142, 0.022)
+  const shadowsilkCollar = sculptLoft([
+    { y: -0.028, rx: 0.202, rz: 0.164 },
+    { y: 0.048, rx: 0.246, rz: 0.196 },
+    { y: 0.082, rx: 0.234, rz: 0.184 }
+  ], { sides: 8, aoStrength: 0.14, aoGradient: 0.08 })
+
+  // Nightwind Shroud
+  const nightwindBody = sculptLoft([
+    { y: -0.20, rx: 0.242, rz: 0.174, frontFlat: 0.08, backFlat: 0.08 },
+    { y: 0.04, rx: 0.266, rz: 0.190, frontFlat: 0.08, backFlat: 0.08 },
+    { y: 0.22, rx: 0.252, rz: 0.176, frontFlat: 0.07, backFlat: 0.07 }
+  ], { sides: 8, aoStrength: 0.16, aoGradient: 0.08 })
+  const nightwindSash = sculptLoft([
+    { y: -0.16, rx: 0.254, rz: 0.184 },
+    { y: -0.06, rx: 0.262, rz: 0.188 }
+  ], { sides: 8 })
+  const nightwindPadL = makeShoulderShell(-1, 0.146, 0.118, 0.148, 0.028)
+  const nightwindPadR = makeShoulderShell(1, 0.146, 0.118, 0.148, 0.028)
+  const nightwindCape = sculptLoft([
+    makeCapeRing(-0.46, 0.28, -0.14, 0.026, 0.05),
+    makeCapeRing(-0.16, 0.25, -0.13, 0.028, 0.04),
+    makeCapeRing(0.14, 0.21, -0.11, 0.030, 0.03)
+  ], { aoStrength: 0.14, aoGradient: 0.08 })
+  const nightwindTailL = sculptLoft([
+    { y: -0.58, rx: 0.042, rz: 0.018, xOffset: -0.16, zOffset: -0.18 },
+    { y: -0.34, rx: 0.062, rz: 0.022, xOffset: -0.13, zOffset: -0.16 },
+    { y: -0.12, rx: 0.052, rz: 0.020, xOffset: -0.10, zOffset: -0.14 }
+  ], { sides: 6 })
+  const nightwindTailR = sculptLoft([
+    { y: -0.58, rx: 0.042, rz: 0.018, xOffset: 0.16, zOffset: -0.18 },
+    { y: -0.34, rx: 0.062, rz: 0.022, xOffset: 0.13, zOffset: -0.16 },
+    { y: -0.12, rx: 0.052, rz: 0.020, xOffset: 0.10, zOffset: -0.14 }
+  ], { sides: 6 })
+
+  cachedClassFamilyArmor = {
+    crestGem,
+    acolyteRobeBody,
+    acolyteStole,
+    robeMantleL,
+    robeMantleR,
+    sunweaveBody,
+    sunweaveStole,
+    sunweaveEmblem,
+    sunweavePadL,
+    sunweavePadR,
+    astralBody,
+    astralSash,
+    astralStar,
+    astralPadL,
+    astralPadR,
+    glacierBody,
+    glacierTrim,
+    glacierCrystal,
+    glacierPadL,
+    glacierPadR,
+    glacierShard,
+    glacierCowl,
+    starweaverBody,
+    starweaverGold,
+    starweaverPadL,
+    starweaverPadR,
+    starweaverCape,
+    starweaverCapeHem,
+    stalkerBody,
+    stalkerStrap,
+    stalkerPadL,
+    stalkerPadR,
+    shadowsilkBody,
+    shadowsilkTrim,
+    shadowsilkPadL,
+    shadowsilkPadR,
+    shadowsilkCollar,
+    nightwindBody,
+    nightwindSash,
+    nightwindPadL,
+    nightwindPadR,
+    nightwindCape,
+    nightwindTailL,
+    nightwindTailR
+  }
+  return cachedClassFamilyArmor
 }

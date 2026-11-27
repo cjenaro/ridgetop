@@ -156,10 +156,10 @@ test('complete metadata coverage for all 24 enemies, 8 heroes, and 18 equipment 
     assert.ok(getHeroCraftCost(hero.id) > 0, `${hero.id} has Forge Shard cost`)
   }
 
-  assert.equal(EQUIPMENT_LIST.length, 18)
+  assert.equal(EQUIPMENT_LIST.length, 33)
   const state = createInitialState(101)
   const gearEntries = getEquipCodexEntries(state.campaign)
-  assert.equal(gearEntries.length, 18)
+  assert.equal(gearEntries.length, 33)
   for (const entry of gearEntries) {
     assert.ok(entry.spec.name.trim().length > 2)
     assert.ok(entry.spec.desc.trim().length > 4)
@@ -186,15 +186,15 @@ test('undiscovered enemies are masked as ??? and live battle discovery unlocks e
   const state = createInitialState(202)
   assert.deepEqual(state.campaign.discoveredEnemies, [])
 
-  // Initial progress: 0/24 enemies, 3/8 starter heroes, 3/18 starter equipment => 6/50 = 12%
+  // Initial progress: 0/24 enemies, 3/8 starter heroes, 4/33 starter equipment => 7/65 = 11%
   const initProg = getCodexProgress(state.campaign)
   assert.equal(initProg.enemiesDiscovered, 0)
   assert.equal(initProg.enemiesTotal, 24)
   assert.equal(initProg.heroesOwned, 3)
   assert.equal(initProg.heroesTotal, 8)
-  assert.equal(initProg.equipmentOwned, 3)
-  assert.equal(initProg.equipmentTotal, 18)
-  assert.equal(initProg.overallPct, 12)
+  assert.equal(initProg.equipmentOwned, 4)
+  assert.equal(initProg.equipmentTotal, 33)
+  assert.equal(initProg.overallPct, 11)
 
   // Before battle, all enemies are undiscovered mysteries
   const hiddenGoblin = getBestiaryEntry(state.campaign, 'goblin')
