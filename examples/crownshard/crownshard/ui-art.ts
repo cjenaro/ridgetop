@@ -1535,184 +1535,142 @@ export function drawOtaUpdateBanner(
 }
 
 /**
- * Integrates the iOS hardware notch / Dynamic Island & home indicator into
- * Crownshard's dark obsidian-steel & gold war-console frame.
- * Purely decorative (pointer-transparent); only draws when real hardware
- * safe-area insets are present.
+ * Draws a minimal gold & steel collar hugging just the iOS Dynamic Island pill
+ * (or classic notch) on the single edge where the hardware cutout sits.
+ * No opaque black wing slab; purely decorative & pointer-transparent.
  */
 export function drawNotchBezel(
   ctx: CanvasRenderingContext2D,
   rect: LayoutRect,
   spec: {
-    readonly mode: 'none' | 'landscape-wings' | 'portrait-top'
-    readonly leftInset: number
-    readonly rightInset: number
-    readonly topInset: number
-    readonly bottomInset: number
+    readonly side: 'none' | 'left' | 'right' | 'top'
+    readonly style: 'island' | 'notch'
+    readonly inset: number
   }
 ) {
-  if (spec.mode === 'none') return
+  if (spec.side === 'none') return
   const { x, y, width: w, height: h } = rect
 
   ctx.save()
-  if (spec.mode === 'landscape-wings') {
-    const wingH = Math.min(h - 32, Math.max(150, Math.round(h * 0.58)))
-    const wy = y + Math.round((h - wingH) / 2)
-    const bevel = 14
+  if (spec.style === 'island') {
+    // Apple Dynamic Island logical geometry: 126pt x 37pt pill, 11pt from screen edge.
+    // Collar expands 3pt around the pill with a dark ink halo, steel bevel, and crisp gold rim.
+    const pad = 3
+    const edgeGap = 11 - pad
+    const pillThick = 37 + pad * 2
+    const pillLen = 126 + pad * 2
+    const r = pillThick / 2
 
-    const drawSideWing = (side: 'left' | 'right', inset: number) => {
-      if (inset < 24) return
-      const wingW = Math.min(64, Math.max(36, Math.round(inset - 2)))
-      const outerX = side === 'left' ? x - 2 : x + w + 2
-      const innerX = side === 'left' ? x + wingW : x + w - wingW
-      const dir = side === 'left' ? 1 : -1
+    let px: number
+    let py: number
+    let pw: number
+    let ph: number
+    if (spec.side === 'left') {
+      px = x + edgeGap
+      py = y + Math.round((h - pillLen) / 2)
+      pw = pillThick
+      ph = pillLen
+    } else if (spec.side === 'right') {
+      px = x + w - edgeGap - pillThick
+      py = y + Math.round((h - pillLen) / 2)
+      pw = pillThick
+      ph = pillLen
+    } else {
+      px = x + Math.round((w - pillLen) / 2)
+      py = y + edgeGap
+      pw = pillLen
+      ph = pillThick
+    }
 
-      // Soft ambient shadow cast onto the 3D scene
-      ctx.save()
-      ctx.shadowColor = 'rgba(4, 7, 16, 0.72)'
-      ctx.shadowBlur = 12
-      ctx.shadowOffsetX = dir * 2
-      ctx.shadowOffsetY = 2
+    // Subtle outer dark ink shadow halo
+    ctx.save()
+    ctx.shadowColor = 'rgba(5, 8, 18, 0.72)'
+    ctx.shadowBlur = 7
+    ctx.shadowOffsetY = 1.5
+    rr(ctx, px, py, pw, ph, r)
+    ctx.strokeStyle = COLOR.outline
+    ctx.lineWidth = 5.5
+    ctx.stroke()
+    ctx.restore()
 
-      // Tapered chamfered obsidian-iron shield bolster
+    // Metallic steel collar ring
+    rr(ctx, px, py, pw, ph, r)
+    ctx.strokeStyle = '#364b7c'
+    ctx.lineWidth = 3.2
+    ctx.stroke()
+
+    // Crisp golden trim line
+    rr(ctx, px, py, pw, ph, r)
+    ctx.strokeStyle = COLOR.accent
+    ctx.lineWidth = 1.4
+    ctx.stroke()
+
+    // Tiny golden accent studs centered right on the collar rim at the two poles of the pill
+    const studs: readonly (readonly [number, number])[] = spec.side === 'top'
+      ? [[px, py + ph / 2], [px + pw, py + ph / 2]]
+      : [[px + pw / 2, py], [px + pw / 2, py + ph]]
+    for (const [sx, sy] of studs) {
       ctx.beginPath()
-      ctx.moveTo(outerX, wy - 6)
-      ctx.lineTo(innerX - dir * bevel, wy + 2)
-      ctx.quadraticCurveTo(innerX, wy + 6, innerX, wy + bevel + 8)
-      ctx.lineTo(innerX, wy + wingH - bevel - 8)
-      ctx.quadraticCurveTo(innerX, wy + wingH - 6, innerX - dir * bevel, wy + wingH - 2)
-      ctx.lineTo(outerX, wy + wingH + 6)
-      ctx.closePath()
-
-      const grad = ctx.createLinearGradient(outerX, wy, innerX, wy)
-      grad.addColorStop(0, '#070a12')
-      grad.addColorStop(0.72, '#0b1020')
-      grad.addColorStop(1, '#1b2644')
-      ctx.fillStyle = grad
-      ctx.fill()
-      ctx.restore()
-
-      // Outer dark ink outline
-      ctx.beginPath()
-      ctx.moveTo(outerX, wy - 6)
-      ctx.lineTo(innerX - dir * bevel, wy + 2)
-      ctx.quadraticCurveTo(innerX, wy + 6, innerX, wy + bevel + 8)
-      ctx.lineTo(innerX, wy + wingH - bevel - 8)
-      ctx.quadraticCurveTo(innerX, wy + wingH - 6, innerX - dir * bevel, wy + wingH - 2)
-      ctx.lineTo(outerX, wy + wingH + 6)
-      ctx.strokeStyle = COLOR.outline
-      ctx.lineWidth = 2.6
-      ctx.stroke()
-
-      // Crisp golden filigree rim along the inner bevel edge
-      const rimX = innerX - dir * 3.5
-      ctx.beginPath()
-      ctx.moveTo(rimX - dir * (bevel - 5), wy + 7)
-      ctx.quadraticCurveTo(rimX, wy + 11, rimX, wy + bevel + 9)
-      ctx.lineTo(rimX, wy + wingH - bevel - 9)
-      ctx.quadraticCurveTo(rimX, wy + wingH - 11, rimX - dir * (bevel - 5), wy + wingH - 7)
-      ctx.strokeStyle = COLOR.accent
-      ctx.lineWidth = 1.6
-      ctx.stroke()
-
-      // Twin steel rivets near top & bottom of bolster
-      const rivetX = innerX - dir * 10
-      for (const ry of [wy + 20, wy + wingH - 20]) {
-        ctx.beginPath()
-        ctx.arc(rivetX, ry, 2.5, 0, Math.PI * 2)
-        ctx.fillStyle = '#5e75ab'
-        ctx.fill()
-        ctx.strokeStyle = COLOR.outline
-        ctx.lineWidth = 1.3
-        ctx.stroke()
-      }
-
-      // Centered golden shard crest accent on the inner edge
-      const cy = wy + wingH / 2
-      ctx.beginPath()
-      ctx.moveTo(innerX + dir * 2.5, cy)
-      ctx.lineTo(innerX - dir * 4.5, cy - 6.5)
-      ctx.lineTo(innerX - dir * 8.5, cy)
-      ctx.lineTo(innerX - dir * 4.5, cy + 6.5)
-      ctx.closePath()
+      ctx.arc(sx, sy, 2.3, 0, Math.PI * 2)
       ctx.fillStyle = COLOR.accentHi
       ctx.fill()
       ctx.strokeStyle = COLOR.outline
-      ctx.lineWidth = 1.5
+      ctx.lineWidth = 1.2
       ctx.stroke()
     }
-
-    drawSideWing('left', spec.leftInset)
-    drawSideWing('right', spec.rightInset)
-  } else if (spec.mode === 'portrait-top') {
-    const capW = Math.min(w - 64, Math.max(156, Math.round(w * 0.48)))
-    const capH = Math.min(58, Math.max(32, Math.round(spec.topInset - 2)))
-    const cx = x + w / 2
-    const leftX = cx - capW / 2
-    const rightX = cx + capW / 2
-    const botY = y + capH
+  } else {
+    // Classic edge-attached iOS notch (44–47pt safe-area): minimal open-edge collar hugging just the cutout.
+    const depth = Math.min(34, Math.max(26, Math.round(spec.inset - 12)))
+    const len = 152
     const r = 14
 
+    const traceNotch = () => {
+      ctx.beginPath()
+      if (spec.side === 'left') {
+        const ny = y + Math.round((h - len) / 2)
+        ctx.moveTo(x - 2, ny)
+        ctx.lineTo(x + depth - r, ny)
+        ctx.quadraticCurveTo(x + depth, ny, x + depth, ny + r)
+        ctx.lineTo(x + depth, ny + len - r)
+        ctx.quadraticCurveTo(x + depth, ny + len, x + depth - r, ny + len)
+        ctx.lineTo(x - 2, ny + len)
+      } else if (spec.side === 'right') {
+        const ny = y + Math.round((h - len) / 2)
+        ctx.moveTo(x + w + 2, ny)
+        ctx.lineTo(x + w - depth + r, ny)
+        ctx.quadraticCurveTo(x + w - depth, ny, x + w - depth, ny + r)
+        ctx.lineTo(x + w - depth, ny + len - r)
+        ctx.quadraticCurveTo(x + w - depth, ny + len, x + w - depth + r, ny + len)
+        ctx.lineTo(x + w + 2, ny + len)
+      } else {
+        const nx = x + Math.round((w - len) / 2)
+        ctx.moveTo(nx, y - 2)
+        ctx.lineTo(nx, y + depth - r)
+        ctx.quadraticCurveTo(nx, y + depth, nx + r, y + depth)
+        ctx.lineTo(nx + len - r, y + depth)
+        ctx.quadraticCurveTo(nx + len, y + depth, nx + len, y + depth - r)
+        ctx.lineTo(nx + len, y - 2)
+      }
+    }
+
     ctx.save()
-    ctx.shadowColor = 'rgba(4, 7, 16, 0.72)'
-    ctx.shadowBlur = 10
-    ctx.shadowOffsetY = 2
-    ctx.beginPath()
-    ctx.moveTo(leftX - 8, y - 2)
-    ctx.lineTo(leftX, botY - r)
-    ctx.quadraticCurveTo(leftX, botY, leftX + r, botY)
-    ctx.lineTo(rightX - r, botY)
-    ctx.quadraticCurveTo(rightX, botY, rightX, botY - r)
-    ctx.lineTo(rightX + 8, y - 2)
-    ctx.closePath()
-    const grad = ctx.createLinearGradient(0, y, 0, botY)
-    grad.addColorStop(0, '#070a12')
-    grad.addColorStop(0.75, '#0b1020')
-    grad.addColorStop(1, '#1b2644')
-    ctx.fillStyle = grad
-    ctx.fill()
+    ctx.shadowColor = 'rgba(5, 8, 18, 0.7)'
+    ctx.shadowBlur = 6
+    traceNotch()
+    ctx.strokeStyle = COLOR.outline
+    ctx.lineWidth = 5
+    ctx.stroke()
     ctx.restore()
 
-    ctx.beginPath()
-    ctx.moveTo(leftX - 8, y - 2)
-    ctx.lineTo(leftX, botY - r)
-    ctx.quadraticCurveTo(leftX, botY, leftX + r, botY)
-    ctx.lineTo(rightX - r, botY)
-    ctx.quadraticCurveTo(rightX, botY, rightX, botY - r)
-    ctx.lineTo(rightX + 8, y - 2)
-    ctx.strokeStyle = COLOR.outline
-    ctx.lineWidth = 2.4
+    traceNotch()
+    ctx.strokeStyle = '#364b7c'
+    ctx.lineWidth = 3
     ctx.stroke()
 
-    // Gold lower trim & center shard gem
-    ctx.beginPath()
-    ctx.moveTo(leftX + r + 2, botY - 3.5)
-    ctx.lineTo(rightX - r - 2, botY - 3.5)
+    traceNotch()
     ctx.strokeStyle = COLOR.accent
-    ctx.lineWidth = 1.6
-    ctx.stroke()
-
-    ctx.beginPath()
-    ctx.moveTo(cx, botY + 2.5)
-    ctx.lineTo(cx - 6, botY - 4)
-    ctx.lineTo(cx, botY - 8)
-    ctx.lineTo(cx + 6, botY - 4)
-    ctx.closePath()
-    ctx.fillStyle = COLOR.accentHi
-    ctx.fill()
-    ctx.strokeStyle = COLOR.outline
     ctx.lineWidth = 1.4
     ctx.stroke()
-  }
-
-  // Subtle bottom home-indicator vignette + gold filigree tick
-  if (spec.bottomInset >= 14) {
-    const stripH = Math.min(24, Math.round(spec.bottomInset))
-    const bg = ctx.createLinearGradient(0, y + h - stripH, 0, y + h)
-    bg.addColorStop(0, 'rgba(7, 10, 18, 0)')
-    bg.addColorStop(1, 'rgba(7, 10, 18, 0.52)')
-    ctx.fillStyle = bg
-    ctx.fillRect(x, y + h - stripH, w, stripH)
   }
 
   ctx.restore()

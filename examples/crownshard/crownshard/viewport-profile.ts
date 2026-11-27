@@ -289,12 +289,12 @@ export function uiCopy(isTouch: boolean, desktopText: string, touchText: string)
   return isTouch ? touchText : desktopText
 }
 
+export type IosNotchSide = 'none' | 'left' | 'right' | 'top'
+
 export interface NotchBezelSpec {
-  readonly mode: 'none' | 'landscape-wings' | 'portrait-top'
-  readonly leftInset: number
-  readonly rightInset: number
-  readonly topInset: number
-  readonly bottomInset: number
+  readonly side: IosNotchSide
+  readonly style: 'island' | 'notch'
+  readonly inset: number
 }
 
 /**
@@ -314,56 +314,77 @@ export function isIosRuntime(
 }
 
 /**
- * Pure computation of whether an iOS device exposes a hardware notch /
- * Dynamic Island cutout (`>= 24px` raw safe-area inset) or home-indicator bar
- * (`>= 14px` bottom inset), so Crownshard can frame it seamlessly into the UI.
- * Strictly gated to iOS (`isIos === true`) so Android/desktop devices never render iOS bezels.
+ * Reads the current screen orientation angle (0, 90, 180, 270) and type safely in browser or Node.
+ * On iOS: `90` / `landscape-primary` = notch on LEFT, `270` (or legacy `-90`) / `landscape-secondary` = notch on RIGHT.
+ */
+export function readScreenOrientation(): { readonly angle: number; readonly type: string } {
+  if (typeof window === 'undefined') return { angle: 0, type: '' }
+  try {
+    const orient = window.screen?.orientation
+    if (orient && typeof orient.angle === 'number' && Number.isFinite(orient.angle)) {
+      const normalized = ((orient.angle % 360) + 360) % 360
+      return { angle: normalized, type: typeof orient.type === 'string' ? orient.type : '' }
+    }
+    const legacy: unknown = Reflect.get(window, 'orientation')
+    if (typeof legacy === 'number' && Number.isFinite(legacy)) {
+      const normalized = ((legacy % 360) + 360) % 360
+      return { angle: normalized, type: '' }
+    }
+  } catch { /* Ignore orientation read failures. */ }
+  return { angle: 0, type: '' }
+}
+
+/**
+ * Pure computation of which single edge holds the iOS hardware Dynamic Island / Notch.
+ * Strictly gated to iOS (`isIos === true`) so Android/desktop never render an iOS collar.
  */
 export function computeNotchBezelSpec(
   width: number,
   height: number,
   rawSafeArea: SafeAreaInsets,
-  isIos: boolean
+  isIos: boolean,
+  orientation: { readonly angle?: number; readonly type?: string } = {}
 ): NotchBezelSpec {
   const left = Math.max(0, Number.isFinite(rawSafeArea.left) ? rawSafeArea.left : 0)
   const right = Math.max(0, Number.isFinite(rawSafeArea.right) ? rawSafeArea.right : 0)
   const top = Math.max(0, Number.isFinite(rawSafeArea.top) ? rawSafeArea.top : 0)
-  const bottom = Math.max(0, Number.isFinite(rawSafeArea.bottom) ? rawSafeArea.bottom : 0)
 
   if (!isIos) {
-    return {
-      mode: 'none',
-      leftInset: left,
-      rightInset: right,
-      topInset: top,
-      bottomInset: bottom
-    }
+    return { side: 'none', style: 'island', inset: 0 }
   }
 
   const isLandscape = width > height
   if (isLandscape && (left >= 24 || right >= 24)) {
+    let side: IosNotchSide
+    if (left >= 24 && right < 24) {
+      side = 'left'
+    } else if (right >= 24 && left < 24) {
+      side = 'right'
+    } else {
+      const rawAngle = typeof orientation.angle === 'number' && Number.isFinite(orientation.angle)
+        ? ((orientation.angle % 360) + 360) % 360
+        : null
+      const type = orientation.type ?? ''
+      const isRight = type === 'landscape-secondary'
+        ? true
+        : type === 'landscape-primary'
+          ? false
+          : rawAngle === 270
+      side = isRight ? 'right' : 'left'
+    }
+    const inset = side === 'right' ? (right >= 24 ? right : left) : (left >= 24 ? left : right)
     return {
-      mode: 'landscape-wings',
-      leftInset: left,
-      rightInset: right,
-      topInset: top,
-      bottomInset: bottom
+      side,
+      style: inset >= 54 ? 'island' : 'notch',
+      inset
     }
   }
   if (!isLandscape && top >= 24) {
     return {
-      mode: 'portrait-top',
-      leftInset: left,
-      rightInset: right,
-      topInset: top,
-      bottomInset: bottom
+      side: 'top',
+      style: top >= 54 ? 'island' : 'notch',
+      inset: top
     }
   }
-  return {
-    mode: 'none',
-    leftInset: left,
-    rightInset: right,
-    topInset: top,
-    bottomInset: bottom
-  }
+  return { side: 'none', style: 'island', inset: 0 }
 }

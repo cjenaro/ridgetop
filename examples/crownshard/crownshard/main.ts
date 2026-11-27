@@ -77,7 +77,7 @@ import {
 } from './ui-art.ts'
 import type { CodexListEntry, FanfareDrawOpts, IconName, ProjectedRegionBanner, StatStripItem } from './ui-art.ts'
 import {
-  computeNotchBezelSpec, computeViewportProfile, createInputModalityTracker, detectInitialInputModality, isIosRuntime, readDomSafeAreaInsets, uiCopy
+  computeNotchBezelSpec, computeViewportProfile, createInputModalityTracker, detectInitialInputModality, isIosRuntime, readDomSafeAreaInsets, readScreenOrientation, uiCopy
 } from './viewport-profile.ts'
 import type { SafeAreaInsets, ViewportProfile } from './viewport-profile.ts'
 import {
@@ -444,7 +444,8 @@ async function start() {
       })
   }
 
-  const previewNotch = page.url.searchParams.get('notch') === '1'
+  const notchParam = page.url.searchParams.get('notch')
+  const previewNotch = notchParam === '1' || notchParam === 'left' || notchParam === 'right' || notchParam === 'top'
   const isIosDevice = isIosRuntime(
     page.platform.kind,
     typeof navigator !== 'undefined' ? navigator.userAgent : '',
@@ -456,6 +457,21 @@ async function start() {
     return w > h
       ? { top: Math.max(dom.top, 0), right: Math.max(dom.right, 59), bottom: Math.max(dom.bottom, 21), left: Math.max(dom.left, 59) }
       : { top: Math.max(dom.top, 59), right: Math.max(dom.right, 0), bottom: Math.max(dom.bottom, 34), left: Math.max(dom.left, 0) }
+  }
+  function readEffectiveOrientation(): { readonly angle: number; readonly type: string } {
+    if (notchParam === 'right') return { angle: 270, type: 'landscape-secondary' }
+    if (notchParam === 'left') return { angle: 90, type: 'landscape-primary' }
+    if (notchParam === 'top') return { angle: 0, type: 'portrait-primary' }
+    return readScreenOrientation()
+  }
+  if (typeof window !== 'undefined') {
+    const onOrientationChange = () => { uiDirty = true }
+    window.addEventListener('orientationchange', onOrientationChange)
+    window.screen?.orientation?.addEventListener?.('change', onOrientationChange)
+    page.onDispose(() => {
+      window.removeEventListener('orientationchange', onOrientationChange)
+      window.screen?.orientation?.removeEventListener?.('change', onOrientationChange)
+    })
   }
   const liveSafeArea = { top: 8, right: 8, bottom: 8, left: 8 }
   function getViewportProfile(w: number, h: number): ViewportProfile {
@@ -10330,8 +10346,10 @@ async function start() {
       : screen === 'defeat' ? buildResultTree(w, h, false)
       : buildPausedTree(w, h)
     const otaBanner = buildOtaUpdateBannerNode(w, h)
-    const notchSpec = computeNotchBezelSpec(w, h, readEffectiveRawSafeArea(w, h), isIosDevice || previewNotch)
-    const notchNode = notchSpec.mode !== 'none'
+    const notchSpec = computeNotchBezelSpec(
+      w, h, readEffectiveRawSafeArea(w, h), isIosDevice || previewNotch, readEffectiveOrientation()
+    )
+    const notchNode = notchSpec.side !== 'none'
       ? boxNode({
           id: 'cs-notch-bezel',
           style: { anchor: 'fill' },
