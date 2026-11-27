@@ -379,8 +379,8 @@ test('Starfall Atoll enforces 2 mythic chests + summit Starfall Altar seize and 
   assert.equal(battle.objective.kind, 'seize')
   assert.equal(battle.objective.chestTiles.length, 2)
   assert.equal(battle.objective.requiredChests, 2)
-  assert.deepEqual(battle.objective.goalTile, { col: 9, row: 3 })
-  assert.equal(cellHeightLevel(battle.cells[3][9]), 3, 'Starfall Altar sits on elevated summit height 3')
+  assert.deepEqual(battle.objective.goalTile, { col: 12, row: 4 })
+  assert.equal(cellHeightLevel(battle.cells[4][12]), 3, 'Starfall Altar sits on elevated summit height 3')
 
   const hero = getUnitByUid(battle, battle.activeUnitUid)!
   const [chest1, chest2] = battle.objective.chestTiles

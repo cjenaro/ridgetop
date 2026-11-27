@@ -1033,6 +1033,18 @@ export function createCrownshardScene(renderer: LowPolyRenderer) {
   let cameraZoomActual = 1.0
   let cameraPanX = 0
   let cameraPanZ = 0
+  let lastBoardCols = 11
+  let lastBoardRows = 8
+
+  function computeCameraPanBounds(zoom: number, cols = lastBoardCols, rows = lastBoardRows): readonly [number, number] {
+    const zoomBonus = Math.max(0, (1.12 - zoom) * 8.5)
+    const boardPanX = Math.max(0, (cols - 8) * TILE_SIZE * 0.42)
+    const boardPanZ = Math.max(0, (rows - 6) * TILE_SIZE * 0.42)
+    return [
+      Math.max(1.8, boardPanX + zoomBonus),
+      Math.max(1.6, boardPanZ + zoomBonus)
+    ]
+  }
   const MIN_CAMERA_ZOOM = 0.58
   const MAX_CAMERA_ZOOM = 1.38
   const actionCam = createActionCameraState()
@@ -2507,14 +2519,16 @@ export function createCrownshardScene(renderer: LowPolyRenderer) {
       cancelActionCamera(actionCam)
     }
     stepActionCamera(actionCam, dt, battle.battleSpeed)
-    const maxPan = Math.max(0, (1.02 - cameraZoomActual) * 8.0)
-    cameraPanX = Math.max(-maxPan, Math.min(maxPan, cameraPanX))
-    cameraPanZ = Math.max(-maxPan, Math.min(maxPan, cameraPanZ))
+    lastBoardCols = battle.cols
+    lastBoardRows = battle.rows
+    const [maxPanX, maxPanZ] = computeCameraPanBounds(cameraZoomActual, battle.cols, battle.rows)
+    cameraPanX = Math.max(-maxPanX, Math.min(maxPanX, cameraPanX))
+    cameraPanZ = Math.max(-maxPanZ, Math.min(maxPanZ, cameraPanZ))
 
     const aspect = Math.max(0.32, w / Math.max(1, h))
     const isPhonePortrait = aspect < 0.85
     const isPhoneLandscape = !isPhonePortrait && h < 480
-    const boardScale = Math.max(0.86, Math.max(battle.cols / 8, battle.rows / 6))
+    const boardScale = Math.min(1.36, Math.max(0.92, Math.max(battle.cols / 9.2, battle.rows / 6.8)))
     const baseDist = (isPhonePortrait
       ? 14.4 / Math.max(0.40, aspect)
       : isPhoneLandscape ? 15.0
@@ -4259,15 +4273,10 @@ export function createCrownshardScene(renderer: LowPolyRenderer) {
     },
     panCamera(dx: number, dz: number) {
       cancelActionCamera(actionCam)
-      const maxPan = Math.max(0, (1.02 - cameraZoom) * 8.0)
-      if (maxPan <= 0) {
-        cameraPanX = 0
-        cameraPanZ = 0
-        return
-      }
+      const [maxPanX, maxPanZ] = computeCameraPanBounds(cameraZoom)
       const [worldDx, worldDz] = cameraRelativePanDelta(dx, dz, cameraYawActual)
-      cameraPanX = Math.max(-maxPan, Math.min(maxPan, cameraPanX + worldDx))
-      cameraPanZ = Math.max(-maxPan, Math.min(maxPan, cameraPanZ + worldDz))
+      cameraPanX = Math.max(-maxPanX, Math.min(maxPanX, cameraPanX + worldDx))
+      cameraPanZ = Math.max(-maxPanZ, Math.min(maxPanZ, cameraPanZ + worldDz))
     },
     resetCamera() {
       cancelActionCamera(actionCam)

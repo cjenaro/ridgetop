@@ -330,10 +330,10 @@ test('Emerald Delta Rising Tide alternates low-tide fords every 2 rounds, safely
     assert.equal(battle.cells[ford.row][ford.col].walkable, true)
   }
 
-  // Place an ally directly on a low-tide ford tile (col 2, row 1)
+  // Place an ally directly on a low-tide ford tile
   const hero = battle.units.find(u => u.alive && u.team === 'ally')!
-  hero.col = 2
-  hero.row = 1
+  hero.col = EMERALD_TIDE_FORD_TILES[0].col
+  hero.row = EMERALD_TIDE_FORD_TILES[0].row
   const hpBefore = hero.hp
   const shieldBefore = hero.shield
 

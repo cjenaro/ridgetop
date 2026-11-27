@@ -9898,7 +9898,7 @@ export function executeAutoBattlePlan(state: GameState, plan: AutoBattleActionPl
       battle.autoBattleDelay = AUTO_BATTLE_POST_ACT_DELAY
       return true
     }
-    if (!target && isIntactBarricade(battle.cells[plan.targetRow]?.[plan.targetCol])) {
+    if (!target && isDestructibleCover(battle.cells[plan.targetRow]?.[plan.targetCol])) {
       executeBasicAttackOnBarricade(state, actor, plan.targetCol, plan.targetRow)
       if (battle.phase === 'player') refreshHighlights(battle, state.campaign)
       battle.autoBattleDelay = AUTO_BATTLE_POST_ACT_DELAY

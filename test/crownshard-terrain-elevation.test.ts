@@ -408,11 +408,11 @@ test('Multi-height pickCellAt() accurately picks cells across height levels 0..4
   const battle = startStageBattle(state, 'eclipse_throne')
   // Build a staircase row with heights 0, 1, 2, 3, 4 plus a void chasm cell
   const testCells: readonly [number, number, number][] = [
-    [1, 3, 0], // H0
-    [2, 3, 1], // H1
-    [4, 3, 2], // H2
-    [6, 3, 3], // H3
-    [7, 3, 4]  // H4
+    [1, 4, 0], // H0
+    [2, 4, 1], // H1
+    [5, 4, 2], // H2
+    [7, 4, 3], // H3
+    [8, 4, 4]  // H4
   ]
   for (const [c, r, expectedH] of testCells) {
     assert.equal(cellHeightAt(battle, c, r), expectedH, `Eclipse Throne (${c},${r}) should be H${expectedH}`)

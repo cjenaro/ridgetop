@@ -167,7 +167,7 @@ test('all biome enemy archetypes and regional mini-bosses have valid ENEMY_SPECS
   assert.equal(getEnemyProjectileStyle('ember_pyromancer'), 'fire')
   assert.equal(getEnemyAttackElement('ember_pyromancer'), 'fire')
 
-  assert.equal(ENEMY_SPECS.ice_wraith.move, 4)
+  assert.equal(ENEMY_SPECS.ice_wraith.move, 5)
   assert.equal(ENEMY_SPECS.ice_wraith.jump, 2)
   assert.equal(ENEMY_SPECS.ice_wraith.range, 2)
   assert.equal(ENEMY_SPECS.ice_wraith.zoc, false)
@@ -184,7 +184,7 @@ test('all biome enemy archetypes and regional mini-bosses have valid ENEMY_SPECS
   assert.equal(ENEMY_SPECS.bone_thrall.range, 1)
 
   assert.equal(ENEMY_SPECS.river_troll.zoc, true)
-  assert.equal(ENEMY_SPECS.river_troll.move, 3)
+  assert.equal(ENEMY_SPECS.river_troll.move, 4)
   assert.ok(ENEMY_SPECS.river_troll.maxHp >= 90)
   assert.equal(isRegeneratingArchetype('river_troll'), true)
   assert.equal(getEnemyBiomeAffinity('river_troll'), 'river')
@@ -393,15 +393,18 @@ test('River Troll regenerates +8 HP at turn start, is suppressed by Burn or Pois
     'Burning River Troll should emit REGEN BLOCKED floating feedback'
   )
 
-  // Case C: Tidal Slam knockback when adjacent to ally
-  placeUnit(battle, ally, 3, 2)
-  placeUnit(battle, troll, 4, 2)
+  // Case C: Tidal Slam knockback when adjacent to ally (ensure open tile behind ally)
+  setCell(battle, 5, 2, 'grass')
+  setCell(battle, 6, 2, 'grass')
+  setCell(battle, 7, 2, 'grass')
+  placeUnit(battle, ally, 6, 2)
+  placeUnit(battle, troll, 7, 2)
   ally.hp = 200
   ally.maxHp = 200
   troll.cooldowns = [0, 0, 0]
   troll.burnTurns = 0
   stepEnemyTurnToCompletion(state, troll)
-  assert.equal(ally.col, 2, 'River Troll Tidal Slam must knock ally back 1 tile away from (4,2) to (2,2)')
+  assert.equal(ally.col, 5, 'River Troll Tidal Slam must knock ally back 1 tile away from (7,2) to (5,2)')
   assert.ok(ally.hp < 200, 'Tidal Slam must deal damage')
   assert.ok(troll.cooldowns[0] > 0, 'Tidal Slam must enter cooldown')
 })
@@ -573,9 +576,9 @@ test('Chapter 1 border_watch stays intact and every playable chapter spawns vali
   assert.deepEqual(
     ch1.enemies.map(e => ({ id: e.id, col: e.col, row: e.row })),
     [
-      { id: 'goblin', col: 4, row: 2 },
-      { id: 'goblin', col: 5, row: 3 },
-      { id: 'bone_archer', col: 6, row: 1 }
+      { id: 'goblin', col: 6, row: 2 },
+      { id: 'goblin', col: 7, row: 4 },
+      { id: 'bone_archer', col: 8, row: 1 }
     ]
   )
 

@@ -79,7 +79,7 @@ export const HERO_SPECS: Record<HeroClassId, HeroSpec> = {
     atk: 15,
     def: 6,
     speed: 8,
-    move: 3,
+    move: 4,
     jump: 1,
     range: 1,
     crit: 0.10,
@@ -118,7 +118,7 @@ export const HERO_SPECS: Record<HeroClassId, HeroSpec> = {
     atk: 16,
     def: 3,
     speed: 13,
-    move: 3,
+    move: 4,
     jump: 2,
     range: 3,
     crit: 0.22,
@@ -157,7 +157,7 @@ export const HERO_SPECS: Record<HeroClassId, HeroSpec> = {
     atk: 18,
     def: 2,
     speed: 11,
-    move: 3,
+    move: 4,
     jump: 2,
     range: 3,
     crit: 0.16,
@@ -196,7 +196,7 @@ export const HERO_SPECS: Record<HeroClassId, HeroSpec> = {
     atk: 14,
     def: 4,
     speed: 10,
-    move: 3,
+    move: 4,
     jump: 2,
     range: 3,
     crit: 0.12,
@@ -238,7 +238,7 @@ export const HERO_SPECS: Record<HeroClassId, HeroSpec> = {
     atk: 19,
     def: 3,
     speed: 15,
-    move: 4,
+    move: 5,
     jump: 3,
     range: 1,
     crit: 0.32,
@@ -278,7 +278,7 @@ export const HERO_SPECS: Record<HeroClassId, HeroSpec> = {
     atk: 18,
     def: 8,
     speed: 9,
-    move: 3,
+    move: 4,
     jump: 1,
     range: 1,
     crit: 0.15,
@@ -317,7 +317,7 @@ export const HERO_SPECS: Record<HeroClassId, HeroSpec> = {
     atk: 21,
     def: 4,
     speed: 11,
-    move: 3,
+    move: 4,
     jump: 2,
     range: 3,
     crit: 0.18,
@@ -356,8 +356,8 @@ export const HERO_SPECS: Record<HeroClassId, HeroSpec> = {
     atk: 25,
     def: 9,
     speed: 12,
-    move: 4,
-    jump: 2,
+    move: 5,
+    jump: 3,
     range: 2,
     crit: 0.26,
     zoc: true,
@@ -697,81 +697,81 @@ export const PACK_BY_ID: Record<PackId, PackSpec> = {
 
 export const ENEMY_SPECS: Record<EnemyArchetypeId, EnemySpec> = {
   goblin: {
-    id: 'goblin', name: 'Ashen Goblin', maxHp: 38, atk: 12, def: 2, speed: 12, move: 3, jump: 2, range: 1, ai: 'melee', zoc: true
+    id: 'goblin', name: 'Ashen Goblin', maxHp: 38, atk: 12, def: 2, speed: 12, move: 4, jump: 2, range: 1, ai: 'melee', zoc: true
   },
   bone_archer: {
-    id: 'bone_archer', name: 'Bone Archer', maxHp: 34, atk: 14, def: 1, speed: 11, move: 2, jump: 2, range: 3, ai: 'ranged', zoc: false
+    id: 'bone_archer', name: 'Bone Archer', maxHp: 34, atk: 14, def: 1, speed: 11, move: 3, jump: 2, range: 3, ai: 'ranged', zoc: false
   },
   orc_brute: {
-    id: 'orc_brute', name: 'Ironclad Orc', maxHp: 64, atk: 17, def: 5, speed: 7, move: 2, jump: 1, range: 1, ai: 'melee', zoc: true
+    id: 'orc_brute', name: 'Ironclad Orc', maxHp: 64, atk: 17, def: 5, speed: 7, move: 3, jump: 1, range: 1, ai: 'melee', zoc: true
   },
   bog_shaman: {
-    id: 'bog_shaman', name: 'Eclipse Shaman', maxHp: 46, atk: 14, def: 2, speed: 10, move: 2, jump: 2, range: 3, ai: 'support', zoc: false
+    id: 'bog_shaman', name: 'Eclipse Shaman', maxHp: 46, atk: 14, def: 2, speed: 10, move: 3, jump: 2, range: 3, ai: 'support', zoc: false
   },
   crypt_knight: {
-    id: 'crypt_knight', name: 'Dread Knight', maxHp: 78, atk: 20, def: 7, speed: 9, move: 3, jump: 1, range: 1, ai: 'melee', zoc: true
+    id: 'crypt_knight', name: 'Dread Knight', maxHp: 78, atk: 20, def: 7, speed: 9, move: 4, jump: 2, range: 1, ai: 'melee', zoc: true
   },
   frost_golem: {
-    id: 'frost_golem', name: 'Frost Golem', maxHp: 96, atk: 22, def: 8, speed: 6, move: 2, jump: 1, range: 1, ai: 'melee', zoc: true
+    id: 'frost_golem', name: 'Frost Golem', maxHp: 96, atk: 22, def: 8, speed: 6, move: 3, jump: 1, range: 1, ai: 'melee', zoc: true
   },
   eclipse_archon: {
-    id: 'eclipse_archon', name: 'Archon Malakor', maxHp: 190, atk: 26, def: 7, speed: 11, move: 3, jump: 3, range: 3, ai: 'boss', isBoss: true, zoc: true
+    id: 'eclipse_archon', name: 'Archon Malakor', maxHp: 190, atk: 26, def: 7, speed: 11, move: 4, jump: 3, range: 3, ai: 'boss', isBoss: true, zoc: true
   },
   // Biome-specific archetypes
   ember_pyromancer: {
-    id: 'ember_pyromancer', name: 'Ember Pyromancer', maxHp: 52, atk: 18, def: 2, speed: 11, move: 3, jump: 2, range: 3, ai: 'ranged', zoc: false
+    id: 'ember_pyromancer', name: 'Ember Pyromancer', maxHp: 52, atk: 18, def: 2, speed: 11, move: 4, jump: 2, range: 3, ai: 'ranged', zoc: false
   },
   ice_wraith: {
-    id: 'ice_wraith', name: 'Ice Wraith', maxHp: 48, atk: 16, def: 3, speed: 13, move: 4, jump: 2, range: 2, ai: 'ranged', zoc: false, evadeZoc: true
+    id: 'ice_wraith', name: 'Ice Wraith', maxHp: 48, atk: 16, def: 3, speed: 13, move: 5, jump: 2, range: 2, ai: 'ranged', zoc: false, evadeZoc: true
   },
   bone_necromancer: {
-    id: 'bone_necromancer', name: 'Bone Necromancer', maxHp: 56, atk: 16, def: 3, speed: 10, move: 2, jump: 2, range: 3, ai: 'support', zoc: false
+    id: 'bone_necromancer', name: 'Bone Necromancer', maxHp: 56, atk: 16, def: 3, speed: 10, move: 3, jump: 2, range: 3, ai: 'support', zoc: false
   },
   bone_thrall: {
-    id: 'bone_thrall', name: 'Bone Thrall', maxHp: 28, atk: 11, def: 2, speed: 10, move: 3, jump: 1, range: 1, ai: 'melee', zoc: true
+    id: 'bone_thrall', name: 'Bone Thrall', maxHp: 28, atk: 11, def: 2, speed: 10, move: 4, jump: 1, range: 1, ai: 'melee', zoc: true
   },
   river_troll: {
-    id: 'river_troll', name: 'River Troll', maxHp: 94, atk: 19, def: 4, speed: 7, move: 3, jump: 1, range: 1, ai: 'melee', zoc: true
+    id: 'river_troll', name: 'River Troll', maxHp: 94, atk: 19, def: 4, speed: 7, move: 4, jump: 1, range: 1, ai: 'melee', zoc: true
   },
   // Named regional mini-bosses for Special / Elite nodes
   briar_warlord: {
-    id: 'briar_warlord', name: 'Grom, Briar Warlord', maxHp: 112, atk: 19, def: 6, speed: 8, move: 3, jump: 1, range: 1, ai: 'boss', isBoss: true, zoc: true
+    id: 'briar_warlord', name: 'Grom, Briar Warlord', maxHp: 112, atk: 19, def: 6, speed: 8, move: 4, jump: 2, range: 1, ai: 'boss', isBoss: true, zoc: true
   },
   mire_matriarch: {
-    id: 'mire_matriarch', name: 'Vex, Mire Matriarch', maxHp: 98, atk: 17, def: 4, speed: 10, move: 2, jump: 2, range: 3, ai: 'boss', isBoss: true, zoc: false
+    id: 'mire_matriarch', name: 'Vex, Mire Matriarch', maxHp: 98, atk: 17, def: 4, speed: 10, move: 3, jump: 2, range: 3, ai: 'boss', isBoss: true, zoc: false
   },
   ash_inquisitor: {
-    id: 'ash_inquisitor', name: 'Vaelen, Ash Inquisitor', maxHp: 128, atk: 21, def: 5, speed: 10, move: 2, jump: 2, range: 3, ai: 'boss', isBoss: true, zoc: false
+    id: 'ash_inquisitor', name: 'Vaelen, Ash Inquisitor', maxHp: 128, atk: 21, def: 5, speed: 10, move: 3, jump: 2, range: 3, ai: 'boss', isBoss: true, zoc: false
   },
   frost_jarl: {
-    id: 'frost_jarl', name: 'Jarl Skadi', maxHp: 152, atk: 24, def: 8, speed: 9, move: 3, jump: 2, range: 2, ai: 'boss', isBoss: true, zoc: true
+    id: 'frost_jarl', name: 'Jarl Skadi', maxHp: 152, atk: 24, def: 8, speed: 9, move: 4, jump: 2, range: 2, ai: 'boss', isBoss: true, zoc: true
   },
   magma_warden: {
-    id: 'magma_warden', name: 'Ignar, Magma Warden', maxHp: 168, atk: 25, def: 8, speed: 8, move: 2, jump: 1, range: 2, ai: 'boss', isBoss: true, zoc: true
+    id: 'magma_warden', name: 'Ignar, Magma Warden', maxHp: 168, atk: 25, def: 8, speed: 8, move: 3, jump: 2, range: 2, ai: 'boss', isBoss: true, zoc: true
   },
   // Outer Frontier Raid Bosses (Tiers VI–VIII)
   dune_sovereign_boss: {
-    id: 'dune_sovereign_boss', name: 'Dune Sovereign', maxHp: 235, atk: 29, def: 9, speed: 10, move: 3, jump: 2, range: 3, ai: 'boss', isBoss: true, zoc: true
+    id: 'dune_sovereign_boss', name: 'Dune Sovereign', maxHp: 235, atk: 29, def: 9, speed: 10, move: 4, jump: 2, range: 3, ai: 'boss', isBoss: true, zoc: true
   },
   astral_warden_boss: {
-    id: 'astral_warden_boss', name: 'Astral Warden', maxHp: 270, atk: 32, def: 9, speed: 12, move: 4, jump: 3, range: 3, ai: 'boss', isBoss: true, zoc: true
+    id: 'astral_warden_boss', name: 'Astral Warden', maxHp: 270, atk: 32, def: 9, speed: 12, move: 5, jump: 3, range: 3, ai: 'boss', isBoss: true, zoc: true
   },
   unbroken_crown_boss: {
-    id: 'unbroken_crown_boss', name: 'The Unbroken Crown', maxHp: 340, atk: 35, def: 11, speed: 12, move: 3, jump: 3, range: 3, ai: 'boss', isBoss: true, zoc: true
+    id: 'unbroken_crown_boss', name: 'The Unbroken Crown', maxHp: 340, atk: 35, def: 11, speed: 12, move: 4, jump: 3, range: 3, ai: 'boss', isBoss: true, zoc: true
   },
   // Act II Expansion Bosses (Ashen Catacombs & Frostspire)
   lich_vaelen: {
-    id: 'lich_vaelen', name: 'Lich Vaelen', maxHp: 158, atk: 23, def: 6, speed: 10, move: 2, jump: 2, range: 3, ai: 'boss', isBoss: true, footprintSize: 1, zoc: false
+    id: 'lich_vaelen', name: 'Lich Vaelen', maxHp: 158, atk: 23, def: 6, speed: 10, move: 3, jump: 2, range: 3, ai: 'boss', isBoss: true, footprintSize: 1, zoc: false
   },
   frostwyrm_rimefang: {
-    id: 'frostwyrm_rimefang', name: 'Rimefang, Glacial Frostwyrm', maxHp: 245, atk: 26, def: 8, speed: 9, move: 2, jump: 2, range: 3, ai: 'boss', isBoss: true, footprintSize: 2, zoc: true
+    id: 'frostwyrm_rimefang', name: 'Rimefang, Glacial Frostwyrm', maxHp: 245, atk: 26, def: 8, speed: 9, move: 3, jump: 2, range: 3, ai: 'boss', isBoss: true, footprintSize: 2, zoc: true
   },
   // Endgame Raid Boss & Abyssal Guardians
   ignis_titan: {
-    id: 'ignis_titan', name: 'Ignis Titan', maxHp: 245, atk: 28, def: 9, speed: 8, move: 2, jump: 1, range: 2, ai: 'boss', isBoss: true, zoc: true
+    id: 'ignis_titan', name: 'Ignis Titan', maxHp: 245, atk: 28, def: 9, speed: 8, move: 3, jump: 2, range: 2, ai: 'boss', isBoss: true, zoc: true
   },
   abyssal_sentinel: {
-    id: 'abyssal_sentinel', name: 'Abyssal Sentinel', maxHp: 118, atk: 24, def: 8, speed: 9, move: 3, jump: 2, range: 2, ai: 'melee', zoc: true
+    id: 'abyssal_sentinel', name: 'Abyssal Sentinel', maxHp: 118, atk: 24, def: 8, speed: 9, move: 4, jump: 2, range: 2, ai: 'melee', zoc: true
   }
 }
 
@@ -821,29 +821,33 @@ export const CHAPTERS: readonly ChapterSpec[] = [
     rewardEquipId: 'iron_plate',
     rewardHeroId: 'knight',
     grid: [
-      [V, G, H, H, T, G, G],
-      [G, S, T, G, K, S, H],
-      [G, S, R, G, G, H, G],
-      [G, H, F, C, F, S, G],
-      [V, G, G, W, W, G, V]
+      [V, G, H, H, H, T, G, H, H, V],
+      [G, G, T, G, F, G, K, S, H, G],
+      [G, S, S, G, G, C, G, S, G, G],
+      [G, S, R, G, F, G, G, H, S, G],
+      [G, S, S, T, H, G, K, S, G, G],
+      [G, G, F, F, G, C, F, G, G, G],
+      [V, G, G, W, W, B, W, G, G, V]
     ],
     heights: [
-      [0, 0, 2, 2, 1, 1, 1],
-      [0, 0, 1, 1, 1, 1, 2],
-      [0, 0, 0, 0, 0, 1, 1],
-      [0, 1, 0, 0, 0, 1, 1],
-      [0, 0, 0, 0, 0, 0, 0]
+      [0, 0, 2, 2, 2, 1, 1, 2, 2, 0],
+      [0, 0, 1, 1, 0, 1, 1, 1, 2, 1],
+      [0, 0, 0, 0, 0, 0, 1, 1, 1, 1],
+      [0, 0, 0, 0, 0, 0, 1, 2, 1, 1],
+      [0, 0, 0, 1, 2, 1, 1, 1, 1, 1],
+      [0, 0, 0, 0, 0, 0, 0, 1, 1, 1],
+      [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
     ],
-    heroSpawns: [[0, 1], [1, 2], [0, 3], [1, 1]],
+    heroSpawns: [[0, 2], [1, 3], [0, 4], [1, 2]],
     objective: {
       kind: 'rout',
       label: 'Rout All Enemies',
       description: 'Defeat all Eclipse raiders holding the Watchtower road.'
     },
     enemies: [
-      { id: 'goblin', col: 4, row: 2 },
-      { id: 'goblin', col: 5, row: 3 },
-      { id: 'bone_archer', col: 6, row: 1 }
+      { id: 'goblin', col: 6, row: 2 },
+      { id: 'goblin', col: 7, row: 4 },
+      { id: 'bone_archer', col: 8, row: 1 }
     ]
   },
   {
@@ -858,7 +862,7 @@ export const CHAPTERS: readonly ChapterSpec[] = [
     mapY: 0.54,
     requires: ['border_watch'],
     specialTag: 'Ford Ambush',
-    modifierDesc: '6x5 Tight Creek Crossing · Seize 2 Supply Chests',
+    modifierDesc: '10x7 Twin Creek Crossing · Seize 2 Supply Chests',
     title: 'Millers\' Ford',
     subtitle: 'Special: Twin Creek Crossing',
     biome: 'meadow',
@@ -871,33 +875,37 @@ export const CHAPTERS: readonly ChapterSpec[] = [
     rewardEquipId: 'copper_signet',
     rewardHeroId: 'archer',
     grid: [
-      [V, G, W, F, H, H],
-      [G, S, B, S, T, G],
-      [G, H, W, G, K, G],
-      [G, S, B, S, T, G],
-      [V, G, W, F, H, V]
+      [V, G, G, W, W, F, H, H, G, V],
+      [G, S, S, B, B, S, T, G, H, G],
+      [G, H, F, W, W, G, K, G, G, G],
+      [G, S, R, W, W, G, C, S, H, G],
+      [G, H, F, W, W, G, K, G, G, G],
+      [G, S, S, B, B, S, T, G, H, G],
+      [V, G, G, W, W, F, H, H, G, V]
     ],
     heights: [
-      [0, 0, 0, 0, 2, 2],
-      [0, 0, 0, 0, 1, 1],
-      [0, 1, 0, 0, 1, 1],
-      [0, 0, 0, 0, 1, 1],
-      [0, 0, 0, 0, 2, 0]
+      [0, 0, 0, 0, 0, 0, 2, 2, 1, 0],
+      [0, 0, 0, 0, 0, 0, 1, 1, 2, 1],
+      [0, 1, 0, 0, 0, 0, 1, 1, 1, 1],
+      [0, 0, 0, 0, 0, 0, 1, 1, 2, 1],
+      [0, 1, 0, 0, 0, 0, 1, 1, 1, 1],
+      [0, 0, 0, 0, 0, 0, 1, 1, 2, 1],
+      [0, 0, 0, 0, 0, 0, 2, 2, 1, 0]
     ],
-    heroSpawns: [[0, 1], [0, 3], [1, 1], [1, 3]],
+    heroSpawns: [[0, 1], [0, 5], [1, 2], [1, 4]],
     objective: {
       kind: 'seize',
       label: 'Seize Supply Chests',
-      description: 'Claim both raided supply chests within 10 turns (or rout all foes).',
-      chestTiles: [{ col: 3, row: 2 }, { col: 5, row: 3 }],
+      description: 'Claim both raided supply chests within 12 turns (or rout all foes).',
+      chestTiles: [{ col: 6, row: 1 }, { col: 8, row: 5 }],
       requiredChests: 2,
-      turnLimit: 10
+      turnLimit: 12
     },
     enemies: [
-      { id: 'goblin', col: 3, row: 1 },
-      { id: 'goblin', col: 3, row: 3 },
-      { id: 'bone_archer', col: 4, row: 0 },
-      { id: 'goblin', col: 5, row: 2 }
+      { id: 'goblin', col: 5, row: 1 },
+      { id: 'goblin', col: 5, row: 5 },
+      { id: 'bone_archer', col: 7, row: 0 },
+      { id: 'goblin', col: 8, row: 3 }
     ]
   },
   {
@@ -925,22 +933,26 @@ export const CHAPTERS: readonly ChapterSpec[] = [
     rewardEquipId: 'ember_wand',
     rewardHeroId: 'archer',
     grid: [
-      [V, G, W, W, G, H, H, V],
-      [G, H, B, B, S, T, G, G],
-      [G, T, W, W, F, K, G, G],
-      [G, R, W, W, G, F, S, H],
-      [G, T, B, B, S, T, H, G],
-      [V, G, W, W, G, G, G, V]
+      [V, G, G, W, W, W, G, H, H, G, V],
+      [G, H, S, B, B, B, S, T, G, H, G],
+      [G, T, G, W, W, W, F, K, G, G, G],
+      [G, R, S, W, W, W, G, C, S, H, G],
+      [G, S, F, B, B, B, S, G, F, G, G],
+      [G, T, G, W, W, W, F, K, G, H, G],
+      [G, H, S, B, B, B, S, T, H, G, G],
+      [V, G, G, W, W, W, G, G, G, G, V]
     ],
     heights: [
-      [0, 0, 0, 0, 1, 2, 2, 0],
-      [0, 1, 1, 1, 1, 1, 1, 1],
-      [0, 0, 0, 0, 1, 1, 1, 1],
-      [0, 0, 0, 0, 1, 1, 1, 2],
-      [0, 1, 1, 1, 1, 1, 2, 1],
-      [0, 0, 0, 0, 1, 1, 1, 0]
+      [0, 0, 0, 0, 0, 0, 1, 2, 2, 1, 0],
+      [0, 1, 1, 1, 1, 1, 1, 1, 1, 2, 1],
+      [0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1],
+      [0, 0, 0, 0, 0, 0, 1, 1, 1, 2, 1],
+      [0, 0, 0, 1, 1, 1, 1, 1, 1, 1, 1],
+      [0, 0, 0, 0, 0, 0, 1, 1, 1, 2, 1],
+      [0, 1, 1, 1, 1, 1, 1, 1, 2, 1, 1],
+      [0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 0]
     ],
-    heroSpawns: [[0, 1], [1, 2], [0, 4], [1, 3]],
+    heroSpawns: [[0, 1], [1, 2], [0, 6], [1, 4]],
     objective: {
       kind: 'defend',
       label: 'Defend River Shrine',
@@ -950,10 +962,10 @@ export const CHAPTERS: readonly ChapterSpec[] = [
       protectLabel: 'River Shrine'
     },
     enemies: [
-      { id: 'river_troll', col: 4, row: 1 },
-      { id: 'goblin', col: 4, row: 4 },
-      { id: 'bone_archer', col: 6, row: 0 },
-      { id: 'bog_shaman', col: 7, row: 3 }
+      { id: 'river_troll', col: 6, row: 1 },
+      { id: 'goblin', col: 6, row: 4 },
+      { id: 'bone_archer', col: 8, row: 0 },
+      { id: 'bog_shaman', col: 9, row: 5 }
     ]
   },
   {
@@ -968,7 +980,7 @@ export const CHAPTERS: readonly ChapterSpec[] = [
     mapY: 0.28,
     requires: ['sunken_bridge'],
     specialTag: 'Forest Ambush',
-    modifierDesc: '8x5 Sunken Timber Road · Mini-Boss: Grom, Briar Warlord',
+    modifierDesc: '11x7 Sunken Timber Road · Mini-Boss: Grom, Briar Warlord',
     title: 'Briar Hollow',
     subtitle: 'Special: Briar Warlord Ambush',
     biome: 'meadow',
@@ -981,25 +993,29 @@ export const CHAPTERS: readonly ChapterSpec[] = [
     rewardEquipId: 'hunter_bow',
     rewardHeroId: 'mage',
     grid: [
-      [V, H, H, P, T, H, H, V],
-      [G, T, F, F, G, G, T, G],
-      [G, S, R, K, G, C, S, G],
-      [G, T, F, F, G, G, T, G],
-      [V, H, H, P, T, H, H, V]
+      [V, H, H, P, T, H, H, T, H, H, V],
+      [G, T, F, F, G, G, C, G, T, H, G],
+      [G, S, S, K, G, F, G, K, S, G, G],
+      [G, S, R, G, G, C, G, G, S, H, G],
+      [G, S, S, K, G, F, G, K, S, G, G],
+      [G, T, F, F, G, G, C, G, T, H, G],
+      [V, H, H, P, T, H, H, T, H, H, V]
     ],
     heights: [
-      [0, 2, 2, 2, 1, 2, 3, 0],
-      [0, 1, 0, 0, 0, 1, 2, 1],
-      [0, 0, 0, 0, 0, 1, 1, 1],
-      [0, 1, 0, 0, 0, 1, 2, 1],
-      [0, 2, 2, 2, 1, 2, 3, 0]
+      [0, 2, 2, 2, 1, 2, 2, 2, 3, 3, 0],
+      [0, 1, 0, 0, 0, 1, 1, 1, 2, 2, 1],
+      [0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1],
+      [0, 0, 0, 0, 0, 0, 1, 1, 1, 2, 1],
+      [0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1],
+      [0, 1, 0, 0, 0, 1, 1, 1, 2, 2, 1],
+      [0, 2, 2, 2, 1, 2, 2, 2, 3, 3, 0]
     ],
-    heroSpawns: [[0, 1], [1, 2], [0, 3], [1, 1]],
+    heroSpawns: [[0, 2], [1, 3], [0, 4], [1, 2]],
     enemies: [
-      { id: 'goblin', col: 5, row: 1 },
-      { id: 'briar_warlord', col: 5, row: 3 },
-      { id: 'bone_archer', col: 5, row: 0 },
-      { id: 'bone_archer', col: 5, row: 4 }
+      { id: 'goblin', col: 8, row: 2 },
+      { id: 'briar_warlord', col: 8, row: 3 },
+      { id: 'bone_archer', col: 8, row: 0 },
+      { id: 'bone_archer', col: 8, row: 6 }
     ]
   },
   {
@@ -1015,7 +1031,7 @@ export const CHAPTERS: readonly ChapterSpec[] = [
     requires: ['briar_hollow', 'sunken_bridge'],
     unlockMode: 'any',
     specialTag: 'Shrine Trial',
-    modifierDesc: '7x7 Sacred Grove · Mini-Boss: Vex, Mire Matriarch · Recruits Sera',
+    modifierDesc: '11x8 Sacred Grove · Mini-Boss: Vex, Mire Matriarch · Recruits Sera',
     title: 'Sunwell Glade',
     subtitle: 'Special: Mire Matriarch Trial',
     biome: 'meadow',
@@ -1028,24 +1044,26 @@ export const CHAPTERS: readonly ChapterSpec[] = [
     rewardEquipId: 'swift_boots',
     rewardHeroId: 'cleric',
     grid: [
-      [V, H, T, R, T, H, V],
-      [G, F, C, G, P, F, G],
-      [G, S, T, H, T, S, G],
-      [G, R, G, H, G, R, S],
-      [G, S, T, H, T, S, G],
-      [G, F, P, G, C, F, G],
-      [V, H, T, W, T, H, V]
+      [V, H, H, T, R, T, G, T, H, H, V],
+      [G, F, C, G, G, P, G, G, C, F, G],
+      [G, S, S, T, H, H, H, T, S, S, G],
+      [G, R, S, G, H, R, H, G, S, H, G],
+      [G, S, S, G, H, H, H, G, S, H, G],
+      [G, S, S, T, G, P, G, T, S, S, G],
+      [G, F, P, G, F, G, F, G, C, F, G],
+      [V, H, H, T, W, W, W, T, H, H, V]
     ],
     heights: [
-      [0, 2, 1, 2, 1, 2, 0],
-      [0, 1, 1, 1, 1, 1, 1],
-      [0, 0, 1, 2, 1, 1, 1],
-      [0, 1, 1, 2, 1, 1, 2],
-      [0, 0, 1, 2, 1, 1, 1],
-      [0, 1, 1, 1, 1, 1, 1],
-      [0, 2, 1, 0, 1, 2, 0]
+      [0, 2, 2, 1, 2, 1, 1, 1, 2, 2, 0],
+      [0, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1],
+      [0, 0, 1, 1, 2, 2, 2, 1, 1, 1, 1],
+      [0, 1, 1, 1, 2, 2, 2, 1, 1, 2, 2],
+      [0, 0, 1, 1, 2, 2, 2, 1, 1, 2, 2],
+      [0, 0, 1, 1, 1, 1, 1, 1, 1, 1, 1],
+      [0, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1],
+      [0, 2, 2, 1, 0, 0, 0, 1, 2, 2, 0]
     ],
-    heroSpawns: [[0, 2], [1, 3], [0, 4], [1, 2]],
+    heroSpawns: [[0, 2], [1, 3], [0, 5], [1, 4]],
     objective: {
       kind: 'defend',
       label: 'Defend Sunwell Altar',
@@ -1055,11 +1073,11 @@ export const CHAPTERS: readonly ChapterSpec[] = [
       protectLabel: 'Sunwell Altar'
     },
     enemies: [
-      { id: 'river_troll', col: 5, row: 2 },
-      { id: 'goblin', col: 5, row: 4 },
-      { id: 'bone_archer', col: 5, row: 0 },
-      { id: 'bone_archer', col: 5, row: 6 },
-      { id: 'mire_matriarch', col: 6, row: 3 }
+      { id: 'river_troll', col: 7, row: 2 },
+      { id: 'goblin', col: 7, row: 5 },
+      { id: 'bone_archer', col: 8, row: 0 },
+      { id: 'bone_archer', col: 8, row: 7 },
+      { id: 'mire_matriarch', col: 9, row: 3 }
     ]
   },
 
@@ -1089,22 +1107,26 @@ export const CHAPTERS: readonly ChapterSpec[] = [
     rewardEquipId: 'ranger_cloak',
     rewardHeroId: 'mage',
     grid: [
-      [V, D, S, T, D, S, H, V],
-      [S, S, C, S, S, P, S, H],
-      [S, T, S, R, A, S, T, S],
-      [S, S, S, S, S, S, S, S],
-      [S, S, K, S, S, C, S, H],
-      [V, D, S, T, D, S, H, V]
+      [V, D, S, S, T, D, D, S, H, H, V],
+      [S, S, C, S, S, P, S, S, C, H, H],
+      [S, T, S, R, S, A, S, P, S, T, S],
+      [S, S, S, S, S, S, S, S, S, S, S],
+      [S, S, K, S, S, C, S, S, K, S, S],
+      [S, S, S, T, S, S, S, P, S, T, H],
+      [S, S, C, S, S, A, S, S, C, S, H],
+      [V, D, S, S, T, D, D, S, H, H, V]
     ],
     heights: [
-      [0, 2, 2, 1, 2, 2, 2, 0],
-      [0, 1, 1, 1, 1, 1, 1, 2],
-      [0, 1, 0, 1, 0, 1, 2, 2],
-      [0, 0, 0, 0, 0, 1, 1, 1],
-      [0, 1, 1, 1, 1, 1, 1, 2],
-      [0, 2, 2, 1, 2, 2, 2, 0]
+      [0, 2, 2, 2, 1, 2, 2, 2, 2, 2, 0],
+      [0, 1, 1, 1, 1, 1, 1, 1, 1, 2, 2],
+      [0, 1, 0, 1, 0, 1, 0, 1, 1, 2, 2],
+      [0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1],
+      [0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1],
+      [0, 1, 0, 1, 0, 1, 0, 1, 1, 2, 2],
+      [0, 1, 1, 1, 1, 1, 1, 1, 1, 2, 2],
+      [0, 2, 2, 2, 1, 2, 2, 2, 2, 2, 0]
     ],
-    heroSpawns: [[1, 1], [1, 2], [1, 3], [1, 4]],
+    heroSpawns: [[0, 2], [1, 3], [0, 4], [1, 5]],
     objective: {
       kind: 'assassinate',
       label: 'Slay Crypt Warden',
@@ -1114,10 +1136,10 @@ export const CHAPTERS: readonly ChapterSpec[] = [
       targetName: 'Crypt Warden'
     },
     enemies: [
-      { id: 'crypt_knight', col: 5, row: 2, name: 'Crypt Warden' },
-      { id: 'orc_brute', col: 5, row: 3 },
-      { id: 'bone_archer', col: 7, row: 1 },
-      { id: 'bone_necromancer', col: 7, row: 4 }
+      { id: 'crypt_knight', col: 8, row: 3, name: 'Crypt Warden' },
+      { id: 'orc_brute', col: 7, row: 4 },
+      { id: 'bone_archer', col: 9, row: 1 },
+      { id: 'bone_necromancer', col: 10, row: 6 }
     ]
   },
   {
@@ -1132,7 +1154,7 @@ export const CHAPTERS: readonly ChapterSpec[] = [
     mapY: 0.70,
     requires: ['lantern_crypt'],
     specialTag: 'Barrow Raid',
-    modifierDesc: '7x6 Sunken Crypt Gallery · Mini-Boss: Vaelen, Ash Inquisitor',
+    modifierDesc: '11x8 Sunken Crypt Gallery · Mini-Boss: Vaelen, Ash Inquisitor',
     title: 'Whispering Barrow',
     subtitle: 'Special: Ash Inquisitor Sanctum',
     biome: 'crypt',
@@ -1145,27 +1167,31 @@ export const CHAPTERS: readonly ChapterSpec[] = [
     rewardEquipId: 'frostbite_staff',
     rewardHeroId: null,
     grid: [
-      [V, D, H, D, H, H, V],
-      [S, T, P, T, P, T, S],
-      [S, R, S, A, S, H, S],
-      [S, S, S, P, S, S, S],
-      [S, T, P, T, P, T, S],
-      [V, D, H, D, H, H, V]
+      [V, D, H, D, H, D, H, D, H, H, V],
+      [S, T, P, T, S, C, S, P, T, H, S],
+      [S, S, S, S, A, S, S, S, S, H, S],
+      [S, R, S, P, S, S, P, S, H, S, S],
+      [S, S, S, S, S, A, S, S, H, S, S],
+      [S, S, S, P, S, S, P, S, S, H, S],
+      [S, T, P, T, S, C, S, P, T, H, S],
+      [V, D, H, D, H, D, H, D, H, H, V]
     ],
     heights: [
-      [0, 2, 3, 3, 3, 3, 0],
-      [0, 1, 2, 2, 2, 2, 1],
-      [0, 0, 0, 1, 1, 2, 1],
-      [0, 0, 0, 1, 1, 1, 1],
-      [0, 1, 2, 2, 2, 2, 1],
-      [0, 2, 3, 3, 3, 3, 0]
+      [0, 2, 3, 3, 3, 3, 3, 3, 3, 3, 0],
+      [0, 1, 2, 2, 2, 2, 2, 2, 2, 2, 1],
+      [0, 0, 0, 1, 1, 1, 1, 1, 2, 2, 1],
+      [0, 0, 0, 1, 1, 1, 1, 1, 2, 1, 1],
+      [0, 0, 0, 1, 1, 1, 1, 1, 2, 1, 1],
+      [0, 0, 0, 1, 1, 1, 1, 1, 2, 2, 1],
+      [0, 1, 2, 2, 2, 2, 2, 2, 2, 2, 1],
+      [0, 2, 3, 3, 3, 3, 3, 3, 3, 3, 0]
     ],
-    heroSpawns: [[0, 2], [1, 2], [0, 3], [1, 3]],
+    heroSpawns: [[0, 2], [1, 3], [0, 5], [1, 4]],
     enemies: [
-      { id: 'crypt_knight', col: 4, row: 2 },
-      { id: 'bone_archer', col: 5, row: 0, levelScale: 1.12 },
-      { id: 'bone_necromancer', col: 5, row: 5, levelScale: 1.08 },
-      { id: 'ash_inquisitor', col: 6, row: 3 }
+      { id: 'crypt_knight', col: 7, row: 3 },
+      { id: 'bone_archer', col: 8, row: 0, levelScale: 1.12 },
+      { id: 'bone_necromancer', col: 8, row: 7, levelScale: 1.08 },
+      { id: 'ash_inquisitor', col: 9, row: 4 }
     ]
   },
   {
@@ -1180,12 +1206,12 @@ export const CHAPTERS: readonly ChapterSpec[] = [
     mapY: 0.64,
     requires: ['lantern_crypt'],
     specialTag: 'Treasure Vault',
-    modifierDesc: '6x6 Close-Quarters Ambush · War-Chest Bounty',
+    modifierDesc: '11x8 Obsidian Reliquary · War-Chest Bounty',
     title: 'Cursed Vault',
     subtitle: 'Special: Sealed Reliquary',
     biome: 'crypt',
     introSpeaker: 'Vesper',
-    introText: 'A cramped obsidian reliquary overflowing with stolen Solis gold! Dread Knights and a Bone Necromancer seal the tight floor — strike fast before they box us in.',
+    introText: 'An obsidian reliquary overflowing with stolen Solis gold! Dread Knights and a Bone Necromancer seal the chamber — push through their vaults and claim the seal.',
     outroSpeaker: 'Vesper',
     outroText: 'The war-chest is cracked open and Sunsteel steel gleams inside! A tunnel here climbs straight toward Emberwaste.',
     rewardGold: 220,
@@ -1193,37 +1219,41 @@ export const CHAPTERS: readonly ChapterSpec[] = [
     rewardEquipId: 'sunsteel_blade',
     rewardHeroId: null,
     grid: [
-      [V, S, D, D, S, V],
-      [S, P, T, T, P, S],
-      [S, T, R, H, S, S],
-      [S, T, H, A, S, S],
-      [S, P, T, T, P, S],
-      [V, S, D, D, S, V]
+      [V, S, D, D, S, D, D, S, D, S, V],
+      [S, P, T, T, S, C, S, T, T, P, S],
+      [S, T, S, H, S, K, S, H, S, S, S],
+      [S, S, R, H, S, S, S, H, A, S, S],
+      [S, S, S, H, S, S, S, H, S, S, S],
+      [S, T, S, H, S, K, S, H, S, S, S],
+      [S, P, T, T, S, C, S, T, T, P, S],
+      [V, S, D, D, S, D, D, S, D, S, V]
     ],
     heights: [
-      [0, 1, 2, 2, 1, 0],
-      [0, 1, 1, 1, 1, 1],
-      [0, 1, 2, 2, 1, 1],
-      [0, 1, 2, 1, 1, 1],
-      [0, 1, 1, 1, 1, 1],
-      [0, 1, 2, 2, 1, 0]
+      [0, 1, 2, 2, 1, 2, 2, 1, 2, 1, 0],
+      [0, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1],
+      [0, 1, 1, 2, 1, 1, 1, 2, 1, 1, 1],
+      [0, 1, 1, 2, 1, 1, 1, 2, 1, 1, 1],
+      [0, 1, 1, 2, 1, 1, 1, 2, 1, 1, 1],
+      [0, 1, 1, 2, 1, 1, 1, 2, 1, 1, 1],
+      [0, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1],
+      [0, 1, 2, 2, 1, 2, 2, 1, 2, 1, 0]
     ],
-    heroSpawns: [[0, 2], [0, 3], [1, 2], [1, 3]],
+    heroSpawns: [[0, 2], [0, 5], [1, 3], [1, 4]],
     objective: {
       kind: 'seize',
       label: 'Seize Reliquary Seal',
-      description: 'Reach the Reliquary Seal within 10 turns. Optional chests hold bonus gold!',
-      goalTile: { col: 5, row: 2 },
+      description: 'Reach the Reliquary Seal within 12 turns. Optional chests hold bonus gold!',
+      goalTile: { col: 10, row: 3 },
       goalLabel: 'Reliquary Seal',
-      chestTiles: [{ col: 2, row: 2 }, { col: 5, row: 3 }],
+      chestTiles: [{ col: 4, row: 1 }, { col: 8, row: 6 }],
       requiredChests: 0,
-      turnLimit: 10
+      turnLimit: 12
     },
     enemies: [
-      { id: 'crypt_knight', col: 4, row: 2, levelScale: 1.08 },
-      { id: 'crypt_knight', col: 4, row: 3, levelScale: 1.08 },
-      { id: 'bone_archer', col: 5, row: 1, levelScale: 1.1 },
-      { id: 'bone_necromancer', col: 5, row: 4, levelScale: 1.08 }
+      { id: 'crypt_knight', col: 7, row: 3, levelScale: 1.08 },
+      { id: 'crypt_knight', col: 7, row: 4, levelScale: 1.08 },
+      { id: 'bone_archer', col: 9, row: 2, levelScale: 1.1 },
+      { id: 'bone_necromancer', col: 9, row: 5, levelScale: 1.08 }
     ]
   },
   {
@@ -1250,27 +1280,31 @@ export const CHAPTERS: readonly ChapterSpec[] = [
     rewardEquipId: 'runed_mail',
     rewardHeroId: 'rogue',
     grid: [
-      [V, V, H, H, N, T, H, H, V],
-      [N, S, T, C, N, H, T, S, H],
-      [N, S, R, I, T, S, I, T, N],
-      [W, W, N, I, P, I, S, S, H],
-      [N, S, T, N, N, H, T, S, N],
-      [V, N, N, V, W, W, N, V, V]
+      [V, V, H, H, N, T, H, H, N, H, H, V],
+      [N, S, T, C, N, N, H, T, S, T, H, H],
+      [N, S, R, I, T, S, I, S, I, T, N, H],
+      [W, W, N, I, P, I, S, C, S, S, H, H],
+      [N, S, N, I, S, I, S, P, I, S, H, N],
+      [N, S, T, N, N, H, T, S, N, T, S, N],
+      [N, N, S, C, N, N, H, S, N, S, N, N],
+      [V, N, N, V, W, W, N, N, V, N, V, V]
     ],
     heights: [
-      [0, 0, 2, 2, 2, 3, 4, 4, 0],
-      [0, 0, 1, 2, 2, 3, 3, 3, 4],
-      [0, 0, 1, 1, 2, 2, 2, 3, 3],
-      [0, 0, 1, 1, 2, 2, 2, 3, 3],
-      [0, 0, 1, 1, 2, 2, 2, 3, 3],
-      [0, 0, 1, 0, 0, 0, 2, 0, 0]
+      [0, 0, 2, 2, 2, 2, 3, 3, 3, 4, 4, 0],
+      [0, 0, 1, 2, 2, 2, 3, 3, 3, 3, 4, 4],
+      [0, 0, 1, 1, 2, 2, 2, 2, 3, 3, 3, 4],
+      [0, 0, 1, 1, 2, 2, 2, 2, 3, 3, 3, 3],
+      [0, 0, 1, 1, 2, 2, 2, 2, 3, 3, 3, 3],
+      [0, 0, 1, 1, 2, 2, 2, 2, 3, 3, 3, 3],
+      [0, 0, 1, 1, 1, 2, 2, 2, 2, 3, 3, 3],
+      [0, 0, 1, 0, 0, 0, 2, 2, 0, 2, 0, 0]
     ],
-    heroSpawns: [[0, 1], [1, 2], [0, 4], [1, 4]],
+    heroSpawns: [[0, 1], [1, 2], [0, 5], [1, 6]],
     enemies: [
-      { id: 'frost_golem', col: 5, row: 2 },
-      { id: 'frost_golem', col: 6, row: 4 },
-      { id: 'ice_wraith', col: 8, row: 1, levelScale: 1.12 },
-      { id: 'ice_wraith', col: 8, row: 3, levelScale: 1.12 }
+      { id: 'frost_golem', col: 7, row: 2 },
+      { id: 'frost_golem', col: 8, row: 5 },
+      { id: 'ice_wraith', col: 10, row: 1, levelScale: 1.12 },
+      { id: 'ice_wraith', col: 10, row: 4, levelScale: 1.12 }
     ]
   },
   {
@@ -1285,7 +1319,7 @@ export const CHAPTERS: readonly ChapterSpec[] = [
     mapY: 0.19,
     requires: ['frostspire_pass'],
     specialTag: 'Frozen Island',
-    modifierDesc: '8x7 Ice-Ringed Shrine Island · Twin Bridges',
+    modifierDesc: '12x8 Ice-Ringed Shrine Island · Twin Bridges',
     title: 'Mirror Tarn',
     subtitle: 'Special: Frozen Shrine Island',
     biome: 'frost',
@@ -1298,37 +1332,39 @@ export const CHAPTERS: readonly ChapterSpec[] = [
     rewardEquipId: 'eagle_charm',
     rewardHeroId: null,
     grid: [
-      [V, N, H, I, I, H, N, V],
-      [N, S, W, B, B, W, S, N],
-      [N, W, W, T, T, W, W, N],
-      [N, B, T, R, H, T, B, H],
-      [N, W, W, T, T, W, W, N],
-      [N, S, W, B, B, W, S, N],
-      [V, N, H, I, I, H, N, V]
+      [V, N, H, H, I, I, I, I, H, H, N, V],
+      [N, S, S, W, B, B, B, B, W, S, S, N],
+      [N, N, W, W, T, S, S, T, W, W, N, N],
+      [N, B, B, T, S, R, H, S, T, B, B, H],
+      [N, B, B, T, S, H, H, S, T, B, B, H],
+      [N, N, W, W, T, S, S, T, W, W, N, N],
+      [N, S, S, W, B, B, B, B, W, S, S, N],
+      [V, N, H, H, I, I, I, I, H, H, N, V]
     ],
     heights: [
-      [0, 0, 1, 1, 1, 1, 1, 0],
-      [0, 0, 0, 1, 1, 0, 1, 1],
-      [0, 0, 0, 1, 1, 0, 0, 1],
-      [0, 0, 1, 2, 3, 2, 1, 2],
-      [0, 0, 0, 1, 1, 0, 0, 1],
-      [0, 0, 0, 1, 1, 0, 1, 1],
-      [0, 0, 1, 1, 1, 1, 1, 0]
+      [0, 0, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0],
+      [0, 0, 0, 0, 1, 1, 1, 1, 0, 1, 1, 1],
+      [0, 0, 0, 0, 1, 1, 1, 1, 0, 0, 1, 1],
+      [0, 0, 0, 1, 1, 2, 3, 2, 1, 1, 1, 2],
+      [0, 0, 0, 1, 1, 2, 3, 2, 1, 1, 1, 2],
+      [0, 0, 0, 0, 1, 1, 1, 1, 0, 0, 1, 1],
+      [0, 0, 0, 0, 1, 1, 1, 1, 0, 1, 1, 1],
+      [0, 0, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0]
     ],
     heroSpawns: [[0, 2], [0, 3], [0, 4], [1, 3]],
     objective: {
       kind: 'seize',
       label: 'Seize Mirror Shrine',
-      description: 'Claim the central Mirror Shrine within 9 turns (or rout all foes).',
-      goalTile: { col: 3, row: 3 },
+      description: 'Claim the central Mirror Shrine within 11 turns (or rout all foes).',
+      goalTile: { col: 5, row: 3 },
       goalLabel: 'Mirror Shrine',
-      turnLimit: 9
+      turnLimit: 11
     },
     enemies: [
-      { id: 'frost_golem', col: 4, row: 3, levelScale: 1.12 },
-      { id: 'ice_wraith', col: 6, row: 1, levelScale: 1.10 },
-      { id: 'ice_wraith', col: 6, row: 5, levelScale: 1.10 },
-      { id: 'bog_shaman', col: 7, row: 3, levelScale: 1.15 }
+      { id: 'frost_golem', col: 6, row: 3, levelScale: 1.12 },
+      { id: 'ice_wraith', col: 9, row: 1, levelScale: 1.10 },
+      { id: 'ice_wraith', col: 9, row: 6, levelScale: 1.10 },
+      { id: 'bog_shaman', col: 10, row: 4, levelScale: 1.15 }
     ]
   },
   {
@@ -1344,7 +1380,7 @@ export const CHAPTERS: readonly ChapterSpec[] = [
     requires: ['frostspire_pass', 'frozen_lake'],
     unlockMode: 'any',
     specialTag: 'Elite Siege',
-    modifierDesc: '10x6 Twin-Bridge Siege · Mini-Boss: Jarl Skadi · Epic Halberd',
+    modifierDesc: '13x8 Twin-Bridge Siege · Mini-Boss: Jarl Skadi · Epic Halberd',
     title: 'Glacial Citadel',
     subtitle: 'Special: Elite Ice Stronghold',
     biome: 'frost',
@@ -1357,22 +1393,26 @@ export const CHAPTERS: readonly ChapterSpec[] = [
     rewardEquipId: 'dragonfang_spear',
     rewardHeroId: null,
     grid: [
-      [V, H, N, V, V, N, H, H, N, V],
-      [N, S, S, B, B, S, K, T, S, H],
-      [N, R, I, V, V, I, T, H, S, N],
-      [N, N, I, V, V, I, H, T, S, N],
-      [N, S, S, B, B, S, P, T, S, H],
-      [V, H, N, V, V, N, H, H, N, V]
+      [V, H, N, N, V, V, V, N, H, H, H, N, V],
+      [N, S, S, S, B, B, B, S, K, T, S, H, H],
+      [N, R, I, N, V, V, V, I, T, H, S, S, N],
+      [N, S, I, S, B, B, B, S, H, T, S, H, N],
+      [N, N, I, N, V, V, V, I, H, T, S, H, N],
+      [N, S, S, S, B, B, B, S, P, T, S, H, H],
+      [N, H, I, N, V, V, V, N, C, S, H, N, N],
+      [V, H, N, N, V, V, V, N, H, H, H, N, V]
     ],
     heights: [
-      [0, 1, 1, 0, 0, 1, 2, 3, 3, 0],
-      [0, 0, 1, 1, 1, 1, 2, 2, 3, 4],
-      [0, 0, 1, 0, 0, 1, 2, 3, 3, 3],
-      [0, 0, 1, 0, 0, 1, 2, 2, 3, 3],
-      [0, 0, 1, 1, 1, 1, 2, 2, 3, 4],
-      [0, 1, 1, 0, 0, 1, 2, 3, 3, 0]
+      [0, 1, 1, 1, 0, 0, 0, 1, 2, 3, 3, 3, 0],
+      [0, 0, 1, 1, 1, 1, 1, 1, 2, 2, 3, 4, 4],
+      [0, 0, 1, 1, 0, 0, 0, 1, 2, 3, 3, 3, 3],
+      [0, 0, 1, 1, 1, 1, 1, 1, 2, 2, 3, 3, 3],
+      [0, 0, 1, 1, 0, 0, 0, 1, 2, 2, 3, 3, 3],
+      [0, 0, 1, 1, 1, 1, 1, 1, 2, 2, 3, 4, 4],
+      [0, 1, 1, 1, 0, 0, 0, 1, 2, 2, 3, 3, 3],
+      [0, 1, 1, 1, 0, 0, 0, 1, 2, 3, 3, 3, 0]
     ],
-    heroSpawns: [[0, 1], [1, 1], [0, 4], [1, 4]],
+    heroSpawns: [[0, 1], [1, 2], [0, 5], [1, 4]],
     objective: {
       kind: 'assassinate',
       label: 'Slay Jarl Skadi',
@@ -1382,11 +1422,11 @@ export const CHAPTERS: readonly ChapterSpec[] = [
       targetName: 'Jarl Skadi'
     },
     enemies: [
-      { id: 'frost_golem', col: 5, row: 1, levelScale: 1.15 },
-      { id: 'frost_golem', col: 5, row: 4, levelScale: 1.15 },
-      { id: 'frost_jarl', col: 7, row: 2, levelScale: 1.05, name: 'Jarl Skadi' },
-      { id: 'ice_wraith', col: 9, row: 1, levelScale: 1.18 },
-      { id: 'ice_wraith', col: 9, row: 4, levelScale: 1.18 }
+      { id: 'frost_golem', col: 7, row: 1, levelScale: 1.15 },
+      { id: 'frost_golem', col: 7, row: 5, levelScale: 1.15 },
+      { id: 'frost_jarl', col: 10, row: 3, levelScale: 1.05, name: 'Jarl Skadi' },
+      { id: 'ice_wraith', col: 11, row: 1, levelScale: 1.18 },
+      { id: 'ice_wraith', col: 11, row: 6, levelScale: 1.18 }
     ]
   },
 
@@ -1417,22 +1457,26 @@ export const CHAPTERS: readonly ChapterSpec[] = [
     rewardEquipId: 'blood_amulet',
     rewardHeroId: 'paladin',
     grid: [
-      [V, D, L, L, D, H, H, D, V],
-      [D, S, B, B, S, T, D, H, H],
-      [D, R, L, P, M, D, H, T, D],
-      [D, S, B, B, S, T, M, D, D],
-      [D, D, L, L, M, P, T, H, H],
-      [V, H, D, V, V, D, D, D, V]
+      [V, D, D, L, L, L, D, H, H, D, H, V],
+      [D, S, S, B, B, B, S, T, D, H, H, H],
+      [D, R, D, L, P, L, M, D, H, T, D, D],
+      [D, S, S, B, B, B, S, T, M, D, D, H],
+      [D, D, D, L, L, L, M, C, D, H, T, D],
+      [D, S, S, B, B, B, S, T, D, D, H, H],
+      [D, D, H, L, P, L, D, P, T, H, H, D],
+      [V, H, D, V, V, V, D, D, D, D, D, V]
     ],
     heights: [
-      [0, 1, 0, 0, 1, 2, 3, 3, 0],
-      [0, 1, 1, 1, 1, 2, 2, 3, 4],
-      [0, 1, 0, 1, 1, 2, 3, 3, 3],
-      [0, 1, 1, 1, 1, 2, 2, 3, 3],
-      [0, 1, 0, 0, 1, 2, 2, 3, 4],
-      [0, 2, 1, 0, 0, 1, 2, 2, 0]
+      [0, 1, 1, 0, 0, 0, 1, 2, 3, 3, 3, 0],
+      [0, 1, 1, 1, 1, 1, 1, 2, 2, 3, 4, 4],
+      [0, 1, 1, 0, 1, 0, 1, 2, 3, 3, 3, 3],
+      [0, 1, 1, 1, 1, 1, 1, 2, 2, 3, 3, 3],
+      [0, 1, 1, 0, 0, 0, 1, 2, 2, 3, 3, 3],
+      [0, 1, 1, 1, 1, 1, 1, 2, 2, 3, 3, 4],
+      [0, 1, 2, 0, 1, 0, 1, 2, 2, 3, 4, 3],
+      [0, 2, 1, 0, 0, 0, 1, 2, 2, 2, 2, 0]
     ],
-    heroSpawns: [[0, 1], [1, 1], [0, 3], [1, 3]],
+    heroSpawns: [[0, 1], [1, 1], [0, 5], [1, 3]],
     objective: {
       kind: 'defend',
       label: 'Defend Ember Ward',
@@ -1442,11 +1486,11 @@ export const CHAPTERS: readonly ChapterSpec[] = [
       protectLabel: 'Ember Ward'
     },
     enemies: [
-      { id: 'crypt_knight', col: 4, row: 1, levelScale: 1.15 },
-      { id: 'orc_brute', col: 4, row: 3, levelScale: 1.18 },
-      { id: 'orc_brute', col: 6, row: 2, levelScale: 1.2 },
-      { id: 'ember_pyromancer', col: 8, row: 1, levelScale: 1.15 },
-      { id: 'ember_pyromancer', col: 8, row: 4, levelScale: 1.15 }
+      { id: 'crypt_knight', col: 6, row: 1, levelScale: 1.15 },
+      { id: 'orc_brute', col: 6, row: 3, levelScale: 1.18 },
+      { id: 'orc_brute', col: 8, row: 5, levelScale: 1.2 },
+      { id: 'ember_pyromancer', col: 10, row: 1, levelScale: 1.15 },
+      { id: 'ember_pyromancer', col: 10, row: 6, levelScale: 1.15 }
     ]
   },
   {
@@ -1461,7 +1505,7 @@ export const CHAPTERS: readonly ChapterSpec[] = [
     mapY: 0.63,
     requires: ['obsidian_gate'],
     specialTag: 'Magma Vault',
-    modifierDesc: '7x7 Magma Forge · Mini-Boss: Ignar, Magma Warden · Frostguard Plate',
+    modifierDesc: '12x9 Magma Forge · Mini-Boss: Ignar, Magma Warden · Frostguard Plate',
     title: 'Ashfall Foundry',
     subtitle: 'Special: Magma Warden Forge',
     biome: 'volcano',
@@ -1474,40 +1518,44 @@ export const CHAPTERS: readonly ChapterSpec[] = [
     rewardEquipId: 'frostguard_plate',
     rewardHeroId: null,
     grid: [
-      [V, D, L, B, L, D, V],
-      [D, S, T, M, T, H, D],
-      [L, T, C, T, P, T, L],
-      [B, S, T, R, T, S, B],
-      [L, T, P, T, C, T, L],
-      [D, S, T, M, T, H, D],
-      [V, D, L, B, L, D, V]
+      [V, D, L, L, B, B, B, L, L, D, D, V],
+      [D, S, S, T, D, M, D, T, S, H, D, D],
+      [L, S, T, C, T, D, T, P, T, S, L, D],
+      [L, T, S, D, T, D, T, D, S, T, L, D],
+      [B, S, S, T, D, R, D, T, S, S, B, H],
+      [L, T, S, D, T, D, T, D, S, T, L, D],
+      [L, S, T, P, T, D, T, C, T, S, L, D],
+      [D, S, S, T, D, M, D, T, S, H, D, D],
+      [V, D, L, L, B, B, B, L, L, D, D, V]
     ],
     heights: [
-      [0, 1, 0, 1, 0, 1, 0],
-      [0, 1, 1, 2, 2, 3, 2],
-      [0, 1, 2, 2, 2, 2, 0],
-      [0, 1, 2, 3, 2, 2, 2],
-      [0, 1, 2, 2, 2, 2, 0],
-      [0, 1, 1, 2, 2, 3, 2],
-      [0, 1, 0, 1, 0, 1, 0]
+      [0, 1, 0, 0, 1, 1, 1, 0, 0, 1, 1, 0],
+      [0, 1, 1, 1, 2, 2, 2, 2, 2, 3, 2, 2],
+      [0, 1, 1, 2, 2, 2, 2, 2, 2, 2, 0, 2],
+      [0, 1, 1, 2, 2, 2, 2, 2, 2, 2, 0, 2],
+      [0, 1, 1, 2, 2, 3, 2, 2, 2, 2, 2, 3],
+      [0, 1, 1, 2, 2, 2, 2, 2, 2, 2, 0, 2],
+      [0, 1, 1, 2, 2, 2, 2, 2, 2, 2, 0, 2],
+      [0, 1, 1, 1, 2, 2, 2, 2, 2, 3, 2, 2],
+      [0, 1, 0, 0, 1, 1, 1, 0, 0, 1, 1, 0]
     ],
-    heroSpawns: [[0, 3], [1, 1], [1, 3], [1, 5]],
+    heroSpawns: [[0, 4], [1, 1], [1, 4], [1, 7]],
     objective: {
       kind: 'seize',
       label: 'Seize Anvil Shrine',
-      description: 'Claim the central Anvil Shrine within 10 turns. Armory chests grant bonus gold!',
-      goalTile: { col: 3, row: 3 },
+      description: 'Claim the central Anvil Shrine within 12 turns. Armory chests grant bonus gold!',
+      goalTile: { col: 5, row: 4 },
       goalLabel: 'Anvil Shrine',
-      chestTiles: [{ col: 3, row: 1 }, { col: 3, row: 5 }],
+      chestTiles: [{ col: 5, row: 1 }, { col: 5, row: 7 }],
       requiredChests: 0,
-      turnLimit: 10
+      turnLimit: 12
     },
     enemies: [
-      { id: 'magma_warden', col: 4, row: 3, levelScale: 1.05 },
-      { id: 'crypt_knight', col: 5, row: 1, levelScale: 1.18 },
-      { id: 'orc_brute', col: 5, row: 5, levelScale: 1.2 },
-      { id: 'ember_pyromancer', col: 6, row: 3, levelScale: 1.15 },
-      { id: 'ember_pyromancer', col: 5, row: 2, levelScale: 1.15 }
+      { id: 'magma_warden', col: 7, row: 4, levelScale: 1.05 },
+      { id: 'crypt_knight', col: 8, row: 1, levelScale: 1.18 },
+      { id: 'orc_brute', col: 8, row: 7, levelScale: 1.2 },
+      { id: 'ember_pyromancer', col: 11, row: 4, levelScale: 1.15 },
+      { id: 'ember_pyromancer', col: 9, row: 2, levelScale: 1.15 }
     ]
   },
   {
@@ -1522,7 +1570,7 @@ export const CHAPTERS: readonly ChapterSpec[] = [
     mapY: 0.40,
     requires: ['obsidian_gate'],
     specialTag: 'Act III Boss',
-    modifierDesc: '10x7 Grand Cathedral · Boss: Archon Malakor',
+    modifierDesc: '13x9 Grand Cathedral · Boss: Archon Malakor',
     unlocksEndless: true,
     title: 'Eclipse Throne',
     subtitle: 'Boss: Archon Malakor',
@@ -1536,24 +1584,28 @@ export const CHAPTERS: readonly ChapterSpec[] = [
     rewardEquipId: 'solis_crownblade',
     rewardHeroId: 'champion',
     grid: [
-      [V, V, S, H, H, H, S, V, V, V],
-      [V, S, C, A, T, S, P, S, H, V],
-      [D, R, S, T, H, M, T, H, S, D],
-      [D, S, S, S, T, S, T, H, H, D],
-      [D, S, S, T, H, M, T, H, S, D],
-      [V, S, P, A, T, S, C, S, H, V],
-      [V, V, S, L, L, L, S, V, V, V]
+      [V, V, S, S, H, H, H, H, S, S, V, V, V],
+      [V, S, C, A, T, S, S, P, S, H, H, V, V],
+      [D, S, S, S, T, H, M, T, H, S, H, D, V],
+      [D, R, S, S, S, T, S, T, H, H, S, D, D],
+      [D, S, S, S, S, T, S, T, H, H, H, D, D],
+      [D, S, S, S, S, T, S, T, H, H, S, D, D],
+      [D, S, S, S, T, H, M, T, H, S, H, D, V],
+      [V, S, P, A, T, S, S, C, S, H, H, V, V],
+      [V, V, S, S, L, L, L, L, S, S, V, V, V]
     ],
     heights: [
-      [0, 0, 1, 2, 2, 2, 2, 0, 0, 0],
-      [0, 1, 1, 1, 2, 2, 2, 3, 3, 0],
-      [0, 1, 1, 1, 2, 2, 3, 4, 3, 3],
-      [0, 0, 1, 1, 2, 2, 3, 4, 4, 3],
-      [0, 1, 1, 1, 2, 2, 3, 4, 3, 3],
-      [0, 1, 1, 1, 2, 2, 2, 3, 3, 0],
-      [0, 0, 1, 0, 0, 0, 2, 0, 0, 0]
+      [0, 0, 1, 1, 2, 2, 2, 2, 2, 2, 0, 0, 0],
+      [0, 1, 1, 1, 2, 2, 2, 2, 3, 3, 3, 0, 0],
+      [0, 1, 1, 1, 2, 2, 2, 3, 3, 3, 3, 3, 0],
+      [0, 1, 1, 1, 1, 2, 2, 3, 4, 4, 3, 3, 3],
+      [0, 0, 1, 1, 1, 2, 2, 3, 4, 4, 4, 3, 3],
+      [0, 1, 1, 1, 1, 2, 2, 3, 4, 4, 3, 3, 3],
+      [0, 1, 1, 1, 2, 2, 2, 3, 3, 3, 3, 3, 0],
+      [0, 1, 1, 1, 2, 2, 2, 2, 3, 3, 3, 0, 0],
+      [0, 0, 1, 1, 0, 0, 0, 0, 2, 2, 0, 0, 0]
     ],
-    heroSpawns: [[0, 2], [1, 2], [0, 4], [1, 4]],
+    heroSpawns: [[0, 3], [1, 3], [0, 5], [1, 5]],
     objective: {
       kind: 'assassinate',
       label: 'Slay Archon Malakor',
@@ -1563,11 +1615,11 @@ export const CHAPTERS: readonly ChapterSpec[] = [
       targetName: 'Archon Malakor'
     },
     enemies: [
-      { id: 'eclipse_archon', col: 7, row: 3 },
-      { id: 'crypt_knight', col: 6, row: 2 },
-      { id: 'crypt_knight', col: 6, row: 4 },
-      { id: 'bone_necromancer', col: 8, row: 2, levelScale: 1.15 },
-      { id: 'ember_pyromancer', col: 8, row: 4, levelScale: 1.15 }
+      { id: 'eclipse_archon', col: 10, row: 4 },
+      { id: 'crypt_knight', col: 8, row: 3 },
+      { id: 'crypt_knight', col: 8, row: 5 },
+      { id: 'bone_necromancer', col: 11, row: 2, levelScale: 1.15 },
+      { id: 'ember_pyromancer', col: 11, row: 6, levelScale: 1.15 }
     ]
   },
 
@@ -1586,7 +1638,7 @@ export const CHAPTERS: readonly ChapterSpec[] = [
     mapY: 0.24,
     requires: ['border_watch'],
     specialTag: 'Trade Hub',
-    modifierDesc: '8x6 Guild Plaza · Seize 2 Stolen Caravan Chests · Unlocks Oakhaven Exchange Discount',
+    modifierDesc: '11x8 Guild Plaza · Seize 2 Stolen Caravan Chests · Unlocks Oakhaven Exchange Discount',
     title: 'Oakhaven City',
     subtitle: 'Free Trade Hub & Guild Hall',
     biome: 'meadow',
@@ -1599,35 +1651,39 @@ export const CHAPTERS: readonly ChapterSpec[] = [
     rewardEquipId: 'acolyte_robe',
     rewardHeroId: null,
     grid: [
-      [V, H, T, S, S, T, H, V],
-      [S, S, S, K, S, S, S, H],
-      [G, S, R, S, S, P, S, S],
-      [G, S, S, S, K, S, T, H],
-      [S, F, S, P, S, S, S, H],
-      [V, G, T, H, H, T, S, V]
+      [V, H, H, T, S, S, S, T, H, H, V],
+      [S, S, S, S, K, S, S, K, S, S, H],
+      [G, S, S, R, S, S, P, S, S, S, S],
+      [G, S, F, S, S, C, S, S, S, T, H],
+      [G, S, S, S, K, S, S, K, S, T, H],
+      [G, S, F, S, P, S, S, S, S, S, S],
+      [S, F, S, S, S, C, S, S, S, S, H],
+      [V, G, G, T, H, H, H, T, S, S, V]
     ],
     heights: [
-      [0, 2, 1, 1, 1, 1, 2, 0],
-      [0, 0, 1, 1, 1, 1, 1, 2],
-      [0, 0, 0, 1, 1, 1, 1, 1],
-      [0, 0, 0, 0, 1, 1, 1, 2],
-      [0, 0, 0, 0, 0, 1, 1, 2],
-      [0, 0, 1, 2, 2, 1, 1, 0]
+      [0, 2, 2, 1, 1, 1, 1, 1, 2, 2, 0],
+      [0, 0, 1, 1, 1, 1, 1, 1, 1, 1, 2],
+      [0, 0, 0, 0, 1, 1, 1, 1, 1, 1, 1],
+      [0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 2],
+      [0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 2],
+      [0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1],
+      [0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 2],
+      [0, 0, 0, 1, 2, 2, 2, 1, 1, 1, 0]
     ],
-    heroSpawns: [[0, 1], [0, 2], [0, 3], [1, 2]],
+    heroSpawns: [[0, 2], [0, 3], [0, 4], [1, 3]],
     objective: {
       kind: 'seize',
       label: 'Reclaim Caravan Chests',
-      description: 'Seize both raided Guild Caravan chests within 10 turns (or rout all raiders).',
-      chestTiles: [{ col: 5, row: 1 }, { col: 6, row: 4 }],
+      description: 'Seize both raided Guild Caravan chests within 12 turns (or rout all raiders).',
+      chestTiles: [{ col: 7, row: 2 }, { col: 8, row: 6 }],
       requiredChests: 2,
-      turnLimit: 10
+      turnLimit: 12
     },
     enemies: [
-      { id: 'goblin', col: 4, row: 2, name: 'Guild Raider' },
-      { id: 'goblin', col: 5, row: 3, name: 'Market Cutthroat' },
-      { id: 'bone_archer', col: 6, row: 0, name: 'Balcony Marksman' },
-      { id: 'orc_brute', col: 6, row: 2, name: 'Caravan Bruiser' }
+      { id: 'goblin', col: 6, row: 3, name: 'Guild Raider' },
+      { id: 'goblin', col: 7, row: 5, name: 'Market Cutthroat' },
+      { id: 'bone_archer', col: 8, row: 0, name: 'Balcony Marksman' },
+      { id: 'orc_brute', col: 9, row: 3, name: 'Caravan Bruiser' }
     ]
   },
   {
@@ -1643,7 +1699,7 @@ export const CHAPTERS: readonly ChapterSpec[] = [
     requires: ['oakhaven_market', 'briar_hollow'],
     unlockMode: 'any',
     specialTag: 'Galewind Ridge',
-    modifierDesc: '9x6 Terraced Windmill Cliff · Galewind Gust pushes Height 2+ units 1 tile west every 2 rounds',
+    modifierDesc: '12x8 Terraced Windmill Cliff · Galewind Gust pushes Height 2+ units 1 tile west every 2 rounds',
     title: 'Galewind Ridge',
     subtitle: 'Vertical Windmill Siege',
     biome: 'meadow',
@@ -1656,33 +1712,37 @@ export const CHAPTERS: readonly ChapterSpec[] = [
     rewardEquipId: 'recurved_bow',
     rewardHeroId: null,
     grid: [
-      [V, V, G, T, H, H, T, H, V],
-      [G, G, T, H, P, H, H, H, H],
-      [G, S, T, H, H, T, H, P, H],
-      [G, R, S, T, H, H, T, H, H],
-      [G, F, S, K, H, P, H, T, H],
-      [V, V, G, T, H, H, V, V, V]
+      [V, V, G, G, T, H, H, H, T, H, H, V],
+      [G, G, G, T, H, P, H, H, H, H, H, H],
+      [G, S, S, T, H, H, T, H, C, H, P, H],
+      [G, R, S, S, T, H, H, T, H, H, H, H],
+      [G, S, S, T, H, H, T, H, H, P, H, H],
+      [G, F, S, K, H, P, H, T, H, H, T, H],
+      [G, F, G, T, H, H, C, H, H, H, H, H],
+      [V, V, G, G, T, H, H, H, V, V, V, V]
     ],
     heights: [
-      [0, 0, 0, 1, 2, 2, 2, 3, 0],
-      [0, 0, 1, 2, 2, 2, 3, 3, 3],
-      [0, 0, 1, 2, 2, 2, 3, 3, 3],
-      [0, 0, 1, 1, 2, 2, 2, 3, 3],
-      [0, 0, 1, 1, 2, 2, 2, 2, 3],
-      [0, 0, 0, 1, 2, 2, 0, 0, 0]
+      [0, 0, 0, 0, 1, 2, 2, 2, 2, 3, 3, 0],
+      [0, 0, 0, 1, 2, 2, 2, 2, 3, 3, 3, 3],
+      [0, 0, 0, 1, 2, 2, 2, 3, 3, 3, 3, 3],
+      [0, 0, 0, 1, 1, 2, 2, 2, 3, 3, 3, 3],
+      [0, 0, 0, 1, 2, 2, 2, 3, 3, 3, 3, 3],
+      [0, 0, 0, 1, 1, 2, 2, 2, 2, 3, 3, 3],
+      [0, 0, 0, 1, 2, 2, 2, 2, 2, 3, 3, 3],
+      [0, 0, 0, 0, 1, 2, 2, 2, 0, 0, 0, 0]
     ],
-    heroSpawns: [[0, 1], [0, 2], [0, 3], [1, 2]],
+    heroSpawns: [[0, 2], [0, 3], [0, 4], [1, 3]],
     objective: {
       kind: 'rout',
       label: 'Clear Windmill Ramparts',
       description: 'Rout all Eclipse raiders across the terraced windmill cliff while weathering Galewind Gusts.'
     },
     enemies: [
-      { id: 'goblin', col: 4, row: 2 },
-      { id: 'orc_brute', col: 5, row: 3 },
-      { id: 'goblin', col: 6, row: 1 },
-      { id: 'bone_archer', col: 7, row: 0 },
-      { id: 'bone_archer', col: 7, row: 3 }
+      { id: 'goblin', col: 6, row: 3 },
+      { id: 'orc_brute', col: 7, row: 4 },
+      { id: 'goblin', col: 8, row: 1 },
+      { id: 'bone_archer', col: 10, row: 0 },
+      { id: 'bone_archer', col: 10, row: 5 }
     ]
   },
   {
@@ -1698,7 +1758,7 @@ export const CHAPTERS: readonly ChapterSpec[] = [
     requires: ['miller_ford', 'sunken_bridge'],
     unlockMode: 'any',
     specialTag: 'Rising Tide',
-    modifierDesc: '9x6 Flooded Marsh Islands · Low-tide fords flood every 2 rounds · River Trolls & Shamans',
+    modifierDesc: '12x8 Flooded Marsh Islands · Low-tide fords flood every 2 rounds · River Trolls & Shamans',
     title: 'Emerald Delta',
     subtitle: 'Flooded Marsh Raid',
     biome: 'river',
@@ -1711,33 +1771,37 @@ export const CHAPTERS: readonly ChapterSpec[] = [
     rewardEquipId: 'sunweave_robe',
     rewardHeroId: null,
     grid: [
-      [V, G, W, W, G, H, W, G, V],
-      [G, S, B, B, F, T, B, S, G],
-      [G, R, W, W, S, H, W, F, H],
-      [G, S, B, B, S, T, B, S, G],
-      [G, F, W, W, F, P, W, S, H],
-      [V, G, B, B, G, S, B, G, V]
+      [V, G, G, W, W, G, H, H, W, G, G, V],
+      [G, S, S, B, B, F, T, S, B, S, G, G],
+      [G, R, G, W, W, S, H, F, W, F, H, G],
+      [G, S, S, B, B, S, T, S, B, S, G, G],
+      [G, S, F, B, B, S, T, S, B, S, G, G],
+      [G, F, G, W, W, F, P, S, W, S, H, G],
+      [G, S, S, B, B, G, S, T, B, S, G, G],
+      [V, G, G, W, W, G, H, S, W, G, G, V]
     ],
     heights: [
-      [0, 0, 0, 0, 1, 2, 0, 1, 0],
-      [0, 0, 0, 0, 1, 1, 0, 1, 1],
-      [0, 0, 0, 0, 1, 2, 0, 1, 2],
-      [0, 0, 1, 1, 1, 1, 1, 1, 1],
-      [0, 0, 0, 0, 1, 1, 0, 1, 2],
-      [0, 0, 0, 0, 1, 1, 0, 1, 0]
+      [0, 0, 0, 0, 0, 1, 2, 2, 0, 1, 1, 0],
+      [0, 0, 0, 0, 0, 1, 1, 1, 0, 1, 1, 1],
+      [0, 0, 0, 0, 0, 1, 2, 1, 0, 1, 2, 1],
+      [0, 0, 0, 1, 1, 1, 1, 1, 1, 1, 1, 1],
+      [0, 0, 0, 1, 1, 1, 1, 1, 1, 1, 1, 1],
+      [0, 0, 0, 0, 0, 1, 1, 1, 0, 1, 2, 1],
+      [0, 0, 0, 0, 0, 1, 1, 1, 0, 1, 1, 1],
+      [0, 0, 0, 0, 0, 1, 2, 1, 0, 1, 1, 0]
     ],
-    heroSpawns: [[0, 1], [0, 2], [0, 3], [1, 3]],
+    heroSpawns: [[0, 1], [0, 3], [0, 4], [1, 3]],
     objective: {
       kind: 'rout',
       label: 'Purge Emerald Delta',
       description: 'Defeat all River Trolls and Eclipse Shamans across the tidal marsh islands.'
     },
     enemies: [
-      { id: 'river_troll', col: 4, row: 2 },
-      { id: 'goblin', col: 4, row: 4 },
-      { id: 'bog_shaman', col: 5, row: 0 },
-      { id: 'river_troll', col: 7, row: 4 },
-      { id: 'bog_shaman', col: 8, row: 2 }
+      { id: 'river_troll', col: 6, row: 2 },
+      { id: 'goblin', col: 6, row: 6 },
+      { id: 'bog_shaman', col: 7, row: 0 },
+      { id: 'river_troll', col: 9, row: 5 },
+      { id: 'bog_shaman', col: 10, row: 2 }
     ]
   },
   {
@@ -1753,7 +1817,7 @@ export const CHAPTERS: readonly ChapterSpec[] = [
     requires: ['sunwell_glade', 'lantern_crypt'],
     unlockMode: 'any',
     specialTag: 'Relic Defense',
-    modifierDesc: '9x7 Abbey Courtyard · Defend Relic Altar 6 Turns · Reinforcements on Rounds 2, 4 & 5',
+    modifierDesc: '12x9 Abbey Courtyard · Defend Relic Altar 6 Turns · Reinforcements on Rounds 2, 4 & 5',
     title: 'Solis Monastery',
     subtitle: 'Wave-Defense Sanctum',
     biome: 'river',
@@ -1766,37 +1830,41 @@ export const CHAPTERS: readonly ChapterSpec[] = [
     rewardEquipId: 'astral_vestments',
     rewardHeroId: null,
     grid: [
-      [V, G, S, H, T, H, S, G, V],
-      [G, S, P, S, S, S, P, S, G],
-      [G, S, S, T, S, T, S, S, G],
-      [S, T, S, S, R, S, S, T, S],
-      [G, S, S, T, S, T, S, S, G],
-      [G, S, P, S, K, S, P, S, G],
-      [V, G, S, W, S, W, S, G, V]
+      [V, G, S, H, H, T, T, H, H, S, G, V],
+      [G, S, P, S, S, S, S, S, S, P, S, G],
+      [G, S, S, S, T, S, S, T, S, S, S, G],
+      [S, S, S, T, S, S, S, S, T, S, S, S],
+      [S, T, S, S, S, S, R, S, S, S, T, S],
+      [S, S, S, T, S, S, S, S, T, S, S, S],
+      [G, S, S, S, T, S, S, T, S, S, S, G],
+      [G, S, P, S, S, K, K, S, S, P, S, G],
+      [V, G, S, W, S, S, S, S, W, S, G, V]
     ],
     heights: [
-      [0, 0, 1, 2, 1, 2, 1, 0, 0],
-      [0, 0, 1, 1, 1, 1, 1, 0, 0],
-      [0, 0, 1, 1, 2, 1, 1, 0, 0],
-      [0, 1, 1, 2, 2, 2, 1, 1, 0],
-      [0, 0, 1, 1, 2, 1, 1, 0, 0],
-      [0, 0, 1, 1, 1, 1, 1, 0, 0],
-      [0, 0, 1, 0, 1, 0, 1, 0, 0]
+      [0, 0, 1, 2, 2, 1, 1, 2, 2, 1, 0, 0],
+      [0, 0, 1, 1, 1, 1, 1, 1, 1, 1, 0, 0],
+      [0, 0, 1, 1, 1, 2, 2, 1, 1, 1, 0, 0],
+      [0, 1, 1, 1, 2, 2, 2, 2, 1, 1, 1, 0],
+      [0, 1, 1, 2, 2, 2, 2, 2, 2, 1, 1, 0],
+      [0, 1, 1, 1, 2, 2, 2, 2, 1, 1, 1, 0],
+      [0, 0, 1, 1, 1, 2, 2, 1, 1, 1, 0, 0],
+      [0, 0, 1, 1, 1, 1, 1, 1, 1, 1, 0, 0],
+      [0, 0, 1, 0, 1, 1, 1, 1, 0, 1, 0, 0]
     ],
-    heroSpawns: [[3, 3], [4, 2], [4, 4], [5, 3]],
+    heroSpawns: [[5, 4], [6, 3], [6, 5], [7, 4]],
     objective: {
       kind: 'defend',
       label: 'Defend Relic Altar',
       description: 'Keep Eclipse waves off the central Relic Altar for 6 turns (or rout all foes).',
       targetTurns: 6,
-      protectTile: { col: 4, row: 3 },
+      protectTile: { col: 6, row: 4 },
       protectLabel: 'Relic Altar'
     },
     enemies: [
-      { id: 'crypt_knight', col: 1, row: 3 },
-      { id: 'bog_shaman', col: 7, row: 3 },
+      { id: 'crypt_knight', col: 1, row: 4 },
+      { id: 'bog_shaman', col: 10, row: 4 },
       { id: 'bone_archer', col: 1, row: 1 },
-      { id: 'bone_archer', col: 7, row: 5 }
+      { id: 'bone_archer', col: 10, row: 7 }
     ]
   },
 
@@ -1816,7 +1884,7 @@ export const CHAPTERS: readonly ChapterSpec[] = [
     requires: ['whispering_barrow', 'emerald_delta'],
     unlockMode: 'any',
     specialTag: 'Fog Stalker Hunt',
-    modifierDesc: '9x6 Haunted Timberlands · Innate Fog of War · Tall Grass Ambush',
+    modifierDesc: '12x8 Haunted Timberlands · Innate Fog of War · Tall Grass Ambush',
     title: 'Gloomwood',
     subtitle: 'Fog-of-War Stalker Hunt',
     biome: 'crypt',
@@ -1830,22 +1898,26 @@ export const CHAPTERS: readonly ChapterSpec[] = [
     rewardHeroId: null,
     innateMutators: ['fog_of_war'],
     grid: [
-      [V, D, F, H, P, H, F, D, V],
-      [S, F, T, S, F, T, S, F, H],
-      [S, R, F, P, A, F, S, D, D],
-      [S, S, F, S, S, F, P, S, S],
-      [S, F, T, S, F, T, S, F, H],
-      [V, D, F, H, P, H, F, D, V]
+      [V, D, F, H, P, H, F, H, P, F, D, V],
+      [S, F, T, S, F, T, S, F, T, S, F, H],
+      [S, R, F, P, A, F, S, C, S, D, D, D],
+      [S, S, F, S, S, F, P, S, F, S, S, S],
+      [S, S, F, S, S, F, S, S, F, P, S, S],
+      [S, F, S, P, S, F, A, C, S, F, D, D],
+      [S, F, T, S, F, T, S, F, T, S, F, H],
+      [V, D, F, H, P, H, F, H, P, F, D, V]
     ],
     heights: [
-      [0, 1, 1, 2, 2, 2, 1, 2, 0],
-      [0, 0, 1, 1, 1, 1, 1, 1, 2],
-      [0, 0, 0, 1, 1, 1, 1, 2, 2],
-      [0, 0, 0, 0, 1, 1, 1, 1, 1],
-      [0, 0, 1, 1, 1, 1, 1, 1, 2],
-      [0, 1, 1, 2, 2, 2, 1, 2, 0]
+      [0, 1, 1, 2, 2, 2, 1, 2, 2, 1, 2, 0],
+      [0, 0, 1, 1, 1, 1, 1, 1, 1, 1, 1, 2],
+      [0, 0, 0, 1, 1, 1, 1, 1, 1, 2, 2, 2],
+      [0, 0, 0, 0, 1, 1, 1, 1, 1, 1, 1, 1],
+      [0, 0, 0, 0, 1, 1, 1, 1, 1, 1, 1, 1],
+      [0, 0, 0, 1, 1, 1, 1, 1, 1, 1, 2, 2],
+      [0, 0, 1, 1, 1, 1, 1, 1, 1, 1, 1, 2],
+      [0, 1, 1, 2, 2, 2, 1, 2, 2, 1, 2, 0]
     ],
-    heroSpawns: [[0, 1], [0, 2], [0, 3], [1, 3]],
+    heroSpawns: [[0, 2], [0, 3], [0, 4], [1, 4]],
     objective: {
       kind: 'assassinate',
       label: 'Hunt Gloom Stalker',
@@ -1855,10 +1927,10 @@ export const CHAPTERS: readonly ChapterSpec[] = [
       targetName: 'Gloom Stalker Captain'
     },
     enemies: [
-      { id: 'crypt_knight', col: 7, row: 2, levelScale: 1.12, name: 'Gloom Stalker Captain' },
-      { id: 'bone_archer', col: 6, row: 0, levelScale: 1.08 },
-      { id: 'bone_archer', col: 6, row: 5, levelScale: 1.08 },
-      { id: 'bone_necromancer', col: 8, row: 3, levelScale: 1.08 }
+      { id: 'crypt_knight', col: 9, row: 3, levelScale: 1.12, name: 'Gloom Stalker Captain' },
+      { id: 'bone_archer', col: 8, row: 1, levelScale: 1.08 },
+      { id: 'bone_archer', col: 8, row: 6, levelScale: 1.08 },
+      { id: 'bone_necromancer', col: 11, row: 4, levelScale: 1.08 }
     ]
   },
   {
@@ -1874,7 +1946,7 @@ export const CHAPTERS: readonly ChapterSpec[] = [
     requires: ['whispering_barrow', 'cursed_vault'],
     unlockMode: 'any',
     specialTag: 'Cathedral Boss',
-    modifierDesc: '9x7 Gothic Crypt Nave · Mini-Boss: Lich Vaelen (Necromancy + Soul Nova)',
+    modifierDesc: '12x9 Gothic Crypt Nave · Mini-Boss: Lich Vaelen (Necromancy + Soul Nova)',
     title: 'Ash Cathedral',
     subtitle: 'Mini-Boss: Lich Vaelen',
     biome: 'crypt',
@@ -1887,24 +1959,28 @@ export const CHAPTERS: readonly ChapterSpec[] = [
     rewardEquipId: 'glacier_raiment',
     rewardHeroId: null,
     grid: [
-      [V, V, D, S, A, S, D, V, V],
-      [V, S, P, S, T, S, P, D, V],
-      [S, S, S, T, D, T, D, D, D],
-      [S, R, S, S, T, D, D, H, D],
-      [S, S, S, T, D, T, D, D, D],
-      [V, S, P, S, T, S, P, D, V],
-      [V, V, D, S, A, S, D, V, V]
+      [V, V, D, S, S, A, S, S, D, D, V, V],
+      [V, S, P, S, T, S, S, T, P, D, D, V],
+      [S, S, S, T, D, S, T, D, D, D, D, D],
+      [S, S, S, S, T, D, D, D, D, H, D, D],
+      [S, R, S, S, S, T, D, D, D, H, H, D],
+      [S, S, S, S, T, D, D, D, D, H, D, D],
+      [S, S, S, T, D, S, T, D, D, D, D, D],
+      [V, S, P, S, T, S, S, T, P, D, D, V],
+      [V, V, D, S, S, A, S, S, D, D, V, V]
     ],
     heights: [
-      [0, 0, 1, 1, 1, 1, 2, 0, 0],
-      [0, 0, 1, 1, 1, 1, 2, 2, 0],
-      [0, 0, 0, 1, 1, 2, 2, 2, 3],
-      [0, 0, 0, 0, 1, 2, 2, 2, 3],
-      [0, 0, 0, 1, 1, 2, 2, 2, 3],
-      [0, 0, 1, 1, 1, 1, 2, 2, 0],
-      [0, 0, 1, 1, 1, 1, 2, 0, 0]
+      [0, 0, 1, 1, 1, 1, 1, 1, 2, 2, 0, 0],
+      [0, 0, 1, 1, 1, 1, 1, 1, 2, 2, 2, 0],
+      [0, 0, 0, 1, 1, 1, 2, 2, 2, 2, 3, 3],
+      [0, 0, 0, 0, 1, 2, 2, 2, 2, 3, 3, 3],
+      [0, 0, 0, 0, 1, 2, 2, 2, 2, 3, 3, 3],
+      [0, 0, 0, 0, 1, 2, 2, 2, 2, 3, 3, 3],
+      [0, 0, 0, 1, 1, 1, 2, 2, 2, 2, 3, 3],
+      [0, 0, 1, 1, 1, 1, 1, 1, 2, 2, 2, 0],
+      [0, 0, 1, 1, 1, 1, 1, 1, 2, 2, 0, 0]
     ],
-    heroSpawns: [[0, 2], [0, 3], [0, 4], [1, 2]],
+    heroSpawns: [[0, 3], [0, 4], [0, 5], [1, 3]],
     objective: {
       kind: 'assassinate',
       label: 'Slay Lich Vaelen',
@@ -1914,11 +1990,11 @@ export const CHAPTERS: readonly ChapterSpec[] = [
       targetName: 'Lich Vaelen'
     },
     enemies: [
-      { id: 'lich_vaelen', col: 7, row: 3, name: 'Lich Vaelen' },
-      { id: 'crypt_knight', col: 5, row: 2, levelScale: 1.08 },
-      { id: 'crypt_knight', col: 5, row: 4, levelScale: 1.08 },
-      { id: 'bone_archer', col: 6, row: 0, levelScale: 1.10 },
-      { id: 'bone_archer', col: 6, row: 6, levelScale: 1.10 }
+      { id: 'lich_vaelen', col: 10, row: 4, name: 'Lich Vaelen' },
+      { id: 'crypt_knight', col: 7, row: 3, levelScale: 1.08 },
+      { id: 'crypt_knight', col: 7, row: 5, levelScale: 1.08 },
+      { id: 'bone_archer', col: 8, row: 0, levelScale: 1.10 },
+      { id: 'bone_archer', col: 8, row: 8, levelScale: 1.10 }
     ]
   },
   {
@@ -1933,7 +2009,7 @@ export const CHAPTERS: readonly ChapterSpec[] = [
     mapY: 0.14,
     requires: ['frozen_lake'],
     specialTag: 'Cryomancer Trial',
-    modifierDesc: '9x6 Glacial Runeforge Terraces · Seize Runeforge Anvil · Recruits Cryomancer',
+    modifierDesc: '12x8 Glacial Runeforge Terraces · Seize Runeforge Anvil · Recruits Cryomancer',
     title: 'Runeforge Peak',
     subtitle: 'Cryomancer Recruitment Trial',
     biome: 'frost',
@@ -1946,38 +2022,42 @@ export const CHAPTERS: readonly ChapterSpec[] = [
     rewardEquipId: 'solis_archstaff',
     rewardHeroId: 'cryomancer',
     grid: [
-      [V, N, T, H, S, T, H, V, V],
-      [N, S, I, I, T, S, I, T, H],
-      [N, S, N, P, I, T, S, R, H],
-      [N, S, I, I, T, S, I, T, H],
-      [N, N, T, N, P, S, T, S, N],
-      [V, V, N, T, S, S, H, V, V]
+      [V, N, T, H, S, S, T, H, H, H, V, V],
+      [N, S, I, I, T, S, I, I, T, S, H, H],
+      [N, S, N, P, I, T, S, C, I, T, H, H],
+      [N, S, I, I, S, T, S, S, S, S, R, H],
+      [N, S, I, I, T, S, I, P, I, T, S, H],
+      [N, N, T, N, P, S, T, S, N, T, S, N],
+      [N, S, I, N, S, S, I, S, S, S, N, N],
+      [V, V, N, T, S, S, H, H, S, H, V, V]
     ],
     heights: [
-      [0, 0, 1, 2, 2, 2, 3, 0, 0],
-      [0, 0, 0, 1, 1, 2, 2, 3, 3],
-      [0, 0, 0, 1, 1, 2, 2, 3, 3],
-      [0, 0, 0, 1, 1, 2, 2, 3, 3],
-      [0, 0, 1, 1, 1, 2, 2, 3, 3],
-      [0, 0, 1, 1, 2, 2, 3, 0, 0]
+      [0, 0, 1, 2, 2, 2, 2, 3, 3, 3, 0, 0],
+      [0, 0, 0, 1, 1, 2, 2, 2, 3, 3, 3, 3],
+      [0, 0, 0, 1, 1, 2, 2, 2, 2, 3, 3, 3],
+      [0, 0, 0, 1, 1, 2, 2, 2, 2, 3, 3, 3],
+      [0, 0, 0, 1, 1, 2, 2, 2, 2, 3, 3, 3],
+      [0, 0, 1, 1, 1, 2, 2, 2, 2, 3, 3, 3],
+      [0, 0, 1, 1, 1, 2, 2, 2, 2, 3, 3, 3],
+      [0, 0, 1, 1, 2, 2, 3, 3, 3, 3, 0, 0]
     ],
-    heroSpawns: [[0, 1], [0, 2], [0, 3], [1, 2]],
+    heroSpawns: [[0, 2], [0, 3], [0, 4], [1, 3]],
     objective: {
       kind: 'seize',
       label: 'Seize Runeforge Anvil',
-      description: 'Claim the summit Runeforge Anvil within 10 turns (or rout all guardians) to recruit Freya.',
-      goalTile: { col: 7, row: 2 },
+      description: 'Claim the summit Runeforge Anvil within 12 turns (or rout all guardians) to recruit Freya.',
+      goalTile: { col: 10, row: 3 },
       goalLabel: 'Runeforge Anvil',
-      chestTiles: [{ col: 4, row: 0 }, { col: 5, row: 5 }],
+      chestTiles: [{ col: 5, row: 0 }, { col: 6, row: 7 }],
       requiredChests: 0,
-      turnLimit: 10
+      turnLimit: 12
     },
     enemies: [
-      { id: 'frost_golem', col: 5, row: 2, levelScale: 1.08 },
-      { id: 'frost_golem', col: 6, row: 3, levelScale: 1.08 },
-      { id: 'ice_wraith', col: 6, row: 0, levelScale: 1.12 },
-      { id: 'ice_wraith', col: 8, row: 2, levelScale: 1.12 },
-      { id: 'ice_wraith', col: 6, row: 5, levelScale: 1.10 }
+      { id: 'frost_golem', col: 7, row: 3, levelScale: 1.08 },
+      { id: 'frost_golem', col: 8, row: 4, levelScale: 1.08 },
+      { id: 'ice_wraith', col: 8, row: 0, levelScale: 1.12 },
+      { id: 'ice_wraith', col: 11, row: 3, levelScale: 1.12 },
+      { id: 'ice_wraith', col: 8, row: 7, levelScale: 1.10 }
     ]
   },
   {
@@ -1992,7 +2072,7 @@ export const CHAPTERS: readonly ChapterSpec[] = [
     mapY: 0.13,
     requires: ['glacial_citadel'],
     specialTag: 'Raid Boss (2x2)',
-    modifierDesc: '10x7 Summit Eyrie · 2x2 Raid Boss: Rimefang (Glacial Breath & Wing Buffet)',
+    modifierDesc: '13x9 Summit Eyrie · 2x2 Raid Boss: Rimefang (Glacial Breath & Wing Buffet)',
     title: 'Frostwyrm Eyrie',
     subtitle: 'Raid Boss: Rimefang',
     biome: 'frost',
@@ -2005,24 +2085,28 @@ export const CHAPTERS: readonly ChapterSpec[] = [
     rewardEquipId: 'aegis_of_dawn',
     rewardHeroId: null,
     grid: [
-      [V, V, N, H, I, H, N, V, V, V],
-      [V, N, S, P, T, S, S, S, N, V],
-      [N, S, T, I, S, T, S, S, S, H],
-      [N, R, S, P, I, S, S, S, S, H],
-      [N, S, T, I, S, T, S, S, S, H],
-      [V, N, S, P, T, S, S, S, N, V],
-      [V, V, N, H, I, H, N, V, V, V]
+      [V, V, N, H, I, H, H, I, H, N, V, V, V],
+      [V, N, S, P, T, S, S, S, S, S, N, V, V],
+      [N, S, T, I, S, C, T, S, S, S, S, H, V],
+      [N, S, S, P, I, S, S, S, S, S, S, S, H],
+      [N, R, S, S, I, S, S, S, S, S, S, S, H],
+      [N, S, S, P, I, S, S, S, S, S, S, S, H],
+      [N, S, T, I, S, C, T, S, S, S, S, H, V],
+      [V, N, S, P, T, S, S, S, S, S, N, V, V],
+      [V, V, N, H, I, H, H, I, H, N, V, V, V]
     ],
     heights: [
-      [0, 0, 1, 2, 1, 2, 2, 0, 0, 0],
-      [0, 0, 1, 1, 1, 2, 2, 2, 2, 0],
-      [0, 0, 1, 1, 1, 2, 2, 2, 2, 3],
-      [0, 0, 1, 1, 1, 2, 2, 2, 2, 3],
-      [0, 0, 1, 1, 1, 2, 2, 2, 2, 3],
-      [0, 0, 1, 1, 1, 2, 2, 2, 2, 0],
-      [0, 0, 1, 2, 1, 2, 2, 0, 0, 0]
+      [0, 0, 1, 2, 1, 2, 2, 2, 2, 2, 0, 0, 0],
+      [0, 0, 1, 1, 1, 2, 2, 2, 2, 2, 2, 0, 0],
+      [0, 0, 1, 1, 1, 2, 2, 2, 2, 2, 2, 3, 0],
+      [0, 0, 1, 1, 1, 2, 2, 2, 2, 2, 2, 3, 3],
+      [0, 0, 1, 1, 1, 2, 2, 2, 2, 2, 2, 3, 3],
+      [0, 0, 1, 1, 1, 2, 2, 2, 2, 2, 2, 3, 3],
+      [0, 0, 1, 1, 1, 2, 2, 2, 2, 2, 2, 3, 0],
+      [0, 0, 1, 1, 1, 2, 2, 2, 2, 2, 2, 0, 0],
+      [0, 0, 1, 2, 1, 2, 2, 2, 2, 2, 0, 0, 0]
     ],
-    heroSpawns: [[0, 2], [0, 3], [0, 4], [1, 2]],
+    heroSpawns: [[0, 3], [0, 4], [0, 5], [1, 3]],
     objective: {
       kind: 'assassinate',
       label: 'Slay Rimefang',
@@ -2032,10 +2116,10 @@ export const CHAPTERS: readonly ChapterSpec[] = [
       targetName: 'Rimefang, Glacial Frostwyrm'
     },
     enemies: [
-      { id: 'frostwyrm_rimefang', col: 6, row: 2, name: 'Rimefang, Glacial Frostwyrm' },
-      { id: 'ice_wraith', col: 8, row: 1, levelScale: 1.15 },
-      { id: 'ice_wraith', col: 8, row: 5, levelScale: 1.15 },
-      { id: 'frost_golem', col: 5, row: 4, levelScale: 1.12 }
+      { id: 'frostwyrm_rimefang', col: 8, row: 3, name: 'Rimefang, Glacial Frostwyrm' },
+      { id: 'ice_wraith', col: 10, row: 1, levelScale: 1.15 },
+      { id: 'ice_wraith', col: 10, row: 7, levelScale: 1.15 },
+      { id: 'frost_golem', col: 7, row: 5, levelScale: 1.12 }
     ]
   },
   {
@@ -2051,7 +2135,7 @@ export const CHAPTERS: readonly ChapterSpec[] = [
     requires: ['cursed_vault', 'obsidian_gate'],
     unlockMode: 'any',
     specialTag: '3-Round Pit',
-    modifierDesc: '3-Round Gladiator Gauntlet · +25% HP & +1 AP between waves',
+    modifierDesc: '12x9 3-Round Gladiator Gauntlet · +25% HP & +1 AP between waves',
     title: 'Cinder Arena',
     subtitle: 'Gladiator Trial Pit',
     biome: 'volcano',
@@ -2064,34 +2148,38 @@ export const CHAPTERS: readonly ChapterSpec[] = [
     rewardEquipId: 'dragonfang_spear',
     rewardHeroId: null,
     grid: [
-      [V, H, S, S, S, S, S, H, V],
-      [S, T, M, D, D, D, M, T, S],
-      [S, T, D, S, S, S, D, T, S],
-      [S, T, D, S, R, S, D, T, S],
-      [S, T, D, S, S, S, D, T, S],
-      [S, T, M, D, D, D, M, T, S],
-      [V, H, S, S, S, S, S, H, V]
+      [V, H, S, S, S, S, S, S, S, S, H, V],
+      [S, T, M, D, D, D, D, D, D, M, T, S],
+      [S, T, D, S, C, S, S, C, S, D, T, S],
+      [S, T, D, S, S, S, S, S, S, D, T, S],
+      [S, T, D, S, S, R, S, S, S, D, T, S],
+      [S, T, D, S, S, S, S, S, S, D, T, S],
+      [S, T, D, S, C, S, S, C, S, D, T, S],
+      [S, T, M, D, D, D, D, D, D, M, T, S],
+      [V, H, S, S, S, S, S, S, S, S, H, V]
     ],
     heights: [
-      [-1, 2, 2, 2, 2, 2, 2, 2, -1],
-      [ 1, 1, 0, 0, 0, 0, 0, 1,  1],
-      [ 1, 1, 0, 0, 0, 0, 0, 1,  1],
-      [ 1, 1, 0, 0, 0, 0, 0, 1,  1],
-      [ 1, 1, 0, 0, 0, 0, 0, 1,  1],
-      [ 1, 1, 0, 0, 0, 0, 0, 1,  1],
-      [-1, 2, 2, 2, 2, 2, 2, 2, -1]
+      [-1, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, -1],
+      [ 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 1,  1],
+      [ 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 1,  1],
+      [ 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 1,  1],
+      [ 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 1,  1],
+      [ 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 1,  1],
+      [ 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 1,  1],
+      [ 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 1,  1],
+      [-1, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, -1]
     ],
-    heroSpawns: [[0, 2], [0, 3], [0, 4], [1, 3]],
+    heroSpawns: [[0, 3], [0, 4], [0, 5], [1, 4]],
     objective: {
       kind: 'rout',
       label: '3-Round Gladiator Gauntlet',
       description: 'Clear all 3 gladiator waves in Cinder Arena. Heroes recover +25% HP and +1 AP between rounds.'
     },
     enemies: [
-      { id: 'orc_brute', col: 6, row: 2, levelScale: 1.05, name: 'Pit Bruiser' },
-      { id: 'ember_pyromancer', col: 7, row: 3, levelScale: 1.05, name: 'Cinder Pyromancer' },
-      { id: 'goblin', col: 6, row: 4, levelScale: 1.15, name: 'Arena Skirmisher' },
-      { id: 'crypt_knight', col: 7, row: 2, levelScale: 1.0, name: 'Iron Gladiator' }
+      { id: 'orc_brute', col: 8, row: 3, levelScale: 1.05, name: 'Pit Bruiser' },
+      { id: 'ember_pyromancer', col: 10, row: 4, levelScale: 1.05, name: 'Cinder Pyromancer' },
+      { id: 'goblin', col: 8, row: 5, levelScale: 1.15, name: 'Arena Skirmisher' },
+      { id: 'crypt_knight', col: 9, row: 2, levelScale: 1.0, name: 'Iron Gladiator' }
     ]
   },
   {
@@ -2106,7 +2194,7 @@ export const CHAPTERS: readonly ChapterSpec[] = [
     mapY: 0.59,
     requires: ['ashfall_foundry'],
     specialTag: 'Raid Boss',
-    modifierDesc: 'Ignis Titan Raid · Cataclysm Slam ignites nearby magma geysers',
+    modifierDesc: '12x9 Ignis Titan Raid · Cataclysm Slam ignites nearby magma geysers',
     title: 'Brimstone Maw',
     subtitle: 'Raid Boss: Ignis Titan',
     biome: 'volcano',
@@ -2119,24 +2207,28 @@ export const CHAPTERS: readonly ChapterSpec[] = [
     rewardEquipId: 'heart_of_solis',
     rewardHeroId: null,
     grid: [
-      [V, L, L, D, D, D, L, L, V],
-      [L, D, B, D, M, D, B, D, L],
-      [D, D, M, T, D, T, M, D, D],
-      [D, B, D, T, D, T, D, B, D],
-      [D, D, M, T, D, T, M, D, D],
-      [L, D, B, D, R, D, B, D, L],
-      [V, L, L, D, D, D, L, L, V]
+      [V, L, L, D, D, D, D, D, D, L, L, V],
+      [L, D, B, B, D, M, M, D, B, B, D, L],
+      [D, D, M, D, T, D, D, T, D, M, D, D],
+      [D, S, D, T, D, D, D, D, T, D, S, D],
+      [D, B, D, T, D, D, D, D, T, D, B, D],
+      [D, S, D, T, D, D, D, D, T, D, S, D],
+      [D, D, M, D, T, D, D, T, D, M, D, D],
+      [L, D, B, B, D, R, D, D, B, B, D, L],
+      [V, L, L, D, D, D, D, D, D, L, L, V]
     ],
     heights: [
-      [-1, 0, 0, 1, 1, 1, 0, 0, -1],
-      [ 0, 0, 0, 1, 1, 1, 0, 0,  0],
-      [ 0, 0, 0, 1, 2, 1, 0, 0,  0],
-      [ 0, 0, 1, 1, 2, 1, 1, 0,  0],
-      [ 0, 0, 0, 1, 2, 1, 0, 0,  0],
-      [ 0, 0, 0, 1, 1, 1, 0, 0,  0],
-      [-1, 0, 0, 1, 1, 1, 0, 0, -1]
+      [-1, 0, 0, 1, 1, 1, 1, 1, 1, 0, 0, -1],
+      [ 0, 0, 0, 0, 1, 1, 1, 1, 0, 0, 0,  0],
+      [ 0, 0, 0, 0, 1, 2, 2, 1, 0, 0, 0,  0],
+      [ 0, 0, 1, 1, 2, 2, 2, 2, 1, 1, 0,  0],
+      [ 0, 0, 1, 1, 2, 2, 2, 2, 1, 1, 0,  0],
+      [ 0, 0, 1, 1, 2, 2, 2, 2, 1, 1, 0,  0],
+      [ 0, 0, 0, 0, 1, 2, 2, 1, 0, 0, 0,  0],
+      [ 0, 0, 0, 0, 1, 1, 1, 1, 0, 0, 0,  0],
+      [-1, 0, 0, 1, 1, 1, 1, 1, 1, 0, 0, -1]
     ],
-    heroSpawns: [[0, 2], [0, 3], [0, 4], [1, 3]],
+    heroSpawns: [[0, 3], [0, 4], [0, 5], [1, 4]],
     objective: {
       kind: 'assassinate',
       targetEnemyId: 'ignis_titan',
@@ -2145,10 +2237,10 @@ export const CHAPTERS: readonly ChapterSpec[] = [
       description: 'Defeat the Ignis Titan atop the raised magma dais to claim Brimstone Maw.'
     },
     enemies: [
-      { id: 'ignis_titan', col: 4, row: 3, levelScale: 1.0, name: 'Ignis Titan' },
-      { id: 'ember_pyromancer', col: 6, row: 1, levelScale: 1.10 },
-      { id: 'ember_pyromancer', col: 6, row: 5, levelScale: 1.10 },
-      { id: 'crypt_knight', col: 7, row: 3, levelScale: 1.10, name: 'Obsidian Sentinel' }
+      { id: 'ignis_titan', col: 6, row: 4, levelScale: 1.0, name: 'Ignis Titan' },
+      { id: 'ember_pyromancer', col: 8, row: 1, levelScale: 1.10 },
+      { id: 'ember_pyromancer', col: 8, row: 7, levelScale: 1.10 },
+      { id: 'crypt_knight', col: 10, row: 4, levelScale: 1.10, name: 'Obsidian Sentinel' }
     ]
   },
 
@@ -2168,7 +2260,7 @@ export const CHAPTERS: readonly ChapterSpec[] = [
     requires: ['eclipse_throne'],
     seaRoute: true,
     specialTag: 'Sandstorm Frontier',
-    modifierDesc: '9x6 Oasis Bridges · Shifting Sandstorm Gusts (Shelter by Pillars)',
+    modifierDesc: '12x8 Oasis Bridges · Shifting Sandstorm Gusts (Shelter by Pillars)',
     title: 'Mirage Oasis',
     subtitle: 'Desert Strait Landing',
     biome: 'dunes',
@@ -2181,33 +2273,37 @@ export const CHAPTERS: readonly ChapterSpec[] = [
     rewardEquipId: 'gale_longbow',
     rewardHeroId: null,
     grid: [
-      [V, G, H, W, W, G, H, H, V],
-      [G, S, T, B, B, S, T, S, H],
-      [G, R, P, W, W, P, S, G, G],
-      [G, S, G, W, W, G, P, S, G],
-      [G, S, T, B, B, S, T, H, H],
-      [V, G, H, W, W, G, H, G, V]
+      [V, G, H, H, W, W, W, G, H, H, H, V],
+      [G, S, S, T, B, B, B, S, T, S, H, H],
+      [G, R, P, G, W, W, W, P, S, G, G, H],
+      [G, S, S, T, B, B, B, S, G, P, S, G],
+      [G, S, G, G, W, W, W, G, P, S, G, G],
+      [G, S, P, G, W, W, W, P, S, G, H, H],
+      [G, S, S, T, B, B, B, S, T, H, H, H],
+      [V, G, H, H, W, W, W, G, H, G, G, V]
     ],
     heights: [
-      [0, 0, 1, 0, 0, 1, 2, 2, 0],
-      [0, 0, 1, 1, 1, 1, 2, 2, 2],
-      [0, 0, 1, 0, 0, 1, 1, 1, 1],
-      [0, 0, 1, 0, 0, 1, 1, 1, 1],
-      [0, 0, 1, 1, 1, 1, 2, 2, 2],
-      [0, 0, 1, 0, 0, 1, 2, 1, 0]
+      [0, 0, 1, 1, 0, 0, 0, 1, 2, 2, 2, 0],
+      [0, 0, 0, 1, 1, 1, 1, 1, 2, 2, 2, 2],
+      [0, 0, 1, 1, 0, 0, 0, 1, 1, 1, 1, 2],
+      [0, 0, 0, 1, 1, 1, 1, 1, 1, 1, 1, 1],
+      [0, 0, 0, 1, 0, 0, 0, 1, 1, 1, 1, 1],
+      [0, 0, 1, 1, 0, 0, 0, 1, 1, 1, 2, 2],
+      [0, 0, 0, 1, 1, 1, 1, 1, 2, 2, 2, 2],
+      [0, 0, 1, 1, 0, 0, 0, 1, 2, 1, 1, 0]
     ],
-    heroSpawns: [[0, 1], [1, 1], [0, 4], [1, 4]],
+    heroSpawns: [[0, 1], [1, 1], [0, 6], [1, 3]],
     objective: {
       kind: 'rout',
       label: 'Clear Mirage Oasis',
-      description: 'Defeat the desert vanguard holding the twin oasis bridges.'
+      description: 'Defeat the desert vanguard holding the oasis bridges.'
     },
     enemies: [
-      { id: 'crypt_knight', col: 5, row: 1, levelScale: 1.25, name: 'Dune Sentinel' },
-      { id: 'ember_pyromancer', col: 7, row: 0, levelScale: 1.25, name: 'Sunfire Magus' },
-      { id: 'river_troll', col: 5, row: 4, levelScale: 1.25, name: 'Sandstone Brute' },
-      { id: 'bog_shaman', col: 8, row: 2, levelScale: 1.28, name: 'Mirage Mystic' },
-      { id: 'bone_archer', col: 8, row: 4, levelScale: 1.28, name: 'Desert Marksman' }
+      { id: 'crypt_knight', col: 7, row: 1, levelScale: 1.25, name: 'Dune Sentinel' },
+      { id: 'ember_pyromancer', col: 9, row: 0, levelScale: 1.25, name: 'Sunfire Magus' },
+      { id: 'river_troll', col: 7, row: 6, levelScale: 1.25, name: 'Sandstone Brute' },
+      { id: 'bog_shaman', col: 10, row: 3, levelScale: 1.28, name: 'Mirage Mystic' },
+      { id: 'bone_archer', col: 11, row: 5, levelScale: 1.28, name: 'Desert Marksman' }
     ]
   },
   {
@@ -2222,7 +2318,7 @@ export const CHAPTERS: readonly ChapterSpec[] = [
     mapY: 0.90,
     requires: ['mirage_oasis'],
     specialTag: 'Tier VI Vault',
-    modifierDesc: '8x6 Sunken Reliquary · Seize Sun-Prism · Obelisk Cover & Cursed Altars',
+    modifierDesc: '11x8 Sunken Reliquary · Seize Sun-Prism · Obelisk Cover & Cursed Altars',
     title: 'Sunken Obelisk',
     subtitle: 'Mythic Desert Reliquary',
     biome: 'dunes',
@@ -2235,38 +2331,42 @@ export const CHAPTERS: readonly ChapterSpec[] = [
     rewardEquipId: 'shadowfang_bow',
     rewardHeroId: null,
     grid: [
-      [V, S, H, P, H, H, S, V],
-      [G, T, S, A, S, T, H, S],
-      [G, S, P, S, S, P, S, R],
-      [G, S, S, S, A, S, T, S],
-      [G, T, S, P, S, S, H, S],
-      [V, S, H, H, H, S, S, V]
+      [V, S, H, H, P, H, H, P, H, S, V],
+      [G, T, S, S, A, S, S, T, H, H, S],
+      [G, S, P, S, S, C, S, P, S, S, S],
+      [G, S, S, S, S, A, S, S, T, S, R],
+      [G, S, S, P, S, S, S, C, T, S, S],
+      [G, S, P, S, S, A, S, P, S, H, S],
+      [G, T, S, S, P, S, S, T, H, H, S],
+      [V, S, H, H, H, H, H, S, S, S, V]
     ],
     heights: [
-      [0, 1, 2, 2, 2, 2, 1, 0],
-      [0, 1, 1, 1, 1, 2, 2, 2],
-      [0, 0, 1, 1, 1, 1, 2, 2],
-      [0, 0, 0, 1, 1, 1, 2, 2],
-      [0, 1, 1, 1, 1, 1, 2, 2],
-      [0, 1, 2, 2, 2, 1, 1, 0]
+      [0, 1, 2, 2, 2, 2, 2, 2, 2, 1, 0],
+      [0, 1, 1, 1, 1, 1, 1, 2, 2, 2, 2],
+      [0, 0, 1, 1, 1, 1, 1, 1, 2, 2, 2],
+      [0, 0, 0, 1, 1, 1, 1, 1, 2, 2, 2],
+      [0, 0, 0, 1, 1, 1, 1, 1, 2, 2, 2],
+      [0, 0, 1, 1, 1, 1, 1, 1, 2, 2, 2],
+      [0, 1, 1, 1, 1, 1, 1, 2, 2, 2, 2],
+      [0, 1, 2, 2, 2, 2, 2, 1, 1, 1, 0]
     ],
-    heroSpawns: [[0, 1], [0, 2], [0, 3], [0, 4]],
+    heroSpawns: [[0, 2], [0, 3], [0, 4], [0, 5]],
     objective: {
       kind: 'seize',
       label: 'Seize Sun-Prism Shrine',
-      description: 'Reach the Sun-Prism Shrine within 11 turns. Reliquary chests grant bonus gold!',
-      goalTile: { col: 7, row: 2 },
+      description: 'Reach the Sun-Prism Shrine within 13 turns. Reliquary chests grant bonus gold!',
+      goalTile: { col: 10, row: 3 },
       goalLabel: 'Sun-Prism Shrine',
-      chestTiles: [{ col: 3, row: 1 }, { col: 6, row: 4 }],
+      chestTiles: [{ col: 4, row: 1 }, { col: 8, row: 6 }],
       requiredChests: 0,
-      turnLimit: 11
+      turnLimit: 13
     },
     enemies: [
-      { id: 'crypt_knight', col: 4, row: 2, levelScale: 1.32, name: 'Obelisk Guard' },
-      { id: 'frost_golem', col: 5, row: 3, levelScale: 1.30, name: 'Sandstone Construct' },
-      { id: 'ember_pyromancer', col: 6, row: 1, levelScale: 1.32, name: 'Solar Magus' },
-      { id: 'bone_necromancer', col: 7, row: 4, levelScale: 1.30, name: 'Tomb Acolyte' },
-      { id: 'ice_wraith', col: 6, row: 2, levelScale: 1.30, name: 'Mirage Wraith' }
+      { id: 'crypt_knight', col: 6, row: 3, levelScale: 1.32, name: 'Obelisk Guard' },
+      { id: 'frost_golem', col: 6, row: 4, levelScale: 1.30, name: 'Sandstone Construct' },
+      { id: 'ember_pyromancer', col: 9, row: 1, levelScale: 1.32, name: 'Solar Magus' },
+      { id: 'bone_necromancer', col: 10, row: 6, levelScale: 1.30, name: 'Tomb Acolyte' },
+      { id: 'ice_wraith', col: 9, row: 3, levelScale: 1.30, name: 'Mirage Wraith' }
     ]
   },
   {
@@ -2281,7 +2381,7 @@ export const CHAPTERS: readonly ChapterSpec[] = [
     mapY: 0.91,
     requires: ['sunken_obelisk'],
     specialTag: 'Tier VI Boss',
-    modifierDesc: '9x7 Sunscar Pyramid · Boss: Dune Sovereign · Sandstorm Vortex',
+    modifierDesc: '12x9 Sunscar Pyramid · Boss: Dune Sovereign · Sandstorm Vortex',
     title: 'Sunscar Pyramid',
     subtitle: 'Mythic Boss: Dune Sovereign',
     biome: 'dunes',
@@ -2294,24 +2394,28 @@ export const CHAPTERS: readonly ChapterSpec[] = [
     rewardEquipId: 'windrunner_bow',
     rewardHeroId: null,
     grid: [
-      [V, V, S, H, H, H, S, V, V],
-      [V, S, T, S, P, S, T, H, V],
-      [G, S, S, T, H, T, H, H, S],
-      [G, R, S, S, A, S, T, H, H],
-      [G, S, S, T, H, T, H, H, S],
-      [V, S, T, S, P, S, T, H, V],
-      [V, V, S, H, H, H, S, V, V]
+      [V, V, S, S, H, H, H, H, S, S, V, V],
+      [V, S, T, S, P, S, S, P, T, H, H, V],
+      [G, S, S, T, H, S, T, H, H, H, S, S],
+      [G, S, S, S, T, H, T, H, H, H, H, S],
+      [G, R, S, S, A, S, T, H, H, H, H, H],
+      [G, S, S, S, T, H, T, H, H, H, H, S],
+      [G, S, S, T, H, S, T, H, H, H, S, S],
+      [V, S, T, S, P, S, S, P, T, H, H, V],
+      [V, V, S, S, H, H, H, H, S, S, V, V]
     ],
     heights: [
-      [0, 0, 1, 2, 2, 2, 2, 0, 0],
-      [0, 0, 1, 2, 2, 2, 3, 3, 0],
-      [0, 0, 1, 2, 3, 3, 3, 4, 3],
-      [0, 0, 1, 2, 2, 3, 3, 4, 4],
-      [0, 0, 1, 2, 3, 3, 3, 4, 3],
-      [0, 0, 1, 2, 2, 2, 3, 3, 0],
-      [0, 0, 1, 2, 2, 2, 2, 0, 0]
+      [0, 0, 1, 1, 2, 2, 2, 2, 2, 2, 0, 0],
+      [0, 0, 1, 2, 2, 2, 2, 2, 3, 3, 3, 0],
+      [0, 0, 1, 2, 3, 3, 3, 3, 4, 4, 3, 3],
+      [0, 0, 1, 2, 2, 3, 3, 3, 4, 4, 4, 3],
+      [0, 0, 1, 2, 2, 3, 3, 3, 4, 4, 4, 4],
+      [0, 0, 1, 2, 2, 3, 3, 3, 4, 4, 4, 3],
+      [0, 0, 1, 2, 3, 3, 3, 3, 4, 4, 3, 3],
+      [0, 0, 1, 2, 2, 2, 2, 2, 3, 3, 3, 0],
+      [0, 0, 1, 1, 2, 2, 2, 2, 2, 2, 0, 0]
     ],
-    heroSpawns: [[0, 2], [0, 3], [0, 4], [1, 2]],
+    heroSpawns: [[0, 3], [0, 4], [0, 5], [1, 3]],
     objective: {
       kind: 'assassinate',
       label: 'Slay Dune Sovereign',
@@ -2321,11 +2425,11 @@ export const CHAPTERS: readonly ChapterSpec[] = [
       targetName: 'Dune Sovereign'
     },
     enemies: [
-      { id: 'dune_sovereign_boss', col: 7, row: 3 },
-      { id: 'crypt_knight', col: 5, row: 2, levelScale: 1.32, name: 'Pyramid Guard' },
-      { id: 'crypt_knight', col: 5, row: 4, levelScale: 1.32, name: 'Pyramid Guard' },
-      { id: 'ember_pyromancer', col: 7, row: 1, levelScale: 1.30, name: 'Solar Magus' },
-      { id: 'bone_necromancer', col: 7, row: 5, levelScale: 1.30, name: 'Tomb Priest' }
+      { id: 'dune_sovereign_boss', col: 10, row: 4 },
+      { id: 'crypt_knight', col: 7, row: 3, levelScale: 1.32, name: 'Pyramid Guard' },
+      { id: 'crypt_knight', col: 7, row: 5, levelScale: 1.32, name: 'Pyramid Guard' },
+      { id: 'ember_pyromancer', col: 9, row: 1, levelScale: 1.30, name: 'Solar Magus' },
+      { id: 'bone_necromancer', col: 9, row: 7, levelScale: 1.30, name: 'Tomb Priest' }
     ]
   },
   {
@@ -2342,7 +2446,7 @@ export const CHAPTERS: readonly ChapterSpec[] = [
     unlockMode: 'any',
     seaRoute: true,
     specialTag: 'Mythic Atoll',
-    modifierDesc: 'Outer-Sea Relic Island · Claim 2 Mythic Chests & Seize Starfall Altar',
+    modifierDesc: '13x9 Outer-Sea Relic Island · Claim 2 Mythic Chests & Seize Starfall Altar',
     title: 'Starfall Atoll',
     subtitle: 'Mythic Sea Expedition',
     biome: 'throne',
@@ -2355,39 +2459,43 @@ export const CHAPTERS: readonly ChapterSpec[] = [
     rewardEquipId: 'heart_of_solis',
     rewardHeroId: null,
     grid: [
-      [V, W, W, W, S, H, S, W, W, V],
-      [W, G, S, B, T, H, S, W, S, S],
-      [G, G, S, W, S, D, T, W, T, H],
-      [G, S, S, W, S, D, S, B, T, R],
-      [G, G, S, W, S, D, T, W, T, H],
-      [W, G, S, B, T, H, S, W, S, S],
-      [V, W, W, W, S, H, S, W, W, V]
+      [V, W, W, W, W, S, H, H, S, W, W, W, V],
+      [W, G, S, S, B, T, H, S, S, W, S, S, S],
+      [G, G, S, W, W, S, D, D, T, W, T, H, H],
+      [G, S, S, W, W, S, D, S, T, W, T, H, H],
+      [G, S, S, B, B, S, D, S, S, B, B, T, R],
+      [G, S, S, W, W, S, D, S, T, W, T, H, H],
+      [G, G, S, W, W, S, D, D, T, W, T, H, H],
+      [W, G, S, S, B, T, H, S, S, W, S, S, S],
+      [V, W, W, W, W, S, H, H, S, W, W, W, V]
     ],
     heights: [
-      [-1, 0, 0, 0, 1, 2, 1, 0, 0, -1],
-      [ 0, 0, 0, 0, 1, 2, 1, 0, 1,  2],
-      [ 0, 0, 0, 0, 1, 2, 1, 0, 2,  2],
-      [ 0, 0, 0, 0, 1, 2, 1, 1, 2,  3],
-      [ 0, 0, 0, 0, 1, 2, 1, 0, 2,  2],
-      [ 0, 0, 0, 0, 1, 2, 1, 0, 1,  2],
-      [-1, 0, 0, 0, 1, 2, 1, 0, 0, -1]
+      [-1, 0, 0, 0, 0, 1, 2, 2, 1, 0, 0, 0, -1],
+      [ 0, 0, 0, 0, 0, 1, 2, 1, 1, 0, 1, 2,  2],
+      [ 0, 0, 0, 0, 0, 1, 2, 2, 1, 0, 2, 2,  2],
+      [ 0, 0, 0, 0, 0, 1, 2, 2, 1, 0, 2, 2,  2],
+      [ 0, 0, 0, 0, 0, 1, 2, 2, 1, 1, 1, 2,  3],
+      [ 0, 0, 0, 0, 0, 1, 2, 2, 1, 0, 2, 2,  2],
+      [ 0, 0, 0, 0, 0, 1, 2, 2, 1, 0, 2, 2,  2],
+      [ 0, 0, 0, 0, 0, 1, 2, 1, 1, 0, 1, 2,  2],
+      [-1, 0, 0, 0, 0, 1, 2, 2, 1, 0, 0, 0, -1]
     ],
-    heroSpawns: [[0, 2], [0, 3], [0, 4], [1, 3]],
+    heroSpawns: [[0, 3], [0, 4], [0, 5], [1, 4]],
     objective: {
       kind: 'seize',
       label: 'Seize Starfall Altar',
       description: 'Claim both Mythic Relic Chests on the central ridges and seize the summit Starfall Altar.',
-      goalTile: { col: 9, row: 3 },
+      goalTile: { col: 12, row: 4 },
       goalLabel: 'Starfall Altar',
-      chestTiles: [{ col: 5, row: 0 }, { col: 5, row: 6 }],
+      chestTiles: [{ col: 6, row: 0 }, { col: 6, row: 8 }],
       requiredChests: 2
     },
     enemies: [
-      { id: 'frost_jarl', col: 8, row: 3, levelScale: 1.05, name: 'Astral Warden' },
-      { id: 'ice_wraith', col: 5, row: 1, levelScale: 1.25, name: 'Starlight Wraith' },
-      { id: 'ember_pyromancer', col: 5, row: 5, levelScale: 1.25, name: 'Comet Pyromancer' },
-      { id: 'crypt_knight', col: 6, row: 3, levelScale: 1.22, name: 'Reef Vanguard' },
-      { id: 'abyssal_sentinel', col: 9, row: 2, levelScale: 1.08, name: 'Starfall Sentinel' }
+      { id: 'frost_jarl', col: 11, row: 4, levelScale: 1.05, name: 'Astral Warden' },
+      { id: 'ice_wraith', col: 7, row: 1, levelScale: 1.25, name: 'Starlight Wraith' },
+      { id: 'ember_pyromancer', col: 7, row: 7, levelScale: 1.25, name: 'Comet Pyromancer' },
+      { id: 'crypt_knight', col: 8, row: 4, levelScale: 1.22, name: 'Reef Vanguard' },
+      { id: 'abyssal_sentinel', col: 12, row: 2, levelScale: 1.08, name: 'Starfall Sentinel' }
     ]
   },
   {
@@ -2403,7 +2511,7 @@ export const CHAPTERS: readonly ChapterSpec[] = [
     requires: ['dune_sovereign'],
     seaRoute: true,
     specialTag: 'Tier VII Spire',
-    modifierDesc: '10x6 Sky-Bridge Terraces (H0–H4) · Lightning Conduit Strikes Every 2 Rounds',
+    modifierDesc: '13x8 Sky-Bridge Terraces (H0–H4) · Lightning Conduit Strikes Every 2 Rounds',
     title: 'Tempest Spire',
     subtitle: 'Cataclysm Storm Tower',
     biome: 'aether',
@@ -2416,33 +2524,37 @@ export const CHAPTERS: readonly ChapterSpec[] = [
     rewardEquipId: 'starweaver_mantle',
     rewardHeroId: null,
     grid: [
-      [V, V, S, T, V, V, S, T, H, V],
-      [S, T, S, B, B, S, P, H, H, H],
-      [S, R, P, V, V, S, T, H, S, H],
-      [S, S, S, V, V, S, T, H, P, H],
-      [S, T, S, B, B, S, S, H, H, H],
-      [V, V, S, T, V, V, S, T, H, V]
+      [V, V, S, S, T, V, V, V, S, T, H, H, V],
+      [S, T, S, S, B, B, B, S, P, H, H, H, H],
+      [S, R, P, S, V, V, V, S, T, H, S, H, H],
+      [S, S, S, S, B, B, B, S, T, H, P, H, H],
+      [S, S, S, S, V, V, V, S, T, H, P, H, H],
+      [S, T, S, S, B, B, B, S, S, H, H, H, H],
+      [S, S, P, S, V, V, V, S, T, H, S, H, H],
+      [V, V, S, S, T, V, V, V, S, T, H, H, V]
     ],
     heights: [
-      [0, 0, 1, 2, 0, 0, 3, 3, 4, 0],
-      [0, 1, 1, 2, 2, 2, 3, 3, 4, 4],
-      [0, 0, 1, 0, 0, 2, 3, 3, 3, 4],
-      [0, 0, 1, 0, 0, 2, 3, 3, 3, 4],
-      [0, 1, 1, 2, 2, 2, 3, 3, 4, 4],
-      [0, 0, 1, 2, 0, 0, 3, 3, 4, 0]
+      [0, 0, 1, 1, 2, 0, 0, 0, 3, 3, 4, 4, 0],
+      [0, 1, 1, 1, 2, 2, 2, 2, 3, 3, 4, 4, 4],
+      [0, 0, 1, 1, 0, 0, 0, 2, 3, 3, 3, 4, 4],
+      [0, 0, 1, 1, 2, 2, 2, 2, 3, 3, 3, 4, 4],
+      [0, 0, 1, 1, 0, 0, 0, 2, 3, 3, 3, 4, 4],
+      [0, 1, 1, 1, 2, 2, 2, 2, 3, 3, 4, 4, 4],
+      [0, 0, 1, 1, 0, 0, 0, 2, 3, 3, 3, 4, 4],
+      [0, 0, 1, 1, 2, 0, 0, 0, 3, 3, 4, 4, 0]
     ],
-    heroSpawns: [[0, 1], [0, 2], [0, 3], [0, 4]],
+    heroSpawns: [[0, 1], [0, 3], [0, 4], [0, 5]],
     objective: {
       kind: 'rout',
       label: 'Conquer Tempest Spire',
       description: 'Defeat the storm garrison across the vertical sky-bridge terraces.'
     },
     enemies: [
-      { id: 'frost_golem', col: 5, row: 1, levelScale: 1.38, name: 'Storm Colossus' },
-      { id: 'crypt_knight', col: 5, row: 4, levelScale: 1.38, name: 'Tempest Knight' },
-      { id: 'ice_wraith', col: 7, row: 1, levelScale: 1.40, name: 'Aether Wraith' },
-      { id: 'ember_pyromancer', col: 8, row: 0, levelScale: 1.40, name: 'Lightning Savant' },
-      { id: 'ember_pyromancer', col: 8, row: 5, levelScale: 1.40, name: 'Lightning Savant' }
+      { id: 'frost_golem', col: 7, row: 1, levelScale: 1.38, name: 'Storm Colossus' },
+      { id: 'crypt_knight', col: 7, row: 5, levelScale: 1.38, name: 'Tempest Knight' },
+      { id: 'ice_wraith', col: 9, row: 2, levelScale: 1.40, name: 'Aether Wraith' },
+      { id: 'ember_pyromancer', col: 11, row: 0, levelScale: 1.40, name: 'Lightning Savant' },
+      { id: 'ember_pyromancer', col: 11, row: 7, levelScale: 1.40, name: 'Lightning Savant' }
     ]
   },
   {
@@ -2457,7 +2569,7 @@ export const CHAPTERS: readonly ChapterSpec[] = [
     mapY: 0.32,
     requires: ['tempest_spire'],
     specialTag: 'Tier VII Boss',
-    modifierDesc: '10x7 Floating Citadel · Boss: Astral Warden · Starlight Lance & Tempest Surge',
+    modifierDesc: '13x9 Floating Citadel · Boss: Astral Warden · Starlight Lance & Tempest Surge',
     title: 'Skybreak Bastion',
     subtitle: 'Cataclysm Boss: Astral Warden',
     biome: 'aether',
@@ -2470,24 +2582,28 @@ export const CHAPTERS: readonly ChapterSpec[] = [
     rewardEquipId: 'shadowsilk_vest',
     rewardHeroId: 'champion',
     grid: [
-      [V, V, V, S, H, H, S, V, V, V],
-      [V, S, T, B, S, P, T, H, S, V],
-      [S, S, P, V, S, T, H, H, H, S],
-      [S, R, T, B, S, S, T, H, H, H],
-      [S, S, P, V, S, T, H, H, H, S],
-      [V, S, T, B, S, P, T, H, S, V],
-      [V, V, V, S, H, H, S, V, V, V]
+      [V, V, V, S, S, H, H, H, S, S, V, V, V],
+      [V, S, T, B, B, S, P, T, H, H, S, V, V],
+      [S, S, P, V, V, S, T, H, H, H, H, S, V],
+      [S, S, S, B, B, S, T, H, H, H, H, H, S],
+      [S, R, T, B, B, S, S, T, H, H, H, H, H],
+      [S, S, S, B, B, S, T, H, H, H, H, H, S],
+      [S, S, P, V, V, S, T, H, H, H, H, S, V],
+      [V, S, T, B, B, S, P, T, H, H, S, V, V],
+      [V, V, V, S, S, H, H, H, S, S, V, V, V]
     ],
     heights: [
-      [0, 0, 0, 2, 2, 3, 3, 0, 0, 0],
-      [0, 1, 1, 2, 2, 3, 3, 4, 3, 0],
-      [0, 1, 1, 0, 2, 3, 3, 4, 4, 3],
-      [0, 0, 1, 2, 2, 2, 3, 4, 4, 4],
-      [0, 1, 1, 0, 2, 3, 3, 4, 4, 3],
-      [0, 1, 1, 2, 2, 3, 3, 4, 3, 0],
-      [0, 0, 0, 2, 2, 3, 3, 0, 0, 0]
+      [0, 0, 0, 2, 2, 2, 3, 3, 3, 3, 0, 0, 0],
+      [0, 1, 1, 2, 2, 2, 3, 3, 4, 4, 3, 0, 0],
+      [0, 1, 1, 0, 0, 2, 3, 3, 4, 4, 4, 3, 0],
+      [0, 0, 1, 2, 2, 2, 3, 3, 4, 4, 4, 4, 3],
+      [0, 0, 1, 2, 2, 2, 2, 3, 4, 4, 4, 4, 4],
+      [0, 0, 1, 2, 2, 2, 3, 3, 4, 4, 4, 4, 3],
+      [0, 1, 1, 0, 0, 2, 3, 3, 4, 4, 4, 3, 0],
+      [0, 1, 1, 2, 2, 2, 3, 3, 4, 4, 3, 0, 0],
+      [0, 0, 0, 2, 2, 2, 3, 3, 3, 3, 0, 0, 0]
     ],
-    heroSpawns: [[0, 2], [0, 3], [0, 4], [1, 3]],
+    heroSpawns: [[0, 3], [0, 4], [0, 5], [1, 4]],
     objective: {
       kind: 'assassinate',
       label: 'Slay Astral Warden',
@@ -2497,11 +2613,11 @@ export const CHAPTERS: readonly ChapterSpec[] = [
       targetName: 'Astral Warden'
     },
     enemies: [
-      { id: 'astral_warden_boss', col: 8, row: 3 },
-      { id: 'crypt_knight', col: 5, row: 2, levelScale: 1.42, name: 'Starlight Sentinel' },
-      { id: 'crypt_knight', col: 5, row: 4, levelScale: 1.42, name: 'Starlight Sentinel' },
-      { id: 'ice_wraith', col: 7, row: 1, levelScale: 1.42, name: 'Skybreak Wraith' },
-      { id: 'ember_pyromancer', col: 7, row: 5, levelScale: 1.42, name: 'Astral Conduit' }
+      { id: 'astral_warden_boss', col: 11, row: 4 },
+      { id: 'crypt_knight', col: 7, row: 3, levelScale: 1.42, name: 'Starlight Sentinel' },
+      { id: 'crypt_knight', col: 7, row: 5, levelScale: 1.42, name: 'Starlight Sentinel' },
+      { id: 'ice_wraith', col: 9, row: 1, levelScale: 1.42, name: 'Skybreak Wraith' },
+      { id: 'ember_pyromancer', col: 9, row: 7, levelScale: 1.42, name: 'Astral Conduit' }
     ]
   },
   {
@@ -2518,7 +2634,7 @@ export const CHAPTERS: readonly ChapterSpec[] = [
     unlockMode: 'any',
     seaRoute: true,
     specialTag: '10-Floor Abyss',
-    modifierDesc: 'Secret 10-Floor Pitch-Black Dungeon · Tiers VI–VIII & Abyssal Sovereign',
+    modifierDesc: '12x9 Secret 10-Floor Pitch-Black Dungeon · Tiers VI–VIII & Abyssal Sovereign',
     title: 'Crownless Deep',
     subtitle: 'Secret 10-Floor Abyss',
     biome: 'throne',
@@ -2531,34 +2647,38 @@ export const CHAPTERS: readonly ChapterSpec[] = [
     rewardEquipId: 'nightwind_garb',
     rewardHeroId: 'champion',
     grid: [
-      [V, D, D, P, D, P, D, D, V],
-      [D, D, T, D, D, D, T, D, D],
-      [D, S, D, D, A, D, D, S, D],
-      [D, S, T, D, D, D, T, S, D],
-      [D, S, D, D, R, D, D, S, D],
-      [D, D, T, D, D, D, T, D, D],
-      [V, D, D, P, D, P, D, D, V]
+      [V, D, D, P, D, D, D, D, P, D, D, V],
+      [D, D, T, D, D, S, S, D, D, T, D, D],
+      [D, S, D, D, A, D, D, A, D, D, S, D],
+      [D, S, T, D, D, D, D, D, D, T, S, D],
+      [D, S, D, D, D, R, D, D, D, D, S, D],
+      [D, S, T, D, D, D, D, D, D, T, S, D],
+      [D, S, D, D, A, D, D, A, D, D, S, D],
+      [D, D, T, D, D, S, S, D, D, T, D, D],
+      [V, D, D, P, D, D, D, D, P, D, D, V]
     ],
     heights: [
-      [-1, 1, 1, 1, 1, 1, 1, 1, -1],
-      [ 1, 1, 1, 0, 0, 0, 1, 1,  1],
-      [ 1, 1, 0, 0, 0, 0, 0, 1,  1],
-      [ 1, 1, 1, 0, 0, 0, 1, 1,  1],
-      [ 1, 1, 0, 0, 0, 0, 0, 1,  1],
-      [ 1, 1, 1, 0, 0, 0, 1, 1,  1],
-      [-1, 1, 1, 1, 1, 1, 1, 1, -1]
+      [-1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, -1],
+      [ 1, 1, 1, 0, 0, 0, 0, 0, 0, 1, 1,  1],
+      [ 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 1,  1],
+      [ 1, 1, 1, 0, 0, 0, 0, 0, 0, 1, 1,  1],
+      [ 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 1,  1],
+      [ 1, 1, 1, 0, 0, 0, 0, 0, 0, 1, 1,  1],
+      [ 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 1,  1],
+      [ 1, 1, 1, 0, 0, 0, 0, 0, 0, 1, 1,  1],
+      [-1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, -1]
     ],
-    heroSpawns: [[0, 2], [0, 3], [0, 4], [1, 3]],
+    heroSpawns: [[0, 3], [0, 4], [0, 5], [1, 4]],
     objective: {
       kind: 'rout',
       label: 'Clear Abyss Floor',
       description: 'Defeat the abyssal guardians to unlock the next floor of Crownless Deep.'
     },
     enemies: [
-      { id: 'abyssal_sentinel', col: 7, row: 3, levelScale: 1.0 },
-      { id: 'crypt_knight', col: 6, row: 1, levelScale: 1.15 },
-      { id: 'bone_necromancer', col: 7, row: 5, levelScale: 1.15 },
-      { id: 'bone_archer', col: 8, row: 2, levelScale: 1.15 }
+      { id: 'abyssal_sentinel', col: 9, row: 4, levelScale: 1.0 },
+      { id: 'crypt_knight', col: 8, row: 1, levelScale: 1.15 },
+      { id: 'bone_necromancer', col: 9, row: 7, levelScale: 1.15 },
+      { id: 'bone_archer', col: 11, row: 3, levelScale: 1.15 }
     ]
   },
   {
@@ -2574,7 +2694,7 @@ export const CHAPTERS: readonly ChapterSpec[] = [
     requires: ['skybreak_bastion'],
     seaRoute: true,
     specialTag: 'Tier VII Rift',
-    modifierDesc: '10x6 Fractured Void Isles · Narrow Obsidian Spans · Astral Rift Pulses',
+    modifierDesc: '13x8 Fractured Void Isles · Narrow Obsidian Spans · Astral Rift Pulses',
     title: 'Obsidian Rift',
     subtitle: 'Outer Void Crossing',
     biome: 'expanse',
@@ -2587,33 +2707,37 @@ export const CHAPTERS: readonly ChapterSpec[] = [
     rewardEquipId: 'celestial_staff',
     rewardHeroId: null,
     grid: [
-      [V, D, S, V, V, D, H, V, V, V],
-      [D, S, T, B, D, T, A, B, D, H],
-      [D, R, D, V, D, P, D, V, T, H],
-      [D, S, D, V, D, S, D, V, T, H],
-      [D, S, T, B, D, T, A, B, D, H],
-      [V, D, S, V, V, D, H, V, V, V]
+      [V, D, S, S, V, V, D, H, H, V, V, V, V],
+      [D, S, T, B, B, D, T, A, D, B, B, D, H],
+      [D, R, D, V, V, D, P, D, D, V, T, H, H],
+      [D, S, D, B, B, D, S, D, D, B, B, H, H],
+      [D, S, D, V, V, D, S, D, D, V, T, H, H],
+      [D, S, D, V, V, D, P, D, D, V, T, H, H],
+      [D, S, T, B, B, D, T, A, D, B, B, D, H],
+      [V, D, S, S, V, V, D, H, H, V, V, V, V]
     ],
     heights: [
-      [0, 1, 1, 0, 0, 2, 2, 0, 0, 0],
-      [0, 1, 1, 2, 2, 2, 2, 3, 3, 3],
-      [0, 0, 1, 0, 2, 2, 2, 0, 3, 4],
-      [0, 0, 1, 0, 2, 2, 2, 0, 3, 4],
-      [0, 1, 1, 2, 2, 2, 2, 3, 3, 3],
-      [0, 1, 1, 0, 0, 2, 2, 0, 0, 0]
+      [0, 1, 1, 1, 0, 0, 2, 2, 2, 0, 0, 0, 0],
+      [0, 1, 1, 2, 2, 2, 2, 2, 2, 3, 3, 3, 3],
+      [0, 0, 1, 0, 0, 2, 2, 2, 2, 0, 3, 4, 4],
+      [0, 0, 1, 2, 2, 2, 2, 2, 2, 3, 3, 4, 4],
+      [0, 0, 1, 0, 0, 2, 2, 2, 2, 0, 3, 4, 4],
+      [0, 0, 1, 0, 0, 2, 2, 2, 2, 0, 3, 4, 4],
+      [0, 1, 1, 2, 2, 2, 2, 2, 2, 3, 3, 3, 3],
+      [0, 1, 1, 1, 0, 0, 2, 2, 2, 0, 0, 0, 0]
     ],
-    heroSpawns: [[0, 1], [0, 2], [0, 3], [0, 4]],
+    heroSpawns: [[0, 1], [0, 3], [0, 4], [0, 6]],
     objective: {
       kind: 'rout',
       label: 'Breach Obsidian Rift',
       description: 'Defeat the elite Rift Vanguard across the fractured obsidian islands.'
     },
     enemies: [
-      { id: 'crypt_knight', col: 4, row: 2, levelScale: 1.48, name: 'Rift Vanguard' },
-      { id: 'crypt_knight', col: 4, row: 3, levelScale: 1.48, name: 'Rift Vanguard' },
-      { id: 'frost_golem', col: 6, row: 2, levelScale: 1.45, name: 'Obsidian Colossus' },
-      { id: 'bone_necromancer', col: 8, row: 1, levelScale: 1.48, name: 'Void Necromancer' },
-      { id: 'ember_pyromancer', col: 9, row: 3, levelScale: 1.50, name: 'Eclipse Savant' }
+      { id: 'crypt_knight', col: 5, row: 2, levelScale: 1.48, name: 'Rift Vanguard' },
+      { id: 'crypt_knight', col: 5, row: 5, levelScale: 1.48, name: 'Rift Vanguard' },
+      { id: 'frost_golem', col: 8, row: 3, levelScale: 1.45, name: 'Obsidian Colossus' },
+      { id: 'bone_necromancer', col: 11, row: 1, levelScale: 1.48, name: 'Void Necromancer' },
+      { id: 'ember_pyromancer', col: 12, row: 4, levelScale: 1.50, name: 'Eclipse Savant' }
     ]
   },
   {
@@ -2629,7 +2753,7 @@ export const CHAPTERS: readonly ChapterSpec[] = [
     requires: ['obsidian_rift'],
     seaRoute: true,
     specialTag: 'Tier VIII Apex',
-    modifierDesc: '10x7 Primordial Sanctum · 2-Phase Apex Raid Boss: The Unbroken Crown',
+    modifierDesc: '13x9 Primordial Sanctum · 2-Phase Apex Raid Boss: The Unbroken Crown',
     title: 'First Sun Sanctum',
     subtitle: 'Apex Raid: The Unbroken Crown',
     biome: 'expanse',
@@ -2642,24 +2766,28 @@ export const CHAPTERS: readonly ChapterSpec[] = [
     rewardEquipId: 'solis_crownblade',
     rewardHeroId: 'champion',
     grid: [
-      [V, V, V, D, H, H, D, V, V, V],
-      [V, D, T, B, A, P, T, H, D, V],
-      [D, S, D, V, D, T, H, H, H, D],
-      [D, R, T, B, D, S, T, H, H, H],
-      [D, S, D, V, D, T, H, H, H, D],
-      [V, D, T, B, A, P, T, H, D, V],
-      [V, V, V, D, H, H, D, V, V, V]
+      [V, V, V, D, D, H, H, H, D, D, V, V, V],
+      [V, D, T, B, B, A, P, T, H, H, D, V, V],
+      [D, S, D, V, V, D, T, H, H, H, H, D, V],
+      [D, S, D, B, B, D, T, H, H, H, H, H, D],
+      [D, R, T, B, B, D, S, T, H, H, H, H, H],
+      [D, S, D, B, B, D, T, H, H, H, H, H, D],
+      [D, S, D, V, V, D, T, H, H, H, H, D, V],
+      [V, D, T, B, B, A, P, T, H, H, D, V, V],
+      [V, V, V, D, D, H, H, H, D, D, V, V, V]
     ],
     heights: [
-      [0, 0, 0, 2, 2, 3, 3, 0, 0, 0],
-      [0, 1, 1, 2, 2, 3, 3, 4, 3, 0],
-      [0, 1, 1, 0, 2, 3, 3, 4, 4, 3],
-      [0, 0, 1, 2, 2, 2, 3, 4, 4, 4],
-      [0, 1, 1, 0, 2, 3, 3, 4, 4, 3],
-      [0, 1, 1, 2, 2, 3, 3, 4, 3, 0],
-      [0, 0, 0, 2, 2, 3, 3, 0, 0, 0]
+      [0, 0, 0, 2, 2, 2, 3, 3, 3, 3, 0, 0, 0],
+      [0, 1, 1, 2, 2, 2, 3, 3, 4, 4, 3, 0, 0],
+      [0, 1, 1, 0, 0, 2, 3, 3, 4, 4, 4, 3, 0],
+      [0, 0, 1, 2, 2, 2, 3, 3, 4, 4, 4, 4, 3],
+      [0, 0, 1, 2, 2, 2, 2, 3, 4, 4, 4, 4, 4],
+      [0, 0, 1, 2, 2, 2, 3, 3, 4, 4, 4, 4, 3],
+      [0, 1, 1, 0, 0, 2, 3, 3, 4, 4, 4, 3, 0],
+      [0, 1, 1, 2, 2, 2, 3, 3, 4, 4, 3, 0, 0],
+      [0, 0, 0, 2, 2, 2, 3, 3, 3, 3, 0, 0, 0]
     ],
-    heroSpawns: [[0, 2], [0, 3], [0, 4], [1, 3]],
+    heroSpawns: [[0, 3], [0, 4], [0, 5], [1, 4]],
     objective: {
       kind: 'assassinate',
       label: 'Shatter The Unbroken Crown',
@@ -2669,11 +2797,11 @@ export const CHAPTERS: readonly ChapterSpec[] = [
       targetName: 'The Unbroken Crown'
     },
     enemies: [
-      { id: 'unbroken_crown_boss', col: 8, row: 3 },
-      { id: 'crypt_knight', col: 5, row: 2, levelScale: 1.50, name: 'Crownblade Warden' },
-      { id: 'crypt_knight', col: 5, row: 4, levelScale: 1.50, name: 'Crownblade Warden' },
-      { id: 'bone_necromancer', col: 7, row: 1, levelScale: 1.50, name: 'Solar Archivist' },
-      { id: 'ember_pyromancer', col: 7, row: 5, levelScale: 1.50, name: 'Eclipse Hierophant' }
+      { id: 'unbroken_crown_boss', col: 11, row: 4 },
+      { id: 'crypt_knight', col: 7, row: 3, levelScale: 1.50, name: 'Crownblade Warden' },
+      { id: 'crypt_knight', col: 7, row: 5, levelScale: 1.50, name: 'Crownblade Warden' },
+      { id: 'bone_necromancer', col: 9, row: 1, levelScale: 1.50, name: 'Solar Archivist' },
+      { id: 'ember_pyromancer', col: 9, row: 7, levelScale: 1.50, name: 'Eclipse Hierophant' }
     ]
   }
 ]

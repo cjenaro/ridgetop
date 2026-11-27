@@ -122,10 +122,10 @@ export const CINDER_ARENA_WAVES: readonly GauntletWaveSpec[] = [
     title: 'Opening Bout',
     bannerText: 'ROUND 1 / 3 — OPENING BOUT!',
     enemies: [
-      { id: 'orc_brute', col: 6, row: 2, levelScale: 1.05, name: 'Pit Bruiser' },
-      { id: 'ember_pyromancer', col: 7, row: 3, levelScale: 1.05, name: 'Cinder Pyromancer' },
-      { id: 'goblin', col: 6, row: 4, levelScale: 1.15, name: 'Arena Skirmisher' },
-      { id: 'crypt_knight', col: 7, row: 2, levelScale: 1.0, name: 'Iron Gladiator' }
+      { id: 'orc_brute', col: 8, row: 3, levelScale: 1.05, name: 'Pit Bruiser' },
+      { id: 'ember_pyromancer', col: 10, row: 4, levelScale: 1.05, name: 'Cinder Pyromancer' },
+      { id: 'goblin', col: 8, row: 5, levelScale: 1.15, name: 'Arena Skirmisher' },
+      { id: 'crypt_knight', col: 9, row: 2, levelScale: 1.0, name: 'Iron Gladiator' }
     ]
   },
   {
@@ -133,10 +133,10 @@ export const CINDER_ARENA_WAVES: readonly GauntletWaveSpec[] = [
     title: 'Blood & Ash Wave',
     bannerText: 'ROUND 2 / 3 — BLOOD & ASH WAVE!',
     enemies: [
-      { id: 'river_troll', col: 7, row: 3, levelScale: 1.05, name: 'Arena Crusher' },
-      { id: 'ember_pyromancer', col: 7, row: 1, levelScale: 1.12, name: 'Ash Pyromancer' },
-      { id: 'crypt_knight', col: 6, row: 4, levelScale: 1.10, name: 'Obsidian Duelist' },
-      { id: 'bone_archer', col: 8, row: 2, levelScale: 1.15, name: 'Pit Marksman' }
+      { id: 'river_troll', col: 9, row: 4, levelScale: 1.05, name: 'Arena Crusher' },
+      { id: 'ember_pyromancer', col: 10, row: 1, levelScale: 1.12, name: 'Ash Pyromancer' },
+      { id: 'crypt_knight', col: 8, row: 6, levelScale: 1.10, name: 'Obsidian Duelist' },
+      { id: 'bone_archer', col: 10, row: 3, levelScale: 1.15, name: 'Pit Marksman' }
     ]
   },
   {
@@ -144,10 +144,10 @@ export const CINDER_ARENA_WAVES: readonly GauntletWaveSpec[] = [
     title: 'Champion Finale',
     bannerText: 'FINAL ROUND 3 / 3 — CHAMPION WAVE!',
     enemies: [
-      { id: 'magma_warden', col: 7, row: 3, levelScale: 1.0, name: 'Arena Champion Ignar' },
-      { id: 'ember_pyromancer', col: 7, row: 5, levelScale: 1.15, name: 'Flame Herald' },
-      { id: 'crypt_knight', col: 6, row: 2, levelScale: 1.15, name: 'Bloodsworn Guard' },
-      { id: 'orc_brute', col: 6, row: 4, levelScale: 1.15, name: 'Cinder Juggernaut' }
+      { id: 'magma_warden', col: 9, row: 4, levelScale: 1.0, name: 'Arena Champion Ignar' },
+      { id: 'ember_pyromancer', col: 10, row: 6, levelScale: 1.15, name: 'Flame Herald' },
+      { id: 'crypt_knight', col: 8, row: 3, levelScale: 1.15, name: 'Bloodsworn Guard' },
+      { id: 'orc_brute', col: 8, row: 5, levelScale: 1.15, name: 'Cinder Juggernaut' }
     ]
   }
 ]
@@ -414,6 +414,7 @@ export function getStarfallFirstClearBonus(
 // =========================================================================
 
 const ABYSS_HERO_SPAWNS: readonly (readonly [number, number])[] = [[0, 2], [0, 3], [0, 4], [1, 3]]
+const ABYSS_FLOOR1_HERO_SPAWNS: readonly (readonly [number, number])[] = [[0, 3], [0, 4], [0, 5], [1, 4]]
 
 export const CROWNLESS_DEEP_FLOORS: readonly CrownlessDeepFloorSpec[] = [
   // Floor 1 — Threshold of Ash (Tier VI · Darkness Trench)
@@ -431,34 +432,38 @@ export const CROWNLESS_DEEP_FLOORS: readonly CrownlessDeepFloorSpec[] = [
     bonusDust: 14,
     bonusShards: 10,
     grid: [
-      [V, D, D, P, D, P, D, D, V],
-      [D, D, T, D, D, D, T, D, D],
-      [D, S, D, D, A, D, D, S, D],
-      [D, S, T, D, D, D, T, S, D],
-      [D, S, D, D, R, D, D, S, D],
-      [D, D, T, D, D, D, T, D, D],
-      [V, D, D, P, D, P, D, D, V]
+      [V, D, D, P, D, D, D, D, P, D, D, V],
+      [D, D, T, D, D, S, S, D, D, T, D, D],
+      [D, S, D, D, A, D, D, A, D, D, S, D],
+      [D, S, T, D, D, D, D, D, D, T, S, D],
+      [D, S, D, D, D, R, D, D, D, D, S, D],
+      [D, S, T, D, D, D, D, D, D, T, S, D],
+      [D, S, D, D, A, D, D, A, D, D, S, D],
+      [D, D, T, D, D, S, S, D, D, T, D, D],
+      [V, D, D, P, D, D, D, D, P, D, D, V]
     ],
     heights: [
-      [-1, 1, 1, 1, 1, 1, 1, 1, -1],
-      [ 1, 1, 1, 0, 0, 0, 1, 1,  1],
-      [ 1, 1, 0, 0, 0, 0, 0, 1,  1],
-      [ 1, 1, 1, 0, 0, 0, 1, 1,  1],
-      [ 1, 1, 0, 0, 0, 0, 0, 1,  1],
-      [ 1, 1, 1, 0, 0, 0, 1, 1,  1],
-      [-1, 1, 1, 1, 1, 1, 1, 1, -1]
+      [-1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, -1],
+      [ 1, 1, 1, 0, 0, 0, 0, 0, 0, 1, 1,  1],
+      [ 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 1,  1],
+      [ 1, 1, 1, 0, 0, 0, 0, 0, 0, 1, 1,  1],
+      [ 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 1,  1],
+      [ 1, 1, 1, 0, 0, 0, 0, 0, 0, 1, 1,  1],
+      [ 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 1,  1],
+      [ 1, 1, 1, 0, 0, 0, 0, 0, 0, 1, 1,  1],
+      [-1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, -1]
     ],
-    heroSpawns: ABYSS_HERO_SPAWNS,
+    heroSpawns: ABYSS_FLOOR1_HERO_SPAWNS,
     objective: {
       kind: 'rout',
       label: 'Floor 1 · Clear Trench',
       description: 'Rout the vanguard of the Crownless Deep to descend to Floor 2.'
     },
     enemies: [
-      { id: 'abyssal_sentinel', col: 7, row: 3, levelScale: 1.0 },
-      { id: 'crypt_knight', col: 6, row: 1, levelScale: 1.15 },
-      { id: 'bone_necromancer', col: 7, row: 5, levelScale: 1.15 },
-      { id: 'bone_archer', col: 8, row: 2, levelScale: 1.15 }
+      { id: 'abyssal_sentinel', col: 9, row: 4, levelScale: 1.0 },
+      { id: 'crypt_knight', col: 8, row: 1, levelScale: 1.15 },
+      { id: 'bone_necromancer', col: 9, row: 7, levelScale: 1.15 },
+      { id: 'bone_archer', col: 11, row: 3, levelScale: 1.15 }
     ]
   },
 

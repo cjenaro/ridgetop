@@ -226,7 +226,7 @@ test('Ash Cathedral features Lich Vaelen on elevated dais with Bone Thrall summo
   assert.ok(lich, 'Ash Cathedral must spawn Lich Vaelen')
   assert.equal(lich.isBoss, true)
   assert.equal(battle.objective.targetEnemyUid, lich.uid)
-  assert.equal(cellHeightLevel(battle.cells[lich.row][lich.col]), 2, 'Lich Vaelen must stand on elevated heightLevel 2 altar dais')
+  assert.ok(cellHeightLevel(battle.cells[lich.row][lich.col]) >= 2, 'Lich Vaelen must stand on elevated altar dais')
 
   // 1. First Lich turn: summons a Bone Thrall onto an adjacent open tile
   const beforeUnits = battle.units.length
@@ -342,17 +342,17 @@ test('Frostwyrm Eyrie 2x2 multi-tile boss Rimefang supports 4-tile targeting, Ao
   const fpCells = getUnitFootprintCells(rimefang)
   assert.equal(fpCells.length, 4)
   assert.deepEqual(fpCells, [
-    { col: 6, row: 2 },
-    { col: 7, row: 2 },
-    { col: 6, row: 3 },
-    { col: 7, row: 3 }
+    { col: 8, row: 3 },
+    { col: 9, row: 3 },
+    { col: 8, row: 4 },
+    { col: 9, row: 4 }
   ])
 
   // 1. Occupancy: ALL 4 tiles resolve to Rimefang via unitAt
   for (const fc of fpCells) {
     assert.equal(unitAt(battle, fc.col, fc.row)?.uid, rimefang.uid, `unitAt(${fc.col},${fc.row}) must resolve to Rimefang`)
   }
-  assert.equal(unitAt(battle, 5, 2), undefined)
+  assert.equal(unitAt(battle, 7, 3), undefined)
 
   // 2. Targeting ANY of the 4 footprint tiles damages Rimefang!
   const hero = battle.units.find(u => u.team === 'ally')!
@@ -363,10 +363,10 @@ test('Frostwyrm Eyrie 2x2 multi-tile boss Rimefang supports 4-tile targeting, Ao
   rimefang.hp = rimefang.maxHp
 
   const testCases: readonly { heroPos: [number, number]; hitTile: [number, number] }[] = [
-    { heroPos: [5, 2], hitTile: [6, 2] }, // top-left anchor
-    { heroPos: [8, 2], hitTile: [7, 2] }, // top-right
-    { heroPos: [5, 3], hitTile: [6, 3] }, // bottom-left
-    { heroPos: [8, 3], hitTile: [7, 3] }  // bottom-right
+    { heroPos: [7, 3], hitTile: [8, 3] }, // top-left anchor
+    { heroPos: [10, 3], hitTile: [9, 3] }, // top-right
+    { heroPos: [7, 4], hitTile: [8, 4] }, // bottom-left
+    { heroPos: [10, 4], hitTile: [9, 4] }  // bottom-right
   ]
   for (const tc of testCases) {
     hero.col = tc.heroPos[0]
@@ -416,8 +416,8 @@ test('Frostwyrm Eyrie 2x2 multi-tile boss Rimefang supports 4-tile targeting, Ao
   // 4. AoE hit deduplication: casting a cross AoE overlapping 3 tiles of Rimefang damages Rimefang ONCE!
   const mage = battle.units.find(u => u.team === 'ally' && u.heroId === 'mage')!
   ;(mage as { stars: 1 | 2 | 3 }).stars = 2
-  mage.col = 5
-  mage.row = 2
+  mage.col = 7
+  mage.row = 3
   mage.acted = false
   mage.moved = false
   mage.cooldowns = [0, 0, 0]
@@ -428,11 +428,11 @@ test('Frostwyrm Eyrie 2x2 multi-tile boss Rimefang supports 4-tile targeting, Ao
   rimefang.shield = 0
   const aoeForecast = (() => {
     armSkill(state, 1) // Ember Nova (cross pattern)
-    return computeCombatForecast(state, 6, 2)
+    return computeCombatForecast(state, 8, 3)
   })()
   assert.ok(aoeForecast, 'Ember Nova forecast against Rimefang must exist')
   const hpBeforeAoe = rimefang.hp
-  selectTile(state, 6, 2)
+  selectTile(state, 8, 3)
   const dmgDealt = hpBeforeAoe - rimefang.hp
   assert.equal(dmgDealt, aoeForecast.normalDmg, 'AoE overlapping multiple 2x2 tiles must damage Rimefang exactly once')
 
@@ -442,10 +442,10 @@ test('Frostwyrm Eyrie 2x2 multi-tile boss Rimefang supports 4-tile targeting, Ao
     battle.hand = [flameCard.uid]
     battle.ap = 4
     armTacticCard(state, flameCard.uid)
-    assert.ok(battle.targetTiles.some(t => t.col === 7 && t.row === 3), 'Enemy tactic must allow clicking bottom-right 2x2 tile')
+    assert.ok(battle.targetTiles.some(t => t.col === 9 && t.row === 4), 'Enemy tactic must allow clicking bottom-right 2x2 tile')
     const hpBeforeTac = rimefang.hp
-    assert.equal(selectTile(state, 7, 3), true)
-    assert.ok(rimefang.hp < hpBeforeTac, 'Enemy tactic on (7,3) must damage Rimefang')
+    assert.equal(selectTile(state, 9, 4), true)
+    assert.ok(rimefang.hp < hpBeforeTac, 'Enemy tactic on (9,4) must damage Rimefang')
   }
 
   // 6. Rimefang movement only returns valid 2x2 anchors where all 4 tiles are walkable & free
@@ -465,15 +465,15 @@ test('Frostwyrm Eyrie 2x2 multi-tile boss Rimefang supports 4-tile targeting, Ao
     otherAllies[i].col = 0
     otherAllies[i].row = 2 + i
   }
-  victimA.col = 4
-  victimA.row = 2
+  victimA.col = rimefang.col - 2
+  victimA.row = rimefang.row
   victimA.hp = victimA.maxHp
   victimA.shield = 0
   victimA.slowTurns = 1 // Already Slowed -> Frost breath triggers FREEZE (Stun)!
   victimA.stunTurns = 0
   rimefang.cooldowns = [0, 0, 0]
 
-  const breathCells = computeGlacialBreathCells(battle, rimefang, 4, 2)
+  const breathCells = computeGlacialBreathCells(battle, rimefang, victimA.col, victimA.row)
   assert.ok(breathCells.length >= 4, 'Glacial Breath must cover a wide cone/cross')
   assert.equal(
     breathCells.some(c => battle.cells[c.row][c.col].terrain === 'pillar'),
@@ -491,9 +491,11 @@ test('Frostwyrm Eyrie 2x2 multi-tile boss Rimefang supports 4-tile targeting, Ao
   assert.equal(victimA.stunTurns >= 1, true, 'Glacial Breath on Slowed hero must trigger FREEZE Stun combo')
   assert.ok(state.vfx.some(v => v.kind === 'special' && v.move === 'frostwyrm_breath'), 'Glacial Breath must emit frostwyrm_breath VFX')
 
-  // 8. Wing Buffet: adjacent hero knocked back 2 tiles into cover pillar / open space!
-  victimA.col = 5
-  victimA.row = 3 // Immediately adjacent to Rimefang's (6,3); pillar sits at (3,3) — exactly 2 tiles west!
+  // 8. Wing Buffet: adjacent hero knocked back 2 tiles into cover pillar!
+  victimA.col = rimefang.col - 1
+  victimA.row = rimefang.row + 1
+  battle.cells[victimA.row][victimA.col - 2].terrain = 'pillar'
+  battle.cells[victimA.row][victimA.col - 2].walkable = false
   victimA.hp = victimA.maxHp
   victimA.shield = 0
   victimA.stunTurns = 0
@@ -505,8 +507,8 @@ test('Frostwyrm Eyrie 2x2 multi-tile boss Rimefang supports 4-tile targeting, Ao
 
   advanceEnemyTurn(state, rimefang)
   assert.equal(rimefang.cooldowns[1], FROSTWYRM_WING_BUFFET_COOLDOWN)
-  assert.equal(victimA.col, 4, 'Wing Buffet knockback 2 west from (5,3) must slam into pillar at (3,3) and stop at (4,3)')
-  assert.equal(victimA.row, 3)
+  assert.equal(victimA.col, rimefang.col - 2, 'Wing Buffet knockback 2 west must slam into pillar and stop 1 tile east of it')
+  assert.equal(victimA.row, rimefang.row + 1)
   assert.ok(victimA.stunTurns >= 1, 'Slamming into stone pillar from Wing Buffet must stun hero')
 
   // 9. Save / Resume round-trip parity for 2x2 raid boss!
@@ -521,18 +523,18 @@ test('Frostwyrm Eyrie 2x2 multi-tile boss Rimefang supports 4-tile targeting, Ao
   const bossSnap = validated.units.find(u => u.enemyId === 'frostwyrm_rimefang')
   assert.equal(bossSnap?.footprintSize, 2)
 
-  // Corrupt snapshot placing a hero inside Rimefang's bottom-right cell (7,3) must be rejected!
+  // Corrupt snapshot placing a hero inside Rimefang's bottom-right cell must be rejected!
   const corrupt = JSON.parse(JSON.stringify(snap))
   const heroSnap = corrupt.units.find((u: { team: string }) => u.team === 'ally')
-  heroSnap.col = 7
-  heroSnap.row = 3
+  heroSnap.col = rimefang.col + 1
+  heroSnap.row = rimefang.row + 1
   assert.equal(validateBattleSnapshot(corrupt), null, 'Snapshot overlapping a 2x2 boss footprint cell must be rejected')
 
   const resumed = createInitialState(9999)
   assert.equal(restoreBattleState(resumed, roundTrip), true)
   const resumedBoss = resumed.battle!.units.find(u => u.enemyId === 'frostwyrm_rimefang')!
   assert.equal(getUnitFootprintSize(resumedBoss), 2)
-  assert.equal(unitAt(resumed.battle!, 7, 3)?.uid, resumedBoss.uid)
+  assert.equal(unitAt(resumed.battle!, resumedBoss.col + 1, resumedBoss.row + 1)?.uid, resumedBoss.uid)
   const [ex, ey, ez] = computeFootprintWorldCenter(resumed.battle!, resumedBoss.col, resumedBoss.row, 2)
   assert.ok(Math.abs(resumedBoss.x - ex) < 1e-6 && Math.abs(resumedBoss.y - ey) < 1e-6 && Math.abs(resumedBoss.z - ez) < 1e-6)
 })

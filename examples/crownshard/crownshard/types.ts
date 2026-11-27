@@ -1,7 +1,7 @@
 import type { Vec3 } from 'ridgetop'
 
-export const GRID_COLS = 8
-export const GRID_ROWS = 6
+export const GRID_COLS = 11
+export const GRID_ROWS = 8
 export const TILE_SIZE = 1.65
 export const HEIGHT_STEP = 0.45
 export const MAX_HEIGHT_LEVEL = 4

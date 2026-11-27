@@ -326,9 +326,9 @@ test('Unbroken Crown triggers Phase 2 Solar Eclipse Awakening at <= 50% HP and p
   const atkBefore = boss.atk
   const unitCountBefore = battle.units.length
 
-  // Move hero adjacent to boss (boss is at 8,3; place hero at 7,3 which is walkable H4)
-  hero.col = 7
-  hero.row = 3
+  // Move hero adjacent to boss (boss is at 11,4; place hero at 10,4 which is walkable H4)
+  hero.col = boss.col - 1
+  hero.row = boss.row
   hero.atk = 45
   hero.acted = false
   hero.moved = true
@@ -431,8 +431,8 @@ test('Dunes Sandstorm Gust, Aether Lightning Conduit, and Expanse Astral Rift fi
   const aetherBattle = startStageBattle(aetherState, 'tempest_spire')
   const conduitHero = aetherBattle.units.find(u => u.team === 'ally')!
   const groundedHero = aetherBattle.units.filter(u => u.team === 'ally')[1]!
-  // Col 3, row 1 is sky-bridge ('bridge' adjacent to 'void' at 3,2)
-  conduitHero.col = 3
+  // Col 4, row 1 is sky-bridge ('bridge' adjacent to 'void' at 4,2)
+  conduitHero.col = 4
   conduitHero.row = 1
   conduitHero.shield = 0
   const conduitHpBefore = conduitHero.hp
@@ -457,8 +457,8 @@ test('Dunes Sandstorm Gust, Aether Lightning Conduit, and Expanse Astral Rift fi
   const expanseState = createInitialState(9703)
   const expanseBattle = startStageBattle(expanseState, 'obsidian_rift')
   const riftHero = expanseBattle.units.find(u => u.team === 'ally')!
-  // Col 6, row 0 is hill (0 terrain DEF) adjacent to void at (7,0)
-  riftHero.col = 6
+  // Col 8, row 0 is hill (0 terrain DEF) adjacent to void at (9,0)
+  riftHero.col = 8
   riftHero.row = 0
   riftHero.shield = 0
   const riftHpBefore = riftHero.hp

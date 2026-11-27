@@ -41,12 +41,12 @@ export const GALEWIND_PUSH_DIR: readonly [number, number] = [-1, 0]
 export const EMERALD_TIDE_PERIOD = 2
 export const EMERALD_TIDE_SPLASH_DAMAGE = 6
 export const EMERALD_TIDE_FORD_TILES: readonly GridCoord[] = [
-  { col: 2, row: 1 },
   { col: 3, row: 1 },
-  { col: 6, row: 1 },
-  { col: 2, row: 5 },
-  { col: 3, row: 5 },
-  { col: 6, row: 5 }
+  { col: 4, row: 1 },
+  { col: 8, row: 1 },
+  { col: 3, row: 6 },
+  { col: 4, row: 6 },
+  { col: 8, row: 6 }
 ]
 
 export const MONASTERY_REINFORCEMENT_ROUNDS: readonly number[] = [2, 4, 5]
@@ -178,7 +178,7 @@ export const MONASTERY_WAVE_SPECS: readonly MonasteryWaveSpec[] = [
     label: 'Cloister Raiders',
     spawns: [
       { enemyId: 'goblin', name: 'Abbey Raider', levelScale: 1.05, preferredGate: { col: 0, row: 2 } },
-      { enemyId: 'bone_archer', name: 'Zealot Marksman', levelScale: 1.05, preferredGate: { col: 8, row: 2 } }
+      { enemyId: 'bone_archer', name: 'Zealot Marksman', levelScale: 1.05, preferredGate: { col: 11, row: 2 } }
     ]
   },
   {
@@ -186,8 +186,8 @@ export const MONASTERY_WAVE_SPECS: readonly MonasteryWaveSpec[] = [
     waveNumber: 3,
     label: 'Sanctum Breachers',
     spawns: [
-      { enemyId: 'river_troll', name: 'Fen Crusher', levelScale: 1.05, preferredGate: { col: 0, row: 4 } },
-      { enemyId: 'bog_shaman', name: 'Eclipse Cantor', levelScale: 1.05, preferredGate: { col: 8, row: 4 } }
+      { enemyId: 'river_troll', name: 'Fen Crusher', levelScale: 1.05, preferredGate: { col: 0, row: 6 } },
+      { enemyId: 'bog_shaman', name: 'Eclipse Cantor', levelScale: 1.05, preferredGate: { col: 11, row: 6 } }
     ]
   },
   {
@@ -195,24 +195,24 @@ export const MONASTERY_WAVE_SPECS: readonly MonasteryWaveSpec[] = [
     waveNumber: 4,
     label: 'Final Zealots',
     spawns: [
-      { enemyId: 'crypt_knight', name: 'Sanctum Templar', levelScale: 1.08, preferredGate: { col: 4, row: 0 } },
-      { enemyId: 'goblin', name: 'Abbey Zealot', levelScale: 1.1, preferredGate: { col: 1, row: 5 } }
+      { enemyId: 'crypt_knight', name: 'Sanctum Templar', levelScale: 1.08, preferredGate: { col: 5, row: 0 } },
+      { enemyId: 'goblin', name: 'Abbey Zealot', levelScale: 1.1, preferredGate: { col: 1, row: 7 } }
     ]
   }
 ]
 
 const MONASTERY_FALLBACK_GATES: readonly GridCoord[] = [
   { col: 0, row: 2 },
-  { col: 8, row: 2 },
+  { col: 11, row: 2 },
+  { col: 0, row: 6 },
+  { col: 11, row: 6 },
+  { col: 5, row: 0 },
+  { col: 1, row: 7 },
+  { col: 10, row: 1 },
   { col: 0, row: 4 },
-  { col: 8, row: 4 },
-  { col: 4, row: 0 },
-  { col: 1, row: 5 },
-  { col: 7, row: 1 },
-  { col: 0, row: 3 },
-  { col: 8, row: 3 },
+  { col: 11, row: 4 },
   { col: 1, row: 0 },
-  { col: 7, row: 6 }
+  { col: 10, row: 8 }
 ]
 
 const VALID_OAKHAVEN_DEAL_IDS: ReadonlySet<string> = new Set(
