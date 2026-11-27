@@ -2385,8 +2385,8 @@ async function start() {
 
   function buildWorldMapTree(w: number, h: number): LayoutNode {
     const camp = state.campaign
-    const mobile = w < 780
-    const shortH = !mobile && h < 500
+    const shortH = h < 500 && w >= 560
+    const mobile = !shortH && w < 780
     const isCompact = mobile || shortH
     const selected = getSelectedStage()
     const selectedSoon = Boolean(selected.comingSoon)
@@ -2651,7 +2651,7 @@ async function start() {
     const nextReadyMilestone = claimableMilestones[0] ?? null
     const nextUpcomingMilestone = getNextMasteryMilestone(camp)
 
-    const inspW = mobile ? Math.min(w - 16, 460) : 348
+    const inspW = mobile ? Math.min(w - 16, 460) : shortH && w < 740 ? 296 : 348
     const extraPanels = (showChallengeControls ? 1 : 0) + (showOakhavenExchange ? 1 : 0)
     const abyssExtraH = selectedIsAbyss ? 42 : 0
     const masteryExtraH = showMasteryPanel
@@ -2666,7 +2666,7 @@ async function start() {
           Math.min(h - topH - 28, Math.round(h * (extraPanels > 0 ? 0.78 : selectedIsAbyss ? 0.56 : 0.49))),
           (extraPanels > 1 ? 470 : extraPanels > 0 ? 424 : 272) + abyssExtraH + masteryExtraH
         )
-      : Math.min(h - topH - outerPad * 3 - 8, (extraPanels > 1 ? 664 : extraPanels > 0 ? 648 : 548) + abyssExtraH + (selectedChestClaimable ? 26 : 0))
+      : Math.min(h - topH - outerPad * 2 - 26, (extraPanels > 1 ? 664 : extraPanels > 0 ? 648 : 548) + abyssExtraH + (selectedChestClaimable ? 26 : 0))
     const hideFoesForRoom = isCompact || extraPanels > 1 || (showChallengeControls && h < 700)
     const hideHintForRoom = isCompact && (extraPanels > 0 || selectedChestClaimable)
 
@@ -3539,10 +3539,11 @@ async function start() {
 
     const soonCount = CHAPTERS.length - PLAYABLE_CHAPTERS.length
     const narrowPhone = w < 520
-    const zoomCtrlW = narrowPhone ? 68 : mobile ? 76 : 138
-    const codexBtnW = narrowPhone ? 66 : mobile ? 84 : 112
-    const campBtnW = narrowPhone ? 66 : mobile ? 84 : 154
-    const endlessBtnW = endlessReady ? (narrowPhone ? 64 : mobile ? 82 : 128) : 0
+    const compactTopBar = mobile || w < 780
+    const zoomCtrlW = narrowPhone ? 68 : compactTopBar ? 76 : 138
+    const codexBtnW = narrowPhone ? 66 : compactTopBar ? 84 : 112
+    const campBtnW = narrowPhone ? 66 : compactTopBar ? 84 : 154
+    const endlessBtnW = endlessReady ? (narrowPhone ? 64 : compactTopBar ? 82 : 128) : 0
     const topActionGap = narrowPhone ? 6 : 8
     const wmTopActionsW = (narrowPhone ? 0 : zoomCtrlW + topActionGap)
       + (endlessReady ? endlessBtnW + topActionGap : 0)
@@ -5861,10 +5862,11 @@ async function start() {
         const banterH = mobileLandscape ? 42 : isPhone ? 44 : 46
         const speakerUnit = getUnitByUid(battle, banter.speakerUid)
         const banterPortrait = speakerUnit ? battleUnitPortrait(speakerUnit) : portraits[banter.speakerHeroId]
-        // On narrow mobile portrait, float above dock+hint when no forecast is open so top objective/log stay clear
-        if (mobilePortrait && !activeForecast) {
-          const banterW = Math.min(w - 16, 352)
-          const bottomInsetY = dockH + (showHintPill ? 42 : 12)
+        // On phone viewports (portrait & landscape), float above dock+hint when no forecast is open
+        // so the top Turn Order, Objective, Boss Telegraph banner, and Weather pill stay completely clear!
+        if ((mobilePortrait || mobileLandscape) && !activeForecast) {
+          const banterW = mobileLandscape ? Math.min(w - 160, 380) : Math.min(w - 16, 352)
+          const bottomInsetY = dockH + (showHintPill ? (mobileLandscape ? 38 : 42) : 10)
           return [boxNode({
             id: 'battle-banter-toast',
             style: {
@@ -5923,8 +5925,8 @@ async function start() {
 
   function buildCampTree(w: number, h: number): LayoutNode {
     const camp = state.campaign
-    const mobile = w < 720
-    const shortH = !mobile && h < 480
+    const shortH = h < 480
+    const mobile = !shortH && w < 720
     const isPhone = mobile || shortH
     const wide = w >= 980 && !shortH
     const deckValue = computeDeckValue(camp)
@@ -6193,7 +6195,7 @@ async function start() {
             ? `Equipped Gear · 2/2 ${heroGearSets[0].spec.tag}: ${heroGearSets[0].spec.perkName}`
             : `Equipped Gear · 1/2 ${heroGearSets[0].spec.tag}`
           : 'Equipped Gear'
-        const gearHeaderH = is3Star && (shortH || mobile) ? 20 : 24
+        const gearHeaderH = 24
         const gearHeaderRow = row({ id: 'ins-eq-head', style: { height: gearHeaderH, gap: 8, align: 'center' } }, [
           boxNode({
             id: 'ins-eq-lbl', style: { grow: 1, height: gearHeaderH },
@@ -6445,8 +6447,8 @@ async function start() {
           ])
         } else {
           // Medium tablet / landscape phone: 2 columns
-          bodyNode = row({ id: 'camp-squad-body', style: { grow: 1, gap: 10 } }, [
-            column({ id: 'camp-roster-col', style: { width: 214, gap: 5 } }, [
+          bodyNode = row({ id: 'camp-squad-body', style: { grow: 1, gap: shortH && w < 740 ? 6 : 10 } }, [
+            column({ id: 'camp-roster-col', style: { width: shortH && w < 740 ? 186 : 214, gap: 5 } }, [
               boxNode({
                 id: 'cr-title', style: { height: 14 },
                 widget: {
@@ -6761,9 +6763,10 @@ async function start() {
       }))
       const compatActive = armoryCompatibleFilter === 'compatible'
       const compatLabel = compatActive ? 'Compatible' : (mobile || shortH ? 'All Gear' : 'All Gear')
+      const compactLandscapeArmory = shortH && w < 780
       const armCompatToggleBtn = boxNode({
         id: 'arm-compat-toggle',
-        style: { width: mobile ? 96 : shortH ? 84 : 96, height: shortH ? 32 : mobile ? 32 : 34 },
+        style: { width: mobile ? 96 : compactLandscapeArmory ? 74 : shortH ? 84 : 96, height: shortH ? 32 : mobile ? 32 : 34 },
         widget: {
           type: 'button',
           label: compatLabel,
@@ -6795,7 +6798,7 @@ async function start() {
         }
       })
       const armBestBtn = boxNode({
-        id: 'cs-auto-equip', style: { width: mobile ? (armBestCount > 0 ? 94 : 74) : shortH ? (armBestCount > 0 ? 96 : 74) : (armBestCount > 0 ? 114 : 88), height: shortH ? 32 : 34 },
+        id: 'cs-auto-equip', style: { width: mobile ? (armBestCount > 0 ? 94 : 74) : compactLandscapeArmory ? (armBestCount > 0 ? 84 : 68) : shortH ? (armBestCount > 0 ? 96 : 74) : (armBestCount > 0 ? 114 : 88), height: shortH ? 32 : 34 },
         widget: {
           type: 'button',
           label: armBestLabel,
@@ -6825,11 +6828,13 @@ async function start() {
         style: {
           width: mobile
             ? (bulkPreview.count > 0 ? 148 : 114)
-            : shortH
-              ? (bulkPreview.count > 0 ? 132 : 104)
-              : wide
-                ? (bulkPreview.count > 0 ? 210 : 156)
-                : (bulkPreview.count > 0 ? 182 : 138),
+            : compactLandscapeArmory
+              ? (bulkPreview.count > 0 ? 104 : 88)
+              : shortH
+                ? (bulkPreview.count > 0 ? 132 : 104)
+                : wide
+                  ? (bulkPreview.count > 0 ? 210 : 156)
+                  : (bulkPreview.count > 0 ? 182 : 138),
           height: mobile ? 28 : shortH ? 32 : 34
         },
         widget: {
@@ -6924,18 +6929,23 @@ async function start() {
           })]
         : []
 
-      bodyNode = column({ id: 'camp-armory-body', style: { grow: 1, gap: shortH ? 5 : mobile ? 5 : 6 } }, [
+      const hideArmorySubBarsForShortDiff = Boolean(shortH && activeArmoryDiff)
+      bodyNode = column({ id: 'camp-armory-body', style: { grow: 1, gap: shortH ? 4 : mobile ? 5 : 6 } }, [
         ...(mobile
           ? [
               row({ id: 'arm-top-m1', style: { height: 34, gap: 5, align: 'center' } }, [armHeroPortraitNode, armHeroStrip, armBestBtn]),
               row({ id: 'arm-top-m2', style: { height: 32, gap: 5, align: 'center' } }, [armFilterStrip, armCompatToggleBtn]),
               row({ id: 'arm-top-m3', style: { height: 28, gap: 5, align: 'center' } }, [armHeroFamilyNode, armBulkSalvageBtn])
             ]
-          : [
-              row({ id: 'arm-top-controls', style: { height: shortH ? 32 : 34, gap: shortH ? 5 : 6, align: 'center' } }, [armHeroPortraitNode, armHeroStrip, armHeroFamilyNode, armFilterStrip, armCompatToggleBtn, armBestBtn, armBulkSalvageBtn])
-            ]),
-        ...armHeroStatsNode,
-        ...armGearSetNode,
+          : compactLandscapeArmory
+            ? [
+                row({ id: 'arm-top-controls', style: { height: 32, gap: 4, align: 'center' } }, [armHeroStrip, armFilterStrip, armCompatToggleBtn, armBestBtn, armBulkSalvageBtn])
+              ]
+            : [
+                row({ id: 'arm-top-controls', style: { height: shortH ? 32 : 34, gap: shortH ? 5 : 6, align: 'center' } }, [armHeroPortraitNode, armHeroStrip, armHeroFamilyNode, armFilterStrip, armCompatToggleBtn, armBestBtn, armBulkSalvageBtn])
+              ]),
+        ...(hideArmorySubBarsForShortDiff ? [] : armHeroStatsNode),
+        ...(hideArmorySubBarsForShortDiff ? [] : armGearSetNode),
         ...itemRows,
         spacerNode(1),
         row({ id: 'arm-pager', hidden: maxPage === 0, style: { height: 28, gap: 8, align: 'center' } }, [
@@ -7520,15 +7530,16 @@ async function start() {
         const upPreview = activeArmoryUpgradePreview
         if (campTab !== 'armory' || !diff || collapsed || packAnim) return []
         const hasSetDelta = diff.compatible && (diff.activatedSets.length > 0 || diff.deactivatedSets.length > 0)
-        const diffH = (shortH ? 52 : mobile ? 72 : 60) + (hasSetDelta ? 18 : 0)
+        const diffH = (shortH ? 48 : mobile ? 72 : 60) + (hasSetDelta ? (shortH ? 14 : 18) : 0)
         const temperGap = shortH ? 3 : 4
-        const temperBtnH = shortH ? 30 : mobile ? 32 : 34
+        const temperBtnH = shortH ? 26 : mobile ? 32 : 34
         const temperBlockH = upPreview ? (mobile ? 22 + 4 + temperBtnH : temperBtnH) : 0
         const totalDockH = diffH + (upPreview ? temperGap + temperBlockH : 0)
         if (mobile) {
-          sheetH = Math.min(sheetH, Math.max(240, h - 68 - totalDockH - 16))
+          sheetH = Math.min(sheetH, Math.max(240, h - 78 - totalDockH - 16))
         } else if (shortH) {
-          sheetH = Math.min(sheetH, Math.max(216, h - 50 - totalDockH - 12))
+          // Account for safeArea (top 8 + bottom 8) + camp-top (38 + 6 inset) + dock bottom offset (10) + 6px gap
+          sheetH = Math.min(sheetH, Math.max(176, h - 76 - totalDockH))
         }
         const dockW = Math.min(sheetW, mobile ? sheetW : 820)
         const showTouchConfirm = Boolean(
@@ -7549,7 +7560,7 @@ async function start() {
                   draw: (ctx: CanvasRenderingContext2D, rect: LayoutRect) => drawArmoryStatDiffPanel(ctx, rect, diff)
                 }
               }),
-              column({ id: 'arm-diff-actions', style: { width: mobile ? 76 : 92, height: diffH, gap: 4 } }, [
+              column({ id: 'arm-diff-actions', style: { width: mobile ? 76 : 92, height: diffH, gap: shortH ? 2 : 4 } }, [
                 boxNode({
                   id: 'arm-confirm-equip',
                   style: { grow: 1 },
@@ -7617,7 +7628,7 @@ async function start() {
               id: 'arm-fuse-upgrade',
               style: mobile
                 ? { grow: 1, height: temperBtnH }
-                : { width: shortH ? 156 : 196, height: temperBtnH },
+                : { width: shortH && w < 740 ? 136 : shortH ? 156 : 196, height: temperBtnH },
               widget: {
                 type: 'button',
                 label: `Fuse Dupe (+1) · ${upPreview.fuseGoldCost}g (${upPreview.eligibleDuplicateCount} dupe${upPreview.eligibleDuplicateCount === 1 ? '' : 's'})`,
@@ -7647,7 +7658,7 @@ async function start() {
           id: 'arm-gold-upgrade',
           style: mobile
             ? { grow: 1, height: temperBtnH }
-            : { width: shortH ? 138 : 162, height: temperBtnH },
+            : { width: shortH && w < 740 ? 124 : shortH ? 138 : 162, height: temperBtnH },
           widget: {
             type: 'button',
             label: goldLabel,
@@ -7752,7 +7763,15 @@ async function start() {
       // Bottom Glass Sheet Drawer
       column({
         id: 'camp-modal',
-        style: { anchor: 'bottom', width: sheetW, height: sheetH, inset: isPhone ? 6 : 12, padding: collapsed ? [10, 12] : shortH ? [10, 12, 8, 12] : [16, 14, 12, 14], gap: shortH ? 6 : 10, respectSafeArea: true },
+        style: {
+          anchor: 'bottom',
+          width: sheetW,
+          height: sheetH,
+          inset: isPhone ? 6 : 12,
+          padding: collapsed ? [10, 12] : shortH && campTab === 'armory' && activeArmoryDiff ? [6, 12, 6, 12] : shortH ? [10, 12, 8, 12] : [16, 14, 12, 14],
+          gap: shortH && campTab === 'armory' && activeArmoryDiff ? 4 : shortH ? 6 : 10,
+          respectSafeArea: true
+        },
         widget: {
           type: 'panel',
           blocksPointer: true,

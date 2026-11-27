@@ -21,6 +21,7 @@
     "art-library": "node packages/ridgetop/dist/tools/cli.js art-library",
     "test": "node --test test/*.test.ts",
     "test:browser": "node tools/browser-smoke.ts",
+    "test:mobile": "node tools/crownshard-mobile-smoke.ts",
     "test:firefox": "node tools/firefox-smoke.ts",
     "test:review": "node tools/art-review-smoke.ts",
     "test:player": "node tools/player-smoke.ts",
