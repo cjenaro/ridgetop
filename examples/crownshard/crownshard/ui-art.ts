@@ -1506,7 +1506,7 @@ export function drawOtaUpdateBanner(
   ctx.restore()
 
   const textX = rect.x + 38
-  const maxTextW = Math.max(60, rect.width - 178)
+  const maxTextW = Math.max(60, rect.width - 192)
   if (opts.subtitle) {
     drawText(ctx, opts.title, textX, rect.y + faceH / 2 - 6.5, {
       size: 12,

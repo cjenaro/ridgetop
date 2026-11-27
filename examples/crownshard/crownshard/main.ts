@@ -77,7 +77,7 @@ import {
 } from './ui-art.ts'
 import type { CodexListEntry, FanfareDrawOpts, IconName, ProjectedRegionBanner, StatStripItem } from './ui-art.ts'
 import {
-  computeNotchBezelSpec, computeViewportProfile, createInputModalityTracker, detectInitialInputModality, readDomSafeAreaInsets, uiCopy
+  computeNotchBezelSpec, computeViewportProfile, createInputModalityTracker, detectInitialInputModality, isIosRuntime, readDomSafeAreaInsets, uiCopy
 } from './viewport-profile.ts'
 import type { SafeAreaInsets, ViewportProfile } from './viewport-profile.ts'
 import {
@@ -408,10 +408,18 @@ async function start() {
       if (!applied) {
         otaState = { ...otaState, applying: false }
         uiDirty = true
+        void page.platform.ota.getStatus().then(status => {
+          otaState = applyOtaStatus(otaState, status)
+          uiDirty = true
+        }).catch(() => {})
       }
     }).catch(() => {
       otaState = { ...otaState, applying: false }
       uiDirty = true
+      void page.platform.ota.getStatus().then(status => {
+        otaState = applyOtaStatus(otaState, status)
+        uiDirty = true
+      }).catch(() => {})
     })
   }
 
@@ -436,7 +444,12 @@ async function start() {
       })
   }
 
-  const previewNotch = page.url.searchParams.has('notch')
+  const previewNotch = page.url.searchParams.get('notch') === '1'
+  const isIosDevice = isIosRuntime(
+    page.platform.kind,
+    typeof navigator !== 'undefined' ? navigator.userAgent : '',
+    typeof navigator !== 'undefined' ? navigator.maxTouchPoints : 0
+  )
   function readEffectiveRawSafeArea(w: number, h: number): SafeAreaInsets {
     const dom = readDomSafeAreaInsets()
     if (!previewNotch) return dom
@@ -4466,7 +4479,8 @@ async function start() {
 
       // Floating Top-Left Realm Title + Continent Mastery Stars + Gold Pill
       ...(() => {
-        const wmHeaderW = Math.max(92, Math.min(mobile ? 250 : 450, w - wmTopActionsW - outerPad - topRightInset - 8))
+        const safeHoriz = vp.safeArea.left + vp.safeArea.right
+        const wmHeaderW = Math.max(92, Math.min(mobile ? 250 : 450, w - safeHoriz - wmTopActionsW - outerPad - topRightInset - 8))
         return [boxNode({
           id: 'wm-header',
           style: {
@@ -9464,16 +9478,20 @@ async function start() {
         if (pair.length === 2) {
           rewardRows.push(row({ id: `res-loot-row-${i}`, style: { height: rowH, gap: 6 } }, pair))
         } else {
-          rewardRows.push(pair[0])
+          // Unpaired trailing row sits directly in the vertical column, so clear grow
+          const solo = pair[0]
+          rewardRows.push({ ...solo, style: { ...solo.style, grow: 0 } })
         }
       }
     } else {
-      rewardRows.push(...lootNodes)
+      for (const node of lootNodes) {
+        rewardRows.push(useTwoColLoot ? { ...node, style: { ...node.style, grow: 0 } } : node)
+      }
     }
     if (xpNode) rewardRows.push(xpNode)
 
     const btnH = landscapePhone ? 40 : shortH ? 42 : 44
-    const blessingCardH = landscapePhone ? 116 : shortH ? 132 : 164
+    const blessingCardH = landscapePhone ? 126 : shortH ? 132 : 164
     const blessingDraftNodes: LayoutNode[] = hasBlessingDraft
       ? [
           boxNode({
@@ -9532,7 +9550,8 @@ async function start() {
           anchor: 'center',
           width: modalW,
           padding: landscapePhone ? [10, 14] : shortH ? 14 : hasBlessingDraft ? 18 : 24,
-          gap: landscapePhone ? 5 : shortH ? 7 : hasBlessingDraft ? 9 : 12
+          gap: landscapePhone ? 5 : shortH ? 7 : hasBlessingDraft ? 9 : 12,
+          respectSafeArea: true
         },
         widget: {
           type: 'panel',
@@ -9664,9 +9683,10 @@ async function start() {
         id: 'p-card',
         style: {
           anchor: 'center',
-          width: Math.min(w - 24, 360),
+          width: Math.min(w - Math.max(24, vp.safeArea.left + vp.safeArea.right + 16), 360),
           padding: ultraShortH ? 12 : shortH ? 14 : 22,
-          gap: ultraShortH ? 6 : shortH ? 7 : 10
+          gap: ultraShortH ? 6 : shortH ? 7 : 10,
+          respectSafeArea: true
         },
         widget: {
           type: 'panel',
@@ -9789,8 +9809,10 @@ async function start() {
     }
     const selectedItem = listItems.find(it => it.data.id === codexSelectedId) ?? listItems[0]
 
-    const modalW = mobile ? Math.max(320, w - 12) : Math.min(1080, w - 32)
-    const modalH = mobile ? Math.max(280, h - 12) : Math.min(664, h - 28)
+    const safeHoriz = vp.safeArea.left + vp.safeArea.right
+    const safeVert = vp.safeArea.top + vp.safeArea.bottom
+    const modalW = mobile ? Math.max(300, w - Math.max(12, safeHoriz + 8)) : Math.min(1080, w - Math.max(32, safeHoriz + 16))
+    const modalH = mobile ? Math.max(260, h - Math.max(12, safeVert + 8)) : Math.min(664, h - Math.max(28, safeVert + 12))
     const modalPad = mobile ? 6 : 14
     const headerH = mobile ? 34 : 48
     const tabsH = mobile ? 32 : 38
@@ -10308,7 +10330,7 @@ async function start() {
       : screen === 'defeat' ? buildResultTree(w, h, false)
       : buildPausedTree(w, h)
     const otaBanner = buildOtaUpdateBannerNode(w, h)
-    const notchSpec = computeNotchBezelSpec(w, h, readEffectiveRawSafeArea(w, h))
+    const notchSpec = computeNotchBezelSpec(w, h, readEffectiveRawSafeArea(w, h), isIosDevice || previewNotch)
     const notchNode = notchSpec.mode !== 'none'
       ? boxNode({
           id: 'cs-notch-bezel',

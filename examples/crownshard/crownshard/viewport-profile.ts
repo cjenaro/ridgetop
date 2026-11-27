@@ -298,21 +298,49 @@ export interface NotchBezelSpec {
 }
 
 /**
- * Pure computation of whether the current device exposes a hardware notch /
+ * Pure check for whether the app is running on iOS (native Capacitor iOS or iOS Safari).
+ * Android, desktop, and non-iOS browsers strictly return `false`.
+ */
+export function isIosRuntime(
+  platformKind: string,
+  userAgent = '',
+  maxTouchPoints = 0
+): boolean {
+  if (platformKind === 'ios') return true
+  if (platformKind === 'android' || platformKind === 'desktop') return false
+  if (/iPhone|iPod|iPad/i.test(userAgent)) return true
+  if (/Macintosh/i.test(userAgent) && maxTouchPoints > 1) return true
+  return false
+}
+
+/**
+ * Pure computation of whether an iOS device exposes a hardware notch /
  * Dynamic Island cutout (`>= 24px` raw safe-area inset) or home-indicator bar
  * (`>= 14px` bottom inset), so Crownshard can frame it seamlessly into the UI.
+ * Strictly gated to iOS (`isIos === true`) so Android/desktop devices never render iOS bezels.
  */
 export function computeNotchBezelSpec(
   width: number,
   height: number,
-  rawSafeArea: SafeAreaInsets
+  rawSafeArea: SafeAreaInsets,
+  isIos: boolean
 ): NotchBezelSpec {
   const left = Math.max(0, Number.isFinite(rawSafeArea.left) ? rawSafeArea.left : 0)
   const right = Math.max(0, Number.isFinite(rawSafeArea.right) ? rawSafeArea.right : 0)
   const top = Math.max(0, Number.isFinite(rawSafeArea.top) ? rawSafeArea.top : 0)
   const bottom = Math.max(0, Number.isFinite(rawSafeArea.bottom) ? rawSafeArea.bottom : 0)
-  const isLandscape = width > height
 
+  if (!isIos) {
+    return {
+      mode: 'none',
+      leftInset: left,
+      rightInset: right,
+      topInset: top,
+      bottomInset: bottom
+    }
+  }
+
+  const isLandscape = width > height
   if (isLandscape && (left >= 24 || right >= 24)) {
     return {
       mode: 'landscape-wings',

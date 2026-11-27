@@ -5,6 +5,7 @@ import {
   computeViewportProfile,
   createInputModalityTracker,
   detectInitialInputModality,
+  isIosRuntime,
   readDomSafeAreaInsets,
   uiCopy
 } from '../examples/crownshard/crownshard/viewport-profile.ts'
@@ -366,20 +367,31 @@ test('ui-art draw helpers hide keycaps and swap mouse copy when touch/hideKeycap
   assert.ok(autoTouch.texts.includes('AUTO-BATTLE 2x · TAP TO STOP'))
 })
 
-test('computeNotchBezelSpec activates landscape wings and portrait top bezel only for real hardware insets', () => {
-  // Desktop / standard screen with no notch
-  const none = computeNotchBezelSpec(1280, 720, { top: 0, right: 0, bottom: 0, left: 0 })
-  assert.equal(none.mode, 'none')
+test('isIosRuntime and computeNotchBezelSpec strictly gate notch bezels to iOS only', () => {
+  assert.equal(isIosRuntime('ios'), true)
+  assert.equal(isIosRuntime('android', 'Mozilla/5.0 (Linux; Android 14; Pixel 8)'), false)
+  assert.equal(isIosRuntime('desktop', 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)'), false)
+  assert.equal(isIosRuntime('web', 'Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X)'), true)
+  assert.equal(isIosRuntime('web', 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)', 5), true)
+  assert.equal(isIosRuntime('web', 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)', 0), false)
+
+  // Non-iOS device (e.g. Android punch-hole phone with 59px cutouts) NEVER activates iOS notch bezel
+  const androidCutout = computeNotchBezelSpec(844, 390, { top: 0, right: 59, bottom: 21, left: 59 }, false)
+  assert.equal(androidCutout.mode, 'none')
+
+  // iOS without notch (e.g. iPhone SE / iPad) -> none
+  const noNotchIos = computeNotchBezelSpec(667, 375, { top: 0, right: 0, bottom: 0, left: 0 }, true)
+  assert.equal(noNotchIos.mode, 'none')
 
   // iPhone landscape with Dynamic Island (symmetric 59px left/right, 21px home bar)
-  const landscape = computeNotchBezelSpec(844, 390, { top: 0, right: 59, bottom: 21, left: 59 })
+  const landscape = computeNotchBezelSpec(844, 390, { top: 0, right: 59, bottom: 21, left: 59 }, true)
   assert.equal(landscape.mode, 'landscape-wings')
   assert.equal(landscape.leftInset, 59)
   assert.equal(landscape.rightInset, 59)
   assert.equal(landscape.bottomInset, 21)
 
   // iPhone portrait with top notch/Dynamic Island
-  const portrait = computeNotchBezelSpec(390, 844, { top: 59, right: 0, bottom: 34, left: 0 })
+  const portrait = computeNotchBezelSpec(390, 844, { top: 59, right: 0, bottom: 34, left: 0 }, true)
   assert.equal(portrait.mode, 'portrait-top')
   assert.equal(portrait.topInset, 59)
   assert.equal(portrait.bottomInset, 34)
