@@ -81,10 +81,11 @@ export { auditArtModel } from './art-review.ts'
 export type { ArtAuditReport } from './art-review.ts'
 export * from './physics3d.ts'
 export {
-  isTestingActive, isTestingPaused, onTestingPause, registerHudRegion, registerTestingHooks,
+  isTestingActive, isTestingPaused, onTestingPause, registerDecisionAgent, registerHudRegion, registerTestingHooks,
   setTestingActive, setTestingPaused
 } from './testing-runtime.ts'
 export type {
-  ArtSourceInfo, CapturedFrame, HudRegion, Picked3DInstance, RecognizedAsset, RecognizedMember,
+  ArtSourceInfo, CapturedFrame, DecisionAgentAdapter, DecisionAgentEvidence, DecisionAgentObservation,
+  DecisionAgentOption, DecisionAgentResult, HudRegion, Picked3DInstance, RecognizedAsset, RecognizedMember,
   SpriteAtlasMeta, SpriteDrawRecord, TestingHooks
 } from './testing-runtime.ts'

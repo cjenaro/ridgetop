@@ -72,6 +72,51 @@ export interface TestingHooks {
   onRecipeSaved?(asset: string, recipe: ArtRecipe): void
 }
 
+export interface DecisionAgentOption {
+  readonly id: string
+  readonly label: string
+  readonly description: string
+  readonly category?: string
+  readonly heuristicScore?: number
+}
+
+export interface DecisionAgentEvidence {
+  readonly id: string
+  readonly value: unknown
+  readonly label?: string
+}
+
+export interface DecisionAgentObservation {
+  readonly ready: boolean
+  readonly status: string
+  readonly summary?: string
+  readonly rubric: string
+  readonly state: unknown
+  readonly options: readonly DecisionAgentOption[]
+  readonly evidence: readonly DecisionAgentEvidence[]
+}
+
+export interface DecisionAgentResult {
+  readonly choice: string
+  readonly provider?: string
+  readonly model?: string
+  readonly confidence?: number
+  readonly probabilities?: Readonly<Record<string, number>>
+  readonly evidence?: readonly string[]
+  readonly evidenceProbabilities?: Readonly<Record<string, number>>
+  readonly latencyMs?: number
+  readonly cached?: boolean
+}
+
+export interface DecisionAgentAdapter {
+  readonly name: string
+  readonly description?: string
+  readonly stepIntervalMs?: number
+  ensurePlayable?(): void | Promise<void>
+  observe(): DecisionAgentObservation | null
+  act(optionId: string, decision?: DecisionAgentResult): boolean | void | Promise<boolean | void>
+}
+
 export interface RegisteredArtKit {
   readonly palette: Record<string, string>
   readonly models: Readonly<Record<string, ArtModel>>
@@ -152,6 +197,8 @@ interface TestingRuntimeState {
   canvasUiRegions: Map<HTMLCanvasElement, HudRegion[]>
   hooks: Set<TestingHooks>
   hookListeners?: Set<(hooks: TestingHooks) => void>
+  decisionAgents?: Set<DecisionAgentAdapter>
+  decisionAgentListeners?: Set<() => void>
   artKits: Set<RegisteredArtKit>
   meshMeta: WeakMap<Mesh, MeshMeta>
   rigMeta: WeakMap<object, RigMeta>
@@ -494,6 +541,36 @@ export function getTestingHooks(): readonly TestingHooks[] {
   return Array.from(getState().hooks)
 }
 
+export function registerDecisionAgent(adapter: DecisionAgentAdapter): () => void {
+  const state = getState()
+  state.decisionAgents ??= new Set()
+  state.decisionAgents.add(adapter)
+  if (state.decisionAgentListeners) {
+    for (const listener of Array.from(state.decisionAgentListeners)) {
+      try { listener() } catch { /* Listener errors must not break registration. */ }
+    }
+  }
+  return () => {
+    state.decisionAgents?.delete(adapter)
+    if (state.decisionAgentListeners) {
+      for (const listener of Array.from(state.decisionAgentListeners)) {
+        try { listener() } catch { /* Listener errors must not break unregistration. */ }
+      }
+    }
+  }
+}
+
+export function onDecisionAgentsChanged(listener: () => void): () => void {
+  const state = getState()
+  state.decisionAgentListeners ??= new Set()
+  state.decisionAgentListeners.add(listener)
+  return () => { state.decisionAgentListeners?.delete(listener) }
+}
+
+export function getDecisionAgents(): readonly DecisionAgentAdapter[] {
+  return Array.from(getState().decisionAgents ?? [])
+}
+
 export function resetTestingRuntime(): void {
   const state = getState()
   state.paused = false
@@ -503,6 +580,7 @@ export function resetTestingRuntime(): void {
   state.manualHudRegions.clear()
   state.canvasUiRegions.clear()
   state.hooks.clear()
+  state.decisionAgents?.clear()
   state.artKits.clear()
   state.nextGroupId = 1
   state.nextAtlasId = 1

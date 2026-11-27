@@ -5,7 +5,7 @@ import { createServer } from 'node:http'
 import { promisify } from 'node:util'
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { createDecisionApi } from '../packages/ridgetop/framework/server.ts'
+import { createDecisionAgentHandler, createDecisionApi, parseDotEnv, resolveDecisionEnv } from '../packages/ridgetop/framework/server.ts'
 
 const execute = promisify(execFile)
 
@@ -116,4 +116,149 @@ test('missing provider evidence fails and remains subject to the shared budget',
   const input = { input: null, evidence: [{ id: 'finish', value: true }] }
   await assert.rejects(api.decide(input), /valid evidence judgment/)
   await assert.rejects(api.decide(input), /budget exhausted/)
+})
+
+test('typesafe alias and decideDetailed preserve probabilities, confidence, and usage', async t => {
+  t.mock.method(globalThis, 'fetch', async (url: string | URL | Request, request?: RequestInit) => {
+    assert.equal(url instanceof URL ? url.href : String(url), 'https://api.typesafe.ai/v1/systemone')
+    const body = JSON.parse(String(request?.body ?? ''))
+    assert.equal(body.questions.label.criteria.attack, 'Strike weakened goblin')
+    return Response.json({
+      model: 'jev-1.14.0',
+      answers: {
+        label: { type: 'choice', choice: 'attack', confidence: 0.84, probabilities: { attack: 0.89, heal: 0.11 } },
+        evidence_0: { type: 'noul', noul: 0.91 },
+        evidence_1: { type: 'noul', noul: 0.22 },
+        bug_suspected: { type: 'noul', noul: 0.78 }
+      },
+      usage: { input_tokens: 310, output_tokens: 55 }
+    })
+  })
+  const api = createDecisionApi({
+    provider: 'typesafe',
+    token: 'ts-test-key',
+    labels: ['attack', 'heal'],
+    criteria: { attack: 'Strike weakened goblin', heal: 'Drink healing potion' },
+    rubric: 'Pick the best tactical move',
+    checkForBug: true,
+    maxRequests: 2
+  })
+  const detailed = await api.decideDetailed({
+    input: { hp: 40, enemyHp: 12 },
+    evidence: [{ id: 'can_ko', value: true }, { id: 'hazard', value: false }]
+  })
+  assert.equal(detailed.label, 'attack')
+  assert.deepEqual(detailed.evidence, ['can_ko'])
+  assert.equal(detailed.confidence, 0.84)
+  assert.deepEqual(detailed.probabilities, { attack: 0.89, heal: 0.11 })
+  assert.deepEqual(detailed.evidenceProbabilities, { can_ko: 0.91, hazard: 0.22 })
+  assert.equal(detailed.bugProbability, 0.78)
+  assert.equal(detailed.bugSuspected, true)
+  assert.equal(detailed.model, 'jev-1.14.0')
+  assert.deepEqual(detailed.usage, { inputTokens: 310, outputTokens: 55 })
+  assert.equal(detailed.cached, false)
+
+  const cached = await api.decideDetailed({
+    input: { hp: 40, enemyHp: 12 },
+    evidence: [{ id: 'can_ko', value: true }, { id: 'hazard', value: false }]
+  })
+  assert.equal(cached.cached, true)
+})
+
+test('parseDotEnv and resolveDecisionEnv auto-detect TYPESAFE_API_KEY', () => {
+  const parsed = parseDotEnv('# comment\nexport TYPESAFE_API_KEY="ts_secret_123"\nOTHER=ok\n')
+  assert.equal(parsed.TYPESAFE_API_KEY, 'ts_secret_123')
+  assert.equal(parsed.OTHER, 'ok')
+  const resolved = resolveDecisionEnv({ TYPESAFE_API_KEY: 'ts_key_abc' }, '/nonexistent-dir-for-test')
+  assert.equal(resolved.provider, 'jev')
+  assert.equal(resolved.token, 'ts_key_abc')
+  assert.equal(resolved.configuredProviders.jev, true)
+  assert.equal(resolved.configuredProviders.typesafe, true)
+})
+
+test('decision agent server handler serves status and local heuristic probabilities', async t => {
+  const handler = createDecisionAgentHandler(new URL('../', import.meta.url))
+  const server = createServer(async (req, res) => {
+    const pathname = new URL(req.url ?? '/', 'http://127.0.0.1').pathname
+    const handled = await handler(req, res, pathname)
+    if (!handled) { res.writeHead(404).end() }
+  })
+  server.listen(0, '127.0.0.1')
+  await once(server, 'listening')
+  t.after(() => new Promise(resolve => {
+    server.close(resolve)
+    server.closeAllConnections()
+  }))
+  const base = 'http://127.0.0.1:' + (server.address() as AddressInfo).port
+  const statusRes = await fetch(base + '/__testing/decision/status')
+  assert.equal(statusRes.status, 200)
+  const statusJson = await statusRes.json()
+  assert.equal(statusJson.ok, true)
+  assert.equal(statusJson.configuredProviders.local, true)
+
+  const decideRes = await fetch(base + '/__testing/decision/decide', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      provider: 'local',
+      rubric: 'Pick strongest action',
+      state: { turn: 1 },
+      options: [
+        { id: 'strike', label: 'Strike', description: 'Deal 25 dmg', heuristicScore: 95 },
+        { id: 'wait', label: 'Wait', description: 'End turn', heuristicScore: 5 }
+      ],
+      evidence: [{ id: 'can_ko', value: true }]
+    })
+  })
+  assert.equal(decideRes.status, 200)
+  const decideJson = await decideRes.json()
+  assert.equal(decideJson.ok, true)
+  assert.equal(decideJson.choice, 'strike')
+  assert.ok(decideJson.probabilities.strike > decideJson.probabilities.wait)
+  assert.equal(decideJson.evidenceProbabilities.can_ko, 0.85)
+
+  const outcomeRes = await fetch(base + '/__testing/decision/outcome', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      sessionId: 'test-session',
+      step: 1,
+      choice: 'strike',
+      choiceLabel: 'Strike',
+      executed: true,
+      beforeScreen: 'battle',
+      afterScreen: 'battle',
+      stateChanged: true,
+      anomalies: [],
+      runtimeErrors: []
+    })
+  })
+  assert.equal(outcomeRes.status, 200)
+
+  const logRes = await fetch(base + '/__testing/decision/log')
+  assert.equal(logRes.status, 200)
+  const logJson = await logRes.json()
+  assert.equal(logJson.ok, true)
+  assert.ok(logJson.summary.totalDecisions >= 1)
+  assert.ok(logJson.summary.totalOutcomes >= 1)
+
+  const popoutRes = await fetch(base + '/__testing/agent')
+  assert.equal(popoutRes.status, 200)
+  const popoutHtml = await popoutRes.text()
+  assert.ok(popoutHtml.includes('testing-agent-popout.js'))
+
+  // 1x1 transparent PNG
+  const tinyPng = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII='
+  const shotRes = await fetch(base + '/__testing/decision/screenshot', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ sessionId: 'test-session', step: 1, screen: 'title', dataUrl: tinyPng })
+  })
+  assert.equal(shotRes.status, 200)
+  const shotJson = await shotRes.json()
+  assert.equal(shotJson.ok, true)
+  assert.ok(shotJson.url.startsWith('/__testing/decision/shot/test-session/'))
+  const fetchedShot = await fetch(base + shotJson.url)
+  assert.equal(fetchedShot.status, 200)
+  assert.equal(fetchedShot.headers.get('content-type'), 'image/png')
 })

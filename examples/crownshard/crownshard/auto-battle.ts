@@ -1494,3 +1494,202 @@ export function planAutoBattleAction(state: GameState): AutoBattleActionPlan | n
     facing: chooseBestTurnEndFacing(battle, actor)
   }
 }
+
+/**
+ * Collect a diverse set of top legal tactical action plans for the active player hero.
+ * Used by the Ridgetop Decision Agent to let a Decision API (e.g. Typesafe JEV, Clef, OpenAI)
+ * choose among meaningful tactical options with live probabilities.
+ */
+export function collectAutoBattleCandidates(state: GameState, maxCandidates = 6): AutoBattleActionPlan[] {
+  const battle = state.battle
+  if (!battle || battle.phase !== 'player') return []
+  if (battle.units.some(u => u.path.length > 0)) return []
+
+  const actor = battle.units.find(u => u.uid === battle.activeUnitUid && u.alive && u.team === 'ally')
+  if (!actor) return []
+  if (actor.stunTurns > 0) {
+    return [{
+      kind: 'end_turn',
+      actorUid: actor.uid,
+      score: 0,
+      reason: 'Unit is stunned — end turn',
+      facing: chooseBestTurnEndFacing(battle, actor)
+    }]
+  }
+
+  const enemies = battle.units.filter(u => u.alive && u.team === 'enemy')
+  const visibleEnemies = enemies.filter(u => !isEnemyShrouded(battle, u))
+  const allies = battle.units.filter(u => u.alive && u.team === 'ally')
+  const downedAllies = battle.units.filter(u => isUnitDowned(u) && u.team === 'ally')
+  const provokingTaunters = findAutoBattleProvokingTaunters(battle, actor)
+  const stands = computeReachableStands(battle, actor)
+
+  const byKey = new Map<string, AutoBattleActionPlan>()
+  const addCandidate = (key: string, plan: AutoBattleActionPlan) => {
+    const existing = byKey.get(key)
+    if (!existing || plan.score > existing.score) {
+      byKey.set(key, plan)
+    }
+  }
+
+  // Always include the heuristic planner's top recommendation first
+  const primary = planAutoBattleAction(state)
+  if (primary) {
+    addCandidate(`primary:${primary.kind}:${primary.skillIndex ?? ''}:${primary.tacticUid ?? ''}:${primary.targetCol ?? ''},${primary.targetRow ?? ''}`, primary)
+  }
+
+  // Best tactic card
+  const tacticPlan = planBestTacticCard(state, actor, provokingTaunters)
+  if (tacticPlan && tacticPlan.score > 20) {
+    addCandidate(`tactic:${tacticPlan.tacticUid}`, tacticPlan)
+  }
+
+  // Distinct skills & basic attacks
+  if (!actor.acted) {
+    for (let sIdx = 0; sIdx < 3; sIdx++) {
+      const skill = getUnlockedSkill(actor, sIdx)
+      if (!skill || actor.cooldowns[sIdx] > 0) continue
+
+      if (skill.target === 'self') {
+        const anyNearEnemy = enemies.some(e => manhattan(actor.col, actor.row, e.col, e.row) <= 4)
+        for (const stand of stands) {
+          if (stand.oaLethal) continue
+          const affected = patternCoords(stand.col, stand.row, skill.pattern, battle.cols, battle.rows)
+          let score = 0
+          let useful = false
+          for (const c of affected) {
+            if (skill.canRevive && downedAllyAt(battle, c.col, c.row)) {
+              score += 320
+              useful = true
+              continue
+            }
+            const ally = c.col === stand.col && c.row === stand.row ? actor : activeUnitAt(battle, c.col, c.row)
+            if (!ally || ally.team !== actor.team) continue
+            if (skill.healAmount > 0 && ally.hp < ally.maxHp * 0.85) {
+              score += Math.min(ally.maxHp - ally.hp, skill.healAmount) * 1.9
+              useful = true
+            }
+            if (anyNearEnemy && skill.shieldAmount > 0 && ally.shield < 12) {
+              score += skill.shieldAmount * 1.15
+              useful = true
+            }
+            if (anyNearEnemy && skill.status === 'empower' && ally.empowerTurns === 0) {
+              score += 24
+              useful = true
+            }
+          }
+          if (!useful || score < 30) continue
+          score += stand.terrainScore * 0.5 - stand.oaPenalty
+          addCandidate(`skill:${sIdx}`, stand.requiresMove
+            ? { kind: 'move_and_skill', actorUid: actor.uid, moveTo: { col: stand.col, row: stand.row }, skillIndex: sIdx, targetCol: stand.col, targetRow: stand.row, score, reason: `Move to (${stand.col},${stand.row}) & cast ${skill.name}` }
+            : { kind: 'skill', actorUid: actor.uid, skillIndex: sIdx, targetCol: stand.col, targetRow: stand.row, score, reason: `Cast ${skill.name}` })
+        }
+      } else if (skill.target === 'ally') {
+        for (const stand of stands) {
+          if (stand.oaLethal) continue
+          for (const ally of [...allies, ...downedAllies]) {
+            const dist = manhattan(stand.col, stand.row, ally.col, ally.row)
+            if (dist > skill.range) continue
+            if (isUnitDowned(ally) && !skill.canRevive) continue
+            if (!isUnitDowned(ally) && ally.hp >= ally.maxHp * 0.9 && skill.healAmount > 0) continue
+            const score = isUnitDowned(ally)
+              ? 340
+              : Math.min(ally.maxHp - ally.hp, skill.healAmount) * 2.1 + stand.terrainScore * 0.4 - stand.oaPenalty
+            addCandidate(`skill:${sIdx}:${ally.uid}`, stand.requiresMove
+              ? { kind: 'move_and_skill', actorUid: actor.uid, moveTo: { col: stand.col, row: stand.row }, skillIndex: sIdx, targetCol: ally.col, targetRow: ally.row, score, reason: `Move & cast ${skill.name} on ${ally.name}` }
+              : { kind: 'skill', actorUid: actor.uid, skillIndex: sIdx, targetCol: ally.col, targetRow: ally.row, score, reason: `Cast ${skill.name} on ${ally.name}` })
+          }
+        }
+      } else {
+        const indirect = skill.pattern !== 'single' || skill.range >= 3
+        for (const stand of stands) {
+          if (stand.oaLethal) continue
+          for (const enemy of visibleEnemies) {
+            const hitCell = closestFootprintCell(stand.col, stand.row, enemy)
+            const dist = manhattan(stand.col, stand.row, hitCell.col, hitCell.row)
+            if (dist < 1) continue
+            const effR = effectiveRange(battle, stand.col, stand.row, hitCell.col, hitCell.row, skill.range, actor)
+            if (dist > effR) continue
+            if (!hasClearLoS(battle, stand.col, stand.row, hitCell.col, hitCell.row, indirect)) continue
+            const score = scoreOffensiveSkillOnCell(battle, actor, stand, skill, hitCell.col, hitCell.row, provokingTaunters)
+            if (score <= -300) continue
+            addCandidate(`skill:${sIdx}:${enemy.uid}`, stand.requiresMove
+              ? { kind: 'move_and_skill', actorUid: actor.uid, moveTo: { col: stand.col, row: stand.row }, skillIndex: sIdx, targetCol: hitCell.col, targetRow: hitCell.row, score, reason: `Move & cast ${skill.name} on ${enemy.name}` }
+              : { kind: 'skill', actorUid: actor.uid, skillIndex: sIdx, targetCol: hitCell.col, targetRow: hitCell.row, score, reason: `Cast ${skill.name} on ${enemy.name}` })
+          }
+        }
+      }
+    }
+
+    // Basic attacks against each reachable visible enemy
+    for (const stand of stands) {
+      for (const enemy of visibleEnemies) {
+        const hitCell = closestFootprintCell(stand.col, stand.row, enemy)
+        const dist = manhattan(stand.col, stand.row, hitCell.col, hitCell.row)
+        const effR = effectiveRange(battle, stand.col, stand.row, hitCell.col, hitCell.row, actor.range, actor)
+        if (dist > effR) continue
+        if (!hasClearLoS(battle, stand.col, stand.row, hitCell.col, hitCell.row, false)) continue
+        const est = estimateStrikeDamage(battle, actor, stand.col, stand.row, enemy, actor.atk, 0, false, actor.range > 1)
+        const pincerDmg = estimatePincerBonus(battle, actor, stand.col, stand.row, enemy, null)
+        const totalDmg = est.damage + pincerDmg
+        const lethal = totalDmg >= enemy.hp + enemy.shield
+        const counterPen = estimateCounterPenalty(battle, actor, stand.col, stand.row, enemy, est.arc, false, null, lethal)
+        let score = totalDmg * 2.2 - counterPen + stand.terrainScore * 0.7
+        if (lethal) score += 95 + objectiveTargetPriorityBonus(battle, enemy)
+        if (stand.requiresMove && stand.oaLethal) score -= 240
+        const tag = lethal ? ` (~${totalDmg} dmg, KO!)` : ` (~${totalDmg} dmg)`
+        addCandidate(`attack:${enemy.uid}`, stand.requiresMove
+          ? { kind: 'move_and_attack', actorUid: actor.uid, moveTo: { col: stand.col, row: stand.row }, targetCol: hitCell.col, targetRow: hitCell.row, score, reason: `Move to (${stand.col},${stand.row}) & strike ${enemy.name}${tag}` }
+          : { kind: 'attack', actorUid: actor.uid, targetCol: hitCell.col, targetRow: hitCell.row, score, reason: `Strike ${enemy.name}${tag}` })
+      }
+    }
+  }
+
+  // Best pure reposition / objective advance move (if unit hasn't moved)
+  if (!actor.moved && stands.length > 1) {
+    const goals: GridCoord[] = enemies.map(e => ({ col: e.col, row: e.row }))
+    if (battle.objective.kind === 'seize' && battle.objective.goalTile) goals.unshift(battle.objective.goalTile)
+    const distField = computeDistanceFieldToGoals(battle, actor, goals)
+    let bestAdvance: { stand: ReachableStand; score: number } | null = null
+    let bestDefensive: { stand: ReachableStand; score: number } | null = null
+    for (const stand of stands) {
+      if (!stand.requiresMove || stand.oaLethal) continue
+      const gd = distField.get(`${stand.col},${stand.row}`) ?? 10
+      const advScore = -gd * 14 + stand.terrainScore - stand.oaPenalty
+      if (!bestAdvance || advScore > bestAdvance.score) bestAdvance = { stand, score: advScore }
+      const defScore = stand.terrainScore * 2 + gd * 4 - stand.oaPenalty
+      if (!bestDefensive || defScore > bestDefensive.score) bestDefensive = { stand, score: defScore }
+    }
+    if (bestAdvance) {
+      addCandidate('move:advance', {
+        kind: 'move',
+        actorUid: actor.uid,
+        moveTo: { col: bestAdvance.stand.col, row: bestAdvance.stand.row },
+        score: bestAdvance.score,
+        reason: `Advance to (${bestAdvance.stand.col},${bestAdvance.stand.row})`
+      })
+    }
+    if (bestDefensive && (!bestAdvance || bestDefensive.stand.col !== bestAdvance.stand.col || bestDefensive.stand.row !== bestAdvance.stand.row)) {
+      addCandidate('move:defend', {
+        kind: 'move',
+        actorUid: actor.uid,
+        moveTo: { col: bestDefensive.stand.col, row: bestDefensive.stand.row },
+        score: bestDefensive.score - 20,
+        reason: `Reposition to high-cover tile (${bestDefensive.stand.col},${bestDefensive.stand.row})`
+      })
+    }
+  }
+
+  // Always include End Turn as a fallback tactical choice
+  addCandidate('end_turn', {
+    kind: 'end_turn',
+    actorUid: actor.uid,
+    score: -5,
+    reason: 'Hold position & end turn (save CT, optimal facing)',
+    facing: chooseBestTurnEndFacing(battle, actor)
+  })
+
+  const sorted = Array.from(byKey.values()).sort((a, b) => b.score - a.score)
+  const cap = Math.max(2, maxCandidates)
+  return sorted.slice(0, cap)
+}

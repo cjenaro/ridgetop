@@ -7,7 +7,7 @@ import { evaluateDecisions, STEP, verifyBounded, verifyTrace } from 'ridgetop'
 import { courses } from '../examples/beacon-run/game/level.ts'
 import { platformerRules } from '../examples/beacon-run/game/rules.ts'
 import { createPlayer, stepPlayer } from '../examples/beacon-run/game/simulation.ts'
-import { createDecisionApi } from 'ridgetop/server'
+import { createDecisionApi, resolveDecisionEnv } from 'ridgetop/server'
 
 type StepAction = { left: boolean; right: boolean; jump: boolean }
 
@@ -276,15 +276,21 @@ try {
   }
   let api
   if (remote) {
-    const provider = process.env.RIDGETOP_DECISION_PROVIDER ?? 'http'
-    if (provider !== 'http' && provider !== 'openai' && provider !== 'clef' && provider !== 'jev') {
-      throw new Error('Unknown decision provider. Choose http, openai, clef, or jev')
+    const rawProvider = process.env.RIDGETOP_DECISION_PROVIDER
+    let requested: 'http' | 'openai' | 'clef' | 'jev' | 'typesafe' | undefined
+    if (rawProvider !== undefined) {
+      if (rawProvider !== 'http' && rawProvider !== 'openai' && rawProvider !== 'clef' && rawProvider !== 'jev' && rawProvider !== 'typesafe') {
+        throw new Error('Unknown decision provider. Choose http, openai, clef, jev, or typesafe')
+      }
+      requested = rawProvider
     }
+    const resolved = resolveDecisionEnv(process.env, new URL('../', import.meta.url), requested)
     api = createDecisionApi({
-      provider,
-      endpoint: provider === 'http' ? process.env.RIDGETOP_DECISION_URL : undefined,
-      token: process.env.RIDGETOP_DECISION_TOKEN,
-      accountId: process.env.RIDGETOP_DECISION_ACCOUNT_ID, model: process.env.RIDGETOP_DECISION_MODEL,
+      provider: resolved.provider,
+      endpoint: resolved.provider === 'http' ? resolved.endpoint : undefined,
+      token: resolved.token,
+      accountId: resolved.accountId,
+      model: resolved.model,
       labels, rubric,
       maxRequests: Number(process.env.RIDGETOP_DECISION_MAX_REQUESTS ?? 3)
     })

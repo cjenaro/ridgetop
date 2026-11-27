@@ -15,7 +15,11 @@ export type {
   RoomServiceOptions
 } from './room-server.ts'
 export { createCookieSession, createIdentity, createRecords, openRecords } from './records.ts'
-export { createDecisionApi } from './decision-api.ts'
+export { createDecisionApi, loadDotEnv, parseDotEnv, resolveDecisionEnv } from './decision-api.ts'
+export type { ResolvedDecisionEnv } from './decision-api.ts'
+export type { DecisionProviderName } from './decision-providers.ts'
+export { createDecisionAgentHandler } from './decision-server.ts'
+export type { DecisionAgentProvider, DecisionAgentServerResponse } from './decision-server.ts'
 export { bundleStandaloneHtml, shakeModuleGraph } from './module-bundle.ts'
 export type { BundleStandaloneHtmlOptions, EmbeddedAssetEntry, ShakeModuleGraphOptions } from './module-bundle.ts'
 export { bakeIconPng, formatPackageSummary, packageGame, parsePackageArgs } from './packager.ts'
