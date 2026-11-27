@@ -16,6 +16,12 @@ import {
 } from './data.ts'
 import { cameraAlignedFacing, cameraCardinalHeading, createCrownshardScene, facingPickerAnchor } from './scene.ts'
 import {
+  buildDioramaLandmarks, completeDioramaFlyIn, createWorldMap3DCamera, focusDioramaOnStage,
+  getDioramaFlyInProgress, panDioramaCamera, resetDioramaCamera, rotateDioramaCamera,
+  startDioramaFlyIn, stepDioramaCamera, zoomDioramaCamera
+} from './world-map-3d.ts'
+import type { WorldMap3DCamera } from './world-map-3d.ts'
+import {
   CROWNLESS_DEEP_MAX_FLOOR, ENDLESS_BLESSING_BY_ID, MAX_TACTIC_DECK, MIN_TACTIC_DECK, OAKHAVEN_STAGE_ID,
   STARFALL_ATOLL_FIRST_CLEAR_DUST, STARFALL_ATOLL_FIRST_CLEAR_SHARDS,
   STAGE_DIFFICULTY_TIERS, STAGE_MUTATOR_IDS, STAGE_MUTATOR_SPECS, STAGE_TIER_SPECS,
@@ -48,7 +54,7 @@ import type {
   StageDifficultyTier, StageMutatorId, TurnActionKind, TurnOrderActionPreview, WorldMapEvent
 } from './types.ts'
 import {
-  COLOR, RADIUS, TIER_COLOR, TYPE, UI_THEME_PALETTE, WORLD_MAP_H, WORLD_MAP_W,
+  COLOR, RADIUS, TIER_COLOR, TYPE, UI_THEME_PALETTE,
   drawAnimatedRevealCard, drawApMeter, drawArmoryStatDiffPanel, drawAutoBattlePill, drawBattleInfo, drawBoosterPack, drawButton, drawCameraCompassButton, drawCampHeader,
   drawChallengeHudBadges, drawChapterPicker, drawChip, drawCodexEnemyDetail, drawCodexEntryCard, drawCodexEquipDetail, drawCodexHeader, drawCodexHeroDetail, drawCombatForecast, drawCombatLogPanel, drawCombatLogToggleButton, drawControlHints, drawDefeatBackdrop, drawDeployHeroChip,
   drawDifficultyBadge, drawDiscoveryTipCard, drawEmptyNote, drawEndTurnButton, drawEndlessBlessingCard, drawEndlessBlessingsHudPill, drawEquipCard, drawForecastAltChip,
@@ -59,10 +65,10 @@ import {
   drawStoryHeading, drawTab, drawTacticCard, drawTacticDeckCard, drawTacticDeckHeader, drawText, drawTimelineBg, drawTitleCard,
   drawTitleLogo, drawToast, drawToolbarBg, drawTopFade, drawTurnOrderCallout,
   drawTurnOrderPreviewBanner, drawTurnTimelinePreviewOverlay, drawTurnToken, drawUnitCard,
-  drawVictoryBackdrop, drawVictoryMasteryAnimated, drawWell, drawWorldMapCanvas, drawWorldMapEventNode, drawWorldMapNode, worldMapScale, worldMapToScreen,
+  drawVictoryBackdrop, drawVictoryMasteryAnimated, drawWell, drawWorldMap3DOverlay, drawWorldMapEventNode, drawWorldMapNode,
   FANFARE_DURATION, drawFanfare
 } from './ui-art.ts'
-import type { CodexListEntry, FanfareDrawOpts, IconName, StatStripItem, WorldMapViewport } from './ui-art.ts'
+import type { CodexListEntry, FanfareDrawOpts, IconName, ProjectedRegionBanner, StatStripItem } from './ui-art.ts'
 
 type Screen = 'title' | 'world' | 'camp' | 'codex' | 'story' | 'battle' | 'victory' | 'defeat' | 'paused'
 type CampTab = 'squad' | 'armory' | 'deck' | 'forge' | 'decks'
@@ -295,13 +301,11 @@ async function start() {
   let forecastPulseTick = 0
   let resultAnimTime = 0
   let worldMapTime = 0
-  let worldMapPanX = 0.44
-  let worldMapPanY = 0.50
-  let worldMapZoom = 0.98
-  let worldMapTargetPanX = 0.44
-  let worldMapTargetPanY = 0.50
-  let worldMapTargetZoom = 0.98
-  let worldMapDrag: { pointerId: number; lastX: number; lastY: number; dragged: boolean } | null = null
+  const worldMap3DCam: WorldMap3DCamera = createWorldMap3DCamera()
+  let pendingWorldFlyIn: (() => void) | null = null
+  let worldMapDrag: { pointerId: number; lastX: number; lastY: number; dragged: boolean; mode: 'pan' | 'orbit' } | null = null
+  const worldMapTouches = new Map<number, { x: number; y: number }>()
+  let worldMapPinch: { dist: number; midX: number; midY: number } | null = null
   let selectedWorldEventId: string | null = null
   let pendingWorldEventId: string | null = null
   let packAnim: PackAnimState | null = null
@@ -350,32 +354,24 @@ async function start() {
     uiDirty = true
   }
 
-  function clampWorldMapView() {
-    worldMapTargetZoom = Math.max(0.62, Math.min(1.75, worldMapTargetZoom))
-    worldMapZoom = Math.max(0.62, Math.min(1.75, worldMapZoom))
-    const padX = Math.max(0.08, 0.36 / worldMapTargetZoom)
-    const padY = Math.max(0.10, 0.36 / worldMapTargetZoom)
-    const minX = Math.min(0.5, padX * 0.45)
-    const maxX = Math.max(0.5, 1 - padX * 0.45)
-    const minY = Math.min(0.5, padY * 0.45)
-    const maxY = Math.max(0.5, 1 - padY * 0.45)
-    worldMapTargetPanX = Math.max(minX, Math.min(maxX, worldMapTargetPanX))
-    worldMapTargetPanY = Math.max(minY, Math.min(maxY, worldMapTargetPanY))
-    worldMapPanX = Math.max(minX, Math.min(maxX, worldMapPanX))
-    worldMapPanY = Math.max(minY, Math.min(maxY, worldMapPanY))
+  function readWorldMapPinch(): { dist: number; midX: number; midY: number } | null {
+    const pts = Array.from(worldMapTouches.values())
+    if (pts.length < 2) return null
+    const a = pts[0]
+    const b = pts[1]
+    return {
+      dist: Math.max(12, Math.hypot(b.x - a.x, b.y - a.y)),
+      midX: (a.x + b.x) * 0.5,
+      midY: (a.y + b.y) * 0.5
+    }
   }
 
   function focusWorldMapOnPoint(mapX: number, mapY: number, instant = false) {
-    // Bias slightly right so the floating right-hand inspector never covers the selected landmark!
+    // Bias slightly right on desktop so the floating right-hand inspector never covers the selected 3D landmark
     const mobile = renderer.canvas.clientWidth < 780
-    worldMapTargetPanX = mapX + (mobile ? 0 : 0.11 / worldMapTargetZoom)
-    worldMapTargetPanY = mapY + (mobile ? 0.10 / worldMapTargetZoom : 0)
-    clampWorldMapView()
-    if (instant) {
-      worldMapPanX = worldMapTargetPanX
-      worldMapPanY = worldMapTargetPanY
-      worldMapZoom = worldMapTargetZoom
-    }
+    const offsetX = mobile ? 0 : 0.08 / Math.max(0.85, worldMap3DCam.goalZoom)
+    const offsetY = mobile ? 0.07 / Math.max(0.85, worldMap3DCam.goalZoom) : 0
+    focusDioramaOnStage(worldMap3DCam, mapX + offsetX, mapY + offsetY, undefined, instant)
   }
 
   function focusWorldMapOn(stage: ChapterSpec, instant = false) {
@@ -383,17 +379,30 @@ async function start() {
   }
 
   function resetWorldMapOverview(instant = false) {
-    // Frame the full 9-region atlas cleanly to the left of the floating stage inspector!
-    const mobile = renderer.canvas.clientWidth < 780
-    worldMapTargetPanX = mobile ? 0.50 : 0.66
-    worldMapTargetPanY = 0.51
-    worldMapTargetZoom = mobile ? 0.70 : 0.70
-    clampWorldMapView()
-    if (instant) {
-      worldMapPanX = worldMapTargetPanX
-      worldMapPanY = worldMapTargetPanY
-      worldMapZoom = worldMapTargetZoom
+    pendingWorldFlyIn = null
+    resetDioramaCamera(worldMap3DCam, instant)
+  }
+
+  function finishWorldDeployFlyInNow() {
+    const action = pendingWorldFlyIn
+    pendingWorldFlyIn = null
+    completeDioramaFlyIn(worldMap3DCam)
+    if (action) action()
+  }
+
+  function triggerWorldDeployFlyIn(stageId: string, mapX: number, mapY: number, onComplete: () => void) {
+    audio.unlock()
+    // Complete immediately if paused for testing or if player taps again mid-swoop
+    if (isTestingPaused() || (worldMap3DCam.flyIn && worldMap3DCam.flyIn.active)) {
+      pendingWorldFlyIn = null
+      completeDioramaFlyIn(worldMap3DCam)
+      onComplete()
+      return
     }
+    pendingWorldFlyIn = onComplete
+    startDioramaFlyIn(worldMap3DCam, stageId, mapX, mapY)
+    state.sounds.push({ kind: 'card', pitch: 1.24 })
+    uiDirty = true
   }
 
   function getSelectedStage(): ChapterSpec {
@@ -649,6 +658,13 @@ async function start() {
     clearBattleHoverFeedback()
     clearArmoryHover(true)
     if (next !== 'camp') { packAnim = null; fanfare = null }
+    if (next !== 'world') {
+      pendingWorldFlyIn = null
+      worldMap3DCam.flyIn = null
+      worldMapDrag = null
+      worldMapTouches.clear()
+      worldMapPinch = null
+    }
     if (next === 'victory' || next === 'defeat') resultAnimTime = 0
     if (next === 'title' || next === 'camp' || next === 'codex' || next === 'story' || next === 'world') {
       scene.setCampFraming(next === 'camp' && campTab === 'armory' ? 'armory' : next === 'codex' ? 'camp' : next)
@@ -1156,16 +1172,35 @@ async function start() {
       uiDirty = true
     }
     if (screen === 'world') {
+      if (event.pointerType === 'touch' && worldMapTouches.has(event.pointerId)) {
+        worldMapTouches.set(event.pointerId, { x, y })
+        if (worldMapTouches.size >= 2) {
+          const nextPinch = readWorldMapPinch()
+          if (nextPinch && worldMapPinch) {
+            const factor = nextPinch.dist / worldMapPinch.dist
+            if (Math.abs(factor - 1) > 0.002) {
+              zoomDioramaCamera(worldMap3DCam, factor)
+            }
+            const dx = nextPinch.midX - worldMapPinch.midX
+            const dy = nextPinch.midY - worldMapPinch.midY
+            if (Math.hypot(dx, dy) > 0.5) {
+              panDioramaCamera(worldMap3DCam, dx, dy, w, h)
+            }
+            uiDirty = true
+          }
+          worldMapPinch = nextPinch
+          return
+        }
+      }
       if (worldMapDrag && worldMapDrag.pointerId === event.pointerId) {
         const dx = x - worldMapDrag.lastX
         const dy = y - worldMapDrag.lastY
         if (Math.hypot(dx, dy) > 2) worldMapDrag.dragged = true
-        const scale = worldMapScale({ x: 0, y: 0, width: w, height: h }, worldMapZoom)
-        worldMapTargetPanX -= dx / (WORLD_MAP_W * scale)
-        worldMapTargetPanY -= dy / (WORLD_MAP_H * scale)
-        worldMapPanX = worldMapTargetPanX
-        worldMapPanY = worldMapTargetPanY
-        clampWorldMapView()
+        if (worldMapDrag.mode === 'orbit') {
+          rotateDioramaCamera(worldMap3DCam, dx * 0.005, dy * 0.004)
+        } else {
+          panDioramaCamera(worldMap3DCam, dx, dy, w, h)
+        }
         worldMapDrag.lastX = x
         worldMapDrag.lastY = y
         uiDirty = true
@@ -1304,10 +1339,28 @@ async function start() {
     lastPointerType = event.pointerType || 'mouse'
     const { x, y, w, h } = pointerToCss(event)
     if (screen === 'world') {
-      if (event.button !== 0 && event.pointerType === 'mouse') return
+      if (worldMap3DCam.flyIn?.active && pendingWorldFlyIn) {
+        finishWorldDeployFlyInNow()
+        return
+      }
       if (ui.blocksPoint(x, y)) return
       audio.unlock()
-      worldMapDrag = { pointerId: event.pointerId, lastX: x, lastY: y, dragged: false }
+      if (event.pointerType === 'touch') {
+        worldMapTouches.set(event.pointerId, { x, y })
+        if (worldMapTouches.size >= 2) {
+          worldMapDrag = null
+          worldMapPinch = readWorldMapPinch()
+          return
+        }
+        worldMapDrag = { pointerId: event.pointerId, lastX: x, lastY: y, dragged: false, mode: 'pan' }
+        return
+      }
+      if (event.pointerType === 'mouse' && (event.button === 2 || event.button === 1)) {
+        worldMapDrag = { pointerId: event.pointerId, lastX: x, lastY: y, dragged: false, mode: 'orbit' }
+        return
+      }
+      if (event.button !== 0 && event.pointerType === 'mouse') return
+      worldMapDrag = { pointerId: event.pointerId, lastX: x, lastY: y, dragged: false, mode: 'pan' }
       return
     }
     if (screen !== 'battle' || !state.battle) return
@@ -1387,6 +1440,10 @@ async function start() {
   }, sig)
 
   uiCanvas.addEventListener('pointerup', event => {
+    if (event.pointerType === 'touch' && worldMapTouches.has(event.pointerId)) {
+      worldMapTouches.delete(event.pointerId)
+      if (worldMapTouches.size < 2) worldMapPinch = null
+    }
     if (worldMapDrag && worldMapDrag.pointerId === event.pointerId) {
       worldMapDrag = null
       return
@@ -1477,11 +1534,13 @@ async function start() {
   }, sig)
 
   uiCanvas.addEventListener('contextmenu', event => {
-    if (screen === 'battle') event.preventDefault()
+    if (screen === 'battle' || screen === 'world') event.preventDefault()
   }, sig)
 
   uiCanvas.addEventListener('pointercancel', event => {
     if (worldMapDrag && worldMapDrag.pointerId === event.pointerId) worldMapDrag = null
+    worldMapTouches.delete(event.pointerId)
+    if (worldMapTouches.size < 2) worldMapPinch = null
     activeTouches.delete(event.pointerId)
     if (activeTouches.size === 0) {
       pinchState = null
@@ -1496,8 +1555,7 @@ async function start() {
     if (screen === 'world') {
       if (ui.blocksPoint(event.clientX - box.left, event.clientY - box.top)) return
       event.preventDefault()
-      worldMapTargetZoom *= event.deltaY > 0 ? 1 / 1.12 : 1.12
-      clampWorldMapView()
+      zoomDioramaCamera(worldMap3DCam, event.deltaY > 0 ? 1 / 1.12 : 1.12)
       uiDirty = true
       return
     }
@@ -1524,6 +1582,26 @@ async function start() {
       audio.setMusic(!audio.isMusicEnabled())
       uiDirty = true
       return
+    }
+    if (screen === 'world') {
+      if (event.code === 'KeyQ') {
+        event.preventDefault()
+        rotateDioramaCamera(worldMap3DCam, -0.14)
+        uiDirty = true
+        return
+      }
+      if (event.code === 'KeyE') {
+        event.preventDefault()
+        rotateDioramaCamera(worldMap3DCam, 0.14)
+        uiDirty = true
+        return
+      }
+      if (event.code === 'KeyR' && !event.repeat) {
+        event.preventDefault()
+        resetWorldMapOverview()
+        uiDirty = true
+        return
+      }
     }
     if (screen === 'battle' && state.battle) {
       if (event.code === 'Escape' && !event.repeat) {
@@ -1884,8 +1962,6 @@ async function start() {
 
     const outerPad = isCompact ? 8 : 12
     const topH = shortH ? 38 : 44
-    const vp: WorldMapViewport = { panX: worldMapPanX, panY: worldMapPanY, zoom: worldMapZoom }
-    const mapRect: LayoutRect = { x: 0, y: 0, width: w, height: h }
 
     const nodeW = mobile ? 88 : 118
     const nodeH = mobile ? 76 : 86
@@ -1898,10 +1974,11 @@ async function start() {
       selectedWorldEventId = null
     }
 
-    // Position all visible continent landmarks directly onto the full-viewport map canvas!
+    // Project all 33 continent landmarks directly onto their live 3D banner pins!
     const mapNodes: LayoutNode[] = []
     for (const stage of CHAPTERS) {
-      const pt = worldMapToScreen(stage.mapX, stage.mapY, mapRect, vp)
+      const pt = scene.projectWorldMapPoint(stage.mapX, stage.mapY, worldMap3DCam, w, h, 0.52)
+      if (!pt) continue
       const left = Math.round(pt.x - nodeW / 2)
       const top = Math.round(pt.y - pinCenterY)
       if (left + nodeW < -20 || left > w + 20 || top + nodeH < -20 || top > h + 20) continue
@@ -1947,12 +2024,13 @@ async function start() {
       }))
     }
 
-    // Dynamic temporary World Map event medallions along cleared roads
+    // Dynamic temporary World Map event medallions projected directly onto their 3D road beacons!
     const evNodeW = mobile ? 84 : 108
     const evNodeH = mobile ? 58 : 66
     const evPinCenterY = mobile ? 19 : 22
     for (const ev of camp.worldEvents) {
-      const pt = worldMapToScreen(ev.mapX, ev.mapY, mapRect, vp)
+      const pt = scene.projectWorldMapPoint(ev.mapX, ev.mapY, worldMap3DCam, w, h, 0.56)
+      if (!pt) continue
       const left = Math.round(pt.x - evNodeW / 2)
       const top = Math.round(pt.y - evPinCenterY)
       if (left + evNodeW < -20 || left > w + 20 || top + evNodeH < -20 || top > h + 20) continue
@@ -2648,8 +2726,7 @@ async function start() {
           disabled: !selectedUnlocked,
           onPress: () => {
             if (!selectedUnlocked) return
-            audio.unlock()
-            openStory(selected.index, 0)
+            triggerWorldDeployFlyIn(selected.id, selected.mapX, selected.mapY, () => openStory(selected.index, 0))
           },
           draw: (ctx: CanvasRenderingContext2D, rect: LayoutRect, st: CanvasWidgetDrawState) => drawButton(
             ctx,
@@ -2984,7 +3061,7 @@ async function start() {
                   type: 'button',
                   label: 'Deploy to Event',
                   primary: true,
-                  onPress: () => launchWorldEventBattle(ev.id),
+                  onPress: () => triggerWorldDeployFlyIn(ev.id, ev.mapX, ev.mapY, () => launchWorldEventBattle(ev.id)),
                   draw: (ctx: CanvasRenderingContext2D, rect: LayoutRect, st: CanvasWidgetDrawState) => drawButton(
                     ctx, rect, 'Deploy to Event', st, { variant: 'primary', icon: 'sword', size: isCompact ? 13 : 14 }
                   )
@@ -3007,15 +3084,38 @@ async function start() {
       + (endlessReady ? endlessBtnW + topActionGap : 0)
       + codexBtnW + topActionGap + campBtnW
 
+    const regionBanners: ProjectedRegionBanner[] = []
+    for (const reg of buildDioramaLandmarks().regions) {
+      const rp = scene.projectWorldMapPoint(reg.mapX, reg.mapY, worldMap3DCam, w, h, 0.95)
+      if (!rp) continue
+      regionBanners.push({
+        name: reg.name,
+        tierRange: reg.tierRange,
+        x: rp.x,
+        y: rp.y,
+        accentHex: reg.accentHex,
+        futureFrontier: reg.futureFrontier
+      })
+    }
+
     return overlay({ id: 'root', style: { anchor: 'fill' } }, [
-      // Full-viewport illustrated continent canvas (does NOT block pointer so drag-to-pan works anywhere!)
+      // Translucent cartographic vignette & 3D-projected region banners (lets the live 3D tabletop diorama shine through!)
       boxNode({
         id: 'wm-canvas-bg',
         style: { anchor: 'fill' },
         widget: {
           type: 'panel',
-          draw: (ctx: CanvasRenderingContext2D, rect: LayoutRect) => drawWorldMapCanvas(
-            ctx, rect, vp, worldMapTime, CHAPTERS, clearedSet, unlockedSet
+          draw: (ctx: CanvasRenderingContext2D, rect: LayoutRect) => drawWorldMap3DOverlay(
+            ctx,
+            rect,
+            {
+              time: worldMapTime,
+              zoom: worldMap3DCam.zoom,
+              yaw: worldMap3DCam.yaw,
+              flyInProgress: getDioramaFlyInProgress(worldMap3DCam),
+              regionBanners,
+              compact: mobile
+            }
           )
         }
       }),
@@ -3212,7 +3312,7 @@ async function start() {
           style: { width: 27, height: 28 },
           widget: {
             type: 'button', label: 'Zoom Out',
-            onPress: () => { worldMapTargetZoom /= 1.18; clampWorldMapView(); uiDirty = true },
+            onPress: () => { zoomDioramaCamera(worldMap3DCam, 1 / 1.18); uiDirty = true },
             draw: (ctx: CanvasRenderingContext2D, rect: LayoutRect, st: CanvasWidgetDrawState) => drawIconButton(ctx, rect, 'minus', st)
           }
         }),
@@ -3221,7 +3321,7 @@ async function start() {
           style: { width: 27, height: 28 },
           widget: {
             type: 'button', label: 'Zoom In',
-            onPress: () => { worldMapTargetZoom *= 1.18; clampWorldMapView(); uiDirty = true },
+            onPress: () => { zoomDioramaCamera(worldMap3DCam, 1.18); uiDirty = true },
             draw: (ctx: CanvasRenderingContext2D, rect: LayoutRect, st: CanvasWidgetDrawState) => drawIconButton(ctx, rect, 'plus', st)
           }
         })
@@ -3254,7 +3354,7 @@ async function start() {
             style: { width: 28, height: 30 },
             widget: {
               type: 'button', label: 'Zoom Out',
-              onPress: () => { worldMapTargetZoom /= 1.18; clampWorldMapView(); uiDirty = true },
+              onPress: () => { zoomDioramaCamera(worldMap3DCam, 1 / 1.18); uiDirty = true },
               draw: (ctx: CanvasRenderingContext2D, rect: LayoutRect, st: CanvasWidgetDrawState) => drawIconButton(ctx, rect, 'minus', st)
             }
           }),
@@ -3272,7 +3372,7 @@ async function start() {
             style: { width: 28, height: 30 },
             widget: {
               type: 'button', label: 'Zoom In',
-              onPress: () => { worldMapTargetZoom *= 1.18; clampWorldMapView(); uiDirty = true },
+              onPress: () => { zoomDioramaCamera(worldMap3DCam, 1.18); uiDirty = true },
               draw: (ctx: CanvasRenderingContext2D, rect: LayoutRect, st: CanvasWidgetDrawState) => drawIconButton(ctx, rect, 'plus', st)
             }
           })
@@ -3357,8 +3457,8 @@ async function start() {
             ctx,
             rect,
             soonCount > 0
-              ? `Drag to Pan · Scroll to Zoom · ★ ${totalMasteryStars}/${maxMasteryStars}${nextUpcomingMilestone ? ` (Next Chest: ${nextUpcomingMilestone.threshold}★)` : ' · All Chests Claimed!'}`
-              : `Drag to Pan · Scroll to Zoom · ★ ${totalMasteryStars}/${maxMasteryStars}${nextUpcomingMilestone ? ` (Next Milestone: ${nextUpcomingMilestone.threshold}★)` : ' · Grandmaster!'}`,
+              ? `Drag Pan · Right-Drag / Q·E Orbit · Scroll Zoom · ★ ${totalMasteryStars}/${maxMasteryStars}${nextUpcomingMilestone ? ` (${nextUpcomingMilestone.threshold}★)` : ''}`
+              : `Drag Pan · Right-Drag / Q·E Orbit · Scroll Zoom · ★ ${totalMasteryStars}/${maxMasteryStars}${nextUpcomingMilestone ? ` (${nextUpcomingMilestone.threshold}★)` : ' · Grandmaster!'}`,
             COLOR.accentHi
           )
         }
@@ -8199,13 +8299,7 @@ async function start() {
         renderUiNow()
       },
       setWorldMapView: (panX: number, panY: number, zoom: number) => {
-        worldMapTargetPanX = panX
-        worldMapTargetPanY = panY
-        worldMapTargetZoom = zoom
-        clampWorldMapView()
-        worldMapPanX = worldMapTargetPanX
-        worldMapPanY = worldMapTargetPanY
-        worldMapZoom = worldMapTargetZoom
+        focusDioramaOnStage(worldMap3DCam, panX, panY, zoom, true)
         uiDirty = true
         renderUiNow()
       },
@@ -8451,13 +8545,15 @@ async function start() {
       lastRenderAt = now
       const renderDt = screen === 'paused' ? 0 : rawDt
 
-      // Advance animated UI scenes (World Map pan/zoom/trails, Victory/Defeat FX, Pack Lottery Ceremony)
+      // Advance animated UI scenes (3D World Map diorama camera & fly-in, Victory/Defeat FX, Pack Lottery Ceremony)
       if (screen === 'world') {
         worldMapTime += renderDt
-        const smooth = Math.min(1, renderDt * 10)
-        worldMapPanX += (worldMapTargetPanX - worldMapPanX) * smooth
-        worldMapPanY += (worldMapTargetPanY - worldMapPanY) * smooth
-        worldMapZoom += (worldMapTargetZoom - worldMapZoom) * smooth
+        const flyInFinished = stepDioramaCamera(worldMap3DCam, renderDt)
+        if (flyInFinished && pendingWorldFlyIn) {
+          const onDone = pendingWorldFlyIn
+          pendingWorldFlyIn = null
+          onDone()
+        }
         uiDirty = true
       } else if (screen === 'victory' || screen === 'defeat') {
         resultAnimTime += renderDt
@@ -8522,7 +8618,31 @@ async function start() {
       }
 
       const r0 = performance.now()
-      const stats = scene.render(state, renderDt, w, h)
+      let stats
+      if (screen === 'world' && !state.battle) {
+        const clearedIds = new Set(state.campaign.clearedStageIds)
+        const unlockedIds = new Set(CHAPTERS.filter(ch => isStageUnlocked(state.campaign, ch)).map(ch => ch.id))
+        const mastered3StarIds = new Set<string>()
+        for (const id of state.campaign.clearedStageIds) {
+          const rec = getStageMasteryRecord(state.campaign, id)
+          if (rec && rec.stars >= 3) mastered3StarIds.add(id)
+        }
+        stats = scene.renderWorldMap3D(state, worldMap3DCam, {
+          dt: renderDt,
+          width: w,
+          height: h,
+          time: worldMapTime,
+          selectedStageId: state.campaign.selectedStageId,
+          recommendedStageId: getNextRecommendedStage(state.campaign).id,
+          clearedIds,
+          unlockedIds,
+          mastered3StarIds,
+          selectedEventId: selectedWorldEventId,
+          events: state.campaign.worldEvents
+        })
+      } else {
+        stats = scene.render(state, renderDt, w, h)
+      }
       const renderMs = performance.now() - r0
       audio.update(state, renderDt, screen === 'battle')
 

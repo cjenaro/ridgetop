@@ -45,6 +45,7 @@
       "crownshard/mutators.ts",
       "crownshard/pincer.ts",
       "crownshard/world-events.ts",
+      "crownshard/world-map-3d.ts",
       "crownshard/zoc.ts",
       "crownshard/data.ts",
       "crownshard/types.ts",

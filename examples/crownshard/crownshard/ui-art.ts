@@ -7640,6 +7640,135 @@ export function drawWorldMapCanvas(
   ctx.restore()
 }
 
+export interface ProjectedRegionBanner {
+  readonly name: string
+  readonly tierRange: string
+  readonly x: number
+  readonly y: number
+  readonly accentHex: string
+  readonly futureFrontier?: boolean
+}
+
+/**
+ * Lightweight translucent cartographic overlay for the live 3D Solis World Map diorama.
+ * Leaves the center completely clear so the sculpted 3D miniature world shines through!
+ */
+export function drawWorldMap3DOverlay(
+  ctx: CanvasRenderingContext2D,
+  rect: LayoutRect,
+  opts: {
+    readonly time: number
+    readonly zoom: number
+    readonly yaw: number
+    readonly flyInProgress: number
+    readonly regionBanners: readonly ProjectedRegionBanner[]
+    readonly compact?: boolean
+  }
+) {
+  const { x, y, width: w, height: h } = rect
+  ctx.save()
+  ctx.beginPath()
+  ctx.rect(x, y, w, h)
+  ctx.clip()
+
+  // Subtle dark cartographic edge vignette framing the 3D tabletop
+  const vig = ctx.createRadialGradient(
+    x + w * 0.5, y + h * 0.5, Math.min(w, h) * 0.34,
+    x + w * 0.5, y + h * 0.5, Math.max(w, h) * 0.72
+  )
+  vig.addColorStop(0, 'rgba(10, 18, 32, 0)')
+  vig.addColorStop(0.75, 'rgba(10, 18, 32, 0.10)')
+  vig.addColorStop(1, 'rgba(6, 12, 24, 0.44)')
+  ctx.fillStyle = vig
+  ctx.fillRect(x, y, w, h)
+
+  // Subtle projected 3D region title banners floating cleanly above each biome
+  const scaleFactor = Math.max(0.72, Math.min(1.25, opts.zoom * 0.92))
+  const baseTitleSz = (opts.compact ? 10 : 12.5) * scaleFactor
+  const subSz = Math.max(7.5, baseTitleSz * 0.62)
+  for (const reg of opts.regionBanners) {
+    if (reg.x < x - 90 || reg.x > x + w + 90 || reg.y < y + 48 || reg.y > y + h - 28) continue
+    ctx.save()
+    ctx.globalAlpha = 0.84 * (1 - opts.flyInProgress * 0.85)
+    drawText(ctx, reg.name.toUpperCase(), reg.x, reg.y - subSz * 0.3, {
+      size: baseTitleSz,
+      weight: 900,
+      color: reg.futureFrontier ? '#f5d2e8' : '#fff5dc',
+      align: 'center',
+      spacing: baseTitleSz * 0.14,
+      display: true,
+      stroke: 'rgba(10, 16, 28, 0.86)',
+      strokeWidth: Math.max(2.6, baseTitleSz * 0.28)
+    })
+    drawText(ctx, reg.tierRange.toUpperCase(), reg.x, reg.y + baseTitleSz * 0.62, {
+      size: subSz,
+      weight: 800,
+      color: reg.accentHex,
+      align: 'center',
+      spacing: subSz * 0.18,
+      display: true,
+      stroke: 'rgba(10, 16, 28, 0.82)',
+      strokeWidth: Math.max(2, subSz * 0.25)
+    })
+    ctx.restore()
+  }
+
+  // Translucent brass compass rose watermark tucked in the bottom-left corner
+  if (!opts.compact && w >= 720 && h >= 440) {
+    const cr = 26
+    const cx = x + 44
+    const cy = y + h - 44
+    ctx.save()
+    ctx.translate(cx, cy)
+    ctx.rotate(-opts.yaw)
+    ctx.globalAlpha = 0.56 * (1 - opts.flyInProgress)
+    ctx.strokeStyle = 'rgba(246, 214, 134, 0.72)'
+    ctx.lineWidth = 1.4
+    ctx.beginPath()
+    ctx.arc(0, 0, cr, 0, Math.PI * 2)
+    ctx.stroke()
+    ctx.beginPath()
+    ctx.arc(0, 0, cr * 0.72, 0, Math.PI * 2)
+    ctx.stroke()
+    // 4 cardinal compass needles
+    for (let i = 0; i < 4; i++) {
+      ctx.save()
+      ctx.rotate((i * Math.PI) / 2)
+      ctx.beginPath()
+      ctx.moveTo(0, -cr * 0.94)
+      ctx.lineTo(4.2, -3.5)
+      ctx.lineTo(0, 0)
+      ctx.lineTo(-4.2, -3.5)
+      ctx.closePath()
+      ctx.fillStyle = i === 0 ? '#ffd86b' : 'rgba(230, 214, 178, 0.72)'
+      ctx.fill()
+      ctx.restore()
+    }
+    drawText(ctx, 'N', 0, -cr - 8, {
+      size: 9.5, weight: 900, color: '#ffe494', align: 'center', display: true,
+      stroke: 'rgba(8, 12, 22, 0.85)', strokeWidth: 2.2
+    })
+    ctx.restore()
+  }
+
+  // Smooth golden bloom/vignette ease during battle deploy camera fly-in
+  if (opts.flyInProgress > 0.01) {
+    const p = Math.min(1, Math.max(0, opts.flyInProgress))
+    const bloom = Math.pow(p, 1.8)
+    const g = ctx.createRadialGradient(
+      x + w * 0.5, y + h * 0.5, Math.min(w, h) * (0.32 * (1 - bloom * 0.55)),
+      x + w * 0.5, y + h * 0.5, Math.max(w, h) * 0.78
+    )
+    g.addColorStop(0, `rgba(255, 236, 168, ${(bloom * 0.52).toFixed(3)})`)
+    g.addColorStop(0.55, `rgba(255, 206, 98, ${(bloom * 0.28).toFixed(3)})`)
+    g.addColorStop(1, `rgba(18, 14, 28, ${(bloom * 0.45).toFixed(3)})`)
+    ctx.fillStyle = g
+    ctx.fillRect(x, y, w, h)
+  }
+
+  ctx.restore()
+}
+
 /** Miniature FFTA / Summerlands hand-inked landmark silhouette drawn inside each World Map medallion! */
 function drawLandmarkArt(ctx: CanvasRenderingContext2D, kind: LandmarkKind, cx: number, cy: number, r: number, color: string) {
   ctx.save()
