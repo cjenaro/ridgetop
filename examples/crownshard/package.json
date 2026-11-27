@@ -36,6 +36,7 @@
       "crownshard/expansion-endgame.ts",
       "crownshard/expansion-frontier.ts",
       "crownshard/forge.ts",
+      "crownshard/grid-cursor.ts",
       "crownshard/passives.ts",
       "crownshard/counter-attack.ts",
       "crownshard/elemental-combos.ts",

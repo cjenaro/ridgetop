@@ -31,6 +31,7 @@ import {
   previewPathOpportunityAttacks, unitAt, unitOrDownedAt
 } from './simulation.ts'
 import { TACTIC_BY_ID } from './data.ts'
+import type { GridCursorRenderSpec } from './grid-cursor.ts'
 import { BARRICADE_DEFAULT_HP, FACING_DIRS, TILE_SIZE, facingToYaw, facingVector, gridToWorld, isUnitDowned, vectorToFacing } from './types.ts'
 import type {
   AttackArc, BattleState, BattleUnit, CombatForecast, DangerZoneMap, DisplacementKind, EnemyThreatMap,
@@ -154,6 +155,14 @@ const C_KO_2: Color = [1.0, 0.48, 0.16, 0.96]
 const C_KO_1: Color = [1.0, 0.22, 0.24, 0.98]
 const C_REVIVE_TILE: Color = [1.0, 0.82, 0.28, 0.44]
 const C_REVIVE_MARK: Color = [1.0, 0.96, 0.78, 0.98]
+const C_CURSOR_NORMAL: Color = [1.0, 0.86, 0.28, 0.98]
+const C_CURSOR_NORMAL_GLOW: Color = [1.0, 0.94, 0.56, 0.92]
+const C_CURSOR_ATTACK: Color = [1.0, 0.34, 0.24, 0.98]
+const C_CURSOR_ATTACK_GLOW: Color = [1.0, 0.58, 0.34, 0.94]
+const C_CURSOR_ALLY: Color = [0.24, 0.96, 0.78, 0.98]
+const C_CURSOR_ALLY_GLOW: Color = [0.58, 1.0, 0.88, 0.92]
+const C_CURSOR_DEPLOY: Color = [0.30, 0.86, 1.0, 0.98]
+const C_CURSOR_DEPLOY_GLOW: Color = [0.68, 0.96, 1.0, 0.94]
 
 /** Death timing: topple clip, then sink + shrink into a soul-mote burst. */
 const DEATH_SINK_START = 1.0
@@ -388,6 +397,58 @@ const chestMarkerMesh = (() => {
   addBox(-0.34, 0.34, -0.24, 0.34, 0.48, 0.24)
   return mesh(pos, idx)
 })()
+
+// 11. Sculpted 3D 4-corner tactical board cursor brackets (unit tile scale [-0.5..0.5], raised corner posts)
+const gridCursorBracketsMesh = (() => {
+  const pos: number[] = []
+  const idx: number[] = []
+  function addBox(x0: number, y0: number, z0: number, x1: number, y1: number, z1: number) {
+    const n = pos.length / 3
+    pos.push(
+      x0, y0, z0, x1, y0, z0, x1, y1, z0, x0, y1, z0,
+      x0, y0, z1, x1, y0, z1, x1, y1, z1, x0, y1, z1
+    )
+    const faces = [
+      [0, 2, 1], [0, 3, 2],
+      [4, 5, 6], [4, 6, 7],
+      [0, 1, 5], [0, 5, 4],
+      [3, 7, 6], [3, 6, 2],
+      [0, 4, 7], [0, 7, 3],
+      [1, 2, 6], [1, 6, 5]
+    ]
+    for (const [a, b, c] of faces) idx.push(n + a, n + b, n + c)
+  }
+  const outer = 0.49
+  const thick = 0.08
+  const arm = 0.27
+  const hArm = 0.09
+  const hPost = 0.18
+  const corners: readonly (readonly [number, number])[] = [
+    [-1, -1],
+    [1, -1],
+    [-1, 1],
+    [1, 1]
+  ]
+  for (const [sx, sz] of corners) {
+    const ox = sx * outer
+    const oz = sz * outer
+    const ix = sx * (outer - thick)
+    const iz = sz * (outer - thick)
+    const ax = sx * (outer - arm)
+    const az = sz * (outer - arm)
+    // X-axis L-arm
+    addBox(Math.min(ox, ax), 0, Math.min(oz, iz), Math.max(ox, ax), hArm, Math.max(oz, iz))
+    // Z-axis L-arm
+    addBox(Math.min(ox, ix), 0, Math.min(oz, az), Math.max(ox, ix), hArm, Math.max(oz, az))
+    // Sculpted raised corner post
+    addBox(Math.min(ox, ix), 0, Math.min(oz, iz), Math.max(ox, ix), hPost, Math.max(oz, iz))
+  }
+  return mesh(pos, idx)
+})()
+
+export interface CrownshardRenderOptions {
+  readonly gridCursor?: GridCursorRenderSpec | null
+}
 
 function vfxColor(style: 'slash' | 'arrow' | 'arcane' | 'fire' | 'frost' | 'holy' | 'shadow' | 'gold'): Color {
   if (style === 'fire') return C_FIRE_CORE
@@ -641,6 +702,7 @@ export function createCrownshardScene(renderer: LowPolyRenderer) {
 
   let lastMatrix: Matrix = multiply(perspective(Math.PI / 3.6, 16 / 9, 0.5, 120), view([0, 12, 13], [0, 0, 0]))
   let hoveredCell: { col: number; row: number } | null = null
+  let activeGridCursor: GridCursorRenderSpec | null = null
   let activeForecast: CombatForecast | null = null
   let dangerZoneVisible = false
   let inspectedEnemyUid: string | null = null
@@ -1898,7 +1960,13 @@ export function createCrownshardScene(renderer: LowPolyRenderer) {
     }
   }
 
-  function renderBattle(state: GameState, dt: number, w: number, h: number): Readonly<RenderStats> {
+  function renderBattle(
+    state: GameState,
+    dt: number,
+    w: number,
+    h: number,
+    options?: CrownshardRenderOptions
+  ): Readonly<RenderStats> {
     const battle = state.battle
     if (!battle) return renderer.render(lastMatrix, campBatches)
 
@@ -2484,6 +2552,77 @@ export function createCrownshardScene(renderer: LowPolyRenderer) {
       }
     }
 
+    // 5b. 3D Keyboard / Gamepad Tactical Grid Cursor (sculpted 4-corner brackets + glowing diamond/frame, purely dynamic instances)
+    const effectiveGridCursor = options?.gridCursor !== undefined ? options.gridCursor : activeGridCursor
+    if (
+      effectiveGridCursor &&
+      effectiveGridCursor.active &&
+      !battle.facingPicker &&
+      (battle.phase === 'player' || battle.phase === 'deploy') &&
+      effectiveGridCursor.col >= 0 &&
+      effectiveGridCursor.col < battle.cols &&
+      effectiveGridCursor.row >= 0 &&
+      effectiveGridCursor.row < battle.rows
+    ) {
+      const cCell = battle.cells[effectiveGridCursor.row][effectiveGridCursor.col]
+      const cElev = cCell.terrain === 'void' ? 0 : cCell.elevation
+      const [cx, cy, cz] = gridToWorld(effectiveGridCursor.col, effectiveGridCursor.row, cElev, battle.cols, battle.rows)
+      const cursorPulse = 1 + Math.sin(state.time * 6.4) * 0.055
+      const bob = Math.sin(state.time * 5.2) * 0.07
+      const primaryCol = effectiveGridCursor.mode === 'attack'
+        ? C_CURSOR_ATTACK
+        : effectiveGridCursor.mode === 'ally'
+          ? C_CURSOR_ALLY
+          : effectiveGridCursor.mode === 'deploy'
+            ? C_CURSOR_DEPLOY
+            : C_CURSOR_NORMAL
+      const glowCol = effectiveGridCursor.mode === 'attack'
+        ? C_CURSOR_ATTACK_GLOW
+        : effectiveGridCursor.mode === 'ally'
+          ? C_CURSOR_ALLY_GLOW
+          : effectiveGridCursor.mode === 'deploy'
+            ? C_CURSOR_DEPLOY_GLOW
+            : C_CURSOR_NORMAL_GLOW
+      const cursorUnit = unitOrDownedAt(battle, effectiveGridCursor.col, effectiveGridCursor.row)
+      const pointerHeight = cursorUnit ? (cursorUnit.isBoss ? 2.68 : 2.18) : 0.72
+
+      pool.add(
+        gridCursorBracketsMesh,
+        [cx, cy + 0.055, cz],
+        [TILE_SIZE * 0.98 * cursorPulse, 1, TILE_SIZE * 0.98 * cursorPulse],
+        0,
+        primaryCol,
+        0.92
+      )
+      pool.add(
+        tileFrameMesh,
+        [cx, cy + 0.062, cz],
+        [TILE_SIZE * 0.92, 1, TILE_SIZE * 0.92],
+        0,
+        glowCol,
+        1.0,
+        'additive'
+      )
+      pool.add(
+        tileDiamondMesh,
+        [cx, cy + 0.068, cz],
+        [TILE_SIZE * 0.76 * cursorPulse, 1, TILE_SIZE * 0.76 * cursorPulse],
+        0,
+        glowCol,
+        1.0,
+        'additive'
+      )
+      pool.add(
+        crystalMesh,
+        [cx, cy + pointerHeight + bob, cz],
+        [0.14, 0.24, 0.14],
+        state.time * 3.1,
+        primaryCol,
+        1.0,
+        'additive'
+      )
+    }
+
     // Pre-attack 3D tactical preview: Move+Attack path, landing ring, pulsing lock-on reticle & targeting arc
     if (activeForecast && battle.phase === 'player' && !battle.units.some(u => u.path.length > 0)) {
       const fc = activeForecast
@@ -3063,8 +3202,8 @@ export function createCrownshardScene(renderer: LowPolyRenderer) {
   }
 
   return {
-    render(state: GameState, dt: number, width: number, height: number): Readonly<RenderStats> {
-      if (state.battle) return renderBattle(state, dt, width, height)
+    render(state: GameState, dt: number, width: number, height: number, options?: CrownshardRenderOptions): Readonly<RenderStats> {
+      if (state.battle) return renderBattle(state, dt, width, height, options)
       return renderCamp(state, dt, width, height)
     },
     setCampFraming(mode: 'title' | 'camp' | 'armory' | 'story' | 'world') {
@@ -3092,6 +3231,12 @@ export function createCrownshardScene(renderer: LowPolyRenderer) {
     },
     getHoveredCell() {
       return hoveredCell
+    },
+    setGridCursor(cursor: GridCursorRenderSpec | null) {
+      activeGridCursor = cursor
+    },
+    getGridCursor() {
+      return activeGridCursor
     },
     setForecast(forecast: CombatForecast | null) {
       activeForecast = forecast
