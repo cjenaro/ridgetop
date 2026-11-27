@@ -1,4 +1,5 @@
 import type { Vec3 } from 'ridgetop'
+import { appendCombatLog, formatComboLog, formatKoLog } from './combat-log.ts'
 import {
   KO_COUNTDOWN_TURNS,
   cellHeightLevel,
@@ -101,11 +102,13 @@ function defaultDefeatUnit(state: GameState, unit: BattleUnit): void {
     unit.koCountdown = KO_COUNTDOWN_TURNS
     unit.ct = 0
     pushComboFloat(battle, unit.x, unit.y + 0.35, unit.z, `DOWNED (${KO_COUNTDOWN_TURNS})`, '#ffb84d')
+    appendCombatLog(battle, 'ko', formatKoLog({ unitName: unit.name, kind: 'downed', countdown: KO_COUNTDOWN_TURNS }))
     state.sounds.push({ kind: 'ko' })
     state.vfx.push({ kind: 'ko', at: [unit.x, unit.y + 0.6, unit.z], isBoss: false, downed: true })
   } else {
     unit.downed = false
     unit.koCountdown = 0
+    appendCombatLog(battle, 'ko', formatKoLog({ unitName: unit.name, kind: 'ko', isBoss: unit.isBoss }))
     state.sounds.push({ kind: 'ko' })
     state.vfx.push({ kind: 'ko', at: [unit.x, unit.y + 0.6, unit.z], isBoss: unit.isBoss })
   }
@@ -307,7 +310,7 @@ export function previewElementalCombo(
  */
 export function triggerElementalCombo(
   state: GameState,
-  _attacker: BattleUnit | null,
+  attacker: BattleUnit | null,
   element: ElementKind | null,
   target: BattleUnit | null,
   targetCol: number,
@@ -337,6 +340,11 @@ export function triggerElementalCombo(
     battle.shake = Math.max(battle.shake, 0.34)
 
     pushComboFloat(battle, target.x, target.y + 0.72, target.z, `SHATTER! -${dmg}`, '#7ef0ff')
+    appendCombatLog(
+      battle,
+      'combo',
+      formatComboLog({ actorName: attacker?.name ?? null, combo: 'shatter', targetName: target.name, bonusDamage: dmg })
+    )
     const at: Vec3 = [target.x, target.y, target.z]
     state.vfx.push({ kind: 'combo', combo: 'shatter', at, cells: [at], bonusDamage: dmg })
     state.sounds.push({ kind: 'crit', pitch: 1.18 })
@@ -370,6 +378,11 @@ export function triggerElementalCombo(
     battle.shake = Math.max(battle.shake, 0.26)
 
     pushComboFloat(battle, target.x, target.y + 0.72, target.z, `FROZEN! -${dmg}`, '#9ef2ff')
+    appendCombatLog(
+      battle,
+      'combo',
+      formatComboLog({ actorName: attacker?.name ?? null, combo: 'freeze', targetName: target.name, bonusDamage: dmg })
+    )
     const at: Vec3 = [target.x, target.y, target.z]
     state.vfx.push({ kind: 'combo', combo: 'freeze', at, cells: [at], bonusDamage: dmg })
     state.sounds.push({ kind: 'magic', pitch: 1.35 })
@@ -403,6 +416,11 @@ export function triggerElementalCombo(
     battle.shake = Math.max(battle.shake, 0.38)
 
     pushComboFloat(battle, target.x, target.y + 0.72, target.z, `COMBUST! -${dmg}`, '#b8ff52')
+    appendCombatLog(
+      battle,
+      'combo',
+      formatComboLog({ actorName: attacker?.name ?? null, combo: 'combust', targetName: target.name, bonusDamage: dmg })
+    )
     const at: Vec3 = [target.x, target.y, target.z]
     state.vfx.push({ kind: 'combo', combo: 'combust', at, cells: [at], bonusDamage: dmg })
     state.sounds.push({ kind: 'crit', pitch: 0.92 })
@@ -457,6 +475,16 @@ export function triggerElementalCombo(
       }
     }
 
+    appendCombatLog(
+      battle,
+      'combo',
+      formatComboLog({
+        actorName: attacker?.name ?? null,
+        combo: 'wildfire',
+        bonusDamage: totalDamageDealt,
+        tileCount: patch.length
+      })
+    )
     battle.shake = Math.max(battle.shake, 0.30)
     state.vfx.push({ kind: 'combo', combo: 'wildfire', at: origin, cells: patchCentres, bonusDamage: WILDFIRE_DAMAGE })
     state.sounds.push({ kind: 'magic', pitch: 0.85 })

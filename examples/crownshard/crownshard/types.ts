@@ -567,6 +567,25 @@ export interface FloatingNumber {
   duration: number
 }
 
+export type CombatLogCategory =
+  | 'attack'
+  | 'crit'
+  | 'heal'
+  | 'status'
+  | 'combo'
+  | 'reaction'
+  | 'hazard'
+  | 'ko'
+  | 'system'
+
+export interface CombatLogEntry {
+  readonly id: number
+  readonly turn: number
+  readonly category: CombatLogCategory
+  readonly text: string
+  readonly accentHex: string
+}
+
 export type SoundEvent =
   | { kind: 'step'; pitch?: number }
   | { kind: 'slash'; pitch?: number }
@@ -897,6 +916,8 @@ export interface BattleState {
   enemyActedThisTurn: boolean
   floatingNumbers: FloatingNumber[]
   nextFloatId: number
+  combatLog: CombatLogEntry[]
+  nextLogId: number
   bannerText: string
   bannerTimer: number
   shake: number
@@ -985,6 +1006,8 @@ export interface BattleSaveSnapshot {
   readonly objective?: BattleObjectiveSnapshot
   readonly xpEarnedByHero?: Record<string, number>
   readonly heroStartLevelByUid?: Record<string, number>
+  readonly combatLog?: readonly CombatLogEntry[]
+  readonly nextLogId?: number
 }
 
 export interface CampaignState {

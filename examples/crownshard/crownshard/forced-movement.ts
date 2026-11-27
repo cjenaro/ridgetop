@@ -1,4 +1,5 @@
 import type { Vec3 } from 'ridgetop'
+import { appendCombatLog, formatHazardLog, formatKoLog, formatStatusLog } from './combat-log.ts'
 import {
   BARRICADE_DEFAULT_HP,
   COLLISION_IMPACT_DAMAGE,
@@ -435,14 +436,21 @@ function defeatDisplacedUnit(state: GameState, unit: BattleUnit): void {
     unit.koCountdown = KO_COUNTDOWN_TURNS
     unit.ct = 0
     pushFloat(battle, unit.x, unit.y + 0.35, unit.z, `DOWNED (${KO_COUNTDOWN_TURNS})`, '#ffb84d')
+    appendCombatLog(battle, 'ko', formatKoLog({ unitName: unit.name, kind: 'downed', countdown: KO_COUNTDOWN_TURNS }))
     state.sounds.push({ kind: 'ko' })
     state.vfx.push({ kind: 'ko', at: [unit.x, unit.y + 0.6, unit.z], isBoss: false, downed: true })
   } else {
     unit.downed = false
     unit.koCountdown = 0
+    appendCombatLog(battle, 'ko', formatKoLog({ unitName: unit.name, kind: 'ko', isBoss: unit.isBoss }))
     state.sounds.push({ kind: 'ko' })
     state.vfx.push({ kind: 'ko', at: [unit.x, unit.y + 0.6, unit.z], isBoss: unit.isBoss })
   }
+}
+
+interface ImpactDamageOutcome {
+  readonly hpDamage: number
+  readonly absorbed: number
 }
 
 function applyImpactDamage(
@@ -452,9 +460,9 @@ function applyImpactDamage(
   label: string,
   color: string,
   floatOffsetY = 0.25
-): number {
+): ImpactDamageOutcome {
   const battle = state.battle
-  if (!battle || !unit.alive || amount <= 0) return 0
+  if (!battle || !unit.alive || amount <= 0) return { hpDamage: 0, absorbed: 0 }
 
   let dmg = Math.max(1, Math.round(amount))
   let absorbed = 0
@@ -491,7 +499,7 @@ function applyImpactDamage(
   if (unit.hp <= 0) {
     defeatDisplacedUnit(state, unit)
   }
-  return dmg
+  return { hpDamage: dmg, absorbed }
 }
 
 function applyBarricadeCollision(
@@ -549,7 +557,13 @@ function triggerLandingHazard(
     state.vfx.push({ kind: 'burst', style: 'fire', at: [tx, ty + 0.4, tz], radius: 0.95 })
     pushFloat(battle, unit.x, unit.y + 0.48, unit.z, 'GEYSER!', '#ff7a38')
     const geyserDmg = computeGeyserImpactDmg(unit, cell)
-    let dealt = applyImpactDamage(state, unit, geyserDmg, `-${geyserDmg}`, '#ff7a38', 0.1)
+    const impact = applyImpactDamage(state, unit, geyserDmg, `-${geyserDmg}`, '#ff7a38', 0.1)
+    appendCombatLog(
+      battle,
+      'hazard',
+      formatHazardLog({ kind: 'lava_geyser', targetName: unit.name, damage: impact.hpDamage, absorbed: impact.absorbed })
+    )
+    let dealt = impact.hpDamage
     if (unit.alive) {
       const geyserElem = classifyHazardElement('lava_geyser')
       if (geyserElem) {
@@ -560,6 +574,7 @@ function triggerLandingHazard(
     if (unit.alive) {
       unit.burnTurns = Math.max(unit.burnTurns, 2)
       pushFloat(battle, unit.x, unit.y + 0.82, unit.z, 'BURN!', '#ff7a38')
+      appendCombatLog(battle, 'status', formatStatusLog({ targetName: unit.name, status: 'burn', phase: 'apply' }))
     }
     return dealt
   }
@@ -585,6 +600,16 @@ function triggerLandingHazard(
       unit.z,
       unit.team === 'ally' ? 'DARK PACT! +EMPOWER +1 AP' : 'DARK PACT! +EMPOWER',
       '#e28cff'
+    )
+    appendCombatLog(
+      battle,
+      'hazard',
+      formatHazardLog({
+        kind: 'cursed_altar',
+        targetName: unit.name,
+        damage: hpDrain,
+        detail: unit.team === 'ally' ? '+1 AP' : undefined
+      })
     )
     battle.shake = Math.max(battle.shake, 0.22)
     return hpDrain
@@ -689,6 +714,11 @@ export function applyDisplacement(
       })
       state.sounds.push({ kind: 'card', pitch: 1.25 })
       pushFloat(battle, target.x, target.y + 0.55, target.z, 'SWAP!', '#d8a6ff')
+      appendCombatLog(
+        battle,
+        'hazard',
+        formatHazardLog({ kind: 'swap', actorName: actor.name, targetName: target.name })
+      )
 
       // Trigger landing hazards on both swapped units
       targetDmgDealt += triggerLandingHazard(state, target, battle.cells[target.row][target.col], true)
@@ -728,11 +758,24 @@ export function applyDisplacement(
   if (preview.iceSlid) {
     state.vfx.push({ kind: 'burst', style: 'frost', at: [toPos[0], toPos[1] + 0.2, toPos[2]], radius: 0.75 })
     pushFloat(battle, target.x, target.y + 0.72, target.z, 'ICE SLIDE!', '#9eeeff')
+    appendCombatLog(battle, 'hazard', formatHazardLog({ kind: 'ice_slide', targetName: target.name }))
   }
 
   // Ledge fall damage
   if (preview.fallDmg > 0 && target.alive) {
-    targetDmgDealt += applyImpactDamage(state, target, preview.fallDmg, `FALL -${preview.fallDmg}`, '#ffb057', 0.42)
+    const fallRes = applyImpactDamage(state, target, preview.fallDmg, `FALL -${preview.fallDmg}`, '#ffb057', 0.42)
+    targetDmgDealt += fallRes.hpDamage
+    appendCombatLog(
+      battle,
+      'hazard',
+      formatHazardLog({
+        kind: 'fall',
+        targetName: target.name,
+        damage: fallRes.hpDamage,
+        absorbed: fallRes.absorbed,
+        detail: `${preview.fallDrop} lvl`
+      })
+    )
     battle.shake = Math.max(battle.shake, 0.30)
   }
 
@@ -746,17 +789,31 @@ export function applyDisplacement(
         : `COLLIDE -${preview.collisionDmg}`
     const impactColor = isLedgeStop ? '#ff8b52' : '#ffa24d'
 
-    targetDmgDealt += applyImpactDamage(state, target, preview.collisionDmg, impactLabel, impactColor, 0.24)
+    const colRes = applyImpactDamage(state, target, preview.collisionDmg, impactLabel, impactColor, 0.24)
+    targetDmgDealt += colRes.hpDamage
+    appendCombatLog(
+      battle,
+      'hazard',
+      formatHazardLog({
+        kind: isLedgeStop ? 'ledge' : 'collision',
+        targetName: target.name,
+        damage: colRes.hpDamage,
+        absorbed: colRes.absorbed,
+        detail: preview.collidedUnitName ?? preview.collidedWith
+      })
+    )
     state.vfx.push({ kind: 'burst', style: 'gold', at: [toPos[0], toPos[1] + 0.55, toPos[2]], radius: 0.9 })
 
     if (target.alive) {
       if (preview.causesStun) {
         target.stunTurns = Math.max(target.stunTurns, 1)
         pushFloat(battle, target.x, target.y + 0.68, target.z, 'STUN!', '#ffe88a')
+        appendCombatLog(battle, 'status', formatStatusLog({ targetName: target.name, status: 'stun', phase: 'apply' }))
       }
       if (preview.causesSlow) {
         target.slowTurns = Math.max(target.slowTurns, 2)
         pushFloat(battle, target.x, target.y + 0.92, target.z, 'SLOW!', '#8ce8ff')
+        appendCombatLog(battle, 'status', formatStatusLog({ targetName: target.name, status: 'slow', phase: 'apply' }))
       }
       if (preview.collidedWith === 'lava' && preview.causesBurn) {
         const lavaElem = classifyHazardElement('lava')
@@ -767,6 +824,7 @@ export function applyDisplacement(
         if (target.alive) {
           target.burnTurns = Math.max(target.burnTurns, 2)
           pushFloat(battle, target.x, target.y + 1.12, target.z, 'BURN!', '#ff7a38')
+          appendCombatLog(battle, 'status', formatStatusLog({ targetName: target.name, status: 'burn', phase: 'apply' }))
         }
       }
     }
@@ -774,7 +832,7 @@ export function applyDisplacement(
     if (preview.collidedWith === 'unit' && preview.collidedUnitUid && preview.secondaryCollisionDmg > 0) {
       const blocker = battle.units.find(u => u.uid === preview.collidedUnitUid && u.alive)
       if (blocker) {
-        secondaryDmgDealt += applyImpactDamage(
+        const secRes = applyImpactDamage(
           state,
           blocker,
           preview.secondaryCollisionDmg,
@@ -782,11 +840,34 @@ export function applyDisplacement(
           '#ffa24d',
           0.24
         )
+        secondaryDmgDealt += secRes.hpDamage
+        appendCombatLog(
+          battle,
+          'hazard',
+          formatHazardLog({
+            kind: 'collision',
+            targetName: blocker.name,
+            damage: secRes.hpDamage,
+            absorbed: secRes.absorbed,
+            detail: target.name
+          })
+        )
       }
     } else if (preview.collidedWith === 'barricade' && preview.collidedCell && preview.barricadeDmg > 0) {
       const barRes = applyBarricadeCollision(state, preview.collidedCell.col, preview.collidedCell.row, preview.barricadeDmg)
       barricadeDmgDealt = barRes.dealt
       barricadeShattered = barRes.shattered
+      if (barRes.dealt > 0) {
+        appendCombatLog(
+          battle,
+          'hazard',
+          formatHazardLog({
+            kind: barRes.shattered ? 'barricade_smash' : 'barricade_hit',
+            actorName: target.name,
+            damage: barRes.dealt
+          })
+        )
+      }
     }
   }
 

@@ -1,12 +1,13 @@
 import type { CanvasWidgetDrawState, LayoutRect } from 'ridgetop/ui'
 import type {
-  BattleHeroXpGain, BattleUnit, ChapterSpec, CombatForecast, CombatForecastAlt, DifficultyLevel,
+  BattleHeroXpGain, BattleUnit, ChapterSpec, CombatForecast, CombatForecastAlt, CombatLogEntry, DifficultyLevel,
   ElementalComboPreview, EquipSlot, EquipmentSpec, FacingDir, FacingExposureLevel, HeroSpec,
   LandmarkKind, OwnedHeroCard, PackPityStatus, PackRevealItem, PackSpec, Rarity, SkillSpec, StatusKind,
   TacticCardSpec, TurnOrderActionPreview, TurnPreviewEntry
 } from './types.ts'
 import { ARMORY_STAT_ORDER, formatStatDelta, formatStatValue } from './armory-diff.ts'
 import type { EquipmentStatDiff } from './armory-diff.ts'
+import { getMaxCombatLogScroll, getRecentCombatLog } from './combat-log.ts'
 import { DIFFICULTY_META, RARITY_META, RARITY_ORDER } from './data.ts'
 import { EPIC_PITY_THRESHOLD, LEGENDARY_PITY_THRESHOLD } from './forge.ts'
 import { heroLevelProgress } from './leveling.ts'
@@ -88,7 +89,7 @@ export type IconName =
   | 'rotate-left' | 'rotate-right' | 'sword' | 'shield' | 'heart' | 'boot' | 'bolt' | 'target'
   | 'crit' | 'star' | 'coin' | 'gem' | 'hourglass' | 'lock' | 'unlock' | 'check' | 'plus' | 'minus' | 'sparkle' | 'flag'
   | 'users' | 'bag' | 'cards' | 'camp' | 'arrow-right' | 'up' | 'sell' | 'retreat'
-  | 'map' | 'skull' | 'crown' | 'chest'
+  | 'map' | 'skull' | 'crown' | 'chest' | 'scroll' | 'close'
 
 export type ButtonVariant = 'primary' | 'secondary' | 'ghost' | 'danger' | 'success'
 
@@ -861,6 +862,17 @@ export function drawIcon(ctx: CanvasRenderingContext2D, name: IconName, cx: numb
       ctx.strokeStyle = COLOR.outline; ctx.lineWidth = Math.max(1.6, size * 0.12)
       ctx.beginPath(); ctx.moveTo(cx - s * 0.78, cy - s * 0.06); ctx.lineTo(cx + s * 0.78, cy - s * 0.06); ctx.stroke()
       ctx.fillStyle = COLOR.accentHi; ctx.fillRect(cx - s * 0.18, cy - s * 0.2, s * 0.36, s * 0.34); break
+    case 'scroll':
+      rr(ctx, cx - s * 0.68, cy - s * 0.78, s * 1.36, s * 1.56, s * 0.22); ctx.stroke()
+      ctx.beginPath()
+      ctx.moveTo(cx - s * 0.38, cy - s * 0.34); ctx.lineTo(cx + s * 0.38, cy - s * 0.34)
+      ctx.moveTo(cx - s * 0.38, cy); ctx.lineTo(cx + s * 0.38, cy)
+      ctx.moveTo(cx - s * 0.38, cy + s * 0.34); ctx.lineTo(cx + s * 0.18, cy + s * 0.34)
+      ctx.stroke(); break
+    case 'close':
+      ctx.moveTo(cx - s * 0.54, cy - s * 0.54); ctx.lineTo(cx + s * 0.54, cy + s * 0.54)
+      ctx.moveTo(cx + s * 0.54, cy - s * 0.54); ctx.lineTo(cx - s * 0.54, cy + s * 0.54)
+      ctx.stroke(); break
   }
   ctx.restore()
 }
@@ -8480,5 +8492,326 @@ export function drawFanfare(ctx: CanvasRenderingContext2D, rect: LayoutRect, o: 
     ctx.globalAlpha = a * (0.5 + Math.sin(t * 4) * 0.25)
     drawText(ctx, 'Tap to continue', cx, y + h - (compact ? 22 : 34), { size: 11, align: 'center', color: COLOR.muted })
   }
+  ctx.restore()
+}
+
+// ===========================================================================
+// Collapsible Battle Combat Log HUD
+// ===========================================================================
+
+export interface CombatLogToggleOpts {
+  readonly open: boolean
+  readonly unreadCount: number
+  readonly totalCount: number
+  readonly compact?: boolean
+}
+
+/** Compact HUD toggle pill for the collapsible Combat Log with unread/entry count badge. */
+export function drawCombatLogToggleButton(
+  ctx: CanvasRenderingContext2D,
+  rect: LayoutRect,
+  st: CanvasWidgetDrawState,
+  opts: CombatLogToggleOpts
+) {
+  const { x, width: w, height: h } = rect
+  if (w < 8 || h < 8) return
+  const pressed = st.pressed && !st.disabled
+  const hot = (st.hovered || st.focused) && !st.disabled
+  const y = rect.y + (pressed ? 2 : 0)
+  const drawH = Math.max(8, h - (pressed ? 2 : 0))
+  const r = Math.min(RADIUS.md, drawH / 2)
+  const lip = pressed ? 1 : 3
+
+  ctx.save()
+  // Base lip
+  rr(ctx, x, y, w, drawH, r)
+  ctx.fillStyle = opts.open ? COLOR.accentLip : '#101628'
+  ctx.fill()
+
+  // Face
+  const faceH = Math.max(4, drawH - lip)
+  rr(ctx, x + 1, y + 1, w - 2, faceH - 1, Math.max(2, r - 1))
+  const g = ctx.createLinearGradient(0, y, 0, y + faceH)
+  if (opts.open) {
+    g.addColorStop(0, hot ? '#fff09c' : COLOR.accentHi)
+    g.addColorStop(1, COLOR.accentLo)
+  } else {
+    g.addColorStop(0, hot ? '#3d5180ee' : '#263459e6')
+    g.addColorStop(1, hot ? '#263459ee' : '#16203be8')
+  }
+  ctx.fillStyle = g
+  ctx.fill()
+
+  // Top gloss
+  rr(ctx, x + 3, y + 2, w - 6, Math.max(2, faceH * 0.4), Math.max(1, r - 2))
+  ctx.fillStyle = '#ffffff26'
+  ctx.fill()
+
+  // Crisp ink outline
+  rr(ctx, x + 1, y + 1, w - 2, drawH - 2, Math.max(1, r - 1))
+  ctx.strokeStyle = opts.open ? COLOR.outline : (opts.unreadCount > 0 ? '#ffc83bcc' : COLOR.outline)
+  ctx.lineWidth = 2
+  ctx.stroke()
+
+  const cy = y + faceH / 2
+  const fg = opts.open ? COLOR.accentText : '#f2f6ff'
+  const iconSize = Math.min(13, faceH * 0.56)
+  const iconX = x + 13
+  drawIcon(ctx, 'scroll', iconX, cy, iconSize, fg)
+
+  const showBadge = !opts.open && (opts.unreadCount > 0 || opts.totalCount > 0)
+  const badgeVal = opts.unreadCount > 0 ? opts.unreadCount : opts.totalCount
+  const badgeText = badgeVal > 99 ? '99+' : String(badgeVal)
+  const badgeW = showBadge ? Math.max(18, Math.round(measureText(ctx, badgeText, 9.5, 900, true) + 10)) : 0
+  const label = opts.compact ? 'Log' : 'Log L'
+  const labelX = iconX + iconSize * 0.55 + 6
+  const maxLabelW = Math.max(20, w - (labelX - x) - (showBadge ? badgeW + 10 : 8))
+  drawText(ctx, label, labelX, cy + 0.5, {
+    size: opts.compact ? 10.5 : 11,
+    weight: 900,
+    color: fg,
+    maxW: maxLabelW,
+    display: true,
+    stroke: !opts.open,
+    strokeWidth: 2
+  })
+
+  if (showBadge) {
+    const bh = Math.min(16, faceH - 6)
+    const bx = x + w - badgeW - 6
+    const by = cy - bh / 2
+    rr(ctx, bx, by, badgeW, bh, bh / 2)
+    ctx.fillStyle = opts.unreadCount > 0 ? COLOR.accent : '#141c33'
+    ctx.fill()
+    ctx.strokeStyle = COLOR.outline
+    ctx.lineWidth = 1.4
+    ctx.stroke()
+    drawText(ctx, badgeText, bx + badgeW / 2, cy + 0.5, {
+      size: 9.5,
+      weight: 900,
+      color: opts.unreadCount > 0 ? COLOR.accentText : COLOR.muted,
+      align: 'center',
+      display: true
+    })
+  }
+  ctx.restore()
+  if (st.focused && !st.disabled) drawFocusRing(ctx, x, y, w, drawH, r)
+}
+
+export interface CombatLogPanelOpts {
+  readonly scrollOffset?: number
+  readonly visibleRows?: number
+  readonly compact?: boolean
+  readonly title?: string
+  readonly headerControlsWidth?: number
+}
+
+const COMBAT_LOG_ROW_TEXT_COLOR: Readonly<Record<CombatLogEntry['category'], string>> = {
+  attack: '#f5f7ff',
+  crit: '#fff1a8',
+  heal: '#c6ffe0',
+  status: '#e5d4ff',
+  combo: '#bff8ff',
+  reaction: '#ffe0b5',
+  hazard: '#ffd0ba',
+  ko: '#ffc2cc',
+  system: '#c4d4f2'
+}
+
+/** Translucent dark-glass collapsible Combat Log panel with category accents, turn chips, and scroll indicator. */
+export function drawCombatLogPanel(
+  ctx: CanvasRenderingContext2D,
+  rect: LayoutRect,
+  entries: readonly CombatLogEntry[],
+  opts: CombatLogPanelOpts = {}
+) {
+  const { x, y, width: w, height: h } = rect
+  if (w < 40 || h < 40) return
+  const compact = Boolean(opts.compact)
+  const r = RADIUS.lg
+  const headerH = compact ? 26 : 28
+  const pad = compact ? 6 : 8
+
+  ctx.save()
+  // Soft drop shadow
+  ctx.save()
+  ctx.shadowColor = '#050814aa'
+  ctx.shadowBlur = 16
+  ctx.shadowOffsetY = 5
+  rr(ctx, x, y, w, h, r)
+  ctx.fillStyle = '#090d1ad8'
+  ctx.fill()
+  ctx.restore()
+
+  // Translucent dark-glass body
+  rr(ctx, x, y, w, h, r)
+  const bg = ctx.createLinearGradient(0, y, 0, y + h)
+  bg.addColorStop(0, '#18233fe8')
+  bg.addColorStop(1, '#0d1326f2')
+  ctx.fillStyle = bg
+  ctx.fill()
+
+  // Subtle top bevel highlight
+  ctx.save()
+  rr(ctx, x + 1, y + 1, w - 2, h - 2, Math.max(0, r - 1))
+  ctx.clip()
+  const gloss = ctx.createLinearGradient(0, y, 0, y + headerH + 6)
+  gloss.addColorStop(0, '#7590c833')
+  gloss.addColorStop(1, '#7590c800')
+  ctx.fillStyle = gloss
+  ctx.fillRect(x + 1, y + 1, w - 2, headerH + 6)
+  ctx.restore()
+
+  // Steel-blue inner rim + dark outer ink border
+  rr(ctx, x + 1.5, y + 1.5, w - 3, h - 3, Math.max(0, r - 1.5))
+  ctx.strokeStyle = '#6c86bf88'
+  ctx.lineWidth = 1.25
+  ctx.stroke()
+  rr(ctx, x + 0.5, y + 0.5, w - 1, h - 1, r)
+  ctx.strokeStyle = COLOR.outline
+  ctx.lineWidth = 2
+  ctx.stroke()
+
+  // Header strip
+  const headerCy = y + headerH * 0.5 + 1
+  drawIcon(ctx, 'scroll', x + pad + 7, headerCy, compact ? 11 : 12.5, COLOR.accentHi)
+  const titleText = opts.title ?? 'COMBAT LOG'
+  const controlsReserve = opts.headerControlsWidth ?? 78
+  const titleX = x + pad + 18
+  drawText(ctx, titleText, titleX, headerCy + 0.5, {
+    size: compact ? 10 : 11,
+    weight: 900,
+    color: COLOR.accentHi,
+    spacing: 0.9,
+    display: true,
+    stroke: true,
+    strokeWidth: 2,
+    maxW: Math.max(40, w - controlsReserve - 54)
+  })
+
+  // Recessed inner well for entries
+  const wellX = x + pad
+  const wellY = y + headerH + 2
+  const wellW = Math.max(20, w - pad * 2)
+  const wellH = Math.max(20, h - headerH - pad - 2)
+  rr(ctx, wellX, wellY, wellW, wellH, RADIUS.sm)
+  ctx.fillStyle = '#080d1ad4'
+  ctx.fill()
+  ctx.strokeStyle = '#33456e99'
+  ctx.lineWidth = 1.2
+  ctx.stroke()
+
+  const rowH = compact ? 20 : 22
+  const innerPad = 4
+  const visibleRows = opts.visibleRows ?? Math.max(1, Math.floor((wellH - innerPad * 2) / rowH))
+  const total = entries.length
+  const maxScroll = getMaxCombatLogScroll(total, visibleRows)
+  const scrollOffset = Math.max(0, Math.min(maxScroll, Math.floor(opts.scrollOffset ?? 0)))
+
+  // Compact range / count pill in header
+  const countLabel = total === 0
+    ? '0'
+    : scrollOffset > 0
+      ? `${Math.max(1, total - scrollOffset - visibleRows + 1)}-${total - scrollOffset}/${total}`
+      : `${total}`
+  const countRightX = x + w - pad - controlsReserve - 2
+  if (countRightX > titleX + 68) {
+    drawChip(ctx, countRightX, headerCy - 8, countLabel, {
+      h: 16,
+      size: 9,
+      align: 'right',
+      bg: '#111a33cc',
+      color: scrollOffset > 0 ? COLOR.accentHi : COLOR.muted,
+      border: scrollOffset > 0 ? COLOR.accentLo : '#3d517d'
+    })
+  }
+
+  if (total === 0) {
+    drawText(ctx, 'No combat events yet.', wellX + wellW / 2, wellY + wellH / 2, {
+      size: compact ? 10.5 : 11.5,
+      weight: 600,
+      color: COLOR.faint,
+      align: 'center'
+    })
+    ctx.restore()
+    return
+  }
+
+  const visible = getRecentCombatLog(entries, visibleRows, scrollOffset)
+  const hasScrollbar = total > visibleRows
+  const contentW = wellW - innerPad * 2 - (hasScrollbar ? 7 : 0)
+
+  ctx.save()
+  rr(ctx, wellX + 1, wellY + 1, wellW - 2, wellH - 2, Math.max(1, RADIUS.sm - 1))
+  ctx.clip()
+
+  for (let i = 0; i < visible.length; i++) {
+    const entry = visible[i]
+    const ry = wellY + innerPad + i * rowH
+    const rcy = ry + rowH * 0.5
+
+    // Subtle zebra tint
+    if (i % 2 === 1) {
+      rr(ctx, wellX + innerPad, ry + 1, contentW, rowH - 2, 4)
+      ctx.fillStyle = '#ffffff0a'
+      ctx.fill()
+    }
+
+    // Category accent bar
+    rr(ctx, wellX + innerPad + 2, ry + 3, 3, rowH - 6, 1.5)
+    ctx.fillStyle = entry.accentHex
+    ctx.fill()
+
+    // Turn chip
+    const turnTag = `T${entry.turn}`
+    const chipW = Math.max(compact ? 22 : 24, Math.round(measureText(ctx, turnTag, 9, 900, true) + 8))
+    const chipH = compact ? 14 : 15
+    const chipX = wellX + innerPad + 9
+    const chipY = rcy - chipH * 0.5
+    rr(ctx, chipX, chipY, chipW, chipH, 4)
+    ctx.fillStyle = '#141e38'
+    ctx.fill()
+    ctx.strokeStyle = `${entry.accentHex}aa`
+    ctx.lineWidth = 1.1
+    ctx.stroke()
+    drawText(ctx, turnTag, chipX + chipW * 0.5, rcy + 0.5, {
+      size: 9,
+      weight: 900,
+      color: entry.accentHex,
+      align: 'center',
+      display: true
+    })
+
+    // Entry text
+    const textX = chipX + chipW + 6
+    const maxTextW = Math.max(24, wellX + innerPad + contentW - textX - 4)
+    drawText(ctx, entry.text, textX, rcy + 0.5, {
+      size: compact ? 10.5 : 11.2,
+      weight: entry.category === 'crit' || entry.category === 'combo' || entry.category === 'ko' ? 800 : 700,
+      color: COMBAT_LOG_ROW_TEXT_COLOR[entry.category],
+      maxW: maxTextW,
+      shadow: true
+    })
+  }
+  ctx.restore()
+
+  // Compact vertical scrollbar track & thumb when log exceeds visible rows
+  if (hasScrollbar) {
+    const trackX = wellX + wellW - 6
+    const trackY = wellY + innerPad + 2
+    const trackH = Math.max(12, wellH - innerPad * 2 - 4)
+    rr(ctx, trackX, trackY, 3, trackH, 1.5)
+    ctx.fillStyle = '#1f2c4d'
+    ctx.fill()
+
+    const thumbRatio = Math.min(1, visibleRows / total)
+    const thumbH = Math.max(12, Math.round(trackH * thumbRatio))
+    const scrollFrac = maxScroll > 0 ? 1 - scrollOffset / maxScroll : 1
+    const thumbY = trackY + Math.round((trackH - thumbH) * scrollFrac)
+    rr(ctx, trackX, thumbY, 3, thumbH, 1.5)
+    ctx.fillStyle = scrollOffset > 0 ? COLOR.accentHi : '#7590c8'
+    ctx.fill()
+  }
+
   ctx.restore()
 }
