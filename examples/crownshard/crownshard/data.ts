@@ -782,6 +782,7 @@ const B: TileTerrain = 'bridge'
 const W: TileTerrain = 'water'
 const R: TileTerrain = 'shrine'
 const P: TileTerrain = 'pillar'
+const C: TileTerrain = 'cracked_pillar'
 const L: TileTerrain = 'lava'
 const N: TileTerrain = 'snow'
 const D: TileTerrain = 'darkstone'
@@ -823,7 +824,7 @@ export const CHAPTERS: readonly ChapterSpec[] = [
       [V, G, H, H, T, G, G],
       [G, S, T, G, K, S, H],
       [G, S, R, G, G, H, G],
-      [G, H, F, P, F, S, G],
+      [G, H, F, C, F, S, G],
       [V, G, G, W, W, G, V]
     ],
     heights: [
@@ -982,7 +983,7 @@ export const CHAPTERS: readonly ChapterSpec[] = [
     grid: [
       [V, H, H, P, T, H, H, V],
       [G, T, F, F, G, G, T, G],
-      [G, S, R, K, G, P, S, G],
+      [G, S, R, K, G, C, S, G],
       [G, T, F, F, G, G, T, G],
       [V, H, H, P, T, H, H, V]
     ],
@@ -1028,11 +1029,11 @@ export const CHAPTERS: readonly ChapterSpec[] = [
     rewardHeroId: 'cleric',
     grid: [
       [V, H, T, R, T, H, V],
-      [G, F, P, G, P, F, G],
+      [G, F, C, G, P, F, G],
       [G, S, T, H, T, S, G],
       [G, R, G, H, G, R, S],
       [G, S, T, H, T, S, G],
-      [G, F, P, G, P, F, G],
+      [G, F, P, G, C, F, G],
       [V, H, T, W, T, H, V]
     ],
     heights: [
@@ -1089,10 +1090,10 @@ export const CHAPTERS: readonly ChapterSpec[] = [
     rewardHeroId: 'mage',
     grid: [
       [V, D, S, T, D, S, H, V],
-      [S, S, P, S, S, P, S, H],
+      [S, S, C, S, S, P, S, H],
       [S, T, S, R, A, S, T, S],
       [S, S, S, S, S, S, S, S],
-      [S, S, K, S, S, P, S, H],
+      [S, S, K, S, S, C, S, H],
       [V, D, S, T, D, S, H, V]
     ],
     heights: [
@@ -1250,7 +1251,7 @@ export const CHAPTERS: readonly ChapterSpec[] = [
     rewardHeroId: 'rogue',
     grid: [
       [V, V, H, H, N, T, H, H, V],
-      [N, S, T, P, N, H, T, S, H],
+      [N, S, T, C, N, H, T, S, H],
       [N, S, R, I, T, S, I, T, N],
       [W, W, N, I, P, I, S, S, H],
       [N, S, T, N, N, H, T, S, N],
@@ -1475,9 +1476,9 @@ export const CHAPTERS: readonly ChapterSpec[] = [
     grid: [
       [V, D, L, B, L, D, V],
       [D, S, T, M, T, H, D],
-      [L, T, P, T, P, T, L],
+      [L, T, C, T, P, T, L],
       [B, S, T, R, T, S, B],
-      [L, T, P, T, P, T, L],
+      [L, T, P, T, C, T, L],
       [D, S, T, M, T, H, D],
       [V, D, L, B, L, D, V]
     ],
@@ -1536,11 +1537,11 @@ export const CHAPTERS: readonly ChapterSpec[] = [
     rewardHeroId: 'champion',
     grid: [
       [V, V, S, H, H, H, S, V, V, V],
-      [V, S, P, A, T, S, P, S, H, V],
+      [V, S, C, A, T, S, P, S, H, V],
       [D, R, S, T, H, M, T, H, S, D],
       [D, S, S, S, T, S, T, H, H, D],
       [D, S, S, T, H, M, T, H, S, D],
-      [V, S, P, A, T, S, P, S, H, V],
+      [V, S, P, A, T, S, C, S, H, V],
       [V, V, S, L, L, L, S, V, V, V]
     ],
     heights: [

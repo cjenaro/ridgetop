@@ -257,8 +257,10 @@ function findUnitAtTile(battle: BattleState, col: number, row: number, includeDo
 
 function isTileIntactBarricade(battle: BattleState, col: number, row: number): boolean {
   const cell = battle.cells[row]?.[col]
-  if (!cell || cell.terrain !== 'barricade') return false
-  return (cell.barricadeHp ?? 1) > 0
+  if (!cell) return false
+  if (cell.terrain === 'barricade') return (cell.barricadeHp ?? 1) > 0
+  if (cell.terrain === 'cracked_pillar') return (cell.pillarHp ?? 1) > 0
+  return false
 }
 
 function isClaimedChest(battle: BattleState, col: number, row: number): boolean {

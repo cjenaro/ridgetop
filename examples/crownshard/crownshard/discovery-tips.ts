@@ -170,7 +170,8 @@ const HAZARD_TERRAINS: ReadonlySet<TileTerrain> = new Set<TileTerrain>([
   'ice',
   'cursed_altar',
   'tall_grass',
-  'barricade'
+  'barricade',
+  'cracked_pillar'
 ])
 
 /** True when `id` is a known DiscoveryTipId. */

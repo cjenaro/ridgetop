@@ -33,9 +33,9 @@ import { computeWeatherLighting } from './weather.ts'
 import type { ShiftedBattleLighting } from './weather.ts'
 import {
   computeDangerZone, computeEnemyThreat, computeZocPerimeterTiles, evaluateAllFacingExposures, findGridPath,
-  getEquipmentByUid, getHeroByUid, getHeroSkill, getPatternCells, getTacticByUid, getUnitByUid,
+  getCoverDamageRatio, getEquipmentByUid, getHeroByUid, getHeroSkill, getPatternCells, getTacticByUid, getUnitByUid,
   getUnitFootprintCells, getUnitFootprintSize,
-  hasMutator, isChestClaimed, isEnemyShrouded, isIntactBarricade, isTileRevealedInFog,
+  hasMutator, isChestClaimed, isCrackedPillarCell, isDestructibleCover, isEnemyShrouded, isIntactBarricade, isTileRevealedInFog,
   previewPathOpportunityAttacks, unitAt, unitOrDownedAt
 } from './simulation.ts'
 import { CHAPTERS, TACTIC_BY_ID } from './data.ts'
@@ -202,6 +202,13 @@ const C_ENEMY_SOUL = color('d58cff')
 const C_WOOD_TIMBER = color('9e5f38')
 const C_WOOD_TIMBER_DARK = color('6e4026')
 const C_IRON_BAND = color('48546b')
+const C_CRACKED_STONE = color('8c94a8')
+const C_CRACKED_STONE_HI = color('aeb6c9')
+const C_CRACKED_FISSURE = color('262938')
+const C_CRACKED_GLOW: Color = [1.0, 0.56, 0.18, 0.96]
+const C_CRACKED_GLOW_HOT: Color = [1.0, 0.34, 0.14, 0.98]
+const C_COVER_SHATTER_RING: Color = [1.0, 0.42, 0.16, 0.98]
+const C_COVER_HIT_RING: Color = [1.0, 0.78, 0.24, 0.94]
 const C_GRASS_BLADE = color('49a354')
 const C_GRASS_TIP = color('72c96b')
 const C_CURSE_DIM = color('4a3c5e')
@@ -736,7 +743,8 @@ export function pickCellFromRay(
       if (!cell || cell.terrain === 'void') continue
       const [wx, wy, wz] = gridToWorld(col, row, cell.elevation, battle.cols, battle.rows)
       const minY = Math.min(-0.35, wy - 0.35)
-      const t = intersectRayAABB(origin, direction, wx - half, minY, wz - half, wx + half, wy, wz + half)
+      const maxY = cell.terrain === 'cracked_pillar' ? wy + 1.15 : cell.terrain === 'barricade' ? wy + 0.85 : wy
+      const t = intersectRayAABB(origin, direction, wx - half, minY, wz - half, wx + half, maxY, wz + half)
       if (t !== null && t < bestT) {
         bestT = t
         bestCell = { col, row }
@@ -1607,6 +1615,34 @@ export function createCrownshardScene(renderer: LowPolyRenderer) {
             })
           }
         })
+      } else if (ev.kind === 'cover_shatter') {
+        const at = ev.at
+        const isPillar = ev.coverKind === 'pillar'
+        const chunkCount = ev.heavy ? 18 : 13
+        const chunkCol = isPillar ? C_CRACKED_STONE : C_WOOD_TIMBER
+        const accentCol = isPillar ? C_CRACKED_STONE_HI : C_WOOD_TIMBER_DARK
+        vfx.groundRing(at, C_COVER_SHATTER_RING, 0, 0.52, 0.24, 1.55, 2.4)
+        spawnDust(at[0], at[1], at[2], isPillar ? 14 : 10, 1.55)
+        spawnSparks([at[0], at[1] + 0.35, at[2]], isPillar ? C_CRACKED_GLOW : C_FIRE_TIP, 10, 2.2)
+        localShake = Math.max(localShake, ev.heavy ? 0.34 : 0.26)
+        for (let i = 0; i < chunkCount; i++) {
+          const a = (i / chunkCount) * Math.PI * 2 + (i % 3) * 0.22
+          const spd = (1.5 + (i % 4) * 0.62) * (ev.heavy ? 1.18 : 1.0)
+          particles.spawn({
+            mesh: i % 2 === 0 ? roundPebble : softBevel,
+            position: [at[0] + Math.cos(a) * 0.22, at[1] + 0.25 + (i % 3) * 0.28, at[2] + Math.sin(a) * 0.22],
+            velocity: [Math.cos(a) * spd, 2.2 + (i % 4) * 0.72, Math.sin(a) * spd],
+            gravity: 7.4,
+            spin: 8 + (i % 4) * 2,
+            scale: isPillar
+              ? [0.16 + (i % 3) * 0.05, 0.14 + (i % 2) * 0.05, 0.16 + (i % 3) * 0.04]
+              : [0.22, 0.09, 0.10],
+            endScale: 0.42,
+            color: i % 3 === 0 ? accentCol : chunkCol,
+            unlit: 0.12,
+            life: 0.78
+          })
+        }
       } else if (ev.kind === 'levelup') {
         for (let i = 0; i < 16; i++) {
           const a = (i / 16) * Math.PI * 2
@@ -2540,6 +2576,97 @@ export function createCrownshardScene(renderer: LowPolyRenderer) {
           pool.add(crispBevel, [wx, wy + 0.54 * hScale, wz], [1.34, 0.10, 0.26], 0, C_IRON_BAND)
           pool.add(roundPebble, [wx - 0.44, wy + 0.08, wz + 0.26], [0.22, 0.16, 0.20], phase, C_IRON_BAND)
           pool.add(roundPebble, [wx + 0.44, wy + 0.08, wz - 0.24], [0.20, 0.14, 0.22], phase + 1.1, C_IRON_BAND)
+        } else if (isCrackedPillarCell(cell)) {
+          const dmgFrac = getCoverDamageRatio(cell)
+          const damaged = dmgFrac > 0.01
+          const critical = dmgFrac >= 0.5
+          const hScale = 1 - dmgFrac * 0.18
+          const lean = dmgFrac * 0.14
+          const pulse = 0.5 + 0.5 * Math.sin(state.time * (critical ? 7.5 : 3.4) + phase)
+          const biomeStone = BIOME_STYLES[battle.biome].tiles.cracked_pillar[(col + row) % 2]
+          const baseStone = BIOME_STYLES[battle.biome].baseStone
+          // Weathered pedestal + fractured lower & upper stone drums + chipped cap
+          pool.add(softBevel, [wx, wy + 0.15, wz], [1.04, 0.26, 1.04], 0, baseStone)
+          pool.add(smoothCyl, [wx, wy + 0.52 * hScale, wz], [0.39, 0.56 * hScale, 0.39], phase * 0.2, biomeStone)
+          pool.add(
+            smoothCyl,
+            [wx + lean * 0.24, wy + 0.98 * hScale, wz - lean * 0.18],
+            [0.36, 0.48 * hScale, 0.36],
+            quaternionFromEuler(lean * 0.7, phase * 0.4, -lean * 0.9),
+            C_CRACKED_STONE_HI
+          )
+          pool.add(collarRing, [wx, wy + 0.74 * hScale, wz], [0.45, 0.11, 0.45], lean * 0.6, baseStone)
+          pool.add(
+            tileCapMesh,
+            [wx + lean * 0.30, wy + 1.28 * hScale, wz - lean * 0.22],
+            [0.86, 0.18, 0.86],
+            quaternionFromEuler(lean * 0.85, 0.14, -lean * 1.05),
+            C_CRACKED_STONE_HI
+          )
+          // Dark fracture seams crossing the column faces (readable even at full HP)
+          pool.add(
+            crispBevel,
+            [wx + 0.02, wy + 0.74 * hScale, wz + 0.33],
+            [0.09 + dmgFrac * 0.06, 0.74 * hScale, 0.08],
+            quaternionFromEuler(0.06, 0.15, 0.42),
+            C_CRACKED_FISSURE
+          )
+          pool.add(
+            crispBevel,
+            [wx - 0.31, wy + 0.68 * hScale, wz + 0.04],
+            [0.08, 0.64 * hScale, 0.09 + dmgFrac * 0.05],
+            quaternionFromEuler(-0.38, 0.1, 0.08),
+            C_CRACKED_FISSURE
+          )
+          // Glowing stress cracks (subtle warning at full HP, blazing pulse below 50% HP!)
+          const crackScale = (critical ? 0.11 : damaged ? 0.08 : 0.055) + pulse * (critical ? 0.04 : 0.015)
+          const crackCol = critical ? C_CRACKED_GLOW_HOT : C_CRACKED_GLOW
+          const crackEmissive = critical ? 0.98 : damaged ? 0.86 : 0.62
+          pool.add(
+            crystalMesh,
+            [wx + 0.04, wy + 0.76 * hScale, wz + 0.35],
+            [crackScale, (0.48 + dmgFrac * 0.24) * hScale, crackScale * 0.8],
+            quaternionFromEuler(0.04, 0.15, 0.42),
+            crackCol,
+            crackEmissive,
+            critical ? 'additive' : 'opaque'
+          )
+          pool.add(
+            crystalMesh,
+            [wx - 0.33, wy + 0.70 * hScale, wz + 0.05],
+            [crackScale * 0.85, (0.40 + dmgFrac * 0.22) * hScale, crackScale],
+            quaternionFromEuler(-0.36, 0.1, 0.08),
+            crackCol,
+            crackEmissive,
+            critical ? 'additive' : 'opaque'
+          )
+          // Chipped rubble pebbles around plinth
+          pool.add(roundPebble, [wx - 0.48, wy + 0.07, wz + 0.34], [0.22, 0.13, 0.18], phase, biomeStone)
+          pool.add(roundPebble, [wx + 0.46, wy + 0.06, wz - 0.32], [0.19, 0.11, 0.21], phase + 1.4, baseStone)
+          if (critical && emitHazardSparks) {
+            particles.spawn({
+              mesh: roundPebble,
+              position: [wx + Math.cos(state.time * 4 + phase) * 0.3, wy + 0.95 * hScale, wz + Math.sin(state.time * 4 + phase) * 0.3],
+              velocity: [Math.cos(phase) * 0.35, -0.4, Math.sin(phase) * 0.35],
+              gravity: 4.2,
+              spin: 6,
+              scale: [0.09, 0.08, 0.09],
+              endScale: 0.25,
+              color: C_CRACKED_STONE,
+              unlit: 0.1,
+              life: 0.45
+            })
+          }
+        } else if (cell.coverShattered) {
+          // Low scattered rubble / splinters along tile rim so units walk cleanly over shattered cover!
+          const rubbleCol = cell.coverShattered === 'pillar'
+            ? BIOME_STYLES[battle.biome].tiles.stone[(col + row) % 2]
+            : C_WOOD_TIMBER_DARK
+          const accentCol = cell.coverShattered === 'pillar' ? C_CRACKED_STONE_HI : C_WOOD_TIMBER
+          pool.add(roundPebble, [wx - 0.52, wy + 0.05, wz - 0.44], [0.24, 0.10, 0.20], phase, rubbleCol)
+          pool.add(roundPebble, [wx + 0.50, wy + 0.04, wz + 0.46], [0.22, 0.09, 0.18], phase + 1.3, accentCol)
+          pool.add(softBevel, [wx - 0.44, wy + 0.04, wz + 0.48], [0.26, 0.07, 0.16], quaternionFromEuler(0.12, phase * 0.7, 0.15), rubbleCol)
+          pool.add(roundPebble, [wx + 0.48, wy + 0.04, wz - 0.46], [0.18, 0.08, 0.22], phase + 2.1, rubbleCol)
         } else if (cell.terrain === 'lava_geyser') {
           const pulse = 0.5 + 0.5 * Math.sin(state.time * 5.2 + phase)
           if (cell.geyserActive) {
@@ -3063,6 +3190,13 @@ export function createCrownshardScene(renderer: LowPolyRenderer) {
           ? getPatternCells(previewCell.col, previewCell.row, pattern, battle.cols, battle.rows)
           : [previewCell]
         const isOffensiveSkill = Boolean(armedSkill && armedSkill.powerMul > 0)
+        const isOffensiveTactic = Boolean(armedTactic && armedTactic.damage > 0)
+        const coverPreviewMap = new Map<string, boolean>()
+        if (activeForecast?.coverHits) {
+          for (const ch of activeForecast.coverHits) {
+            coverPreviewMap.set(`${ch.col},${ch.row}`, ch.willShatter)
+          }
+        }
         for (const pc of previewCells) {
           const c = battle.cells[pc.row][pc.col]
           if (c.terrain === 'void') continue
@@ -3072,10 +3206,18 @@ export function createCrownshardScene(renderer: LowPolyRenderer) {
             occ && occ.team === 'ally' &&
             !(activeUnit && occ.uid === activeUnit.uid && !(previewCell.col === activeUnit.col && previewCell.row === activeUnit.row))
           )
+          const isCoverHit = (isOffensiveSkill || isOffensiveTactic) && isDestructibleCover(c)
           if (isFriendlyHit) {
             pool.add(tileQuad, [px, py + 0.052, pz], [TILE_SIZE * 0.88, 1, TILE_SIZE * 0.88], 0, C_FRIENDLY_FIRE_TILE, 0.98, 'alpha')
             pool.add(tileCrossMesh, [px, py + 0.058, pz], [TILE_SIZE * 0.92, 1, TILE_SIZE * 0.92], 0, C_FRIENDLY_FIRE_MARK, 0.98, 'alpha')
             pool.add(tileFrameMesh, [px, py + 0.056, pz], [TILE_SIZE * 0.92, 1, TILE_SIZE * 0.92], 0, C_FRIENDLY_FIRE_MARK, 0.98, 'alpha')
+          } else if (isCoverHit) {
+            const willShatter = coverPreviewMap.get(`${pc.col},${pc.row}`) === true
+            const pulse = 1 + Math.sin(state.time * (willShatter ? 8.5 : 5.5)) * 0.06
+            const ringCol = willShatter ? C_COVER_SHATTER_RING : C_COVER_HIT_RING
+            pool.add(tileQuad, [px, py + 0.048, pz], [TILE_SIZE * 0.90, 1, TILE_SIZE * 0.90], 0, willShatter ? C_ATTACK_TILE : C_AOE_PREVIEW, 0.97, 'alpha')
+            pool.add(tileCornersMesh, [px, py + 0.056, pz], [TILE_SIZE * 0.94 * pulse, 1, TILE_SIZE * 0.94 * pulse], 0, ringCol, 0.99, 'alpha')
+            pool.add(flatRing, [px, py + 0.060, pz], [0.74 * pulse, 1, 0.74 * pulse], -state.time * 2.6, ringCol, 1.0, 'additive')
           } else if (pattern === 'cross' || pattern === 'area3' || pattern === 'aura') {
             pool.add(tileQuad, [px, py + 0.046, pz], [TILE_SIZE * 0.88, 1, TILE_SIZE * 0.88], 0, C_AOE_PREVIEW, 0.96, 'alpha')
             pool.add(tileDiamondMesh, [px, py + 0.052, pz], [TILE_SIZE * 0.88, 1, TILE_SIZE * 0.88], 0, C_AOE_MARK, 0.98, 'alpha')

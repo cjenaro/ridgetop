@@ -108,6 +108,8 @@ export interface HazardLogOptions {
     | 'cursed_altar'
     | 'barricade_hit'
     | 'barricade_smash'
+    | 'pillar_hit'
+    | 'pillar_smash'
     | 'shrine'
     | 'collision'
     | 'ledge'
@@ -333,6 +335,10 @@ export function formatHazardLog(opts: HazardLogOptions): string {
       return `${actor ? `${actor} hits` : 'Impact hits'} Barricade (-${dmg} HP)`
     case 'barricade_smash':
       return `${actor ? `${actor} smashes` : 'Impact smashes'} Barricade!`
+    case 'pillar_hit':
+      return `${actor ? `${actor} cracks` : 'Impact cracks'} Cracked Pillar (-${dmg} HP)`
+    case 'pillar_smash':
+      return `${actor ? `${actor} shatters` : 'Impact shatters'} Cracked Pillar!`
     case 'shrine': {
       const heal = Math.max(0, Math.round(opts.healAmount ?? 0))
       return `${target} blessed by Sun Shrine (+${heal} HP)`

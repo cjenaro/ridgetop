@@ -356,6 +356,7 @@ export const BIOME_STYLES: Record<BiomeId, BiomeStyle> = {
       water: [color('3b89ab'), color('327b9c')],
       shrine: [color('b3e6d0'), color('9fd6be')],
       pillar: [color('9da5ba'), color('8c94aa')],
+      cracked_pillar: [color('8f95a6'), color('7e8596')],
       lava: [color('eb632d'), color('d65322')],
       snow: [color('e0edf7'), color('d0e1f0')],
       darkstone: [color('5b6278'), color('50576b')],
@@ -392,6 +393,7 @@ export const BIOME_STYLES: Record<BiomeId, BiomeStyle> = {
       water: [color('317d9e'), color('296e8c')],
       shrine: [color('a3e8d8'), color('8fd9c8')],
       pillar: [color('8f9bad'), color('808c9e')],
+      cracked_pillar: [color('818c9c'), color('727d8d')],
       lava: [color('eb632d'), color('d65322')],
       snow: [color('e0edf7'), color('d0e1f0')],
       darkstone: [color('535f73'), color('485366')],
@@ -428,6 +430,7 @@ export const BIOME_STYLES: Record<BiomeId, BiomeStyle> = {
       water: [color('2c627a'), color('245469')],
       shrine: [color('78e0cf'), color('65cfbd')],
       pillar: [color('7a8296'), color('6c7487')],
+      cracked_pillar: [color('6b7285'), color('5d6475')],
       lava: [color('eb632d'), color('d65322')],
       snow: [color('a8bed1'), color('98afc2')],
       darkstone: [color('555c70'), color('4b5163')],
@@ -464,6 +467,7 @@ export const BIOME_STYLES: Record<BiomeId, BiomeStyle> = {
       water: [color('3b8fba'), color('327fa8')],
       shrine: [color('94f2ea'), color('80e0d8')],
       pillar: [color('78add4'), color('689cc4')],
+      cracked_pillar: [color('6a96b8'), color('5c86a8')],
       lava: [color('eb632d'), color('d65322')],
       snow: [color('e3eff7'), color('d4e4f0')],
       darkstone: [color('62738a'), color('56667c')],
@@ -500,6 +504,7 @@ export const BIOME_STYLES: Record<BiomeId, BiomeStyle> = {
       water: [color('f0682e'), color('db5822')],
       shrine: [color('ffd478'), color('ebc063')],
       pillar: [color('5e505e'), color('524552')],
+      cracked_pillar: [color('544654'), color('483b48')],
       lava: [color('ff702e'), color('eb5c20')],
       snow: [color('9c8f99'), color('8a7d87')],
       darkstone: [color('4d424f'), color('423845')],
@@ -536,6 +541,7 @@ export const BIOME_STYLES: Record<BiomeId, BiomeStyle> = {
       water: [color('422a69'), color('372259')],
       shrine: [color('ffda7a'), color('ebc565')],
       pillar: [color('62527d'), color('54466e')],
+      cracked_pillar: [color('56486e'), color('4a3d61')],
       lava: [color('eb4c3d'), color('d43e31')],
       snow: [color('9482ad'), color('83729c')],
       darkstone: [color('473a5e'), color('3d3152')],
@@ -572,6 +578,7 @@ export const BIOME_STYLES: Record<BiomeId, BiomeStyle> = {
       water: [color('2aa3ad'), color('218f99')],
       shrine: [color('ffe58a'), color('f0d173')],
       pillar: [color('d9b477'), color('c49e62')],
+      cracked_pillar: [color('c7a165'), color('b38e54')],
       lava: [color('eb632d'), color('d65322')],
       snow: [color('f5e6c4'), color('e6d4b0')],
       darkstone: [color('78583c'), color('694b32')],
@@ -608,6 +615,7 @@ export const BIOME_STYLES: Record<BiomeId, BiomeStyle> = {
       water: [color('45b8db'), color('38a3c7')],
       shrine: [color('8af7ff'), color('72e3f0')],
       pillar: [color('dce7f5'), color('c7d6eb')],
+      cracked_pillar: [color('c8d5e8'), color('b4c4db')],
       lava: [color('eb632d'), color('d65322')],
       snow: [color('f0f7ff'), color('e0edfa')],
       darkstone: [color('5c7296'), color('4e6385')],
@@ -644,6 +652,7 @@ export const BIOME_STYLES: Record<BiomeId, BiomeStyle> = {
       water: [color('2e1d52'), color('241642')],
       shrine: [color('ffde73'), color('ebc75b')],
       pillar: [color('3b2c52'), color('312445')],
+      cracked_pillar: [color('45355e'), color('392b4f')],
       lava: [color('f06230'), color('d95022')],
       snow: [color('7c6b96'), color('6d5d85')],
       darkstone: [color('2d2240'), color('251c36')],
@@ -965,8 +974,8 @@ export function buildStaticBoardBatches(biome: BiomeId, cells: GridCell[][]): {
         tileCaps.add([wx, wy - 0.06, wz], [TILE_SIZE * 0.93, 0.15, TILE_SIZE * 0.93], 0, tint, 0.24)
         copings.add([wx, wy + 0.02, wz], [TILE_SIZE * 0.78, 0.03, TILE_SIZE * 0.78], 0, C_ICE, 0.36)
         crystals.add([wx + 0.52, wy + 0.07, wz - 0.48], [0.14, 0.16, 0.14], h * 2.2, C_CYAN, 0.55)
-      } else if (cell.terrain === 'barricade') {
-        // Static base matches flagstone cleanly so destroying a barricade leaves walkable stone immediately!
+      } else if (cell.terrain === 'barricade' || cell.terrain === 'cracked_pillar') {
+        // Static base matches flagstone cleanly so shattering destructible cover leaves walkable stone immediately with zero ghost geometry!
         addTerracedColumn(tileBases, copings, wx, wy, wz, hLvl, style.baseStone, style.cliff, C_STONE_LIGHT)
         tileCaps.add([wx, wy - 0.06, wz], [TILE_SIZE * 0.92, 0.15, TILE_SIZE * 0.92], 0, style.tiles.stone[checker])
       } else if (isWater || isLava) {

@@ -10,6 +10,7 @@ import type { BossTelegraphHudSummary } from './boss-telegraphs.ts'
 import { ARMORY_STAT_ORDER, formatStatDelta, formatStatValue } from './armory-diff.ts'
 import type { EquipmentStatDiff } from './armory-diff.ts'
 import { getMaxCombatLogScroll, getRecentCombatLog } from './combat-log.ts'
+import { formatCoverForecastBadge } from './destructible-cover.ts'
 import type { CodexProgress, EnemyCodexEntry, EquipCodexEntry, HeroCodexEntry } from './codex.ts'
 import type { DiscoveryTipSpec } from './discovery-tips.ts'
 import { ENDLESS_BLESSING_BY_ID, ENDLESS_BLESSING_RARITY_META } from './endless-roguelite.ts'
@@ -3297,7 +3298,8 @@ export function drawCombatForecast(
     bg: '#365f99'
   })
 
-  // Right: Target portrait or Empty Ground crosshair tile
+  const isCoverDirectTarget = !isEmpty && fc.targetUid === null && (fc.damagedCoverCount ?? 0) > 0
+  // Right: Target portrait, Destructible Cover emblem, or Empty Ground crosshair tile
   const rpx = x + w - pad - ps
   if (isEmpty) {
     rr(ctx, rpx, topY, ps, ps, 8)
@@ -3307,6 +3309,14 @@ export function drawCombatForecast(
     ctx.lineWidth = 2
     ctx.stroke()
     drawIcon(ctx, 'target', rpx + ps / 2, topY + ps / 2, ps * 0.56, comboStyle ? comboStyle.color : COLOR.muted)
+  } else if (isCoverDirectTarget) {
+    rr(ctx, rpx, topY, ps, ps, 8)
+    ctx.fillStyle = fc.willShatterCover ? '#5c2814' : '#3a3447'
+    ctx.fill()
+    ctx.strokeStyle = fc.willShatterCover ? '#ff8a3d' : '#c9a66b'
+    ctx.lineWidth = 2.2
+    ctx.stroke()
+    drawIcon(ctx, 'shield', rpx + ps / 2, topY + ps / 2, ps * 0.54, fc.willShatterCover ? '#ffd180' : '#dfe4f2')
   } else {
     drawPortraitTile(ctx, rpx, topY, ps, o.targetPortrait, {
       ring: fc.friendlyFire ? '#ff5ca8' : isHeal ? COLOR.good : COLOR.enemy,
@@ -3412,6 +3422,15 @@ export function drawCombatForecast(
         tags.push({ text: '+STUN', bg: '#6e5208', color: '#ffe88a' })
       }
     }
+  }
+  const coverBadge = formatCoverForecastBadge(fc, o.compact)
+  if (coverBadge) {
+    tags.push({
+      text: coverBadge,
+      bg: fc.willShatterCover ? '#823110' : '#5e4516',
+      color: fc.willShatterCover ? '#ffe29e' : '#f5d48c',
+      border: fc.willShatterCover ? '#ff9642' : '#c99b44'
+    })
   }
   tags.push({
     text: fc.actionName.toUpperCase(),
@@ -3573,11 +3592,11 @@ export function drawCombatForecast(
     // Right side of damage row: KO stamp or Crit % / Self-Shield
     const rightX = innerX + innerW
     if (fc.lethalNormal) {
-      drawChip(ctx, rightX, wellY + 5, 'KO!', {
+      drawChip(ctx, rightX, wellY + 5, isCoverDirectTarget ? 'SHATTER!' : 'KO!', {
         h: 18,
         size: 10,
         color: '#ffffff',
-        bg: COLOR.danger,
+        bg: isCoverDirectTarget ? '#c44d16' : COLOR.danger,
         border: COLOR.outline,
         align: 'right'
       })
