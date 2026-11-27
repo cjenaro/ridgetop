@@ -6,6 +6,7 @@ import {
   getHeroEquipFamily
 } from './equip-families.ts'
 import { getEquipSetId, getHeroActiveGearSetIds } from './gear-sets.ts'
+import { formatEquipDisplayName, normalizeEquipUpgradeLevel } from './gear-upgrade.ts'
 import { computeHeroStats, findEquipOwner, getEquipmentByUid, getHeroByUid } from './simulation.ts'
 import type { CampaignState, EquipFamily, EquipSlot, GearSetId, OwnedHeroCard, Rarity } from './types.ts'
 
@@ -41,12 +42,14 @@ export interface EquipmentStatDiff {
   readonly slot: EquipSlot
   readonly candidateEquipUid: string
   readonly candidateName: string
+  readonly candidateUpgradeLevel: number
   readonly candidateRarity: Rarity
   readonly candidateFamily: EquipFamily
   readonly candidateSetId: GearSetId | null
   readonly compatible: boolean
   readonly incompatibilityReason: string | null
   readonly currentItemName: string | null
+  readonly currentItemUpgradeLevel: number
   readonly currentItemRarity: Rarity | null
   readonly isAlreadyEquipped: boolean
   readonly currentOwnerUid: string | null
@@ -168,19 +171,24 @@ export function computeEquipmentStatDiff(
     activatedSets.length > 0 ||
     deactivatedSets.length > 0
 
+  const candidateUpgradeLevel = normalizeEquipUpgradeLevel(candidate.upgradeLevel)
+  const currentItemUpgradeLevel = currentItem ? normalizeEquipUpgradeLevel(currentItem.upgradeLevel) : 0
+
   return {
     heroUid: hero.uid,
     heroName: heroSpec.name,
     heroFamily,
     slot,
     candidateEquipUid: candidate.uid,
-    candidateName: candidateSpec.name,
+    candidateName: formatEquipDisplayName(candidateSpec, candidateUpgradeLevel),
+    candidateUpgradeLevel,
     candidateRarity: candidateSpec.rarity,
     candidateFamily,
     candidateSetId,
     compatible,
     incompatibilityReason,
-    currentItemName: currentSpec ? currentSpec.name : null,
+    currentItemName: currentSpec ? formatEquipDisplayName(currentSpec, currentItemUpgradeLevel) : null,
+    currentItemUpgradeLevel,
     currentItemRarity: currentSpec ? currentSpec.rarity : null,
     isAlreadyEquipped,
     currentOwnerUid,

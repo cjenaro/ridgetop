@@ -28,7 +28,7 @@ import {
 } from './world-map-3d.ts'
 import type { WorldMap3DCamera } from './world-map-3d.ts'
 import {
-  CROWNLESS_DEEP_MAX_FLOOR, ENDLESS_BLESSING_BY_ID, GEAR_SET_SPECS, MAX_TACTIC_DECK, MIN_TACTIC_DECK, OAKHAVEN_STAGE_ID,
+  CROWNLESS_DEEP_MAX_FLOOR, ENDLESS_BLESSING_BY_ID, GEAR_SET_SPECS, MAX_EQUIP_UPGRADE, MAX_TACTIC_DECK, MIN_TACTIC_DECK, OAKHAVEN_STAGE_ID,
   STARFALL_ATOLL_FIRST_CLEAR_DUST, STARFALL_ATOLL_FIRST_CLEAR_SHARDS,
   STAGE_DIFFICULTY_TIERS, STAGE_MUTATOR_IDS, STAGE_MUTATOR_SPECS, STAGE_TIER_SPECS, WEATHER_SPECS,
   abandonBattle, abandonEndlessRun, areDiscoveryTipsEnabled, armSkill, armTacticCard, autoBuildTacticDeck, autoEquipBestFit, beginWaitFacingPicker,
@@ -36,23 +36,23 @@ import {
   cancelAutoBattle, cancelWaitFacingPicker, checkDiscoveryTipForBattle, claimMasteryMilestone, claimStageMasteryChest, clearSave, computeChallengeRewards,
   computeCombatForecast, computeDangerZone, computeDeckValue,
   computeEnemyThreat, computeHeroStats, computeSquadPower, computeTacticDeckCurve, computeZocPerimeterTiles,
-  confirmDeployment, confirmWaitFacingPicker, countBattleDestructibleCover, countUniqueTelegraphTiles, craftEquipment, craftHero, createInitialState,
+  confirmDeployment, confirmWaitFacingPicker, countBattleDestructibleCover, countUniqueTelegraphTiles, countUpgradedEquipment, craftEquipment, craftHero, createInitialState,
   createTurnBoundaryTracker, dismissDiscoveryTip, draftEndlessBlessing, effectiveSpeed, equipItem, evaluateAllFacingExposures, evaluateFacingExposure,
-  findBestFitUpgrades, findEquipOwner, findGridPath, formatAbyssFloorLabel, formatBattleSpeedLabel, formatBossTelegraphHudSummary, formatCoverTooltip, formatEndlessBiomeLabel, formatOpportunityWarning, formatWeatherHudLabel,
+  findBestFitUpgrades, findEquipOwner, findGridPath, formatAbyssFloorLabel, formatBattleSpeedLabel, formatBossTelegraphHudSummary, formatCoverTooltip, formatEndlessBiomeLabel, formatEquipDisplayName, formatOpportunityWarning, formatWeatherHudLabel,
   getAct1StageMechanicStatus, getActiveDiscoveryTip, getActiveTacticDeckUids,
   getBestiaryEntries, getChapterObjectiveSummary, getClaimableMasteryMilestones, getCodexProgress, getCoverHp, getCraftableEquipment, getCraftableHeroes, getCrownlessDeepFloorSpec, getEquipCodexEntries, getEquipCompatibilityReason, getEquipCraftCost, getEquipEffect, getEquipFamily,
-  getEquipSalvageDust, getEquipShortLockLabel, getEquipmentByUid, getHeroActiveGearSetIds, getHeroByUid, getHeroCodexEntries, getHeroCraftCost, getHeroEquipFamily, getHeroEquipFamilyMeta, getHeroGearSetProgress, getHeroPassive, getHeroSalvageShards,
+  getEquipSalvageDust, getEquipShortLockLabel, getEquipUpgradePreview, getEquipmentByUid, getHeroActiveGearSetIds, getHeroByUid, getHeroCodexEntries, getHeroCraftCost, getHeroEquipFamily, getHeroEquipFamilyMeta, getHeroGearSetProgress, getHeroPassive, getHeroSalvageShards,
   getHeroSkill, getHighestClearedStageTier, getMaxCombatLogScroll, getMaxLivingBossPhase, getMaxMasteryStars, getMaxSelectableCrownlessDeepFloor, getMergeCandidates, getNextMasteryMilestone, getNextRecommendedStage, getOakhavenExchangeOffers, getObjectiveProgressText, getPackPityStatus,
-  getSelectedCrownlessDeepFloor, getStageMasteryChestReward, getStageMasteryObjectives, getStageMasteryRecord, getStageUnlockHint, getTacticByUid, getTelegraphsAtCell, getTotalMasteryStars, getUnitByUid, getWorldMapEventById, hasClaimedStageMasteryChest, hasMaxedHero, hasOakhavenPatronDiscount, heroLevelProgress, isChestClaimed,
+  getSelectedCrownlessDeepFloor, getStageMasteryChestReward, getStageMasteryObjectives, getStageMasteryRecord, getStageUnlockHint, getTacticByUid, getTelegraphsAtCell, getTotalMasteryStars, getUnitByUid, getUpgradedEquipSalvageYield, getWorldMapEventById, hasClaimedStageMasteryChest, hasMaxedHero, hasOakhavenPatronDiscount, heroLevelProgress, isChestClaimed,
   isCrownlessDeepStage, isDeployTile, isDestructibleCover, isEndlessBossWave, isEndlessUnlocked, isEnemyShrouded, isOakhavenExchangeUnlocked, isStageCleared, isStageUnlocked, loadSave, maxSquadSize, mergeHero,
-  moveDeployUnit, persistSave, previewBulkSalvageCommonDupes, previewPathOpportunityAttacks,
+  moveDeployUnit, normalizeEquipUpgradeLevel, persistSave, previewBulkSalvageCommonDupes, previewPathOpportunityAttacks,
   previewTurnOrderAfterAction, previewWaitFacing, resetDiscoveryTips, resolveBattleAtmosphere, resolveStageChallenge, restoreBattleState, rotateDeployUnit, salvageEquipCard,
   salvageHeroCard, selectEndlessWaveStage, selectHeroByUid, selectTile, serializeBattleState, setActionCameraEnabled, setAutoBattle, setBattleSpeed,
   setDiscoveryTipsEnabled, setSelectedCrownlessDeepFloor, shouldAutoSaveOnTurnBoundary, skipAllDiscoveryTips, startChapterBattle, startEndlessRun, startWorldEventBattle, stepGame,
   swapDeployUnit, syncTurnBoundaryTracker, toggleAutoBattle, toggleBattleSpeed, toggleEquipLock, toggleHeroLock,
-  toggleSquadMember, toggleTacticInDeck, undoMove, unequipItem, unitAt, isActionCameraEnabled
+  toggleSquadMember, toggleTacticInDeck, undoMove, unequipItem, unitAt, upgradeEquipWithDuplicate, upgradeEquipWithGold, isActionCameraEnabled
 } from './simulation.ts'
-import type { CodexTab } from './simulation.ts'
+import type { CodexTab, EquipUpgradePreview } from './simulation.ts'
 import { FACING_DIRS, cellHeightLevel, gridToWorld, isUnitDowned } from './types.ts'
 import type {
   BattleSaveSnapshot, BattleSpeedMultiplier, BattleUnit, ChapterSpec, CombatForecast, EndlessBlessingId, EnemyArchetypeId, FacingDir, GameState,
@@ -61,7 +61,7 @@ import type {
 } from './types.ts'
 import {
   COLOR, RADIUS, TIER_COLOR, TYPE, UI_THEME_PALETTE,
-  drawAnimatedRevealCard, drawApMeter, drawArmoryStatDiffPanel, drawAutoBattlePill, drawBattleInfo, drawBoosterPack, drawBossTelegraphBanner, drawButton, drawCameraCompassButton, drawCampHeader,
+  drawAnimatedRevealCard, drawApMeter, drawArmoryStatDiffPanel, drawArmoryTemperBar, drawAutoBattlePill, drawBattleInfo, drawBoosterPack, drawBossTelegraphBanner, drawButton, drawCameraCompassButton, drawCampHeader,
   drawChallengeHudBadges, drawChapterPicker, drawChip, drawCodexEnemyDetail, drawCodexEntryCard, drawCodexEquipDetail, drawCodexHeader, drawCodexHeroDetail, drawCombatForecast, drawCombatLogPanel, drawCombatLogToggleButton, drawControlHints, drawDefeatBackdrop, drawDeployHeroChip,
   drawDifficultyBadge, drawDiscoveryTipCard, drawEmptyNote, drawEndTurnButton, drawEndlessBlessingCard, drawEndlessBlessingsHudPill, drawEquipCard, drawEquipFamilyPill, drawForecastAltChip,
   drawForgeBalanceBanner, drawForgeRecipeCard, drawGearSetBanner, drawHeroHeader, drawHeroRosterCard, drawHeroXpSummaryAnimated, drawHintPill, drawIconButton, drawLabel, drawLetterbox,
@@ -1534,10 +1534,22 @@ async function start() {
     if (screen === 'camp' && campTab === 'armory' && !packAnim) {
       if (event.pointerType !== 'touch') {
         const uiHit = ui.hitTest(x, y)
-        const nextEquipUid = uiHit ? (armoryEquipIdByWidget.get(uiHit.id) ?? null) : null
-        if (nextEquipUid !== hoveredArmoryEquipUid) {
-          hoveredArmoryEquipUid = nextEquipUid
-          uiDirty = true
+        const isDockHit = Boolean(
+          uiHit && (
+            uiHit.id.startsWith('arm-diff') ||
+            uiHit.id.startsWith('arm-temper') ||
+            uiHit.id === 'arm-confirm-equip' ||
+            uiHit.id === 'arm-dismiss-diff' ||
+            uiHit.id === 'arm-fuse-upgrade' ||
+            uiHit.id === 'arm-gold-upgrade'
+          )
+        )
+        if (!isDockHit) {
+          const nextEquipUid = uiHit ? (armoryEquipIdByWidget.get(uiHit.id) ?? null) : null
+          if (nextEquipUid !== hoveredArmoryEquipUid) {
+            hoveredArmoryEquipUid = nextEquipUid
+            uiDirty = true
+          }
         }
       }
       scene.setHoveredCell(null)
@@ -5866,6 +5878,7 @@ async function start() {
 
     let bodyNode: LayoutNode
     let activeArmoryDiff: EquipmentStatDiff | null = null
+    let activeArmoryUpgradePreview: EquipUpgradePreview | null = null
     let armorySelectedHero: OwnedHeroCard | undefined
     let confirmInspectedArmoryEquip: (() => void) | null = null
     if (campTab !== 'armory') {
@@ -6131,36 +6144,36 @@ async function start() {
             id: 'eq-slot-weapon', style: { grow: 1, height: gearH },
             widget: {
               type: 'button',
-              label: wSpec ? wSpec.name : 'Empty Weapon',
+              label: wSpec ? formatEquipDisplayName(wSpec, weapon?.upgradeLevel) : 'Empty Weapon',
               onPress: () => {
                 if (wSpec) { unequipItem(state, selHero.uid, 'weapon'); saveNow(); uiDirty = true }
                 else { setCampTab('armory'); armorySlotFilter = 'weapon'; uiDirty = true }
               },
-              draw: (ctx: CanvasRenderingContext2D, rect: LayoutRect, st: CanvasWidgetDrawState) => drawEquipCard(ctx, rect, { slot: 'weapon', spec: wSpec, locked: Boolean(weapon?.locked) }, st)
+              draw: (ctx: CanvasRenderingContext2D, rect: LayoutRect, st: CanvasWidgetDrawState) => drawEquipCard(ctx, rect, { slot: 'weapon', spec: wSpec, upgradeLevel: weapon?.upgradeLevel, locked: Boolean(weapon?.locked) }, st)
             }
           }),
           boxNode({
             id: 'eq-slot-armor', style: { grow: 1, height: gearH },
             widget: {
               type: 'button',
-              label: aSpec ? aSpec.name : 'Empty Armor',
+              label: aSpec ? formatEquipDisplayName(aSpec, armor?.upgradeLevel) : 'Empty Armor',
               onPress: () => {
                 if (aSpec) { unequipItem(state, selHero.uid, 'armor'); saveNow(); uiDirty = true }
                 else { setCampTab('armory'); armorySlotFilter = 'armor'; uiDirty = true }
               },
-              draw: (ctx: CanvasRenderingContext2D, rect: LayoutRect, st: CanvasWidgetDrawState) => drawEquipCard(ctx, rect, { slot: 'armor', spec: aSpec, locked: Boolean(armor?.locked) }, st)
+              draw: (ctx: CanvasRenderingContext2D, rect: LayoutRect, st: CanvasWidgetDrawState) => drawEquipCard(ctx, rect, { slot: 'armor', spec: aSpec, upgradeLevel: armor?.upgradeLevel, locked: Boolean(armor?.locked) }, st)
             }
           }),
           boxNode({
             id: 'eq-slot-relic', style: { grow: 1, height: gearH },
             widget: {
               type: 'button',
-              label: rSpec ? rSpec.name : 'Empty Relic',
+              label: rSpec ? formatEquipDisplayName(rSpec, relic?.upgradeLevel) : 'Empty Relic',
               onPress: () => {
                 if (rSpec) { unequipItem(state, selHero.uid, 'relic'); saveNow(); uiDirty = true }
                 else { setCampTab('armory'); armorySlotFilter = 'relic'; uiDirty = true }
               },
-              draw: (ctx: CanvasRenderingContext2D, rect: LayoutRect, st: CanvasWidgetDrawState) => drawEquipCard(ctx, rect, { slot: 'relic', spec: rSpec, locked: Boolean(relic?.locked) }, st)
+              draw: (ctx: CanvasRenderingContext2D, rect: LayoutRect, st: CanvasWidgetDrawState) => drawEquipCard(ctx, rect, { slot: 'relic', spec: rSpec, upgradeLevel: relic?.upgradeLevel, locked: Boolean(relic?.locked) }, st)
             }
           })
         ])
@@ -6329,27 +6342,31 @@ async function start() {
       activeArmoryDiff = selHero && previewArmoryEquipUid
         ? computeEquipmentStatDiff(camp, selHero.uid, previewArmoryEquipUid)
         : null
+      activeArmoryUpgradePreview = previewArmoryEquipUid
+        ? getEquipUpgradePreview(camp, previewArmoryEquipUid)
+        : null
 
       const equipArmoryItem = (item: OwnedEquipCard) => {
         if (!selHero) return
         const spec = EQUIPMENT_BY_ID[item.equipId]
+        const displayName = spec ? formatEquipDisplayName(spec, item.upgradeLevel) : item.equipId
         if (!canHeroEquipItem(selHero.heroId, item.equipId)) {
           const reason = getEquipCompatibilityReason(selHero.heroId, item.equipId)
-          showToast(reason ?? `Cannot equip ${spec?.name ?? 'item'} on ${HERO_SPECS[selHero.heroId].name}.`)
+          showToast(reason ?? `Cannot equip ${displayName} on ${HERO_SPECS[selHero.heroId].name}.`)
           return
         }
         const wasOnSel = findEquipOwner(camp, item.uid)?.uid === selHero.uid
         const setsBefore = getHeroActiveGearSetIds(camp, selHero)
         if (equipItem(state, selHero.uid, item.uid)) {
-          inspectedArmoryEquipUid = null
+          inspectedArmoryEquipUid = item.uid
           saveNow()
           scene.triggerCampEquipFlourish(selHero.uid, item.slot, spec?.accentHex)
           const setsAfter = getHeroActiveGearSetIds(camp, selHero)
           const newSetId = setsAfter.find(id => !setsBefore.includes(id))
           const eqEff = spec ? getEquipEffect(spec.id) : null
           const baseMsg = eqEff
-            ? `Equipped ${spec?.name ?? 'item'} (${eqEff.name}: ${eqEff.shortLabel}) on ${HERO_SPECS[selHero.heroId].name}.`
-            : `Equipped ${spec?.name ?? 'item'} on ${HERO_SPECS[selHero.heroId].name}.`
+            ? `Equipped ${displayName} (${eqEff.name}: ${eqEff.shortLabel}) on ${HERO_SPECS[selHero.heroId].name}.`
+            : `Equipped ${displayName} on ${HERO_SPECS[selHero.heroId].name}.`
           showToast(
             newSetId
               ? `${baseMsg} ★ 2pc ${GEAR_SET_SPECS[newSetId].shortName}: ${GEAR_SET_SPECS[newSetId].perkName}!`
@@ -6407,7 +6424,7 @@ async function start() {
 
       armoryEquipIdByWidget.clear()
       const itemRows: LayoutNode[] = []
-      const cardH = shortH ? 42 : mobile ? 46 : 44
+      const cardH = shortH ? (activeArmoryDiff ? 38 : 42) : mobile ? 46 : 44
       for (let i = 0; i < shown.length; i += cols) {
         const slice = shown.slice(i, i + cols)
         const cards: LayoutNode[] = slice.map((item, j) => {
@@ -6415,6 +6432,10 @@ async function start() {
           armoryEquipIdByWidget.set(widgetId, item.uid)
           const spec = EQUIPMENT_BY_ID[item.equipId]
           const meta = spec ? RARITY_META[spec.rarity] : RARITY_META.common
+          const displayName = spec ? formatEquipDisplayName(spec, item.upgradeLevel) : item.equipId
+          const salvageYield = spec
+            ? getUpgradedEquipSalvageYield(spec, item.upgradeLevel)
+            : { gold: meta.salvage, dust: 0 }
           const owner = findEquipOwner(camp, item.uid)
           const equippedOnSel = owner?.uid === selHero?.uid
           const isInspected = inspectedArmoryEquipUid === item.uid
@@ -6427,14 +6448,19 @@ async function start() {
               widget: {
                 type: 'button',
                 label: compatible
-                  ? (spec?.name ?? item.equipId)
-                  : `${spec?.name ?? item.equipId} (${shortLockLabel ?? 'Locked'})`,
+                  ? displayName
+                  : `${displayName} (${shortLockLabel ?? 'Locked'})`,
                 disabled: !compatible,
                 selected: compatible && (equippedOnSel || isInspected),
                 onPress: () => {
                   audio.unlock()
                   if (!selHero || !compatible) return
-                  if (lastPointerType === 'touch' && !equippedOnSel && !isInspected) {
+                  if (equippedOnSel) {
+                    inspectedArmoryEquipUid = item.uid
+                    uiDirty = true
+                    return
+                  }
+                  if (lastPointerType === 'touch' && !isInspected) {
                     inspectedArmoryEquipUid = item.uid
                     uiDirty = true
                     return
@@ -6447,6 +6473,7 @@ async function start() {
                   effect: spec ? getEquipEffect(spec.id) ?? undefined : undefined,
                   ownerText: equippedOnSel ? undefined : ownerLabel,
                   equippedOnSelected: equippedOnSel,
+                  upgradeLevel: item.upgradeLevel,
                   locked: Boolean(item.locked),
                   incompatible: !compatible,
                   incompatibleLabel: shortLockLabel
@@ -6457,13 +6484,13 @@ async function start() {
               id: `arm-lock-${i + j}`, style: { width: mobile ? 36 : 40, height: cardH },
               widget: {
                 type: 'button',
-                label: item.locked ? `Unlock ${spec?.name ?? item.equipId}` : `Lock ${spec?.name ?? item.equipId}`,
+                label: item.locked ? `Unlock ${displayName}` : `Lock ${displayName}`,
                 selected: Boolean(item.locked),
                 onPress: () => {
                   audio.unlock()
                   if (toggleEquipLock(state, item.uid)) {
                     saveNow()
-                    showToast(item.locked ? `Locked ${spec?.name ?? 'item'}.` : `Unlocked ${spec?.name ?? 'item'}.`)
+                    showToast(item.locked ? `Locked ${displayName}.` : `Unlocked ${displayName}.`)
                   }
                 },
                 draw: (ctx: CanvasRenderingContext2D, rect: LayoutRect, st: CanvasWidgetDrawState) => drawIconButton(
@@ -6477,26 +6504,26 @@ async function start() {
                 type: 'button',
                 label: item.locked
                   ? 'Locked'
-                  : `Salvage +${meta.salvage}g +${spec ? getEquipSalvageDust(spec.rarity) : 0} Dust`,
+                  : `Salvage +${salvageYield.gold}g +${salvageYield.dust} Dust`,
                 disabled: Boolean(item.locked),
                 onPress: () => {
                   audio.unlock()
-                  const dustYield = spec ? getEquipSalvageDust(spec.rarity) : 0
+                  const dustYield = salvageYield.dust
                   const g = salvageEquipCard(state, item.uid)
                   if (g > 0) {
                     if (hoveredArmoryEquipUid === item.uid) hoveredArmoryEquipUid = null
                     if (inspectedArmoryEquipUid === item.uid) inspectedArmoryEquipUid = null
                     saveNow()
-                    showToast(`Salvaged ${spec?.name ?? 'item'} for +${g}g & +${dustYield} Arcane Dust.`)
+                    showToast(`Salvaged ${displayName} for +${g}g & +${dustYield} Arcane Dust.`)
                   }
                 },
                 draw: (ctx: CanvasRenderingContext2D, rect: LayoutRect, st: CanvasWidgetDrawState) => drawButton(
-                  ctx, rect, item.locked ? 'Locked' : `+${meta.salvage}g`, st,
+                  ctx, rect, item.locked ? 'Locked' : `+${salvageYield.gold}g`, st,
                   item.locked
                     ? { variant: 'secondary', icon: 'lock', size: 10 }
                     : {
                         variant: 'danger',
-                        sub: `+${spec ? getEquipSalvageDust(spec.rarity) : 0} Dust`,
+                        sub: `+${salvageYield.dust} Dust`,
                         size: mobile ? 10 : 10.5
                       }
                 )
@@ -7334,28 +7361,32 @@ async function start() {
         ])
       ]),
 
-      // Floating Armory Live Stat-Diff Dock above the bottom sheet
+      // Floating Armory Live Stat-Diff & Temper / Reforge Dock above the bottom sheet
       ...(() => {
         const diff = activeArmoryDiff
+        const upPreview = activeArmoryUpgradePreview
         if (campTab !== 'armory' || !diff || collapsed || packAnim) return []
         const hasSetDelta = diff.compatible && (diff.activatedSets.length > 0 || diff.deactivatedSets.length > 0)
-        const diffH = (shortH ? 58 : mobile ? 78 : 64) + (hasSetDelta ? 18 : 0)
+        const diffH = (shortH ? 52 : mobile ? 72 : 60) + (hasSetDelta ? 18 : 0)
+        const temperGap = shortH ? 3 : 4
+        const temperBtnH = shortH ? 30 : mobile ? 32 : 34
+        const temperBlockH = upPreview ? (mobile ? 22 + 4 + temperBtnH : temperBtnH) : 0
+        const totalDockH = diffH + (upPreview ? temperGap + temperBlockH : 0)
         if (mobile) {
-          sheetH = Math.min(sheetH, Math.max(240, h - 68 - diffH - 18))
+          sheetH = Math.min(sheetH, Math.max(240, h - 68 - totalDockH - 16))
+        } else if (shortH) {
+          sheetH = Math.min(sheetH, Math.max(216, h - 50 - totalDockH - 12))
         }
-        const dockW = Math.min(sheetW, mobile ? sheetW : 780)
+        const dockW = Math.min(sheetW, mobile ? sheetW : 820)
         const showTouchConfirm = Boolean(
           inspectedArmoryEquipUid && diff.compatible && !diff.isAlreadyEquipped && armorySelectedHero && confirmInspectedArmoryEquip
         )
         const confirmAction = confirmInspectedArmoryEquip
         const confirmLabel = diff.currentOwnerName ? 'Swap' : 'Equip'
-        const dockInsetBottom = sheetH + (isPhone ? 12 : 18)
-        if (showTouchConfirm && confirmAction) {
-          return [
-            row({
-              id: 'arm-diff-dock',
-              style: { anchor: 'bottom', width: dockW, height: diffH, inset: [isPhone ? 6 : 12, dockInsetBottom], gap: 6, align: 'stretch', respectSafeArea: true }
-            }, [
+        const dockInsetBottom = sheetH + (isPhone ? 10 : 16)
+
+        const topRowNode: LayoutNode = showTouchConfirm && confirmAction
+          ? row({ id: 'arm-diff-top', style: { height: diffH, gap: 6, align: 'stretch' } }, [
               boxNode({
                 id: 'arm-diff-panel',
                 style: { grow: 1, height: diffH },
@@ -7393,18 +7424,154 @@ async function start() {
                 })
               ])
             ])
+          : boxNode({
+              id: 'arm-diff-panel',
+              style: { height: diffH },
+              widget: {
+                type: 'panel',
+                blocksPointer: Boolean(upPreview),
+                draw: (ctx: CanvasRenderingContext2D, rect: LayoutRect) => drawArmoryStatDiffPanel(ctx, rect, diff)
+              }
+            })
+
+        if (!upPreview) {
+          return [
+            column({
+              id: 'arm-diff-dock',
+              style: { anchor: 'bottom', width: dockW, height: totalDockH, inset: [isPhone ? 6 : 12, dockInsetBottom], gap: 0, respectSafeArea: true }
+            }, [topRowNode])
           ]
         }
+
+        const runTemperFeedback = (resName: string, methodLabel: string, goldSpent: number) => {
+          inspectedArmoryEquipUid = upPreview.equipUid
+          const eqOwner = findEquipOwner(state.campaign, upPreview.equipUid) ?? armorySelectedHero
+          if (eqOwner) {
+            scene.triggerCampEquipFlourish(eqOwner.uid, upPreview.spec.slot, COLOR.accent)
+          }
+          saveNow()
+          showToast(`Tempered ${resName} (${methodLabel} -${goldSpent}g)!`)
+        }
+
+        const showFuseBtn = !upPreview.isMaxLevel && upPreview.eligibleDuplicateCount > 0
+        const fuseShortText = mobile
+          ? `Fuse +1 · ${upPreview.fuseGoldCost}g (${upPreview.eligibleDuplicateCount})`
+          : shortH
+            ? `Fuse +1 (${upPreview.fuseGoldCost}g · ${upPreview.eligibleDuplicateCount})`
+            : `Fuse Dupe (+1) · ${upPreview.fuseGoldCost}g (${upPreview.eligibleDuplicateCount})`
+        const fuseBtnNode = showFuseBtn
+          ? [boxNode({
+              id: 'arm-fuse-upgrade',
+              style: mobile
+                ? { grow: 1, height: temperBtnH }
+                : { width: shortH ? 156 : 196, height: temperBtnH },
+              widget: {
+                type: 'button',
+                label: `Fuse Dupe (+1) · ${upPreview.fuseGoldCost}g (${upPreview.eligibleDuplicateCount} dupe${upPreview.eligibleDuplicateCount === 1 ? '' : 's'})`,
+                disabled: !upPreview.canFuseDuplicate,
+                onPress: () => {
+                  audio.unlock()
+                  const res = upgradeEquipWithDuplicate(state, upPreview.equipUid)
+                  if (res) {
+                    runTemperFeedback(res.displayName, 'Dupe Fuse', res.goldSpent)
+                  }
+                },
+                draw: (ctx: CanvasRenderingContext2D, rect: LayoutRect, st: CanvasWidgetDrawState) => drawButton(
+                  ctx, rect, fuseShortText, st, {
+                    variant: upPreview.canFuseDuplicate ? 'success' : 'secondary',
+                    icon: 'up',
+                    size: mobile || shortH ? 9.5 : 10.5
+                  }
+                )
+              }
+            })]
+          : []
+
+        const goldLabel = upPreview.isMaxLevel
+          ? `MAX +${MAX_EQUIP_UPGRADE}`
+          : `Temper +${upPreview.nextLevel} (${upPreview.reforgeGoldCost}g)`
+        const goldBtnNode = boxNode({
+          id: 'arm-gold-upgrade',
+          style: mobile
+            ? { grow: 1, height: temperBtnH }
+            : { width: shortH ? 138 : 162, height: temperBtnH },
+          widget: {
+            type: 'button',
+            label: goldLabel,
+            primary: upPreview.canGoldReforge,
+            disabled: upPreview.isMaxLevel || !upPreview.canGoldReforge,
+            onPress: () => {
+              audio.unlock()
+              const res = upgradeEquipWithGold(state, upPreview.equipUid)
+              if (res) {
+                runTemperFeedback(res.displayName, 'Reforge', res.goldSpent)
+              }
+            },
+            draw: (ctx: CanvasRenderingContext2D, rect: LayoutRect, st: CanvasWidgetDrawState) => drawButton(
+              ctx, rect, goldLabel, st, {
+                variant: upPreview.isMaxLevel ? 'secondary' : upPreview.canGoldReforge ? 'primary' : 'secondary',
+                icon: upPreview.isMaxLevel ? 'star' : 'sparkle',
+                size: mobile || shortH ? 9.5 : 10.5
+              }
+            )
+          }
+        })
+
+        const dismissBtnNodes = !showTouchConfirm && inspectedArmoryEquipUid
+          ? [boxNode({
+              id: 'arm-dismiss-diff',
+              style: { width: mobile ? 32 : shortH ? 30 : 34, height: temperBtnH },
+              widget: {
+                type: 'button',
+                label: 'Close',
+                onPress: () => { clearArmoryHover(true); uiDirty = true },
+                draw: (ctx: CanvasRenderingContext2D, rect: LayoutRect, st: CanvasWidgetDrawState) => drawButton(
+                  ctx, rect, '×', st, { variant: 'secondary', size: 13 }
+                )
+              }
+            })]
+          : []
+
+        const temperStripNode: LayoutNode = mobile
+          ? column({ id: 'arm-temper-wrap', style: { height: temperBlockH, gap: 4 } }, [
+              boxNode({
+                id: 'arm-temper-panel',
+                style: { height: 22 },
+                widget: {
+                  type: 'panel',
+                  blocksPointer: true,
+                  draw: (ctx: CanvasRenderingContext2D, rect: LayoutRect) => drawArmoryTemperBar(ctx, rect, upPreview, { compact: true })
+                }
+              }),
+              row({ id: 'arm-temper-actions', style: { height: temperBtnH, gap: 6, align: 'center' } }, [
+                ...fuseBtnNode,
+                goldBtnNode,
+                ...dismissBtnNodes
+              ])
+            ])
+          : row({ id: 'arm-temper-row', style: { height: temperBtnH, gap: 6, align: 'center' } }, [
+              boxNode({
+                id: 'arm-temper-panel',
+                style: { grow: 1, height: temperBtnH },
+                widget: {
+                  type: 'panel',
+                  blocksPointer: true,
+                  draw: (ctx: CanvasRenderingContext2D, rect: LayoutRect) => drawArmoryTemperBar(ctx, rect, upPreview, { compact: shortH })
+                }
+              }),
+              ...fuseBtnNode,
+              goldBtnNode,
+              ...dismissBtnNodes
+            ])
+
         return [
-          boxNode({
-            id: 'arm-diff-panel',
-            style: { anchor: 'bottom', width: dockW, height: diffH, inset: [isPhone ? 6 : 12, dockInsetBottom], respectSafeArea: true },
-            widget: {
-              type: 'panel',
-              blocksPointer: false,
-              draw: (ctx: CanvasRenderingContext2D, rect: LayoutRect) => drawArmoryStatDiffPanel(ctx, rect, diff)
-            }
-          })
+          column({
+            id: 'arm-diff-dock',
+            style: { anchor: 'bottom', width: dockW, height: totalDockH, inset: [isPhone ? 6 : 12, dockInsetBottom], gap: temperGap, respectSafeArea: true }
+          }, [
+            topRowNode,
+            temperStripNode
+          ])
         ]
       })(),
 
@@ -7418,7 +7585,7 @@ async function start() {
           inset: [
             8,
             sheetH + 18 + (campTab === 'armory' && activeArmoryDiff && !collapsed && !packAnim
-              ? (shortH ? 66 : mobile ? 86 : 72) + (activeArmoryDiff.compatible && (activeArmoryDiff.activatedSets.length > 0 || activeArmoryDiff.deactivatedSets.length > 0) ? 18 : 0)
+              ? (shortH ? 92 : mobile ? 140 : 106) + (activeArmoryDiff.compatible && (activeArmoryDiff.activatedSets.length > 0 || activeArmoryDiff.deactivatedSets.length > 0) ? 18 : 0)
               : 0)
           ],
           respectSafeArea: true
@@ -9092,6 +9259,17 @@ async function start() {
       hoveredTurnUnitUid,
       hoveredArmoryEquipUid,
       inspectedArmoryEquipUid,
+      selectedEquipUpgradeLevel: (() => {
+        const uid = inspectedArmoryEquipUid ?? hoveredArmoryEquipUid
+        const eq = getEquipmentByUid(state.campaign, uid)
+        return eq ? normalizeEquipUpgradeLevel(eq.upgradeLevel) : null
+      })(),
+      upgradedEquipCount: countUpgradedEquipment(state.campaign),
+      canUpgradeSelectedEquip: (() => {
+        const uid = inspectedArmoryEquipUid ?? hoveredArmoryEquipUid
+        const preview = uid ? getEquipUpgradePreview(state.campaign, uid) : null
+        return Boolean(preview && (preview.canFuseDuplicate || preview.canGoldReforge))
+      })(),
       selectedHeroEquipFamily: (() => {
         const h = getHeroByUid(state.campaign, state.campaign.selectedCampHeroUid) ?? state.campaign.heroes[0]
         return h ? getHeroEquipFamily(h.heroId) : null

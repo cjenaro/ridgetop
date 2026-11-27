@@ -16,6 +16,22 @@ export {
 }
 export type { EquipFamilyMeta } from './equip-families.ts'
 import {
+  EQUIP_REFORGE_BASE_GOLD, EQUIP_UPGRADE_RARITY_FACTOR, EQUIP_UPGRADE_STAT_STEP, MAX_EQUIP_UPGRADE,
+  computeUpgradedEquipStats, countUpgradedEquipment, findEligibleFuseDuplicate, findEligibleFuseDuplicates,
+  formatEquipDisplayName, formatUpgradedEquipSummary, getEquipUpgradeCosts, getEquipUpgradePreview,
+  getUpgradedEquipSalvageYield, normalizeEquipUpgradeLevel, upgradeEquipWithDuplicate, upgradeEquipWithGold
+} from './gear-upgrade.ts'
+export {
+  EQUIP_REFORGE_BASE_GOLD, EQUIP_UPGRADE_RARITY_FACTOR, EQUIP_UPGRADE_STAT_STEP, MAX_EQUIP_UPGRADE,
+  computeUpgradedEquipStats, countUpgradedEquipment, findEligibleFuseDuplicate, findEligibleFuseDuplicates,
+  formatEquipDisplayName, formatUpgradedEquipSummary, getEquipUpgradeCosts, getEquipUpgradePreview,
+  getUpgradedEquipSalvageYield, normalizeEquipUpgradeLevel, upgradeEquipWithDuplicate, upgradeEquipWithGold
+}
+export type {
+  EquipUpgradeCosts, EquipUpgradePreview, EquipUpgradeResult, EquipUpgradeStatDelta,
+  EquipUpgradeStatKey, UpgradedEquipStats
+} from './gear-upgrade.ts'
+import {
   EPIC_PITY_THRESHOLD, EQUIP_CRAFT_COST, EQUIP_SALVAGE_DUST, HERO_CRAFT_COST, HERO_SALVAGE_SHARDS,
   LEGENDARY_PITY_THRESHOLD, MAX_HERO_OVERFLOW_SHARDS, canCraftEquipment, canCraftHero, craftEquipment,
   craftHero, getCraftableEquipment, getCraftableHeroes, getDuplicateMaxHeroShards, getEquipCraftCost,
@@ -647,16 +663,17 @@ export function computeHeroStats(campaign: CampaignState, hero: OwnedHeroCard): 
     if (!owned) continue
     const item = EQUIPMENT_BY_ID[owned.equipId]
     if (!item) continue
-    maxHp += item.hp
-    atk += item.atk
-    def += item.def
-    speed += item.speed
-    move += item.move
-    jump += (item.jump ?? 0) + getEquipmentJumpBonus(item.id)
-    range += item.range
-    crit += item.crit
-    lifesteal += item.lifesteal
-    shieldStart += item.shieldStart
+    const up = computeUpgradedEquipStats(item, owned.upgradeLevel)
+    maxHp += up.hp
+    atk += up.atk
+    def += up.def
+    speed += up.speed
+    move += up.move
+    jump += up.jump + getEquipmentJumpBonus(item.id)
+    range += up.range
+    crit += up.crit
+    lifesteal += up.lifesteal
+    shieldStart += up.shieldStart
   }
 
   const setBonus = computeGearSetStatBonuses(
@@ -815,46 +832,51 @@ export function unequipItem(state: GameState, heroUid: string, slot: EquipSlot):
 }
 
 /** Archetype-aware equipment fit score used by Best Fit auto-equip. */
-export function scoreEquipmentForHero(heroId: HeroClassId, spec: EquipmentSpec): number {
+export function scoreEquipmentForHero(
+  heroId: HeroClassId,
+  spec: EquipmentSpec,
+  upgradeLevel = 0
+): number {
+  const up = computeUpgradedEquipStats(spec, upgradeLevel)
   const rankBonus = rarityRank(spec.rarity) * 0.5
   if (heroId === 'knight' || heroId === 'paladin' || heroId === 'champion') {
     return (
-      spec.hp * 1.15 +
-      spec.def * 4.5 +
-      spec.shieldStart * 1.6 +
-      spec.atk * 3.0 +
-      spec.speed * 2.4 +
-      spec.move * 18 +
-      spec.range * 22 +
-      spec.crit * 70 +
-      spec.lifesteal * 160 +
+      up.hp * 1.15 +
+      up.def * 4.5 +
+      up.shieldStart * 1.6 +
+      up.atk * 3.0 +
+      up.speed * 2.4 +
+      up.move * 18 +
+      up.range * 22 +
+      up.crit * 70 +
+      up.lifesteal * 160 +
       rankBonus
     )
   }
   if (heroId === 'archer' || heroId === 'rogue') {
     return (
-      spec.atk * 4.2 +
-      spec.crit * 140 +
-      spec.speed * 3.6 +
-      spec.move * 18 +
-      spec.range * 24 +
-      spec.hp * 0.65 +
-      spec.def * 2.0 +
-      spec.shieldStart * 0.9 +
-      spec.lifesteal * 110 +
+      up.atk * 4.2 +
+      up.crit * 140 +
+      up.speed * 3.6 +
+      up.move * 18 +
+      up.range * 24 +
+      up.hp * 0.65 +
+      up.def * 2.0 +
+      up.shieldStart * 0.9 +
+      up.lifesteal * 110 +
       rankBonus
     )
   }
   return (
-    spec.atk * 4.0 +
-    spec.speed * 3.4 +
-    spec.shieldStart * 1.5 +
-    spec.crit * 100 +
-    spec.hp * 0.95 +
-    spec.def * 2.5 +
-    spec.move * 15 +
-    spec.range * 24 +
-    spec.lifesteal * 90 +
+    up.atk * 4.0 +
+    up.speed * 3.4 +
+    up.shieldStart * 1.5 +
+    up.crit * 100 +
+    up.hp * 0.95 +
+    up.def * 2.5 +
+    up.move * 15 +
+    up.range * 24 +
+    up.lifesteal * 90 +
     rankBonus
   )
 }
@@ -885,7 +907,9 @@ export function findBestFitUpgrades(campaign: CampaignState, heroUid: string): O
       currentItem && canHeroEquipItem(hero.heroId, currentItem.equipId)
         ? EQUIPMENT_BY_ID[currentItem.equipId]
         : undefined
-    const currentScore = currentSpec ? scoreEquipmentForHero(hero.heroId, currentSpec) : -1
+    const currentScore = currentSpec
+      ? scoreEquipmentForHero(hero.heroId, currentSpec, currentItem?.upgradeLevel ?? 0)
+      : -1
 
     let bestItem: OwnedEquipCard | null = null
     let bestScore = currentScore
@@ -895,7 +919,7 @@ export function findBestFitUpgrades(campaign: CampaignState, heroUid: string): O
       if (!canHeroEquipItem(hero.heroId, item.equipId)) continue
       const spec = EQUIPMENT_BY_ID[item.equipId]
       if (!spec) continue
-      const score = scoreEquipmentForHero(hero.heroId, spec)
+      const score = scoreEquipmentForHero(hero.heroId, spec, item.upgradeLevel ?? 0)
       if (score > bestScore) {
         bestScore = score
         bestItem = item
@@ -1158,8 +1182,7 @@ export function salvageEquipCard(state: GameState, equipUid: string): number {
     if (owner.relicUid === equipUid) owner.relicUid = null
   }
   campaign.equipment.splice(idx, 1)
-  const gold = RARITY_META[spec.rarity].salvage
-  const dust = getEquipSalvageDust(spec.rarity)
+  const { gold, dust } = getUpgradedEquipSalvageYield(spec, item.upgradeLevel)
   campaign.gold += gold
   campaign.dust += dust
   state.sounds.push({ kind: 'coin' })
@@ -1384,7 +1407,18 @@ function cloneCampaignFromSave(c: SavedCampaignState, fallbackSeed: number): Cam
       const xp = normalizeHeroXp(level, h.xp)
       return { ...h, level, xp, locked: h.locked === true }
     }),
-    equipment: Array.isArray(c.equipment) ? c.equipment.map(e => ({ ...e, locked: e.locked === true })) : [],
+    equipment: Array.isArray(c.equipment)
+      ? c.equipment.map(e => {
+          const upgradeLevel = normalizeEquipUpgradeLevel(e.upgradeLevel)
+          return {
+            uid: e.uid,
+            equipId: e.equipId,
+            slot: e.slot,
+            locked: e.locked === true,
+            ...(upgradeLevel > 0 ? { upgradeLevel } : {})
+          }
+        })
+      : [],
     tactics: Array.isArray(c.tactics) ? c.tactics.map(t => ({ ...t })) : [],
     ...(Array.isArray(c.activeTacticDeckUids)
       ? { activeTacticDeckUids: c.activeTacticDeckUids.filter((u): u is string => typeof u === 'string') }
@@ -1560,8 +1594,11 @@ export function serializeBattleState(
       ...(fpSize > 1 ? { footprintSize: fpSize } : {}),
       ...(u.summonerUid !== undefined ? { summonerUid: u.summonerUid } : {}),
       ...(u.weaponId !== undefined ? { weaponId: u.weaponId } : {}),
+      ...(u.weaponUpgrade && u.weaponUpgrade > 0 ? { weaponUpgrade: normalizeEquipUpgradeLevel(u.weaponUpgrade) } : {}),
       ...(u.armorId !== undefined ? { armorId: u.armorId } : {}),
+      ...(u.armorUpgrade && u.armorUpgrade > 0 ? { armorUpgrade: normalizeEquipUpgradeLevel(u.armorUpgrade) } : {}),
       ...(u.relicId !== undefined ? { relicId: u.relicId } : {}),
+      ...(u.relicUpgrade && u.relicUpgrade > 0 ? { relicUpgrade: normalizeEquipUpgradeLevel(u.relicUpgrade) } : {}),
       col,
       row,
       facing: battle.facingPicker?.unitUid === u.uid ? battle.facingPicker.originalFacing : u.facing,
@@ -1931,8 +1968,11 @@ export function validateBattleSnapshot(raw: unknown): BattleSaveSnapshot | null 
     }
 
     const weaponId = typeof item.weaponId === 'string' && EQUIPMENT_BY_ID[item.weaponId] ? item.weaponId : undefined
+    const weaponUpgrade = weaponId !== undefined ? normalizeEquipUpgradeLevel(item.weaponUpgrade) : 0
     const armorId = typeof item.armorId === 'string' && EQUIPMENT_BY_ID[item.armorId] ? item.armorId : undefined
+    const armorUpgrade = armorId !== undefined ? normalizeEquipUpgradeLevel(item.armorUpgrade) : 0
     const relicId = typeof item.relicId === 'string' && EQUIPMENT_BY_ID[item.relicId] ? item.relicId : undefined
+    const relicUpgrade = relicId !== undefined ? normalizeEquipUpgradeLevel(item.relicUpgrade) : 0
     const summonerUid = typeof item.summonerUid === 'string' && item.summonerUid.length > 0 ? item.summonerUid : undefined
 
     units.push({
@@ -1948,8 +1988,11 @@ export function validateBattleSnapshot(raw: unknown): BattleSaveSnapshot | null 
       ...(footprintSize > 1 ? { footprintSize } : {}),
       ...(summonerUid !== undefined ? { summonerUid } : {}),
       ...(weaponId !== undefined ? { weaponId } : {}),
+      ...(weaponUpgrade > 0 ? { weaponUpgrade } : {}),
       ...(armorId !== undefined ? { armorId } : {}),
+      ...(armorUpgrade > 0 ? { armorUpgrade } : {}),
       ...(relicId !== undefined ? { relicId } : {}),
+      ...(relicUpgrade > 0 ? { relicUpgrade } : {}),
       col,
       row,
       facing,
@@ -2132,8 +2175,11 @@ export function restoreBattleState(state: GameState, snapshot: unknown): boolean
       ...(fpSize > 1 ? { footprintSize: fpSize } : {}),
       ...(u.summonerUid !== undefined ? { summonerUid: u.summonerUid } : {}),
       ...(u.weaponId !== undefined ? { weaponId: u.weaponId } : {}),
+      ...(u.weaponUpgrade && u.weaponUpgrade > 0 ? { weaponUpgrade: normalizeEquipUpgradeLevel(u.weaponUpgrade) } : {}),
       ...(u.armorId !== undefined ? { armorId: u.armorId } : {}),
+      ...(u.armorUpgrade && u.armorUpgrade > 0 ? { armorUpgrade: normalizeEquipUpgradeLevel(u.armorUpgrade) } : {}),
       ...(u.relicId !== undefined ? { relicId: u.relicId } : {}),
+      ...(u.relicUpgrade && u.relicUpgrade > 0 ? { relicUpgrade: normalizeEquipUpgradeLevel(u.relicUpgrade) } : {}),
       col: u.col,
       row: u.row,
       x: wx,
@@ -2441,11 +2487,16 @@ export function serializeSave(state: GameState): SaveData {
               relicUid: h.relicUid
             }
       }),
-      equipment: state.campaign.equipment.map(e => (e.locked ? { ...e, locked: true } : {
-        uid: e.uid,
-        equipId: e.equipId,
-        slot: e.slot
-      })),
+      equipment: state.campaign.equipment.map(e => {
+        const upgradeLevel = normalizeEquipUpgradeLevel(e.upgradeLevel)
+        return {
+          uid: e.uid,
+          equipId: e.equipId,
+          slot: e.slot,
+          ...(upgradeLevel > 0 ? { upgradeLevel } : {}),
+          ...(e.locked ? { locked: true } : {})
+        }
+      }),
       tactics: state.campaign.tactics.map(t => ({ ...t })),
       ...(Array.isArray(state.campaign.activeTacticDeckUids)
         ? { activeTacticDeckUids: state.campaign.activeTacticDeckUids.slice() }
@@ -3303,6 +3354,9 @@ function launchBattleInternal(
     const weaponOwned = getEquipmentByUid(campaign, hero.weaponUid)
     const armorOwned = getEquipmentByUid(campaign, hero.armorUid)
     const relicOwned = getEquipmentByUid(campaign, hero.relicUid)
+    const weaponUpgrade = normalizeEquipUpgradeLevel(weaponOwned?.upgradeLevel)
+    const armorUpgrade = normalizeEquipUpgradeLevel(armorOwned?.upgradeLevel)
+    const relicUpgrade = normalizeEquipUpgradeLevel(relicOwned?.upgradeLevel)
     let startEmpower = 0
     let startTaunt = 0
     let startHaste = 0
@@ -3321,8 +3375,11 @@ function launchBattleInternal(
       level: normalizeHeroLevel(hero.level),
       isBoss: false,
       weaponId: weaponOwned?.equipId,
+      ...(weaponUpgrade > 0 ? { weaponUpgrade } : {}),
       armorId: armorOwned?.equipId,
+      ...(armorUpgrade > 0 ? { armorUpgrade } : {}),
       relicId: relicOwned?.equipId,
+      ...(relicUpgrade > 0 ? { relicUpgrade } : {}),
       col: spawn[0],
       row: spawn[1],
       x: wx,

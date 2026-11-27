@@ -1,5 +1,6 @@
 import { EQUIPMENT_BY_ID, RARITY_META } from './data.ts'
 import { getEquipSalvageDust } from './forge.ts'
+import { normalizeEquipUpgradeLevel } from './gear-upgrade.ts'
 import type { CampaignState, GameState, OwnedEquipCard, OwnedHeroCard } from './types.ts'
 
 export interface BulkSalvagePreview {
@@ -44,8 +45,9 @@ export function toggleHeroLock(state: GameState, heroUid: string): boolean {
  *  1. Common rarity (`rarity === 'common'`)
  *  2. Unlocked (`!item.locked`)
  *  3. Unequipped (not equipped in any hero's weapon, armor, or relic slot)
- *  4. Excess duplicate: always preserves at least 1 copy of each `equipId`
- *     (preferring an already-equipped or locked copy, otherwise the first copy).
+ *  4. Untempered (`normalizeEquipUpgradeLevel(item.upgradeLevel) === 0`) — upgraded gear is NEVER auto-salvaged!
+ *  5. Excess duplicate: always preserves at least 1 copy of each `equipId`
+ *     (preferring an already-equipped, locked, or upgraded copy, otherwise the first copy).
  */
 export function findBulkSalvageableCommonDupes(campaign: CampaignState): OwnedEquipCard[] {
   const equippedUids = new Set<string>()
@@ -55,22 +57,22 @@ export function findBulkSalvageableCommonDupes(campaign: CampaignState): OwnedEq
     if (hero.relicUid) equippedUids.add(hero.relicUid)
   }
 
-  // First pass: mark any Common equipId that already has at least 1 equipped or locked copy.
+  // First pass: mark any Common equipId that already has at least 1 equipped, locked, or tempered copy.
   const keptEquipIds = new Set<string>()
   for (const item of campaign.equipment) {
     const spec = EQUIPMENT_BY_ID[item.equipId]
     if (!spec || spec.rarity !== 'common') continue
-    if (item.locked || equippedUids.has(item.uid)) {
+    if (item.locked || equippedUids.has(item.uid) || normalizeEquipUpgradeLevel(item.upgradeLevel) > 0) {
       keptEquipIds.add(item.equipId)
     }
   }
 
-  // Second pass: keep the first unlocked unequipped copy if none is kept yet; flag the rest.
+  // Second pass: keep the first unlocked unequipped untempered copy if none is kept yet; flag the rest.
   const salvageable: OwnedEquipCard[] = []
   for (const item of campaign.equipment) {
     const spec = EQUIPMENT_BY_ID[item.equipId]
     if (!spec || spec.rarity !== 'common') continue
-    if (item.locked || equippedUids.has(item.uid)) continue
+    if (item.locked || equippedUids.has(item.uid) || normalizeEquipUpgradeLevel(item.upgradeLevel) > 0) continue
     if (!keptEquipIds.has(item.equipId)) {
       keptEquipIds.add(item.equipId)
       continue
