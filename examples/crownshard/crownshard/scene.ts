@@ -1328,7 +1328,7 @@ export function createCrownshardScene(renderer: LowPolyRenderer) {
     if (fx.deathClip === 'death_crumble' && crossed(0.55)) {
       localShake = Math.max(localShake, 0.12)
       const ice = unit.enemyId === 'frost_golem'
-      const magma = unit.enemyId === 'magma_warden'
+      const magma = unit.enemyId === 'magma_warden' || unit.enemyId === 'ignis_titan'
       const troll = unit.enemyId === 'river_troll'
       const chunkCol: Color = ice ? [0.74, 0.90, 1.0, 1]
         : magma ? [0.96, 0.38, 0.14, 1]
@@ -1384,9 +1384,11 @@ export function createCrownshardScene(renderer: LowPolyRenderer) {
         })
       : ENEMY_RIGS[unit.enemyId ?? 'goblin']
 
-    const scale = unit.enemyId === 'eclipse_archon' ? 1.38
+    const scale = unit.enemyId === 'ignis_titan' ? 1.46
+      : unit.enemyId === 'eclipse_archon' ? 1.38
       : unit.isBoss ? 1.32
       : unit.enemyId === 'frost_golem' || unit.enemyId === 'river_troll' ? 1.24
+      : unit.enemyId === 'abyssal_sentinel' ? 1.18
       : unit.enemyId === 'goblin' || unit.enemyId === 'bone_thrall' ? 0.90
       : unit.stars === 3 ? 1.12
       : unit.stars === 2 ? 1.05
@@ -1793,7 +1795,7 @@ export function createCrownshardScene(renderer: LowPolyRenderer) {
       }
     }
     if (unit.isBoss) {
-      const bossCrystalCol = unit.enemyId === 'magma_warden' ? C_FIRE_CORE
+      const bossCrystalCol = unit.enemyId === 'magma_warden' || unit.enemyId === 'ignis_titan' ? C_FIRE_CORE
         : unit.enemyId === 'frost_jarl' ? C_FROST
         : unit.enemyId === 'mire_matriarch' ? C_POISON
         : unit.enemyId === 'briar_warlord' ? C_STAR2_GOLD

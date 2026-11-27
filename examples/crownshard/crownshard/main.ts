@@ -17,6 +17,7 @@ import {
 import { cameraAlignedFacing, cameraCardinalHeading, createCrownshardScene, facingPickerAnchor } from './scene.ts'
 import {
   MAX_TACTIC_DECK, MIN_TACTIC_DECK,
+  CROWNLESS_DEEP_MAX_FLOOR, STARFALL_ATOLL_FIRST_CLEAR_DUST, STARFALL_ATOLL_FIRST_CLEAR_SHARDS,
   STAGE_DIFFICULTY_TIERS, STAGE_MUTATOR_IDS, STAGE_MUTATOR_SPECS, STAGE_TIER_SPECS,
   abandonBattle, areDiscoveryTipsEnabled, armSkill, armTacticCard, autoBuildTacticDeck, autoEquipBestFit, beginWaitFacingPicker,
   bulkSalvageCommonDupes, buyPack, canBuyPack, canCraftEquipment, canCraftHero, canMergeHero, canUndoMove,
@@ -25,17 +26,17 @@ import {
   computeEnemyThreat, computeHeroStats, computeSquadPower, computeTacticDeckCurve, computeZocPerimeterTiles,
   confirmDeployment, confirmWaitFacingPicker, craftEquipment, craftHero, createInitialState,
   createTurnBoundaryTracker, dismissDiscoveryTip, effectiveSpeed, equipItem, evaluateAllFacingExposures, evaluateFacingExposure,
-  findBestFitUpgrades, findEquipOwner, findGridPath, formatBattleSpeedLabel, formatOpportunityWarning,
+  findBestFitUpgrades, findEquipOwner, findGridPath, formatAbyssFloorLabel, formatBattleSpeedLabel, formatOpportunityWarning,
   getActiveDiscoveryTip, getActiveTacticDeckUids,
-  getChapterObjectiveSummary, getCraftableEquipment, getCraftableHeroes, getEquipCraftCost, getEquipEffect,
+  getChapterObjectiveSummary, getCraftableEquipment, getCraftableHeroes, getCrownlessDeepFloorSpec, getEquipCraftCost, getEquipEffect,
   getEquipSalvageDust, getEquipmentByUid, getHeroByUid, getHeroCraftCost, getHeroPassive, getHeroSalvageShards,
-  getHeroSkill, getHighestClearedStageTier, getMaxCombatLogScroll, getMergeCandidates, getNextRecommendedStage, getObjectiveProgressText, getPackPityStatus,
-  getStageUnlockHint, getTacticByUid, getUnitByUid, hasMaxedHero, heroLevelProgress, isChestClaimed,
-  isDeployTile, isEndlessUnlocked, isEnemyShrouded, isStageCleared, isStageUnlocked, loadSave, maxSquadSize, mergeHero,
+  getHeroSkill, getHighestClearedStageTier, getMaxCombatLogScroll, getMaxSelectableCrownlessDeepFloor, getMergeCandidates, getNextRecommendedStage, getObjectiveProgressText, getPackPityStatus,
+  getSelectedCrownlessDeepFloor, getStageUnlockHint, getTacticByUid, getUnitByUid, hasMaxedHero, heroLevelProgress, isChestClaimed,
+  isCrownlessDeepStage, isDeployTile, isEndlessUnlocked, isEnemyShrouded, isStageCleared, isStageUnlocked, loadSave, maxSquadSize, mergeHero,
   moveDeployUnit, persistSave, previewBulkSalvageCommonDupes, previewPathOpportunityAttacks,
   previewTurnOrderAfterAction, previewWaitFacing, resetDiscoveryTips, resolveStageChallenge, restoreBattleState, rotateDeployUnit, salvageEquipCard,
   salvageHeroCard, selectHeroByUid, selectTile, serializeBattleState, setAutoBattle, setBattleSpeed,
-  setDiscoveryTipsEnabled, shouldAutoSaveOnTurnBoundary, skipAllDiscoveryTips, startChapterBattle, stepGame,
+  setDiscoveryTipsEnabled, setSelectedCrownlessDeepFloor, shouldAutoSaveOnTurnBoundary, skipAllDiscoveryTips, startChapterBattle, stepGame,
   swapDeployUnit, syncTurnBoundaryTracker, toggleAutoBattle, toggleBattleSpeed, toggleEquipLock, toggleHeroLock,
   toggleSquadMember, toggleTacticInDeck, undoMove, unequipItem, unitAt
 } from './simulation.ts'
@@ -114,7 +115,9 @@ const SPEAKER_PORTRAIT: Record<string, string> = {
   'Vex, Mire Matriarch': 'mire_matriarch',
   'Vaelen, Ash Inquisitor': 'ash_inquisitor',
   'Jarl Skadi': 'frost_jarl',
-  'Ignar, Magma Warden': 'magma_warden'
+  'Ignar, Magma Warden': 'magma_warden',
+  'Ignis Titan': 'ignis_titan',
+  'Abyssal Sovereign': 'eclipse_archon'
 }
 
 const ACT_ID_ALIASES: Record<string, string> = {
@@ -468,7 +471,13 @@ async function start() {
 
   function formatResumableBattleLabel(snap: BattleSaveSnapshot, compact = false): string {
     const ch = CHAPTER_BY_ID[snap.stageId] ?? CHAPTERS[snap.chapterIndex] ?? CHAPTERS[0]
-    const stageLabel = snap.endlessWave > 0 ? `Endless W${snap.endlessWave}` : ch.title
+    const stageLabel = snap.endlessWave > 0
+      ? `Endless W${snap.endlessWave}`
+      : snap.abyssFloor
+        ? `${ch.title} F${snap.abyssFloor}/${CROWNLESS_DEEP_MAX_FLOOR}`
+        : snap.gauntletMaxRounds
+          ? `${ch.title} R${snap.gauntletRound ?? 1}/${snap.gauntletMaxRounds}`
+          : ch.title
     return compact
       ? `Resume (T${snap.turn}) · ${stageLabel}`
       : `Resume Battle — ${stageLabel} (Turn ${snap.turn})`
@@ -665,10 +674,14 @@ async function start() {
     resumableBattle = null
     const chapterId = CHAPTERS[pendingChapter]?.id ?? CHAPTERS[0].id
     const challenge = pendingEndless === 0 ? getStageChallenge(chapterId) : DEFAULT_STAGE_CHALLENGE
+    const abyssFloor = pendingEndless === 0 && isCrownlessDeepStage(chapterId)
+      ? getSelectedCrownlessDeepFloor(state.campaign)
+      : undefined
     startChapterBattle(state, pendingChapter, pendingEndless, {
       deployPhase: true,
       tier: challenge.tier,
-      mutators: challenge.mutators
+      mutators: challenge.mutators,
+      ...(abyssFloor !== undefined ? { abyssFloor } : {})
     })
     lastBattlePhase = state.battle?.phase ?? null
     lastActiveUid = state.battle?.activeUnitUid ?? null
@@ -917,6 +930,9 @@ async function start() {
   function advanceAfterVictory() {
     if (isEndlessUnlocked(state.campaign) && (state.battle?.endlessWave ?? 0) > 0) {
       openStory(CHAPTER_BY_ID.eclipse_throne.index, (state.battle?.endlessWave ?? 0) + 1)
+    } else if (state.battle?.abyssFloor && state.battle.abyssFloor < CROWNLESS_DEEP_MAX_FLOOR) {
+      setSelectedCrownlessDeepFloor(state.campaign, state.battle.abyssFloor + 1)
+      openStory(CHAPTER_BY_ID.abyssal_deep.index, 0)
     } else {
       const nextStage = getNextRecommendedStage(state.campaign)
       openWorldMap(nextStage.id)
@@ -1773,33 +1789,66 @@ async function start() {
       }))
     }
 
-    // Aggregate unique enemy roster for the selected stage
+    // Aggregate unique enemy roster for the selected stage (Crownless Deep reflects selected Abyss floor)
+    const selectedIsAbyss = isCrownlessDeepStage(selected.id) && !selectedSoon
+    const abyssMaxSelectable = getMaxSelectableCrownlessDeepFloor(camp)
+    const abyssSelectedFloor = selectedIsAbyss ? getSelectedCrownlessDeepFloor(camp) : 1
+    const abyssFloorSpec = selectedIsAbyss ? getCrownlessDeepFloorSpec(abyssSelectedFloor) : null
+    const inspectEnemies = abyssFloorSpec ? abyssFloorSpec.enemies : selected.enemies
     const enemyCounts = new Map<EnemyArchetypeId, number>()
-    for (const sp of selected.enemies) {
+    for (const sp of inspectEnemies) {
       enemyCounts.set(sp.id, (enemyCounts.get(sp.id) ?? 0) + 1)
     }
     const enemyList = Array.from(enemyCounts.entries())
-    const gridCols = selected.grid[0]?.length ?? 8
-    const gridRows = selected.grid.length
-    const biomeName = selected.biome[0].toUpperCase() + selected.biome.slice(1)
+    const gridCols = (abyssFloorSpec ? abyssFloorSpec.grid[0]?.length : selected.grid[0]?.length) ?? 8
+    const gridRows = abyssFloorSpec ? abyssFloorSpec.grid.length : selected.grid.length
+    const inspectBiome = abyssFloorSpec ? abyssFloorSpec.biome : selected.biome
+    const inspectDifficulty = abyssFloorSpec ? abyssFloorSpec.difficulty : selected.difficulty
+    const biomeName = inspectBiome[0].toUpperCase() + inspectBiome.slice(1)
     const firstEq = selected.rewardEquipId ? EQUIPMENT_BY_ID[selected.rewardEquipId] : undefined
     const firstHero = selected.rewardHeroId ? HERO_SPECS[selected.rewardHeroId] : undefined
 
-    const firstClearLoot: { icon: IconName; text: string; color?: string }[] = [
-      { icon: 'coin', text: `+${selected.rewardGold}g`, color: selectedCleared ? COLOR.faint : COLOR.accentHi }
-    ]
-    if (firstEq) {
+    const firstClearLoot: { icon: IconName; text: string; color?: string }[] = abyssFloorSpec
+      ? [
+          { icon: 'coin', text: `+${abyssFloorSpec.rewardGold}g`, color: abyssSelectedFloor <= camp.crownlessDeepFloor ? COLOR.faint : COLOR.accentHi },
+          { icon: 'sparkle', text: `+${abyssFloorSpec.bonusDust} Dust · +${abyssFloorSpec.bonusShards} Shd`, color: '#a3f7d0' }
+        ]
+      : [
+          { icon: 'coin', text: `+${selected.rewardGold}g`, color: selectedCleared ? COLOR.faint : COLOR.accentHi }
+        ]
+    if (abyssFloorSpec && abyssSelectedFloor === CROWNLESS_DEEP_MAX_FLOOR && firstEq) {
+      firstClearLoot.push({
+        icon: 'bag',
+        text: firstEq.name,
+        color: camp.crownlessDeepRewardClaimed ? COLOR.faint : RARITY_META[firstEq.rarity].hex
+      })
+    }
+    if (abyssFloorSpec && abyssSelectedFloor === CROWNLESS_DEEP_MAX_FLOOR && firstHero) {
+      firstClearLoot.push({
+        icon: 'users',
+        text: firstHero.name,
+        color: camp.crownlessDeepRewardClaimed ? COLOR.faint : '#9ff0c4'
+      })
+    }
+    if (!abyssFloorSpec && firstEq) {
       firstClearLoot.push({
         icon: 'bag',
         text: firstEq.name,
         color: selectedCleared ? COLOR.faint : RARITY_META[firstEq.rarity].hex
       })
     }
-    if (firstHero) {
+    if (!abyssFloorSpec && firstHero) {
       firstClearLoot.push({
         icon: 'users',
         text: firstHero.name,
         color: selectedCleared ? COLOR.faint : '#9ff0c4'
+      })
+    }
+    if (!abyssFloorSpec && selected.id === 'starfall_atoll') {
+      firstClearLoot.push({
+        icon: 'sparkle',
+        text: `+${STARFALL_ATOLL_FIRST_CLEAR_DUST} Dust · +${STARFALL_ATOLL_FIRST_CLEAR_SHARDS} Shd`,
+        color: selectedCleared ? COLOR.faint : '#a3f7d0'
       })
     }
     if (selected.unlocksSlot4) {
@@ -1816,12 +1865,12 @@ async function start() {
     const activeTierSpec = STAGE_TIER_SPECS[activeChallenge.tier]
     const highestClearedTier = selectedCleared ? getHighestClearedStageTier(camp, selected.id) : null
     const challengeRewards = computeChallengeRewards(
-      selected.replayGold,
-      selected.difficulty,
+      abyssFloorSpec ? abyssFloorSpec.replayGold : selected.replayGold,
+      inspectDifficulty,
       activeChallenge.tier,
       activeChallenge.mutators
     )
-    const effectiveRecPower = Math.round(selected.recommendedPower * activeTierSpec.recommendedPowerMul)
+    const effectiveRecPower = Math.round((abyssFloorSpec ? abyssFloorSpec.recommendedPower : selected.recommendedPower) * activeTierSpec.recommendedPowerMul)
 
     const replayLoot: { icon: IconName; text: string; color?: string }[] = [
       {
@@ -1851,15 +1900,19 @@ async function start() {
       ? 'Coming Soon...'
       : !selectedUnlocked
         ? 'Locked'
-        : selectedCleared
-          ? activeChallenge.tier !== 'normal'
-            ? `Deploy (${activeTierSpec.label})`
-            : activeChallenge.mutators.length > 0
-              ? `Deploy (${activeChallenge.mutators.length} Mut)`
-              : 'Replay Battle'
-          : 'Deploy to Battle'
+        : selectedIsAbyss
+          ? abyssSelectedFloor <= camp.crownlessDeepFloor
+            ? `Replay Floor ${abyssSelectedFloor}`
+            : `Descend Floor ${abyssSelectedFloor}`
+          : selectedCleared
+            ? activeChallenge.tier !== 'normal'
+              ? `Deploy (${activeTierSpec.label})`
+              : activeChallenge.mutators.length > 0
+                ? `Deploy (${activeChallenge.mutators.length} Mut)`
+                : 'Replay Battle'
+            : 'Deploy to Battle'
 
-    const showChallengeControls = selectedCleared && !selectedSoon
+    const showChallengeControls = selectedCleared && !selectedSoon && !selectedIsAbyss
     const inspW = mobile ? Math.min(w - 16, 460) : 344
     const inspH = mobile
       ? Math.min(Math.min(h - topH - 36, Math.round(h * (showChallengeControls ? 0.66 : 0.42))), showChallengeControls ? 408 : 258)
@@ -1888,7 +1941,11 @@ async function start() {
         widget: {
           type: 'panel',
           draw: (ctx: CanvasRenderingContext2D, rect: LayoutRect) => {
-            const tag = selectedSoon ? 'COMING SOON' : (selected.specialTag ?? regionMeta.name)
+            const tag = selectedSoon
+              ? 'COMING SOON'
+              : selectedIsAbyss
+                ? formatAbyssFloorLabel(abyssSelectedFloor)
+                : (selected.specialTag ?? regionMeta.name)
             const tagBg = selectedSoon ? '#6e3226'
               : selected.kind === 'boss' ? '#5e1a2a'
               : selected.kind === 'elite' ? '#4a2417'
@@ -1935,7 +1992,7 @@ async function start() {
           type: 'panel',
           draw: (ctx: CanvasRenderingContext2D, rect: LayoutRect) => {
             drawWell(ctx, rect, RADIUS.md)
-            const bw = drawDifficultyBadge(ctx, rect.x + 8, rect.y + 6, selected.difficulty, { h: 20, showLabel: true })
+            const bw = drawDifficultyBadge(ctx, rect.x + 8, rect.y + 6, inspectDifficulty, { h: 20, showLabel: true })
             drawChip(ctx, rect.x + 14 + bw, rect.y + 6, selectedSoon ? biomeName : `${gridCols}x${gridRows} ${biomeName}`, {
               h: 20, size: 9.5, color: '#dce8ff', bg: '#1e2b4a'
             })
@@ -1943,7 +2000,9 @@ async function start() {
               ctx,
               selectedSoon
                 ? `${selected.subtitle} · In Development`
-                : `Squad Power ${squadPower} / Rec ${effectiveRecPower}`,
+                : selectedIsAbyss && abyssFloorSpec
+                  ? `${formatAbyssFloorLabel(abyssSelectedFloor)} · ${abyssFloorSpec.title} (Cleared ${camp.crownlessDeepFloor}/10)`
+                  : `Squad Power ${squadPower} / Rec ${effectiveRecPower}`,
               rect.x + 10,
               rect.y + rect.height - 11,
               { size: 10.5, weight: 800, color: selectedSoon ? '#f0cf99' : powerColor, maxW: rect.width - 20, display: true }
@@ -1970,7 +2029,7 @@ async function start() {
               )
               return
             }
-            drawOverline(ctx, `Hostile Forces (${selected.enemies.length})`, rect.x + 10, rect.y + 12, rect.width - 20)
+            drawOverline(ctx, `Hostile Forces (${inspectEnemies.length})`, rect.x + 10, rect.y + 12, rect.width - 20)
             let ex = rect.x + 10
             const ey = rect.y + 23
             const ps = 40
@@ -1990,6 +2049,64 @@ async function start() {
           }
         }
       })]),
+
+      // Crownless Deep 10-Floor Selector (push deeper or replay cleared floors)
+      ...(selectedIsAbyss && abyssFloorSpec ? [row({
+        id: 'wm-abyss-floor-bar',
+        style: { height: isCompact ? 32 : 36, gap: 6 }
+      }, [
+        boxNode({
+          id: 'wm-abyss-prev',
+          style: { width: 34, height: isCompact ? 32 : 36 },
+          widget: {
+            type: 'button',
+            label: 'Previous Abyss Floor',
+            disabled: abyssSelectedFloor <= 1,
+            onPress: () => {
+              setSelectedCrownlessDeepFloor(camp, abyssSelectedFloor - 1)
+              saveNow()
+              uiDirty = true
+            },
+            draw: (ctx: CanvasRenderingContext2D, rect: LayoutRect, st: CanvasWidgetDrawState) => drawButton(
+              ctx, rect, '<', st, { variant: 'secondary', size: 13 }
+            )
+          }
+        }),
+        boxNode({
+          id: 'wm-abyss-floor-info',
+          style: { grow: 1, height: isCompact ? 32 : 36 },
+          widget: {
+            type: 'panel',
+            draw: (ctx: CanvasRenderingContext2D, rect: LayoutRect) => {
+              drawWell(ctx, rect, RADIUS.md)
+              drawText(
+                ctx,
+                `${formatAbyssFloorLabel(abyssSelectedFloor)} · ${abyssFloorSpec.title}`,
+                rect.x + rect.width * 0.5,
+                rect.y + rect.height * 0.5 + 1,
+                { size: isCompact ? 10 : 11, weight: 800, color: '#e5adff', align: 'center', maxW: rect.width - 12 }
+              )
+            }
+          }
+        }),
+        boxNode({
+          id: 'wm-abyss-next',
+          style: { width: 34, height: isCompact ? 32 : 36 },
+          widget: {
+            type: 'button',
+            label: 'Next Abyss Floor',
+            disabled: abyssSelectedFloor >= abyssMaxSelectable,
+            onPress: () => {
+              setSelectedCrownlessDeepFloor(camp, abyssSelectedFloor + 1)
+              saveNow()
+              uiDirty = true
+            },
+            draw: (ctx: CanvasRenderingContext2D, rect: LayoutRect, st: CanvasWidgetDrawState) => drawButton(
+              ctx, rect, '>', st, { variant: 'secondary', size: 13 }
+            )
+          }
+        })
+      ])] : []),
 
       // Cleared-Stage Heroic / Mythic Difficulty Tier & Tactical Mutator Selector
       ...(showChallengeControls ? [column({
@@ -2448,13 +2565,22 @@ async function start() {
     const storyRewards = alreadyCleared
       ? computeChallengeRewards(ch.replayGold, ch.difficulty, storyChallenge.tier, storyChallenge.mutators)
       : null
-    const header = pendingEndless > 0 ? `Endless Arena - Wave ${pendingEndless}` : ch.title
+    const storyAbyssSpec = pendingEndless === 0 && isCrownlessDeepStage(ch.id)
+      ? getCrownlessDeepFloorSpec(getSelectedCrownlessDeepFloor(state.campaign))
+      : null
+    const header = pendingEndless > 0
+      ? `Endless Arena - Wave ${pendingEndless}`
+      : storyAbyssSpec
+        ? `${ch.title} — ${formatAbyssFloorLabel(storyAbyssSpec.floor)}`
+        : ch.title
     const challengeTag = alreadyCleared && (storyChallenge.tier !== 'normal' || storyChallenge.mutators.length > 0)
       ? ` · ${storyTierSpec.label.toUpperCase()}${storyChallenge.mutators.length > 0 ? ` +${storyChallenge.mutators.length} MUT` : ''}`
       : ''
     const kicker = pendingEndless > 0
       ? `${ch.subtitle} · ${gridCols}x${gridRows}`
-      : `${ch.subtitle} · ${gridCols}x${gridRows} · Diff ${diffMeta.short}${challengeTag}`
+      : storyAbyssSpec
+        ? `${storyAbyssSpec.title} · ${storyAbyssSpec.modifierSummary}`
+        : `${ch.subtitle} · ${gridCols}x${gridRows} · Diff ${diffMeta.short}${challengeTag}`
     const desc = pendingEndless > 0
       ? `Eclipse remnants surge back into ${ch.subtitle}. Every wave scales foes and awards richer gold and weighted loot.`
       : `"${ch.introText}"`
@@ -2883,7 +3009,13 @@ async function start() {
     const inspectedOwned = inspected?.team === 'ally' ? getHeroByUid(state.campaign, inspected.uid) : undefined
     const inspectedXpProgress = inspectedOwned ? heroLevelProgress(inspectedOwned.level, inspectedOwned.xp) : undefined
     const fpsShort = `${Math.round(perf.snapshot().fps || 60)}`
-    const chapterShort = battle.endlessWave > 0 ? `Endless Wave ${battle.endlessWave}` : `${ch.title} · D${battle.difficulty}`
+    const chapterShort = battle.endlessWave > 0
+      ? `Endless Wave ${battle.endlessWave}`
+      : battle.abyssFloor
+        ? `${ch.title} · ${formatAbyssFloorLabel(battle.abyssFloor)}`
+        : battle.gauntletMaxRounds
+          ? `${ch.title} · R${battle.gauntletRound ?? 1}/${battle.gauntletMaxRounds}`
+          : `${ch.title} · D${battle.difficulty}`
 
     // Top-right toolbar (compact on phone & narrow tablets so top-left bar never collides)
     const tbIconS = isPhone ? 28 : 30
@@ -5862,15 +5994,19 @@ async function start() {
       ? state.campaign.heroes.filter(h => h.heroId === reward.heroCard?.heroId && h.stars === 1).length
       : 0
 
-    const title = won ? (reward?.campaignWon ? 'Sunstone Crown Reforged' : 'Victory!') : 'Vanguard Defeated'
+    const title = won
+      ? (reward?.campaignWon ? 'Sunstone Crown Reforged' : reward?.abyssCompleted ? 'Crownless Deep Conquered!' : 'Victory!')
+      : 'Vanguard Defeated'
     const rewardTier = reward?.difficultyTier ?? battle?.difficultyTier ?? 'normal'
     const rewardMutCount = (reward?.mutators ?? battle?.mutators ?? []).length
     const challengeSubTag = rewardTier !== 'normal' || rewardMutCount > 0
       ? ` · ${STAGE_TIER_SPECS[rewardTier].label}${rewardMutCount > 0 ? ` +${rewardMutCount} Mut` : ''}`
-      : (reward && !reward.firstClear && (battle?.endlessWave ?? 0) === 0 ? ' · Replay' : '')
+      : (reward && !reward.firstClear && (battle?.endlessWave ?? 0) === 0 && !battle?.abyssFloor ? ' · Replay' : '')
+    const abyssSubTag = battle?.abyssFloor ? ` · ${formatAbyssFloorLabel(battle.abyssFloor)}` : ''
+    const gauntletSubTag = battle?.gauntletMaxRounds ? ` · All ${battle.gauntletMaxRounds} Rounds Cleared` : ''
     const sub = won
-      ? `${ch.title}${challengeSubTag}`
-      : `${ch.title} · Regroup & Adapt`
+      ? `${ch.title}${abyssSubTag}${gauntletSubTag}${challengeSubTag}`
+      : `${ch.title}${abyssSubTag} · Regroup & Adapt`
     const quote = won
       ? `${ch.outroSpeaker}: "${ch.outroText}"`
       : 'Return to Vanguard Camp to equip stronger gear, open booster decks, or merge 3 identical heroes to unlock Tier 2 skills.'
@@ -6067,16 +6203,24 @@ async function start() {
             id: 'cs-victory-next', style: { grow: 1.4, height: btnH },
             widget: {
               type: 'button',
-              label: (state.battle?.endlessWave ?? 0) > 0 ? 'Next Wave' : 'World Map',
+              label: (state.battle?.endlessWave ?? 0) > 0
+                ? 'Next Wave'
+                : (state.battle?.abyssFloor && state.battle.abyssFloor < CROWNLESS_DEEP_MAX_FLOOR)
+                  ? `Floor ${state.battle.abyssFloor + 1}`
+                  : 'World Map',
               primary: true,
               onPress: advanceAfterVictory,
-              draw: (ctx: CanvasRenderingContext2D, rect: LayoutRect, st: CanvasWidgetDrawState) => drawButton(
-                ctx,
-                rect,
-                (state.battle?.endlessWave ?? 0) > 0 ? 'Next Wave' : 'World Map',
-                st,
-                { variant: 'primary', icon: (state.battle?.endlessWave ?? 0) > 0 ? 'arrow-right' : 'map', size: 14 }
-              )
+              draw: (ctx: CanvasRenderingContext2D, rect: LayoutRect, st: CanvasWidgetDrawState) => {
+                const nextBtnLabel = (state.battle?.endlessWave ?? 0) > 0
+                  ? 'Next Wave'
+                  : (state.battle?.abyssFloor && state.battle.abyssFloor < CROWNLESS_DEEP_MAX_FLOOR)
+                    ? `Floor ${state.battle.abyssFloor + 1}`
+                    : 'World Map'
+                const nextBtnIcon = ((state.battle?.endlessWave ?? 0) > 0 || (state.battle?.abyssFloor && state.battle.abyssFloor < CROWNLESS_DEEP_MAX_FLOOR))
+                  ? 'arrow-right'
+                  : 'map'
+                drawButton(ctx, rect, nextBtnLabel, st, { variant: 'primary', icon: nextBtnIcon, size: 14 })
+              }
             }
           })
         ] : [

@@ -246,7 +246,8 @@ const HERO_IDS: readonly HeroClassId[] = [
 const ENEMY_IDS: readonly EnemyArchetypeId[] = [
   'goblin', 'bone_archer', 'orc_brute', 'bog_shaman', 'crypt_knight', 'frost_golem', 'eclipse_archon',
   'ember_pyromancer', 'ice_wraith', 'bone_necromancer', 'bone_thrall', 'river_troll',
-  'briar_warlord', 'mire_matriarch', 'ash_inquisitor', 'frost_jarl', 'magma_warden'
+  'briar_warlord', 'mire_matriarch', 'ash_inquisitor', 'frost_jarl', 'magma_warden',
+  'ignis_titan', 'abyssal_sentinel'
 ]
 
 /** DOM-free bust portraits for every hero and enemy rig (usable from Node tools, tests, and packagers). */

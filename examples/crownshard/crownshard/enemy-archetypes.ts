@@ -53,6 +53,8 @@ export type EnemySpecialMoveKind =
   | 'ash_nova'
   | 'frost_breath'
   | 'magma_slam'
+  | 'cataclysm_slam'
+  | 'abyssal_cleave'
   | 'eclipse_nova'
 
 export interface TurnStartRegenResult {
@@ -76,6 +78,7 @@ export interface EnemySpecialDecision {
   readonly statusStacks?: number
   readonly element?: ElementKind
   readonly knockbackDistance?: number
+  readonly ignitesGeysers?: boolean
   readonly label: string
 }
 
@@ -113,7 +116,7 @@ export function isRegionalMiniBoss(enemyId?: EnemyArchetypeId): boolean {
 
 /** Home biome affinity for each enemy archetype. */
 export function getEnemyBiomeAffinity(enemyId: EnemyArchetypeId): BiomeId {
-  if (enemyId === 'ember_pyromancer' || enemyId === 'magma_warden') return 'volcano'
+  if (enemyId === 'ember_pyromancer' || enemyId === 'magma_warden' || enemyId === 'ignis_titan') return 'volcano'
   if (enemyId === 'ice_wraith' || enemyId === 'frost_golem' || enemyId === 'frost_jarl') return 'frost'
   if (
     enemyId === 'bone_necromancer' ||
@@ -125,7 +128,7 @@ export function getEnemyBiomeAffinity(enemyId: EnemyArchetypeId): BiomeId {
     return 'crypt'
   }
   if (enemyId === 'river_troll' || enemyId === 'bog_shaman' || enemyId === 'mire_matriarch') return 'river'
-  if (enemyId === 'eclipse_archon') return 'throne'
+  if (enemyId === 'eclipse_archon' || enemyId === 'abyssal_sentinel') return 'throne'
   return 'meadow'
 }
 
@@ -134,10 +137,11 @@ export function getEnemyProjectileStyle(
   enemyId?: EnemyArchetypeId
 ): 'arrow' | 'fire' | 'frost' | 'shadow' | 'arcane' {
   if (enemyId === 'bone_archer') return 'arrow'
-  if (enemyId === 'ember_pyromancer' || enemyId === 'magma_warden') return 'fire'
+  if (enemyId === 'ember_pyromancer' || enemyId === 'magma_warden' || enemyId === 'ignis_titan') return 'fire'
   if (enemyId === 'ice_wraith' || enemyId === 'frost_jarl') return 'frost'
   if (
     enemyId === 'eclipse_archon' ||
+    enemyId === 'abyssal_sentinel' ||
     enemyId === 'bog_shaman' ||
     enemyId === 'bone_necromancer' ||
     enemyId === 'ash_inquisitor' ||
@@ -153,10 +157,10 @@ export function getEnemyBasicAttackStatus(enemyId?: EnemyArchetypeId): EnemyBasi
   if (enemyId === 'bog_shaman' || enemyId === 'mire_matriarch') {
     return { status: 'poison', stacks: 2 }
   }
-  if (enemyId === 'ember_pyromancer' || enemyId === 'magma_warden') {
+  if (enemyId === 'ember_pyromancer' || enemyId === 'magma_warden' || enemyId === 'ignis_titan') {
     return { status: 'burn' }
   }
-  if (enemyId === 'ice_wraith' || enemyId === 'frost_jarl') {
+  if (enemyId === 'ice_wraith' || enemyId === 'frost_jarl' || enemyId === 'abyssal_sentinel') {
     return { status: 'slow' }
   }
   return null
@@ -164,7 +168,7 @@ export function getEnemyBasicAttackStatus(enemyId?: EnemyArchetypeId): EnemyBasi
 
 /** Elemental affinity of an enemy's basic attack for Wave 4 elemental combos. */
 export function getEnemyAttackElement(enemyId?: EnemyArchetypeId): ElementKind | null {
-  if (enemyId === 'ember_pyromancer' || enemyId === 'magma_warden') return 'fire'
+  if (enemyId === 'ember_pyromancer' || enemyId === 'magma_warden' || enemyId === 'ignis_titan') return 'fire'
   if (enemyId === 'ice_wraith' || enemyId === 'frost_jarl') return 'frost'
   if (enemyId === 'bog_shaman' || enemyId === 'mire_matriarch') return 'poison'
   return null
@@ -474,6 +478,35 @@ export function chooseEnemySpecialMove(
       element: 'fire',
       knockbackDistance: 1,
       label: 'MAGMA SLAM!'
+    }
+  }
+
+  if (eid === 'ignis_titan' && enemy.cooldowns[0] <= 0) {
+    return {
+      move: 'cataclysm_slam',
+      vfxMove: 'titan_slam',
+      cooldownTurns: MINIBOSS_SPECIAL_COOLDOWN,
+      pattern: 'cross',
+      powerMul: 1.30,
+      ignoreArmor: 0.35,
+      status: 'burn',
+      element: 'fire',
+      knockbackDistance: 1,
+      ignitesGeysers: true,
+      label: 'CATACLYSM SLAM!'
+    }
+  }
+
+  if (eid === 'abyssal_sentinel' && enemy.cooldowns[0] <= 0) {
+    return {
+      move: 'abyssal_cleave',
+      vfxMove: 'eclipse_nova',
+      cooldownTurns: 3,
+      pattern: 'cross',
+      powerMul: 1.20,
+      ignoreArmor: 0.30,
+      status: 'slow',
+      label: 'ABYSSAL CLEAVE!'
     }
   }
 

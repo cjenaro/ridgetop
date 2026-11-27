@@ -68,7 +68,7 @@ function buildStance(heroId?: HeroClassId, enemyId?: EnemyArchetypeId): Record<s
   }
   if (
     enemyId === 'orc_brute' || enemyId === 'frost_golem' ||
-    enemyId === 'river_troll' || enemyId === 'briar_warlord' || enemyId === 'magma_warden'
+    enemyId === 'river_troll' || enemyId === 'briar_warlord' || enemyId === 'magma_warden' || enemyId === 'ignis_titan'
   ) {
     return {
       body: { rotation: [0.10, 0, 0] },
@@ -1618,7 +1618,8 @@ function archetypeOf(heroId?: HeroClassId, enemyId?: EnemyArchetypeId): Archetyp
   if (heroId === 'archer' || enemyId === 'bone_archer') return 'bow'
   if (
     enemyId === 'orc_brute' || heroId === 'champion' || enemyId === 'crypt_knight' || enemyId === 'frost_golem' ||
-    enemyId === 'river_troll' || enemyId === 'briar_warlord' || enemyId === 'frost_jarl' || enemyId === 'magma_warden'
+    enemyId === 'river_troll' || enemyId === 'briar_warlord' || enemyId === 'frost_jarl' ||
+    enemyId === 'magma_warden' || enemyId === 'ignis_titan' || enemyId === 'abyssal_sentinel'
   ) return 'heavy'
   if (heroId === 'rogue' || enemyId === 'goblin' || enemyId === 'bone_thrall') return 'stab'
   if (
@@ -1634,7 +1635,7 @@ function archetypeOf(heroId?: HeroClassId, enemyId?: EnemyArchetypeId): Archetyp
 export type Gait = 'normal' | 'heavy' | 'agile' | 'glide' | 'stomp'
 
 export function gaitFor(heroId?: HeroClassId, enemyId?: EnemyArchetypeId): Gait {
-  if (heroId === 'knight' || heroId === 'paladin' || enemyId === 'crypt_knight' || enemyId === 'frost_jarl') return 'heavy'
+  if (heroId === 'knight' || heroId === 'paladin' || enemyId === 'crypt_knight' || enemyId === 'frost_jarl' || enemyId === 'abyssal_sentinel') return 'heavy'
   if (heroId === 'rogue' || enemyId === 'goblin' || enemyId === 'bone_thrall') return 'agile'
   if (
     heroId === 'mage' || heroId === 'cryomancer' || enemyId === 'eclipse_archon' ||
@@ -1643,7 +1644,7 @@ export function gaitFor(heroId?: HeroClassId, enemyId?: EnemyArchetypeId): Gait 
   ) return 'glide'
   if (
     enemyId === 'frost_golem' || enemyId === 'orc_brute' ||
-    enemyId === 'river_troll' || enemyId === 'briar_warlord' || enemyId === 'magma_warden'
+    enemyId === 'river_troll' || enemyId === 'briar_warlord' || enemyId === 'magma_warden' || enemyId === 'ignis_titan'
   ) return 'stomp'
   return 'normal'
 }
@@ -1686,7 +1687,9 @@ const ENEMY_ATTACK: Readonly<Record<EnemyArchetypeId, UnitClipName>> = {
   mire_matriarch: 'attack_staff',
   ash_inquisitor: 'attack_staff',
   frost_jarl: 'attack_heavy',
-  magma_warden: 'attack_pound'
+  magma_warden: 'attack_pound',
+  ignis_titan: 'attack_pound',
+  abyssal_sentinel: 'attack_dark_cleave'
 }
 
 /** Basic attack clip per class/archetype; hero weapon ids can override the class default. */
@@ -1762,7 +1765,7 @@ export function statusClipFor(status: StatusKind): UnitClipName {
 export function deathClipFor(heroId?: HeroClassId, enemyId?: EnemyArchetypeId, isBoss?: boolean): UnitClipName {
   if (
     enemyId === 'frost_golem' || enemyId === 'orc_brute' ||
-    enemyId === 'river_troll' || enemyId === 'briar_warlord' || enemyId === 'magma_warden'
+    enemyId === 'river_troll' || enemyId === 'briar_warlord' || enemyId === 'magma_warden' || enemyId === 'ignis_titan'
   ) return 'death_crumble'
   if (
     enemyId === 'eclipse_archon' || isBoss || enemyId === 'bog_shaman' ||
@@ -1770,7 +1773,7 @@ export function deathClipFor(heroId?: HeroClassId, enemyId?: EnemyArchetypeId, i
     enemyId === 'bone_necromancer' || enemyId === 'mire_matriarch' || enemyId === 'ash_inquisitor'
   ) return 'death_dissolve'
   if (enemyId === 'goblin' || enemyId === 'bone_thrall') return 'death_tumble'
-  if (heroId === 'knight' || heroId === 'paladin' || heroId === 'champion' || enemyId === 'crypt_knight' || enemyId === 'frost_jarl') return 'death_kneel'
+  if (heroId === 'knight' || heroId === 'paladin' || heroId === 'champion' || enemyId === 'crypt_knight' || enemyId === 'frost_jarl' || enemyId === 'abyssal_sentinel') return 'death_kneel'
   return 'death'
 }
 
@@ -1809,8 +1812,9 @@ export function idleClipFor(team: 'ally' | 'enemy', hpRatio: number, stunned: bo
 /** Idle playback rate per archetype (heavy units breathe slowly, goblins fidget fast) with per-unit jitter in [0,1). */
 export function idleRateFor(enemyId: EnemyArchetypeId | undefined, jitter: number): number {
   const base =
-    enemyId === 'frost_golem' || enemyId === 'magma_warden' ? 0.68
-      : enemyId === 'orc_brute' || enemyId === 'river_troll' || enemyId === 'briar_warlord' ? 0.82
+    enemyId === 'ignis_titan' ? 0.62
+      : enemyId === 'frost_golem' || enemyId === 'magma_warden' ? 0.68
+      : enemyId === 'orc_brute' || enemyId === 'river_troll' || enemyId === 'briar_warlord' || enemyId === 'abyssal_sentinel' ? 0.82
       : enemyId === 'goblin' || enemyId === 'bone_thrall' ? 1.25
       : enemyId === 'ice_wraith' ? 1.15
       : 1

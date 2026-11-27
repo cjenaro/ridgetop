@@ -673,6 +673,13 @@ export const ENEMY_SPECS: Record<EnemyArchetypeId, EnemySpec> = {
   },
   magma_warden: {
     id: 'magma_warden', name: 'Ignar, Magma Warden', maxHp: 168, atk: 25, def: 8, speed: 8, move: 2, jump: 1, range: 2, ai: 'boss', isBoss: true, zoc: true
+  },
+  // Endgame Raid Boss & Abyssal Guardians
+  ignis_titan: {
+    id: 'ignis_titan', name: 'Ignis Titan', maxHp: 245, atk: 28, def: 9, speed: 8, move: 2, jump: 1, range: 2, ai: 'boss', isBoss: true, zoc: true
+  },
+  abyssal_sentinel: {
+    id: 'abyssal_sentinel', name: 'Abyssal Sentinel', maxHp: 118, atk: 24, def: 8, speed: 9, move: 3, jump: 2, range: 2, ai: 'melee', zoc: true
   }
 }
 
@@ -1732,23 +1739,49 @@ export const CHAPTERS: readonly ChapterSpec[] = [
     mapY: 0.68,
     requires: ['cursed_vault', 'obsidian_gate'],
     unlockMode: 'any',
-    comingSoon: true,
-    soonNote: 'Soon... 3-Round Gladiator Gauntlet with Escalating Modifiers',
-    specialTag: 'Soon...',
+    specialTag: '3-Round Pit',
+    modifierDesc: '3-Round Gladiator Gauntlet · +25% HP & +1 AP between waves',
     title: 'Cinder Arena',
     subtitle: 'Gladiator Trial Pit',
     biome: 'volcano',
     introSpeaker: 'Sir Aldric',
-    introText: 'Prove your vanguard across three relentless arena rounds.',
+    introText: 'Step down into the ember pit—three gladiator waves await before the arena champion emerges.',
     outroSpeaker: 'Sir Aldric',
-    outroText: 'The arena roars your name.',
+    outroText: 'The arena roars your name above the coals.',
     rewardGold: 290,
     replayGold: 145,
     rewardEquipId: 'dragonfang_spear',
     rewardHeroId: null,
-    grid: SOON_GRID,
-    heroSpawns: [[0, 1], [0, 2], [0, 3], [1, 2]],
-    enemies: [{ id: 'orc_brute', col: 5, row: 2 }, { id: 'crypt_knight', col: 5, row: 1 }, { id: 'bog_shaman', col: 5, row: 3 }]
+    grid: [
+      [V, H, S, S, S, S, S, H, V],
+      [S, T, M, D, D, D, M, T, S],
+      [S, T, D, S, S, S, D, T, S],
+      [S, T, D, S, R, S, D, T, S],
+      [S, T, D, S, S, S, D, T, S],
+      [S, T, M, D, D, D, M, T, S],
+      [V, H, S, S, S, S, S, H, V]
+    ],
+    heights: [
+      [-1, 2, 2, 2, 2, 2, 2, 2, -1],
+      [ 1, 1, 0, 0, 0, 0, 0, 1,  1],
+      [ 1, 1, 0, 0, 0, 0, 0, 1,  1],
+      [ 1, 1, 0, 0, 0, 0, 0, 1,  1],
+      [ 1, 1, 0, 0, 0, 0, 0, 1,  1],
+      [ 1, 1, 0, 0, 0, 0, 0, 1,  1],
+      [-1, 2, 2, 2, 2, 2, 2, 2, -1]
+    ],
+    heroSpawns: [[0, 2], [0, 3], [0, 4], [1, 3]],
+    objective: {
+      kind: 'rout',
+      label: '3-Round Gladiator Gauntlet',
+      description: 'Clear all 3 gladiator waves in Cinder Arena. Heroes recover +25% HP and +1 AP between rounds.'
+    },
+    enemies: [
+      { id: 'orc_brute', col: 6, row: 2, levelScale: 1.05, name: 'Pit Bruiser' },
+      { id: 'ember_pyromancer', col: 7, row: 3, levelScale: 1.05, name: 'Cinder Pyromancer' },
+      { id: 'goblin', col: 6, row: 4, levelScale: 1.15, name: 'Arena Skirmisher' },
+      { id: 'crypt_knight', col: 7, row: 2, levelScale: 1.0, name: 'Iron Gladiator' }
+    ]
   },
   {
     id: 'molten_core',
@@ -1761,23 +1794,51 @@ export const CHAPTERS: readonly ChapterSpec[] = [
     mapX: 0.72,
     mapY: 0.59,
     requires: ['ashfall_foundry'],
-    comingSoon: true,
-    soonNote: 'Soon... Erupting Magma Geysers & Obsidian Titan Boss',
-    specialTag: 'Soon...',
+    specialTag: 'Raid Boss',
+    modifierDesc: 'Ignis Titan Raid · Cataclysm Slam ignites nearby magma geysers',
     title: 'Brimstone Maw',
     subtitle: 'Raid Boss: Ignis Titan',
     biome: 'volcano',
     introSpeaker: 'Vesper',
-    introText: 'The caldera cracks open around an ancient fire colossus.',
+    introText: 'The caldera cracks open around the Ignis Titan. Topple the molten colossus before its Cataclysm Slam awakens every vent!',
     outroSpeaker: 'Vesper',
-    outroText: 'The caldera settles.',
+    outroText: 'The molten colossus shatters and the caldera settles.',
     rewardGold: 420,
     replayGold: 195,
     rewardEquipId: 'heart_of_solis',
     rewardHeroId: null,
-    grid: SOON_GRID,
-    heroSpawns: [[0, 1], [0, 2], [0, 3], [1, 2]],
-    enemies: [{ id: 'frost_golem', col: 5, row: 2 }, { id: 'crypt_knight', col: 5, row: 1 }, { id: 'bog_shaman', col: 5, row: 3 }]
+    grid: [
+      [V, L, L, D, D, D, L, L, V],
+      [L, D, B, D, M, D, B, D, L],
+      [D, D, M, T, D, T, M, D, D],
+      [D, B, D, T, D, T, D, B, D],
+      [D, D, M, T, D, T, M, D, D],
+      [L, D, B, D, R, D, B, D, L],
+      [V, L, L, D, D, D, L, L, V]
+    ],
+    heights: [
+      [-1, 0, 0, 1, 1, 1, 0, 0, -1],
+      [ 0, 0, 0, 1, 1, 1, 0, 0,  0],
+      [ 0, 0, 0, 1, 2, 1, 0, 0,  0],
+      [ 0, 0, 1, 1, 2, 1, 1, 0,  0],
+      [ 0, 0, 0, 1, 2, 1, 0, 0,  0],
+      [ 0, 0, 0, 1, 1, 1, 0, 0,  0],
+      [-1, 0, 0, 1, 1, 1, 0, 0, -1]
+    ],
+    heroSpawns: [[0, 2], [0, 3], [0, 4], [1, 3]],
+    objective: {
+      kind: 'assassinate',
+      targetEnemyId: 'ignis_titan',
+      targetName: 'Ignis Titan',
+      label: 'Slay Ignis Titan',
+      description: 'Defeat the Ignis Titan atop the raised magma dais to claim Brimstone Maw.'
+    },
+    enemies: [
+      { id: 'ignis_titan', col: 4, row: 3, levelScale: 1.0, name: 'Ignis Titan' },
+      { id: 'ember_pyromancer', col: 6, row: 1, levelScale: 1.10 },
+      { id: 'ember_pyromancer', col: 6, row: 5, levelScale: 1.10 },
+      { id: 'crypt_knight', col: 7, row: 3, levelScale: 1.10, name: 'Obsidian Sentinel' }
+    ]
   },
 
   // =========================================================================
@@ -1886,23 +1947,54 @@ export const CHAPTERS: readonly ChapterSpec[] = [
     requires: ['eclipse_throne', 'glacial_citadel'],
     unlockMode: 'any',
     seaRoute: true,
-    comingSoon: true,
-    soonNote: 'Soon... Act V Sea Expedition · Floating Starlight Reefs & Mythic Relics',
-    specialTag: 'Tier VI Soon',
+    specialTag: 'Mythic Atoll',
+    modifierDesc: 'Outer-Sea Relic Island · Claim 2 Mythic Chests & Seize Starfall Altar',
     title: 'Starfall Atoll',
     subtitle: 'Mythic Sea Expedition',
     biome: 'throne',
     introSpeaker: 'Vesper',
-    introText: 'A fallen star shattered this outer island into floating crystal reefs.',
+    introText: 'A fallen star shattered this outer island into terraced crystal reefs. Cross the sea-bridges, claim both mythic chests, and seize the Starfall Altar.',
     outroSpeaker: 'Vesper',
-    outroText: 'Starlight relics recovered.',
+    outroText: 'Starlight relics and rare dust recovered from the outer reef.',
     rewardGold: 560,
     replayGold: 245,
     rewardEquipId: 'heart_of_solis',
     rewardHeroId: null,
-    grid: SOON_GRID,
-    heroSpawns: [[0, 1], [0, 2], [0, 3], [1, 2]],
-    enemies: [{ id: 'crypt_knight', col: 5, row: 2 }, { id: 'frost_golem', col: 5, row: 1 }, { id: 'bog_shaman', col: 5, row: 3 }]
+    grid: [
+      [V, W, W, W, S, H, S, W, W, V],
+      [W, G, S, B, T, H, S, W, S, S],
+      [G, G, S, W, S, D, T, W, T, H],
+      [G, S, S, W, S, D, S, B, T, R],
+      [G, G, S, W, S, D, T, W, T, H],
+      [W, G, S, B, T, H, S, W, S, S],
+      [V, W, W, W, S, H, S, W, W, V]
+    ],
+    heights: [
+      [-1, 0, 0, 0, 1, 2, 1, 0, 0, -1],
+      [ 0, 0, 0, 0, 1, 2, 1, 0, 1,  2],
+      [ 0, 0, 0, 0, 1, 2, 1, 0, 2,  2],
+      [ 0, 0, 0, 0, 1, 2, 1, 1, 2,  3],
+      [ 0, 0, 0, 0, 1, 2, 1, 0, 2,  2],
+      [ 0, 0, 0, 0, 1, 2, 1, 0, 1,  2],
+      [-1, 0, 0, 0, 1, 2, 1, 0, 0, -1]
+    ],
+    heroSpawns: [[0, 2], [0, 3], [0, 4], [1, 3]],
+    objective: {
+      kind: 'seize',
+      label: 'Seize Starfall Altar',
+      description: 'Claim both Mythic Relic Chests on the central ridges and seize the summit Starfall Altar.',
+      goalTile: { col: 9, row: 3 },
+      goalLabel: 'Starfall Altar',
+      chestTiles: [{ col: 5, row: 0 }, { col: 5, row: 6 }],
+      requiredChests: 2
+    },
+    enemies: [
+      { id: 'frost_jarl', col: 8, row: 3, levelScale: 1.05, name: 'Astral Warden' },
+      { id: 'ice_wraith', col: 5, row: 1, levelScale: 1.25, name: 'Starlight Wraith' },
+      { id: 'ember_pyromancer', col: 5, row: 5, levelScale: 1.25, name: 'Comet Pyromancer' },
+      { id: 'crypt_knight', col: 6, row: 3, levelScale: 1.22, name: 'Reef Vanguard' },
+      { id: 'abyssal_sentinel', col: 9, row: 2, levelScale: 1.08, name: 'Starfall Sentinel' }
+    ]
   },
   {
     id: 'tempest_spire',
@@ -1978,23 +2070,49 @@ export const CHAPTERS: readonly ChapterSpec[] = [
     requires: ['bone_cathedral', 'cinder_colosseum'],
     unlockMode: 'any',
     seaRoute: true,
-    comingSoon: true,
-    soonNote: 'Soon... Secret 10-Floor Pitch-Black Abyssal Dungeon',
-    specialTag: 'Tier VI Abyss',
+    specialTag: '10-Floor Abyss',
+    modifierDesc: 'Secret 10-Floor Pitch-Black Dungeon · Tiers VI–VIII & Abyssal Sovereign',
     title: 'Crownless Deep',
     subtitle: 'Secret 10-Floor Abyss',
     biome: 'throne',
     introSpeaker: 'Archon Malakor',
-    introText: 'Descend into the sunken sea-trench where forgotten crowns sleep.',
+    introText: 'Ten sunken vaults lie beneath the sea-trench where forgotten crowns sleep. Descend floor by floor toward the Abyssal Sovereign.',
     outroSpeaker: 'Sir Aldric',
-    outroText: 'Light reaches the deepest trench.',
+    outroText: 'Torchlight claims another vault of the Crownless Deep.',
     rewardGold: 640,
     replayGold: 270,
     rewardEquipId: 'solis_crownblade',
     rewardHeroId: 'champion',
-    grid: SOON_GRID,
-    heroSpawns: [[0, 1], [0, 2], [0, 3], [1, 2]],
-    enemies: [{ id: 'eclipse_archon', col: 5, row: 2 }, { id: 'crypt_knight', col: 5, row: 1 }, { id: 'crypt_knight', col: 5, row: 3 }]
+    grid: [
+      [V, D, D, P, D, P, D, D, V],
+      [D, D, T, D, D, D, T, D, D],
+      [D, S, D, D, A, D, D, S, D],
+      [D, S, T, D, D, D, T, S, D],
+      [D, S, D, D, R, D, D, S, D],
+      [D, D, T, D, D, D, T, D, D],
+      [V, D, D, P, D, P, D, D, V]
+    ],
+    heights: [
+      [-1, 1, 1, 1, 1, 1, 1, 1, -1],
+      [ 1, 1, 1, 0, 0, 0, 1, 1,  1],
+      [ 1, 1, 0, 0, 0, 0, 0, 1,  1],
+      [ 1, 1, 1, 0, 0, 0, 1, 1,  1],
+      [ 1, 1, 0, 0, 0, 0, 0, 1,  1],
+      [ 1, 1, 1, 0, 0, 0, 1, 1,  1],
+      [-1, 1, 1, 1, 1, 1, 1, 1, -1]
+    ],
+    heroSpawns: [[0, 2], [0, 3], [0, 4], [1, 3]],
+    objective: {
+      kind: 'rout',
+      label: 'Clear Abyss Floor',
+      description: 'Defeat the abyssal guardians to unlock the next floor of Crownless Deep.'
+    },
+    enemies: [
+      { id: 'abyssal_sentinel', col: 7, row: 3, levelScale: 1.0 },
+      { id: 'crypt_knight', col: 6, row: 1, levelScale: 1.15 },
+      { id: 'bone_necromancer', col: 7, row: 5, levelScale: 1.15 },
+      { id: 'bone_archer', col: 8, row: 2, levelScale: 1.15 }
+    ]
   },
   {
     id: 'obsidian_rift',
