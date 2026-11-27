@@ -20,6 +20,10 @@ import type { Gait, UnitClipName } from './animations.ts'
 import { VFX_COLORS, arrowMesh, createBattleVfx } from './vfx.ts'
 import type { StrikeShape } from './vfx.ts'
 import {
+  cancelActionCamera, createActionCameraState, isActionCameraActive,
+  isActionCameraEnabled, stepActionCamera, triggerActionCameraCue
+} from './action-camera.ts'
+import {
   computeDangerZone, computeEnemyThreat, computeZocPerimeterTiles, evaluateAllFacingExposures, findGridPath,
   getEquipmentByUid, getHeroByUid, getHeroSkill, getPatternCells, getTacticByUid, getUnitByUid,
   getUnitFootprintCells, getUnitFootprintSize,
@@ -654,6 +658,8 @@ export function createCrownshardScene(renderer: LowPolyRenderer) {
   let cameraPanZ = 0
   const MIN_CAMERA_ZOOM = 0.58
   const MAX_CAMERA_ZOOM = 1.38
+  const actionCam = createActionCameraState()
+  let actionCameraSceneEnabled = true
   let campFraming: 'title' | 'camp' | 'armory' | 'story' | 'world' = 'title'
   let campShift = 0
   let armoryFocusW = 0
@@ -1129,6 +1135,10 @@ export function createCrownshardScene(renderer: LowPolyRenderer) {
             vfx.groundRing(ev.to, C_DISPLACE_HAZARD, 0.08, 0.55, 0.25, 1.5, -2.4)
             localShake = Math.max(localShake, 0.30)
           }
+        }
+      } else if (ev.kind === 'camera_cue') {
+        if (battle && actionCameraSceneEnabled && isActionCameraEnabled(state.campaign)) {
+          triggerActionCameraCue(actionCam, ev.cue, ev.at, battle.battleSpeed, true)
         }
       }
     }
@@ -1868,6 +1878,7 @@ export function createCrownshardScene(renderer: LowPolyRenderer) {
       cameraPitchActual = DEFAULT_CAMERA_PITCH
       cameraPanX = 0
       cameraPanZ = 0
+      cancelActionCamera(actionCam, true)
       for (const fn of battle.floatingNumbers) lastFloatId = Math.max(lastFloatId, fn.id)
     } else if (unitFx.size > battle.units.length + 12) {
       const activeUids = new Set(battle.units.map(u => u.uid))
@@ -1917,6 +1928,10 @@ export function createCrownshardScene(renderer: LowPolyRenderer) {
       cameraYawActual = normalizeCameraYaw(cameraYawTarget)
       cameraYawTarget = cameraYawActual
     }
+    if (!(actionCameraSceneEnabled && isActionCameraEnabled(state.campaign)) && actionCam.cue !== null) {
+      cancelActionCamera(actionCam)
+    }
+    stepActionCamera(actionCam, dt, battle.battleSpeed)
     const maxPan = Math.max(0, (1.02 - cameraZoomActual) * 8.0)
     cameraPanX = Math.max(-maxPan, Math.min(maxPan, cameraPanX))
     cameraPanZ = Math.max(-maxPan, Math.min(maxPan, cameraPanZ))
@@ -1931,21 +1946,22 @@ export function createCrownshardScene(renderer: LowPolyRenderer) {
       : aspect < 1.15 ? 16.5 : 14.2) * boardScale
     const baseEyeY = (isPhonePortrait ? baseDist * 0.78 : (isPhoneLandscape ? 12.2 : 11.8) * boardScale)
     const baseHoriz = baseDist * 0.92 + (isPhonePortrait ? 2.0 : 1.2)
-    const orbitRadius = Math.hypot(baseHoriz, baseEyeY) * cameraZoomActual
+    const effectiveZoom = Math.max(MIN_CAMERA_ZOOM * 0.85, cameraZoomActual * actionCam.currentZoom)
+    const orbitRadius = Math.hypot(baseHoriz, baseEyeY) * effectiveZoom
     const horizDist = Math.cos(cameraPitchActual) * orbitRadius
     const eyeY = Math.sin(cameraPitchActual) * orbitRadius
-    const camYaw = cameraYawActual
+    const camYaw = cameraYawActual + actionCam.currentYaw
     const sinYaw = Math.sin(camYaw)
     const cosYaw = Math.cos(camYaw)
     const baseTargetOffset = isPhonePortrait ? 0.9 : isPhoneLandscape ? 0.72 : 0.35
     const target: Vec3 = [
-      cameraPanX + sinYaw * baseTargetOffset,
-      -0.2,
-      cameraPanZ + cosYaw * baseTargetOffset
+      cameraPanX + sinYaw * baseTargetOffset + actionCam.currentFocus[0],
+      -0.2 + actionCam.currentFocus[1],
+      cameraPanZ + cosYaw * baseTargetOffset + actionCam.currentFocus[2]
     ]
     const eye: Vec3 = [
       target[0] + sinYaw * horizDist + cosYaw * shakeX,
-      eyeY + shakeY,
+      eyeY + actionCam.currentFocus[1] * 0.65 + shakeY,
       target[2] + cosYaw * horizDist - sinYaw * shakeX
     ]
     lastMatrix = multiply(perspective(Math.PI / 3.9, aspect, 0.5, 220), view(eye, target))
@@ -3124,13 +3140,16 @@ export function createCrownshardScene(renderer: LowPolyRenderer) {
     },
     rotateCamera(delta: number) {
       if (!Number.isFinite(delta)) return
+      cancelActionCamera(actionCam)
       cameraYawTarget += delta
     },
     snapCameraYaw(steps: number) {
+      cancelActionCamera(actionCam)
       cameraYawTarget = snapYawStep(cameraYawTarget, steps)
       return normalizeCameraYaw(cameraYawTarget)
     },
     setCameraYaw(rad: number, instant = false) {
+      cancelActionCamera(actionCam, instant)
       const normalized = normalizeCameraYaw(rad)
       if (instant) {
         cameraYawActual = normalized
@@ -3150,13 +3169,16 @@ export function createCrownshardScene(renderer: LowPolyRenderer) {
       return (
         Math.abs(cameraYawTarget - cameraYawActual) > 1e-3 ||
         Math.abs(cameraPitch - cameraPitchActual) > 1e-3 ||
-        Math.abs(cameraZoom - cameraZoomActual) > 1e-3
+        Math.abs(cameraZoom - cameraZoomActual) > 1e-3 ||
+        isActionCameraActive(actionCam)
       )
     },
     tiltCamera(delta: number) {
+      cancelActionCamera(actionCam)
       cameraPitch = Math.max(MIN_CAMERA_PITCH, Math.min(MAX_CAMERA_PITCH, cameraPitch + delta))
     },
     setCameraPitch(p: number) {
+      cancelActionCamera(actionCam)
       cameraPitch = Math.max(MIN_CAMERA_PITCH, Math.min(MAX_CAMERA_PITCH, p))
     },
     getCameraPitch() {
@@ -3166,9 +3188,11 @@ export function createCrownshardScene(renderer: LowPolyRenderer) {
       return { min: MIN_CAMERA_PITCH, max: MAX_CAMERA_PITCH }
     },
     zoomCamera(factor: number) {
+      cancelActionCamera(actionCam)
       cameraZoom = Math.max(MIN_CAMERA_ZOOM, Math.min(MAX_CAMERA_ZOOM, cameraZoom * factor))
     },
     setCameraZoom(z: number) {
+      cancelActionCamera(actionCam)
       cameraZoom = Math.max(MIN_CAMERA_ZOOM, Math.min(MAX_CAMERA_ZOOM, z))
     },
     getCameraZoom() {
@@ -3178,6 +3202,7 @@ export function createCrownshardScene(renderer: LowPolyRenderer) {
       return { min: MIN_CAMERA_ZOOM, max: MAX_CAMERA_ZOOM }
     },
     panCamera(dx: number, dz: number) {
+      cancelActionCamera(actionCam)
       const maxPan = Math.max(0, (1.02 - cameraZoom) * 8.0)
       if (maxPan <= 0) {
         cameraPanX = 0
@@ -3189,11 +3214,25 @@ export function createCrownshardScene(renderer: LowPolyRenderer) {
       cameraPanZ = Math.max(-maxPan, Math.min(maxPan, cameraPanZ + worldDz))
     },
     resetCamera() {
+      cancelActionCamera(actionCam)
       cameraYawTarget = cameraYawActual + shortestYawDelta(cameraYawActual, 0)
       cameraPitch = DEFAULT_CAMERA_PITCH
       cameraZoom = 1.0
       cameraPanX = 0
       cameraPanZ = 0
+    },
+    setActionCameraEnabled(enabled: boolean) {
+      actionCameraSceneEnabled = Boolean(enabled)
+      if (!actionCameraSceneEnabled) cancelActionCamera(actionCam)
+    },
+    isActionCameraActive() {
+      return isActionCameraActive(actionCam)
+    },
+    cancelActionCamera(immediate = false) {
+      cancelActionCamera(actionCam, immediate)
+    },
+    getActionCameraState() {
+      return actionCam
     },
     project,
     dispose() {
