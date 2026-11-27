@@ -432,11 +432,33 @@ export type {
   WorldEventPurchaseResult, WorldEventRoadCandidate, WorldEventTickResult,
   WorldEventVictoryRewardPlan
 } from './world-events.ts'
+import {
+  BOSS_PHASE2_HP_RATIO, BOSS_TELEGRAPH_AUTO_AVOID_PENALTY,
+  applyBossPhaseShift, chooseBossTelegraphPlan, clearBossTelegraphsForCaster,
+  cloneBossTelegraphs, collectDueBossTelegraphs, computeBossTelegraphCells,
+  countUniqueTelegraphTiles, createBossTelegraphZone, formatBossTelegraphHudSummary,
+  getBossPhaseShiftSpec, getBossTelegraphElement, getMaxLivingBossPhase,
+  getTelegraphsAtCell, hasPendingBossTelegraph, shouldTriggerBossPhaseShift,
+  telegraphElementToComboElement, usesSecondaryTelegraphCadence, validateBossTelegraphs
+} from './boss-telegraphs.ts'
+export {
+  BOSS_PHASE2_HP_RATIO, BOSS_TELEGRAPH_AUTO_AVOID_PENALTY,
+  applyBossPhaseShift, chooseBossTelegraphPlan, clearBossTelegraphsForCaster,
+  cloneBossTelegraphs, collectDueBossTelegraphs, computeBossTelegraphCells,
+  countUniqueTelegraphTiles, createBossTelegraphZone, formatBossTelegraphHudSummary,
+  getBossPhaseShiftSpec, getBossTelegraphElement, getMaxLivingBossPhase,
+  getTelegraphsAtCell, hasPendingBossTelegraph, shouldTriggerBossPhaseShift,
+  telegraphElementToComboElement, usesSecondaryTelegraphCadence, validateBossTelegraphs
+}
+export type {
+  BossPhaseShiftResult, BossPhaseShiftSpec, BossTelegraphHudSummary,
+  BossTelegraphPattern, BossTelegraphPlan
+} from './boss-telegraphs.ts'
 import type {
   AttackArc, BattleAtmosphere, BattleCellSnapshot, BattleHeroXpGain, BattleObjectiveEvaluation, BattleObjectiveKind,
   EndlessBlessingId,
   BattleObjectiveSnapshot, BattleObjectiveState, BattleReward, BattleSaveSnapshot, BattleSpeedMultiplier,
-  BattleState, BattleUnit, BattleUnitSnapshot, BattleWeatherId, BiomeId, CampaignState, ChapterSpec, CombatForecast,
+  BattleState, BattleUnit, BattleUnitSnapshot, BattleWeatherId, BiomeId, BossTelegraphElement, BossTelegraphZone, CampaignState, ChapterSpec, CombatForecast,
   CombatForecastAlt, CounterAvoidReason, DangerZoneMap, DangerZoneTile, DifficultyLevel, DisplacementPreview,
   ElementKind, ElementalComboPreview, EnemyArchetypeId, EnemyThreatMap, EquipSlot,
   EquipmentSpec, FacingDir, FacingExposureLevel, FacingExposureReport, FacingThreatEntry,
@@ -1580,6 +1602,7 @@ export function serializeBattleState(
     ...(rngSeed !== undefined && Number.isFinite(rngSeed) ? { rngSeed: (rngSeed >>> 0) || 1337 } : {}),
     objective: serializeObjective(battle.objective),
     ...(battle.stageMechanic ? { stageMechanic: cloneStageMechanicState(battle.stageMechanic) } : {}),
+    ...(battle.bossTelegraphs.length > 0 ? { bossTelegraphs: cloneBossTelegraphs(battle.bossTelegraphs) } : {}),
     xpEarnedByHero: { ...battle.xpEarnedByHero },
     heroStartLevelByUid: { ...battle.heroStartLevelByUid },
     ...(battle.heroKoCount > 0 ? { heroKoCount: Math.floor(battle.heroKoCount) } : {}),
@@ -1927,6 +1950,7 @@ export function validateBattleSnapshot(raw: unknown): BattleSaveSnapshot | null 
   const rngSeed = isFiniteNum(raw.rngSeed) ? ((raw.rngSeed >>> 0) || 1337) : undefined
   const objective = raw.objective !== undefined ? validateObjectiveSnapshot(raw.objective, cols, rows) ?? undefined : undefined
   const stageMechanic = validateStageMechanicSnapshot(raw.stageMechanic)
+  const bossTelegraphs = validateBossTelegraphs(raw.bossTelegraphs, cols, rows)
   let xpEarnedByHero: Record<string, number> | undefined
   if (isRecord(raw.xpEarnedByHero)) {
     xpEarnedByHero = {}
@@ -1988,6 +2012,7 @@ export function validateBattleSnapshot(raw: unknown): BattleSaveSnapshot | null 
     ...(rngSeed !== undefined ? { rngSeed } : {}),
     ...(objective !== undefined ? { objective } : {}),
     ...(stageMechanic !== undefined ? { stageMechanic } : {}),
+    ...(bossTelegraphs !== undefined ? { bossTelegraphs } : {}),
     ...(xpEarnedByHero !== undefined ? { xpEarnedByHero } : {}),
     ...(heroStartLevelByUid !== undefined ? { heroStartLevelByUid } : {}),
     ...(heroKoCount !== undefined ? { heroKoCount } : {}),
@@ -2169,6 +2194,9 @@ export function restoreBattleState(state: GameState, snapshot: unknown): boolean
       : valid.activeWorldEventId === undefined && createInitialStageMechanicState(valid.stageId) !== undefined
         ? { stageMechanic: createInitialStageMechanicState(valid.stageId) }
         : {}),
+    bossTelegraphs: valid.bossTelegraphs
+      ? cloneBossTelegraphs(valid.bossTelegraphs).filter(tg => units.some(u => u.uid === tg.casterUid && u.alive))
+      : [],
     turn: valid.turn,
     phase: valid.phase,
     activeUnitUid: valid.activeUnitUid,
@@ -3307,7 +3335,7 @@ function launchBattleInternal(
       stars: spec.isBoss ? 3 : 1,
       level: normalizeHeroLevel(Math.round(chapter.difficulty * 2 - 1 + (endlessWave > 0 ? endlessWave : 0) + (spec.isBoss ? 2 : 0))),
       isBoss: Boolean(spec.isBoss),
-      ...(spawn.id === 'unbroken_crown_boss' ? { bossPhase: 1 } : {}),
+      ...(spec.isBoss ? { bossPhase: 1 } : {}),
       ...(fpSize > 1 ? { footprintSize: fpSize } : {}),
       col: spawn.col,
       row: spawn.row,
@@ -3396,6 +3424,7 @@ function launchBattleInternal(
     ...(!worldEvent && endlessWave === 0 && createInitialStageMechanicState(chapter.id) !== undefined
       ? { stageMechanic: createInitialStageMechanicState(chapter.id) }
       : {}),
+    bossTelegraphs: [],
     turn: 0,
     phase: useDeploy ? 'deploy' : 'player',
     activeUnitUid: null,
@@ -4124,6 +4153,29 @@ export function computeDangerZone(battle: BattleState): DangerZoneMap {
         } else if (entry.highestArc === 'front') {
           entry.highestArc = 'flank'
         }
+      }
+    }
+  }
+
+  for (const tg of battle.bossTelegraphs) {
+    const caster = battle.units.find(u => u.uid === tg.casterUid && u.alive)
+    if (!caster) continue
+    for (const cell of tg.cells) {
+      const key = `${cell.col},${cell.row}`
+      let entry = byKey.get(key)
+      if (!entry) {
+        entry = {
+          col: cell.col,
+          row: cell.row,
+          enemyUids: [],
+          highestArc: 'front',
+          hasFlankRisk: false,
+          hasBackstabRisk: false
+        }
+        byKey.set(key, entry)
+      }
+      if (!entry.enemyUids.includes(tg.casterUid)) {
+        entry.enemyUids.push(tg.casterUid)
       }
     }
   }
@@ -6151,6 +6203,7 @@ function handleUnitDefeat(state: GameState, unit: BattleUnit): void {
   } else {
     unit.downed = false
     unit.koCountdown = 0
+    clearBossTelegraphsForCaster(battle, unit.uid)
     discoverEnemyInCodex(state.campaign, unit.enemyId)
     appendCombatLog(battle, 'ko', formatKoLog({ unitName: unit.name, kind: 'ko', isBoss: unit.isBoss }))
     state.sounds.push({ kind: 'ko' })
@@ -8050,26 +8103,69 @@ function triggerStepOnHazard(state: GameState, unit: BattleUnit, cell: GridCell)
   }
 }
 
-/** Trigger multi-phase raid boss awakening (e.g. Unbroken Crown Phase 1 -> Phase 2 at <= 50% HP). */
+/** Trigger multi-phase boss awakening at <= 50% HP (Unbroken Crown bespoke + all other bosses Phase II). */
 function triggerFrontierBossPhaseIfReady(state: GameState, boss: BattleUnit): void {
   const battle = state.battle
-  if (!battle || !shouldTriggerUnbrokenCrownPhase2(boss)) return
-  const result = applyFrontierBossPhaseTransition(boss)
-  if (!result.triggered) return
+  if (!battle || !boss.alive || !boss.isBoss) return
 
-  const cfg = getUnbrokenCrownPhase2Config()
-  battle.bannerText = result.bannerText
-  battle.bannerTimer = 2.0
-  battle.shake = Math.max(battle.shake, 0.55)
+  if (shouldTriggerUnbrokenCrownPhase2(boss)) {
+    const result = applyFrontierBossPhaseTransition(boss)
+    if (!result.triggered) return
+
+    const cfg = getUnbrokenCrownPhase2Config()
+    battle.bannerText = result.bannerText
+    battle.bannerTimer = 2.0
+    battle.shake = Math.max(battle.shake, 0.55)
+    state.sounds.push({ kind: 'magic', pitch: 0.68 })
+    addFloat(battle, boss.x, boss.y + 0.72, boss.z, 'PHASE 2: SOLAR ECLIPSE!', '#ffe078')
+    addFloat(battle, boss.x, boss.y + 0.35, boss.z, `+${result.shieldGain} SHIELD`, '#7ed9ff')
+    state.vfx.push({
+      kind: 'special',
+      uid: boss.uid,
+      move: 'eclipse_nova',
+      at: [boss.x, boss.y, boss.z],
+      cells: [[boss.x, boss.y, boss.z]]
+    })
+    state.vfx.push({
+      kind: 'camera_cue',
+      cue: 'boss_special',
+      at: [boss.x, boss.y, boss.z]
+    })
+    appendCombatLog(
+      battle,
+      'system',
+      `${boss.name} enters Phase 2 (${result.bannerText}) — +${result.shieldGain} Shield, cleansed, Empowered!`,
+      { accentHex: '#ffd166' }
+    )
+
+    const summonTiles = findFrontierSummonTiles(battle, boss, cfg.summonCount)
+    for (const tile of summonTiles) {
+      const guard = createSummonedEnemyUnit(battle, boss, cfg.summonArchetype, tile.col, tile.row)
+      battle.units.push(guard)
+      discoverEnemyInCodex(state.campaign, guard.enemyId)
+      state.vfx.push({ kind: 'burst', style: 'gold', at: [guard.x, guard.y + 0.55, guard.z], radius: 0.85, uid: boss.uid })
+      addFloat(battle, guard.x, guard.y + 0.4, guard.z, 'SOLAR VANGUARD!', '#ffd166')
+    }
+    battle.turnOrder = computeTurnOrderPreview(battle, 8)
+    return
+  }
+
+  if (!shouldTriggerBossPhaseShift(boss)) return
+  const shift = applyBossPhaseShift(boss)
+  if (!shift.triggered) return
+
+  battle.bannerText = shift.bannerText
+  battle.bannerTimer = 2.2
+  battle.shake = Math.max(battle.shake, 0.50)
   state.sounds.push({ kind: 'magic', pitch: 0.68 })
-  addFloat(battle, boss.x, boss.y + 0.72, boss.z, 'PHASE 2: SOLAR ECLIPSE!', '#ffe078')
-  addFloat(battle, boss.x, boss.y + 0.35, boss.z, `+${result.shieldGain} SHIELD`, '#7ed9ff')
+  addFloat(battle, boss.x, boss.y + 0.74, boss.z, 'PHASE II!', '#ff9cf0')
+  addFloat(battle, boss.x, boss.y + 0.36, boss.z, `+${shift.shieldGain} SHD · +${shift.atkBonus} ATK`, '#7ed9ff')
   state.vfx.push({
-    kind: 'special',
-    uid: boss.uid,
-    move: 'eclipse_nova',
-    at: [boss.x, boss.y, boss.z],
-    cells: [[boss.x, boss.y, boss.z]]
+    kind: 'burst',
+    style: shift.element,
+    at: [boss.x, boss.y + 0.65, boss.z],
+    radius: 1.55,
+    uid: boss.uid
   })
   state.vfx.push({
     kind: 'camera_cue',
@@ -8079,19 +8175,145 @@ function triggerFrontierBossPhaseIfReady(state: GameState, boss: BattleUnit): vo
   appendCombatLog(
     battle,
     'system',
-    `${boss.name} enters Phase 2 (${result.bannerText}) — +${result.shieldGain} Shield, cleansed, Empowered!`,
-    { accentHex: '#ffd166' }
+    `${shift.bannerText} (+${shift.shieldGain} Shield, +${shift.atkBonus} ATK, Empowered & Hasted)`,
+    { accentHex: '#ff70a6' }
   )
-
-  const summonTiles = findFrontierSummonTiles(battle, boss, cfg.summonCount)
-  for (const tile of summonTiles) {
-    const guard = createSummonedEnemyUnit(battle, boss, cfg.summonArchetype, tile.col, tile.row)
-    battle.units.push(guard)
-    discoverEnemyInCodex(state.campaign, guard.enemyId)
-    state.vfx.push({ kind: 'burst', style: 'gold', at: [guard.x, guard.y + 0.55, guard.z], radius: 0.85, uid: boss.uid })
-    addFloat(battle, guard.x, guard.y + 0.4, guard.z, 'SOLAR VANGUARD!', '#ffd166')
-  }
   battle.turnOrder = computeTurnOrderPreview(battle, 8)
+}
+
+function telegraphBurstAccent(element: BossTelegraphElement): string {
+  if (element === 'fire') return '#ff7b3b'
+  if (element === 'frost') return '#7fe8ff'
+  if (element === 'holy') return '#ffe078'
+  if (element === 'arcane') return '#b88cff'
+  return '#ff66c4'
+}
+
+function telegraphVfxMove(zone: BossTelegraphZone): 'eclipse_nova' | 'frostwyrm_breath' | 'titan_slam' {
+  if (zone.element === 'frost' || zone.moveId === 'tempest_surge') return 'frostwyrm_breath'
+  if (
+    zone.moveId === 'magma_slam' ||
+    zone.moveId === 'magma_eruption' ||
+    zone.moveId === 'warlord_slam' ||
+    zone.moveId === 'sandstorm_vortex' ||
+    zone.moveId === 'cataclysm_slam'
+  ) {
+    return 'titan_slam'
+  }
+  return 'eclipse_nova'
+}
+
+/** Cancel a stunned boss's pending telegraphs cleanly so players are rewarded for crowd control. */
+function interruptBossTelegraphsOnStun(state: GameState, boss: BattleUnit): void {
+  const battle = state.battle
+  if (!battle || !boss.isBoss) return
+  const cancelled = clearBossTelegraphsForCaster(battle, boss.uid)
+  if (cancelled.length === 0) return
+  const labels = cancelled.map(z => z.label).join(', ')
+  addFloat(battle, boss.x, boss.y + 0.56, boss.z, 'CAST INTERRUPTED!', '#7cf0ff')
+  appendCombatLog(
+    battle,
+    'status',
+    `${boss.name}'s telegraphed ${labels} was interrupted by Stun!`,
+    { accentHex: '#7cf0ff' }
+  )
+}
+
+/** Detonate any pending boss telegraphs whose countdown reaches 0 on the caster's turn. */
+function detonateDueBossTelegraphs(state: GameState, boss: BattleUnit): boolean {
+  const battle = state.battle
+  if (!battle || !boss.alive || !boss.isBoss) return false
+  const dueZones = collectDueBossTelegraphs(battle, boss.uid)
+  if (dueZones.length === 0) return false
+
+  for (const zone of dueZones) {
+    const centers = cellCentres(battle, zone.cells)
+    const primary = centers[0] ?? [boss.x, boss.y, boss.z]
+    const accent = telegraphBurstAccent(zone.element)
+    boss.animState = 'cast'
+    boss.animTimer = 0.54
+    battle.shake = Math.max(battle.shake, zone.phase >= 2 ? 0.52 : 0.38)
+    state.sounds.push({ kind: 'magic', pitch: zone.phase >= 2 ? 0.68 : 0.76 })
+    addFloat(battle, boss.x, boss.y + 0.66, boss.z, `${zone.label.toUpperCase()}!`, accent)
+    state.vfx.push({
+      kind: 'special',
+      uid: boss.uid,
+      move: telegraphVfxMove(zone),
+      at: primary,
+      cells: centers
+    })
+    for (const pos of centers) {
+      state.vfx.push({
+        kind: 'burst',
+        style: zone.element,
+        at: [pos[0], pos[1] + 0.55, pos[2]],
+        radius: 0.92,
+        uid: boss.uid
+      })
+    }
+    state.vfx.push({
+      kind: 'camera_cue',
+      cue: 'boss_special',
+      at: primary
+    })
+
+    const comboElement = telegraphElementToComboElement(zone.element)
+    const hitUids = new Set<string>()
+    let hitCount = 0
+    for (const cell of zone.cells) {
+      const victim = unitAt(battle, cell.col, cell.row)
+      if (!victim) {
+        if (comboElement) {
+          triggerElementalCombo(state, boss, comboElement, null, cell.col, cell.row, handleUnitDefeat)
+        }
+        continue
+      }
+      if (victim.team !== 'ally' || !victim.alive || hitUids.has(victim.uid)) continue
+      hitUids.add(victim.uid)
+      hitCount += 1
+      const rawDamage = boss.atk * zone.damageMul + zone.flatDamage
+      const ignoreArmor = zone.phase >= 2 ? 0.40 : 0.30
+      applyDamage(
+        state,
+        boss,
+        victim,
+        rawDamage,
+        ignoreArmor,
+        false,
+        true,
+        { skillName: zone.label },
+        false
+      )
+      if (comboElement) {
+        triggerElementalCombo(state, boss, comboElement, victim.alive ? victim : null, cell.col, cell.row, handleUnitDefeat)
+      }
+      if (victim.alive && zone.status) {
+        applyStatus(battle, victim, zone.status, zone.status === 'poison' ? 2 : 1)
+      }
+    }
+
+    if (hitCount === 0) {
+      addFloat(battle, primary[0], primary[1] + 0.55, primary[2], 'DODGED!', '#7cffc4')
+      appendCombatLog(
+        battle,
+        'system',
+        `${boss.name}'s ${zone.label} erupts — all heroes dodged the danger zone!`,
+        { accentHex: '#7cffc4' }
+      )
+    } else {
+      appendCombatLog(
+        battle,
+        'attack',
+        `${boss.name}'s telegraphed ${zone.label} detonates, striking ${hitCount} hero${hitCount === 1 ? '' : 'es'}!`,
+        { accentHex: accent }
+      )
+    }
+
+    checkBattleOutcome(state)
+    if (isBattleEnded(battle)) return true
+  }
+
+  return true
 }
 
 /** Apply round-boundary frontier biome hazards (Sandstorm Gusts, Lightning Conduits, Astral Rift Pulses). */
@@ -8322,6 +8544,8 @@ function advanceToNextUnitTurn(state: GameState, initial = false): void {
       if (next.team === 'ally') {
         battle.objective.roundsElapsed += 1
         applyRoundBoundaryMutators(state)
+      } else if (next.isBoss) {
+        interruptBossTelegraphsOnStun(state, next)
       }
       addFloat(battle, next.x, next.y, next.z, 'STUNNED', '#ffdf59')
       appendCombatLog(battle, 'status', formatStatusLog({ targetName: next.name, status: 'stun', phase: 'stun_skip' }))
@@ -8442,9 +8666,17 @@ function executeEnemyUnitTurn(state: GameState, enemy: BattleUnit): void {
   if (!battle || !enemy.alive) return
   if (enemy.stunTurns > 0) {
     enemy.stunTurns -= 1
+    if (enemy.isBoss) {
+      interruptBossTelegraphsOnStun(state, enemy)
+    }
     addFloat(battle, enemy.x, enemy.y, enemy.z, 'STUNNED', '#ffdf59')
     appendCombatLog(battle, 'status', formatStatusLog({ targetName: enemy.name, status: 'stun', phase: 'stun_skip' }))
     return
+  }
+
+  // Detonate any 1-turn-ahead AoE telegraphs this boss primed on its previous turn
+  if (enemy.isBoss && detonateDueBossTelegraphs(state, enemy)) {
+    if (isBattleEnded(battle) || !enemy.alive) return
   }
 
   const allies = battle.units.filter(u => u.alive && u.team === 'ally')
@@ -8740,6 +8972,48 @@ function performEnemyAttack(state: GameState, enemy: BattleUnit, target: BattleU
       label: 'ECLIPSE NOVA!'
     }
   }
+
+  // Boss 1-turn-ahead AoE Telegraph: mark glowing danger tiles instead of instant un-telegraphed detonation!
+  if (enemy.isBoss) {
+    const telegraphPlan = chooseBossTelegraphPlan(battle, enemy, special)
+    if (telegraphPlan) {
+      const telegraphCells = computeBossTelegraphCells(battle, target.col, target.row, telegraphPlan.pattern)
+      if (telegraphCells.length > 0) {
+        const zone = createBossTelegraphZone(battle, enemy, telegraphPlan, telegraphCells)
+        battle.bossTelegraphs.push(zone)
+        enemy.cooldowns[telegraphPlan.cooldownSlot] = telegraphPlan.cooldownTurns
+        faceToward(enemy, target.x, target.z)
+        enemy.animState = 'cast'
+        enemy.animTimer = 0.52
+        enemy.acted = true
+        const accent = telegraphBurstAccent(zone.element)
+        state.sounds.push({ kind: 'magic', pitch: 0.72 })
+        addFloat(battle, enemy.x, enemy.y + 0.62, enemy.z, `⚠ ${zone.label.toUpperCase()}!`, accent)
+        battle.bannerText = `⚠ ${enemy.name}: ${zone.label} (${zone.cells.length} tiles)`
+        battle.bannerTimer = 1.65
+        state.vfx.push({
+          kind: 'burst',
+          style: zone.element,
+          at: [target.x, target.y + 0.55, target.z],
+          radius: 1.05,
+          uid: enemy.uid
+        })
+        state.vfx.push({
+          kind: 'camera_cue',
+          cue: 'boss_special',
+          at: [(enemy.x + target.x) * 0.5, (enemy.y + target.y) * 0.5, (enemy.z + target.z) * 0.5]
+        })
+        appendCombatLog(
+          battle,
+          'system',
+          `⚠ ${enemy.name} telegraphs ${zone.label} across ${zone.cells.length} tiles — dodge before next boss turn!`,
+          { accentHex: accent }
+        )
+        return
+      }
+    }
+  }
+
   if (special) {
     faceToward(enemy, target.x, target.z)
     enemy.animState = 'cast'

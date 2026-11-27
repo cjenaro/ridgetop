@@ -13,6 +13,23 @@ export type StatusKind = 'burn' | 'slow' | 'stun' | 'empower' | 'taunt' | 'haste
 
 export type ElementKind = 'fire' | 'frost' | 'poison' | 'holy' | 'arcane'
 
+export type BossTelegraphElement = 'shadow' | 'fire' | 'frost' | 'holy' | 'arcane'
+
+export interface BossTelegraphZone {
+  readonly id: string
+  readonly casterUid: string
+  readonly casterName: string
+  readonly moveId: string
+  readonly label: string
+  readonly element: BossTelegraphElement
+  readonly cells: readonly GridCoord[]
+  readonly damageMul: number
+  readonly flatDamage: number
+  readonly status?: StatusKind
+  turnsRemaining: number
+  readonly phase: number
+}
+
 export type ElementalComboId = 'shatter' | 'freeze' | 'wildfire' | 'combust'
 
 export interface ElementalComboPreview {
@@ -1122,6 +1139,7 @@ export interface BattleState {
   readonly deployTiles: readonly GridCoord[]
   readonly objective: BattleObjectiveState
   stageMechanic?: StageMechanicState
+  bossTelegraphs: BossTelegraphZone[]
   turn: number
   phase: BattlePhase
   activeUnitUid: string | null
@@ -1259,6 +1277,7 @@ export interface BattleSaveSnapshot {
   readonly rngSeed?: number
   readonly objective?: BattleObjectiveSnapshot
   readonly stageMechanic?: StageMechanicState
+  readonly bossTelegraphs?: readonly BossTelegraphZone[]
   readonly xpEarnedByHero?: Record<string, number>
   readonly heroStartLevelByUid?: Record<string, number>
   readonly heroKoCount?: number
