@@ -28,6 +28,7 @@
       "crownshard/discovery-tips.ts",
       "crownshard/expansion-act1.ts",
       "crownshard/simulation.ts",
+      "crownshard/expansion-act2.ts",
       "crownshard/enemy-archetypes.ts",
       "crownshard/expansion-frontier.ts",
       "crownshard/forge.ts",

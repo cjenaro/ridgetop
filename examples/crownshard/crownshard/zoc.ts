@@ -1,4 +1,5 @@
 import { ENEMY_SPECS, HERO_SPECS } from './data.ts'
+import { getUnitPerimeterCells, isCellAdjacentToUnit } from './expansion-act2.ts'
 import { mutatorDamageMultiplier } from './mutators.ts'
 import {
   computeAttackerDamageMultiplier, computeBonusIgnoreArmor, computeShieldWallDefBonus
@@ -113,7 +114,7 @@ export function getOpposingZocSentinelsAt(
   for (const u of battle.units) {
     if (u.team === moverTeam) continue
     if (!hasZoneOfControl(u)) continue
-    if (isOrthogonallyAdjacent(u.col, u.row, col, row)) {
+    if (isCellAdjacentToUnit(u, col, row)) {
       out.push(u)
     }
   }
@@ -129,13 +130,12 @@ export function computeZocPerimeterTiles(
   controllingTeam: 'ally' | 'enemy'
 ): ZocTileInfo[] {
   const byKey = new Map<string, { col: number; row: number; controllerUids: string[] }>()
-  const dirs: readonly (readonly [number, number])[] = [[1, 0], [-1, 0], [0, 1], [0, -1]]
   for (const u of battle.units) {
     if (u.team !== controllingTeam || !hasZoneOfControl(u)) continue
-    for (const [dc, dr] of dirs) {
-      const nc = u.col + dc
-      const nr = u.row + dr
-      if (nc < 0 || nc >= battle.cols || nr < 0 || nr >= battle.rows) continue
+    const perim = getUnitPerimeterCells(battle, u)
+    for (const p of perim) {
+      const nc = p.col
+      const nr = p.row
       const cell = battle.cells[nr]?.[nc]
       if (!cell || cell.terrain === 'void' || !terrainWalkable(cell.terrain)) continue
       const key = `${nc},${nr}`

@@ -22,6 +22,7 @@ import type { StrikeShape } from './vfx.ts'
 import {
   computeDangerZone, computeEnemyThreat, computeZocPerimeterTiles, evaluateAllFacingExposures, findGridPath,
   getEquipmentByUid, getHeroByUid, getHeroSkill, getPatternCells, getTacticByUid, getUnitByUid,
+  getUnitFootprintCells, getUnitFootprintSize,
   hasMutator, isChestClaimed, isEnemyShrouded, isIntactBarricade, isTileRevealedInFog,
   previewPathOpportunityAttacks, unitAt, unitOrDownedAt
 } from './simulation.ts'
@@ -1336,7 +1337,7 @@ export function createCrownshardScene(renderer: LowPolyRenderer) {
     const crossed = (t: number) => before < t && after >= t
     if (fx.deathClip === 'death_crumble' && crossed(0.55)) {
       localShake = Math.max(localShake, 0.12)
-      const ice = unit.enemyId === 'frost_golem'
+      const ice = unit.enemyId === 'frost_golem' || unit.enemyId === 'frostwyrm_rimefang'
       const magma = unit.enemyId === 'magma_warden'
       const troll = unit.enemyId === 'river_troll'
       const chunkCol: Color = ice ? [0.74, 0.90, 1.0, 1]
@@ -1393,9 +1394,11 @@ export function createCrownshardScene(renderer: LowPolyRenderer) {
         })
       : ENEMY_RIGS[unit.enemyId ?? 'goblin']
 
-    const scale = unit.enemyId === 'unbroken_crown_boss' ? (unit.bossPhase === 2 ? 1.48 : 1.42)
+    const fpSize = getUnitFootprintSize(unit)
+    const scale = unit.enemyId === 'frostwyrm_rimefang' ? 1.78
+      : unit.enemyId === 'unbroken_crown_boss' ? (unit.bossPhase === 2 ? 1.48 : 1.42)
       : unit.enemyId === 'eclipse_archon' ? 1.38
-      : unit.enemyId === 'dune_sovereign_boss' || unit.enemyId === 'astral_warden_boss' ? 1.36
+      : unit.enemyId === 'dune_sovereign_boss' || unit.enemyId === 'astral_warden_boss' || unit.enemyId === 'lich_vaelen' ? 1.36
       : unit.isBoss ? 1.32
       : unit.enemyId === 'frost_golem' || unit.enemyId === 'river_troll' ? 1.24
       : unit.enemyId === 'goblin' || unit.enemyId === 'bone_thrall' ? 0.90
@@ -1713,7 +1716,11 @@ export function createCrownshardScene(renderer: LowPolyRenderer) {
       }
     }
 
-    const hoverY = unit.enemyId === 'ice_wraith' ? 0.14 + Math.sin(time * 3.4 + fx.seed * 6) * 0.08 : 0
+    const hoverY = unit.enemyId === 'ice_wraith'
+      ? 0.14 + Math.sin(time * 3.4 + fx.seed * 6) * 0.08
+      : unit.enemyId === 'lich_vaelen'
+        ? 0.09 + Math.sin(time * 2.6 + fx.seed * 6) * 0.05
+        : 0
     const px = unit.x + unit.lungeX + fx.kbX + slideOffX
     const pz = unit.z + unit.lungeZ + fx.kbZ + slideOffZ
     const py = unit.y + extraY + slideOffY + hoverY
@@ -1736,7 +1743,7 @@ export function createCrownshardScene(renderer: LowPolyRenderer) {
     const groundY = unit.y
     shadows.add([px, groundY + 0.02, pz], {
       groundY,
-      radius: 0.58 * scale * (1 - Math.min(0.35, extraY * 0.5)),
+      radius: (fpSize === 2 ? 1.55 : 0.58 * scale) * (1 - Math.min(0.35, extraY * 0.5)),
       opacity: shrouded ? 0.14 : 0.30
     })
 
@@ -1750,7 +1757,17 @@ export function createCrownshardScene(renderer: LowPolyRenderer) {
     // Colorblind-safe unit rings: Allies use smooth Circle ring, Enemies use Diamond ring + directional facing chevron!
     const ringColor = isActive ? C_ACTIVE_RING : isSelected ? C_SELECT_RING : unit.team === 'ally' ? C_ALLY_RING : C_ENEMY_RING
     const ringScale = (isActive ? 0.68 + Math.sin(time * 6) * 0.045 : 0.54) * scale
-    if (unit.team === 'enemy') {
+    if (fpSize === 2) {
+      // Highlight all 4 tiles of a 2x2 raid boss's footprint so players can read its full hitbox clearly
+      const fpCells = getUnitFootprintCells(unit)
+      for (const fc of fpCells) {
+        const fCell = battle.cells[fc.row]?.[fc.col]
+        if (!fCell) continue
+        const [fxw, fyw, fzw] = gridToWorld(fc.col, fc.row, fCell.elevation, battle.cols, battle.rows)
+        pool.add(tileDiamondMesh, [fxw, fyw + 0.040, fzw], [TILE_SIZE * 0.72, 1, TILE_SIZE * 0.72], 0, ringColor, 0.72, 'alpha')
+      }
+      pool.add(flatRing, [px, groundY + 0.046, pz], [TILE_SIZE * 0.98, 1, TILE_SIZE * 0.98], time * 0.5, ringColor, 0.92, 'additive')
+    } else if (unit.team === 'enemy') {
       pool.add(tileDiamondMesh, [px, groundY + 0.040, pz], [ringScale * 2.5, 1, ringScale * 2.5], 0, ringColor, 0.96, 'alpha')
     } else {
       pool.add(flatRing, [px, groundY + 0.038, pz], [ringScale, 1, ringScale], time * (isActive ? 1.1 : 0), ringColor, 0.95, 'alpha')
@@ -1805,12 +1822,12 @@ export function createCrownshardScene(renderer: LowPolyRenderer) {
     }
     if (unit.isBoss) {
       const bossCrystalCol = unit.enemyId === 'magma_warden' ? C_FIRE_CORE
-        : unit.enemyId === 'frost_jarl' ? C_FROST
-        : unit.enemyId === 'mire_matriarch' ? C_POISON
+        : unit.enemyId === 'frost_jarl' || unit.enemyId === 'frostwyrm_rimefang' || unit.enemyId === 'astral_warden_boss' ? C_FROST
+        : unit.enemyId === 'mire_matriarch' || unit.enemyId === 'lich_vaelen' ? C_POISON
         : unit.enemyId === 'briar_warlord' || unit.enemyId === 'dune_sovereign_boss' ? C_STAR2_GOLD
-        : unit.enemyId === 'astral_warden_boss' ? C_FROST
         : unit.enemyId === 'unbroken_crown_boss' && (unit.bossPhase ?? 1) >= 2 ? C_STAR2_GOLD
         : C_SHADOW
+      const orbitR = fpSize === 2 ? 1.48 : 0.94
       const crystalCount = unit.enemyId === 'unbroken_crown_boss' && (unit.bossPhase ?? 1) >= 2 ? 5 : 3
       for (let i = 0; i < crystalCount; i++) {
         const a = time * (crystalCount > 3 ? 2.4 : 1.6) + (i / crystalCount) * Math.PI * 2
@@ -1819,7 +1836,7 @@ export function createCrownshardScene(renderer: LowPolyRenderer) {
           : bossCrystalCol
         pool.add(
           crystalMesh,
-          [px + Math.cos(a) * 0.94, py + 1.18 + Math.sin(time * 3 + i) * 0.14, pz + Math.sin(a) * 0.94],
+          [px + Math.cos(a) * orbitR, py + (fpSize === 2 ? 1.55 : 1.18) + Math.sin(time * 3 + i) * 0.14, pz + Math.sin(a) * orbitR],
           [0.20, 0.30, 0.20],
           a,
           col,

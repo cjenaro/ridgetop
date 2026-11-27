@@ -373,17 +373,23 @@ export function isTileRevealedInFog(
 /** True if a unit is currently visible/spotted by the player. Allies are always visible. */
 export function isUnitVisibleToPlayer(
   battle: Pick<BattleState, 'units'> & Partial<Pick<BattleState, 'mutators'>>,
-  unit: Pick<BattleUnit, 'team' | 'col' | 'row' | 'alive'>
+  unit: Pick<BattleUnit, 'team' | 'col' | 'row' | 'alive'> & Partial<Pick<BattleUnit, 'footprintSize'>>
 ): boolean {
   if (unit.team === 'ally') return true
   if (!hasMutator(battle.mutators, 'fog_of_war')) return true
-  return isTileRevealedInFog(battle, unit.col, unit.row)
+  const size = unit.footprintSize === 2 ? 2 : 1
+  for (let dr = 0; dr < size; dr++) {
+    for (let dc = 0; dc < size; dc++) {
+      if (isTileRevealedInFog(battle, unit.col + dc, unit.row + dr)) return true
+    }
+  }
+  return false
 }
 
 /** True if a living enemy is currently shrouded in `fog_of_war` and hidden from direct targeting. */
 export function isEnemyShrouded(
   battle: Pick<BattleState, 'units'> & Partial<Pick<BattleState, 'mutators'>>,
-  unit: Pick<BattleUnit, 'team' | 'col' | 'row' | 'alive'>
+  unit: Pick<BattleUnit, 'team' | 'col' | 'row' | 'alive'> & Partial<Pick<BattleUnit, 'footprintSize'>>
 ): boolean {
   return unit.team === 'enemy' && unit.alive && !isUnitVisibleToPlayer(battle, unit)
 }

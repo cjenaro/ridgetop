@@ -150,6 +150,29 @@ export type {
   FrontierBossPhaseConfig, FrontierBossPhaseResult, FrontierHazardKind,
   FrontierHazardStrike, FrontierRoundHazardResult
 } from './expansion-frontier.ts'
+import {
+  ACT2_EXPANSION_STAGE_IDS, FROSTWYRM_BREATH_COOLDOWN, FROSTWYRM_BREATH_RANGE,
+  FROSTWYRM_WING_BUFFET_COOLDOWN, FROSTWYRM_WING_BUFFET_KNOCKBACK, LICH_VAELEN_SOUL_NOVA_COOLDOWN,
+  LICH_VAELEN_SUMMON_CAP, LICH_VAELEN_SUMMON_COOLDOWN,
+  chooseFrostwyrmSpecial, chooseLichVaelenSoulNova, closestFootprintCell,
+  computeFootprintMoveTiles, computeFootprintWorldCenter, computeGlacialBreathCells,
+  distanceBetweenUnits, distanceToUnitFootprint, findFootprintPath,
+  getFootprintCellsAt, getInnateStageMutators, getUnitFootprintCells, getUnitFootprintSize,
+  getUnitPerimeterCells, isCellAdjacentToUnit, isFrostwyrmArchetype, isLichVaelenArchetype,
+  isValidFootprintAnchor, mergeInnateStageMutators, unitOccupiesCell
+} from './expansion-act2.ts'
+export {
+  ACT2_EXPANSION_STAGE_IDS, FROSTWYRM_BREATH_COOLDOWN, FROSTWYRM_BREATH_RANGE,
+  FROSTWYRM_WING_BUFFET_COOLDOWN, FROSTWYRM_WING_BUFFET_KNOCKBACK, LICH_VAELEN_SOUL_NOVA_COOLDOWN,
+  LICH_VAELEN_SUMMON_CAP, LICH_VAELEN_SUMMON_COOLDOWN,
+  chooseFrostwyrmSpecial, chooseLichVaelenSoulNova, closestFootprintCell,
+  computeFootprintMoveTiles, computeFootprintWorldCenter, computeGlacialBreathCells,
+  distanceBetweenUnits, distanceToUnitFootprint, findFootprintPath,
+  getFootprintCellsAt, getInnateStageMutators, getUnitFootprintCells, getUnitFootprintSize,
+  getUnitPerimeterCells, isCellAdjacentToUnit, isFrostwyrmArchetype, isLichVaelenArchetype,
+  isValidFootprintAnchor, mergeInnateStageMutators, unitOccupiesCell
+}
+export type { FrostwyrmSpecialPlan, LichSoulNovaSpec } from './expansion-act2.ts'
 import { executeBulkSalvageCommonDupes } from './inventory-ops.ts'
 export {
   findBulkSalvageableCommonDupes, isEquipLocked, isHeroLocked,
@@ -1038,7 +1061,9 @@ const ENEMY_ID_LOOKUP: ReadonlyMap<string, EnemyArchetypeId> = new Map<string, E
   ['magma_warden', 'magma_warden'],
   ['dune_sovereign_boss', 'dune_sovereign_boss'],
   ['astral_warden_boss', 'astral_warden_boss'],
-  ['unbroken_crown_boss', 'unbroken_crown_boss']
+  ['unbroken_crown_boss', 'unbroken_crown_boss'],
+  ['lich_vaelen', 'lich_vaelen'],
+  ['frostwyrm_rimefang', 'frostwyrm_rimefang']
 ])
 
 function toDifficultyLevel(raw: number): DifficultyLevel {
@@ -1226,22 +1251,30 @@ export function serializeBattleState(
 
   const occupied = new Set<string>()
   for (const u of battle.units) {
-    if ((u.alive || isUnitDowned(u)) && u.path.length === 0) occupied.add(`${u.col},${u.row}`)
+    if ((u.alive || isUnitDowned(u)) && u.path.length === 0) {
+      for (const fc of getUnitFootprintCells(u)) {
+        occupied.add(`${fc.col},${fc.row}`)
+      }
+    }
   }
 
   let enemyMidMoveReset = false
   const units: BattleUnitSnapshot[] = battle.units.map(u => {
+    const fpSize = getUnitFootprintSize(u)
     let col = u.col
     let row = u.row
     if (u.alive && u.path.length > 0) {
       const dest = u.path[u.path.length - 1]
-      const destKey = `${dest.col},${dest.row}`
-      if (isCellInBounds(dest.col, dest.row, battle.cols, battle.rows) && !occupied.has(destKey)) {
+      const destCells = getFootprintCellsAt(dest.col, dest.row, fpSize)
+      const destValid = destCells.every(
+        fc => isCellInBounds(fc.col, fc.row, battle.cols, battle.rows) && !occupied.has(`${fc.col},${fc.row}`)
+      )
+      if (destValid) {
         col = dest.col
         row = dest.row
-        occupied.add(destKey)
+        for (const fc of destCells) occupied.add(`${fc.col},${fc.row}`)
       } else {
-        occupied.add(`${col},${row}`)
+        for (const fc of getFootprintCellsAt(col, row, fpSize)) occupied.add(`${fc.col},${fc.row}`)
       }
       if (battle.phase === 'enemy' && u.uid === battle.activeUnitUid && !u.acted) {
         enemyMidMoveReset = true
@@ -1257,6 +1290,7 @@ export function serializeBattleState(
       level: normalizeHeroLevel(u.level),
       isBoss: u.isBoss,
       ...(u.bossPhase !== undefined ? { bossPhase: u.bossPhase } : {}),
+      ...(fpSize > 1 ? { footprintSize: fpSize } : {}),
       ...(u.summonerUid !== undefined ? { summonerUid: u.summonerUid } : {}),
       ...(u.weaponId !== undefined ? { weaponId: u.weaponId } : {}),
       ...(u.armorId !== undefined ? { armorId: u.armorId } : {}),
@@ -1520,11 +1554,23 @@ export function validateBattleSnapshot(raw: unknown): BattleSaveSnapshot | null 
     const downed = !alive && team === 'ally' && item.downed === true && rawCountdown > 0
     const koCountdown = downed ? rawCountdown : 0
 
+    const rawFp = item.footprintSize
+    if (rawFp !== undefined && rawFp !== 1 && rawFp !== 2) return null
+    const footprintSize: 1 | 2 = rawFp === 2
+      ? 2
+      : rawFp === 1
+        ? 1
+        : (enemyId && ENEMY_SPECS[enemyId]?.footprintSize === 2 ? 2 : 1)
+
     if (alive || downed) {
-      if (cells[row][col].terrain === 'void') return null
-      const posKey = `${col},${row}`
-      if (occupied.has(posKey)) return null
-      occupied.add(posKey)
+      const fpCells = getFootprintCellsAt(col, row, footprintSize)
+      for (const fc of fpCells) {
+        if (!isCellInBounds(fc.col, fc.row, cols, rows)) return null
+        if (cells[fc.row][fc.col].terrain === 'void') return null
+        const posKey = `${fc.col},${fc.row}`
+        if (occupied.has(posKey)) return null
+        occupied.add(posKey)
+      }
     }
     if (alive) {
       if (team === 'ally') aliveAllies++
@@ -1546,6 +1592,7 @@ export function validateBattleSnapshot(raw: unknown): BattleSaveSnapshot | null 
       level: unitLevel,
       isBoss,
       ...(bossPhase !== undefined ? { bossPhase } : {}),
+      ...(footprintSize > 1 ? { footprintSize } : {}),
       ...(summonerUid !== undefined ? { summonerUid } : {}),
       ...(weaponId !== undefined ? { weaponId } : {}),
       ...(armorId !== undefined ? { armorId } : {}),
@@ -1693,8 +1740,13 @@ export function restoreBattleState(state: GameState, snapshot: unknown): boolean
   )
 
   const units: BattleUnit[] = valid.units.map(u => {
-    const cell = cells[u.row][u.col]
-    const [wx, wy, wz] = gridToWorld(u.col, u.row, cell.elevation, valid.cols, valid.rows)
+    const fpSize: 1 | 2 = u.footprintSize === 2 || (u.enemyId && ENEMY_SPECS[u.enemyId]?.footprintSize === 2) ? 2 : 1
+    const [wx, wy, wz] = computeFootprintWorldCenter(
+      { cells, cols: valid.cols, rows: valid.rows },
+      u.col,
+      u.row,
+      fpSize
+    )
     return {
       uid: u.uid,
       team: u.team,
@@ -1705,6 +1757,7 @@ export function restoreBattleState(state: GameState, snapshot: unknown): boolean
       level: normalizeHeroLevel(u.level),
       isBoss: u.isBoss,
       ...(u.bossPhase !== undefined ? { bossPhase: u.bossPhase } : {}),
+      ...(fpSize > 1 ? { footprintSize: fpSize } : {}),
       ...(u.summonerUid !== undefined ? { summonerUid: u.summonerUid } : {}),
       ...(u.weaponId !== undefined ? { weaponId: u.weaponId } : {}),
       ...(u.armorId !== undefined ? { armorId: u.armorId } : {}),
@@ -2156,7 +2209,7 @@ function buildCells(
 export { KO_COUNTDOWN_TURNS, isUnitActive, isUnitDowned }
 
 export function unitAt(battle: BattleState, col: number, row: number): BattleUnit | undefined {
-  return battle.units.find(u => u.alive && u.col === col && u.row === row)
+  return battle.units.find(u => u.alive && unitOccupiesCell(u, col, row))
 }
 
 export function downedHeroAt(battle: BattleState, col: number, row: number): BattleUnit | undefined {
@@ -2164,7 +2217,7 @@ export function downedHeroAt(battle: BattleState, col: number, row: number): Bat
 }
 
 export function unitOrDownedAt(battle: BattleState, col: number, row: number): BattleUnit | undefined {
-  return battle.units.find(u => (u.alive || isUnitDowned(u)) && u.col === col && u.row === row)
+  return battle.units.find(u => (u.alive || isUnitDowned(u)) && unitOccupiesCell(u, col, row))
 }
 
 export function getUnitByUid(battle: BattleState, uid: string | null): BattleUnit | undefined {
@@ -2667,7 +2720,9 @@ export function startChapterBattle(
     endlessWave
   )
   const difficultyTier = challenge.tier
-  const mutators = challenge.mutators.slice()
+  const mutators = endlessWave === 0
+    ? mergeInnateStageMutators(chapter.id, challenge.mutators)
+    : challenge.mutators.slice()
   const biome: BiomeId = chapter.biome
   const cells = buildCells(chapter.grid, chapter.heights)
   const rows = cells.length
@@ -2772,8 +2827,13 @@ export function startChapterBattle(
       difficultyTier,
       mutators
     )
-    const cell = cells[spawn.row][spawn.col]
-    const [wx, wy, wz] = gridToWorld(spawn.col, spawn.row, cell.elevation, cols, rows)
+    const fpSize: 1 | 2 = spec.footprintSize === 2 ? 2 : 1
+    const [wx, wy, wz] = computeFootprintWorldCenter(
+      { cells, cols, rows },
+      spawn.col,
+      spawn.row,
+      fpSize
+    )
     units.push({
       uid: `enemy_${i}_${spawn.id}`,
       team: 'enemy',
@@ -2783,6 +2843,7 @@ export function startChapterBattle(
       level: normalizeHeroLevel(Math.round(chapter.difficulty * 2 - 1 + (endlessWave > 0 ? endlessWave : 0) + (spec.isBoss ? 2 : 0))),
       isBoss: Boolean(spec.isBoss),
       ...(spawn.id === 'unbroken_crown_boss' ? { bossPhase: 1 } : {}),
+      ...(fpSize > 1 ? { footprintSize: fpSize } : {}),
       col: spawn.col,
       row: spawn.row,
       x: wx,
@@ -3352,6 +3413,9 @@ function computeReachableMoveTiles(
   ignoreMoved: boolean
 ): GridCoord[] {
   if (!unit.alive || (!ignoreMoved && unit.moved) || unit.stunTurns > 0) return []
+  if (getUnitFootprintSize(unit) > 1) {
+    return computeFootprintMoveTiles(battle, unit, ignoreMoved)
+  }
   const maxMove = Math.max(1, unit.move - (unit.slowTurns > 0 ? 1 : 0))
   // State includes whether the unit has already spent its +1 Ice Sheet slick-glide momentum step
   const visited = new Map<string, number>()
@@ -3587,6 +3651,9 @@ export function findGridPath(
   goalCol: number,
   goalRow: number
 ): { col: number; row: number }[] {
+  if (getUnitFootprintSize(unit) > 1) {
+    return findFootprintPath(battle, unit, goalCol, goalRow)
+  }
   const maxMove = Math.max(1, unit.move - (unit.slowTurns > 0 ? 1 : 0))
   const ignoreZoc = canEvadeZoneOfControl(unit)
   const startStateKey = `${unit.col},${unit.row},0`
@@ -4013,16 +4080,18 @@ export function computeTargetTiles(
   const targets: { col: number; row: number }[] = []
 
   if (skillIndex === null || skillIndex === -1) {
-    // Basic attack targets all visible enemies & intact destructible barricades within elevation-adjusted range & direct LoS
+    // Basic attack targets all visible enemies (including every in-range cell of a 2x2 raid boss!) & intact barricades
     for (const other of battle.units) {
       if (!other.alive || other.team === unit.team) continue
       if (unit.team === 'ally' && isEnemyShrouded(battle, other)) continue
-      const effRange = effectiveAttackRange(battle, unit.col, unit.row, other.col, other.row, unit.range, unit)
-      if (
-        manhattan(unit.col, unit.row, other.col, other.row) <= effRange &&
-        hasLineOfSight(battle, unit.col, unit.row, other.col, other.row, false)
-      ) {
-        targets.push({ col: other.col, row: other.row })
+      for (const fc of getUnitFootprintCells(other)) {
+        const effRange = effectiveAttackRange(battle, unit.col, unit.row, fc.col, fc.row, unit.range, unit)
+        if (
+          manhattan(unit.col, unit.row, fc.col, fc.row) <= effRange &&
+          hasLineOfSight(battle, unit.col, unit.row, fc.col, fc.row, false)
+        ) {
+          targets.push({ col: fc.col, row: fc.row })
+        }
       }
     }
     for (let row = 0; row < battle.rows; row++) {
@@ -4097,7 +4166,11 @@ export function computeTacticTargetTiles(
   }
   if (spec.target === 'enemy') {
     for (const u of battle.units) {
-      if (u.alive && u.team === 'enemy' && !isEnemyShrouded(battle, u)) out.push({ col: u.col, row: u.row })
+      if (u.alive && u.team === 'enemy' && !isEnemyShrouded(battle, u)) {
+        for (const fc of getUnitFootprintCells(u)) {
+          out.push({ col: fc.col, row: fc.row })
+        }
+      }
     }
     if (spec.damage > 0) {
       for (let row = 0; row < battle.rows; row++) {
@@ -4228,10 +4301,12 @@ export function computeMoveAttackTiles(
     if (targetKind === 'ally' && u.team !== unit.team) continue
     if ((targetKind === 'enemy' || targetKind === 'tile') && u.team === unit.team) continue
     if (unit.team === 'ally' && isEnemyShrouded(battle, u)) continue
-    if (directTargets.some(t => t.col === u.col && t.row === u.row)) continue
-    const approach = pickBestApproachTile(battle, unit, moveTiles, u.col, u.row, range, indirect)
-    if (approach) {
-      out.push({ col: u.col, row: u.row, fromCol: approach.col, fromRow: approach.row })
+    for (const fc of getUnitFootprintCells(u)) {
+      if (directTargets.some(t => t.col === fc.col && t.row === fc.row)) continue
+      const approach = pickBestApproachTile(battle, unit, moveTiles, fc.col, fc.row, range, indirect)
+      if (approach) {
+        out.push({ col: fc.col, row: fc.row, fromCol: approach.col, fromRow: approach.row })
+      }
     }
   }
   if (targetKind === 'enemy' || targetKind === 'tile') {
@@ -4442,11 +4517,15 @@ export function computeCombatForecast(state: GameState, col: number, row: number
       }
       return null
     }
-    const aoeTargets = affected.filter(c => {
+    const aoeSeenUids = new Set<string>()
+    for (const c of affected) {
       const u = lookup(c.col, c.row)
-      if (!u) return false
-      return spec.damage > 0 ? u.team === 'enemy' : u.team === 'ally'
-    }).length
+      if (!u || aoeSeenUids.has(u.uid)) continue
+      if (spec.damage > 0 ? u.team === 'enemy' : u.team === 'ally') {
+        aoeSeenUids.add(u.uid)
+      }
+    }
+    const aoeTargets = aoeSeenUids.size
 
     let normalDmg = 0
     let healAmount = primary.team === 'ally' ? spec.heal : 0
@@ -6252,8 +6331,9 @@ function executeBasicAttack(state: GameState, attacker: BattleUnit, target: Batt
   const battle = state.battle
   if (!battle) return
   battle.moveUndo = null
-  const attackArc = computeAttackArc(attacker.col, attacker.row, target.col, target.row, target.facing)
-  const isRanged = attacker.range > 1 || manhattan(attacker.col, attacker.row, target.col, target.row) !== 1
+  const hitCell = closestFootprintCell(attacker.col, attacker.row, target)
+  const attackArc = computeAttackArc(attacker.col, attacker.row, hitCell.col, hitCell.row, target.facing)
+  const isRanged = attacker.range > 1 || distanceBetweenUnits(attacker, target) !== 1
   faceToward(attacker, target.x, target.z)
   attacker.animState = 'attack'
   attacker.animTimer = 0.36
@@ -6433,6 +6513,7 @@ function executeHeroSkill(
       applyHealAndShield(state, caster, skill.healAmount, 0, caster, { sourceLabel: skill.name })
     }
     const displaceTargets: BattleUnit[] = []
+    const hitTargetUids = new Set<string>()
     const skillElement = skill.powerMul > 0 ? classifyElement(skill) : null
     for (const c of affected) {
       if (isDawnsJudgmentSafe && skill.canRevive) {
@@ -6457,6 +6538,9 @@ function executeHeroSkill(
         }
         continue
       }
+      // Deduplicate multi-tile raid bosses so overlapping AoE cells hit each unit at most once per cast
+      if (hitTargetUids.has(target.uid)) continue
+      hitTargetUids.add(target.uid)
       // Don't self-hit from splash around an adjacent tile unless caster directly targeted own space
       if (target.uid === caster.uid && !(col === caster.col && row === caster.row)) continue
       if (isDawnsJudgmentSafe && target.team === caster.team) {
@@ -6466,14 +6550,13 @@ function executeHeroSkill(
         continue
       }
       if (skill.powerMul > 0) {
-        const hitArc = computeAttackArc(caster.col, caster.row, target.col, target.row, target.facing)
+        const hitArc = computeAttackArc(caster.col, caster.row, c.col, c.row, target.facing)
         const raw = caster.atk * skill.powerMul + skill.flatBonus
-        const skillIsMelee = skill.range <= 1 && manhattan(caster.col, caster.row, target.col, target.row) === 1
+        const skillIsMelee = skill.range <= 1 && distanceBetweenUnits(caster, target) === 1
         const dmgRes = applyDamageDetailed(state, caster, target, raw, skill.ignoreArmor, true, true, { skillName: skill.name }, skillIsMelee)
         // Frostguard Plate chills adjacent melee skill attackers
         if (
-          skill.range <= 1 &&
-          manhattan(caster.col, caster.row, target.col, target.row) === 1 &&
+          skillIsMelee &&
           caster.alive &&
           caster.team !== target.team &&
           shouldChillMeleeAttacker(target)
@@ -6612,6 +6695,7 @@ function executeTacticCard(state: GameState, tacticUid: string, col: number, row
       casterUid: tacticCasterUid(battle)
     })
     const displaceTargets: BattleUnit[] = []
+    const hitTargetUids = new Set<string>()
     const tacticElement = spec.damage > 0 ? classifyElement(spec) : null
     for (const c of cells) {
       if (spec.canRevive) {
@@ -6631,6 +6715,8 @@ function executeTacticCard(state: GameState, tacticUid: string, col: number, row
         }
         continue
       }
+      if (hitTargetUids.has(target.uid)) continue
+      hitTargetUids.add(target.uid)
       if (target.team === 'enemy') {
         if (spec.damage > 0) {
           applyDamage(state, null, target, spec.damage, 0.6, false, true, { skillName: spec.name })
@@ -7488,10 +7574,11 @@ function chooseEnemyTarget(
 ): { target: BattleUnit | null; provoked: boolean } {
   const taunters = findProvokingTaunters(battle, enemy, allies)
   const canHitNow = (u: BattleUnit): boolean => {
-    const d = manhattan(enemy.col, enemy.row, u.col, u.row)
-    const effR = effectiveAttackRange(battle, enemy.col, enemy.row, u.col, u.row, enemy.range)
+    const origin = closestFootprintCell(u.col, u.row, enemy)
+    const d = manhattan(origin.col, origin.row, u.col, u.row)
+    const effR = effectiveAttackRange(battle, origin.col, origin.row, u.col, u.row, enemy.range)
     if (d > effR) return false
-    return enemy.isBoss || hasLineOfSight(battle, enemy.col, enemy.row, u.col, u.row, false)
+    return enemy.isBoss || hasLineOfSight(battle, origin.col, origin.row, u.col, u.row, false)
   }
 
   if (taunters.length > 0) {
@@ -7501,8 +7588,8 @@ function chooseEnemyTarget(
       : (inRangeTaunters.length > 0 ? inRangeTaunters : taunters)
     if (candidates.length === 0) return { target: null, provoked: true }
     const picked = candidates.slice().sort((a, b) => {
-      const da = manhattan(enemy.col, enemy.row, a.col, a.row)
-      const db = manhattan(enemy.col, enemy.row, b.col, b.row)
+      const da = distanceBetweenUnits(enemy, a)
+      const db = distanceBetweenUnits(enemy, b)
       if (da !== db) return da - db
       return a.hp - b.hp
     })[0]
@@ -7513,8 +7600,8 @@ function chooseEnemyTarget(
   if (pool.length === 0) return { target: null, provoked: false }
   const exploitsChill = enemy.enemyId === 'ice_wraith' || enemy.enemyId === 'frost_jarl'
   const picked = pool.sort((a, b) => {
-    const da = manhattan(enemy.col, enemy.row, a.col, a.row)
-    const db = manhattan(enemy.col, enemy.row, b.col, b.row)
+    const da = distanceBetweenUnits(enemy, a)
+    const db = distanceBetweenUnits(enemy, b)
     if (exploitsChill && da <= enemy.range && db <= enemy.range) {
       const aSlow = a.slowTurns > 0 ? 1 : 0
       const bSlow = b.slowTurns > 0 ? 1 : 0
@@ -7586,11 +7673,18 @@ function executeEnemyUnitTurn(state: GameState, enemy: BattleUnit): void {
 
   if (!target) return
 
+  // Multi-tile Frostwyrm raid boss executes Glacial Breath or Wing Buffet immediately when heroes are in reach
+  if (isFrostwyrmArchetype(enemy.enemyId) && chooseFrostwyrmSpecial(battle, enemy, allies)) {
+    performEnemyAttack(state, enemy, target)
+    return
+  }
+
   // Move if not already in ideal range or LoS is blocked (or if an unprovoked melee foe can breach a Defend objective!)
   const defendTile = !provoked && battle.objective.kind === 'defend' ? battle.objective.protectTile : undefined
-  const distNow = manhattan(enemy.col, enemy.row, target.col, target.row)
-  const effRangeNow = effectiveAttackRange(battle, enemy.col, enemy.row, target.col, target.row, enemy.range)
-  const hasLoSNow = hasLineOfSight(battle, enemy.col, enemy.row, target.col, target.row, false)
+  const originNow = closestFootprintCell(target.col, target.row, enemy)
+  const distNow = manhattan(originNow.col, originNow.row, target.col, target.row)
+  const effRangeNow = effectiveAttackRange(battle, originNow.col, originNow.row, target.col, target.row, enemy.range)
+  const hasLoSNow = enemy.isBoss || hasLineOfSight(battle, originNow.col, originNow.row, target.col, target.row, false)
   const wantMove = distNow > effRangeNow || !hasLoSNow || (spec.ai === 'ranged' && distNow === 1) ||
     Boolean(defendTile && spec.ai === 'melee' && !unitAt(battle, defendTile.col, defendTile.row))
   if (wantMove) {
@@ -7665,9 +7759,127 @@ function executeEnemyUnitTurn(state: GameState, enemy: BattleUnit): void {
 function performEnemyAttack(state: GameState, enemy: BattleUnit, target: BattleUnit): void {
   const battle = state.battle
   if (!battle || !enemy.alive || !target.alive) return
-  const effRange = effectiveAttackRange(battle, enemy.col, enemy.row, target.col, target.row, enemy.range)
-  if (manhattan(enemy.col, enemy.row, target.col, target.row) > effRange) return
-  if (!enemy.isBoss && !hasLineOfSight(battle, enemy.col, enemy.row, target.col, target.row, false)) return
+
+  // Multi-tile Raid Boss: Rimefang's signature Glacial Breath (wide frost cone/cross) & Wing Buffet (adjacent knockback 2)
+  if (isFrostwyrmArchetype(enemy.enemyId)) {
+    const livingAllies = battle.units.filter(u => u.alive && u.team === 'ally')
+    const wyrmPlan = chooseFrostwyrmSpecial(battle, enemy, livingAllies)
+    if (wyrmPlan) {
+      const targetCell = battle.cells[wyrmPlan.targetRow]?.[wyrmPlan.targetCol]
+      const [tx, ty, tz] = targetCell
+        ? gridToWorld(wyrmPlan.targetCol, wyrmPlan.targetRow, targetCell.elevation, battle.cols, battle.rows)
+        : [target.x, target.y, target.z]
+      faceToward(enemy, tx, tz)
+      enemy.animState = 'cast'
+      enemy.animTimer = 0.56
+      enemy.acted = true
+      enemy.cooldowns[wyrmPlan.cooldownSlot] = wyrmPlan.cooldownTurns
+      state.sounds.push({ kind: wyrmPlan.knockbackDistance ? 'slash' : 'magic', pitch: 0.72 })
+      addFloat(battle, enemy.x, enemy.y + 0.65, enemy.z, wyrmPlan.label, wyrmPlan.move === 'glacial_breath' ? '#8ce8ff' : '#ffd166')
+      state.vfx.push({
+        kind: 'special',
+        uid: enemy.uid,
+        move: wyrmPlan.vfxMove,
+        at: [tx, ty, tz],
+        cells: cellCentres(battle, wyrmPlan.cells)
+      })
+      const hitUids = new Set<string>()
+      const kbTargets: BattleUnit[] = []
+      for (const c of wyrmPlan.cells) {
+        const victim = unitAt(battle, c.col, c.row)
+        if (!victim) {
+          if (wyrmPlan.element) {
+            triggerElementalCombo(state, enemy, wyrmPlan.element, null, c.col, c.row, handleUnitDefeat)
+          }
+          continue
+        }
+        if (victim.team !== 'ally' || hitUids.has(victim.uid)) continue
+        hitUids.add(victim.uid)
+        const archMul = computeEnemyArchetypeDamageMul(enemy, victim)
+        applyDamage(
+          state,
+          enemy,
+          victim,
+          enemy.atk * wyrmPlan.powerMul * archMul,
+          wyrmPlan.ignoreArmor,
+          false,
+          true,
+          { skillName: wyrmPlan.label },
+          false
+        )
+        if (wyrmPlan.element) {
+          triggerElementalCombo(state, enemy, wyrmPlan.element, victim.alive ? victim : null, c.col, c.row, handleUnitDefeat)
+        }
+        if (victim.alive && wyrmPlan.status) {
+          applyStatus(battle, victim, wyrmPlan.status)
+        }
+        if (victim.alive && wyrmPlan.knockbackDistance && wyrmPlan.knockbackDistance > 0) {
+          kbTargets.push(victim)
+        }
+      }
+      if (wyrmPlan.knockbackDistance && wyrmPlan.knockbackDistance > 0 && kbTargets.length > 0) {
+        const ordered = orderDisplacementTargets(kbTargets, enemy.col, enemy.row, 'knockback')
+        for (const victim of ordered) {
+          if (!victim.alive) continue
+          applyDisplacement(state, enemy, victim, { kind: 'knockback', distance: wyrmPlan.knockbackDistance })
+          if (victim.alive) checkTileObjectiveInteractions(state, victim)
+        }
+      }
+      checkBattleOutcome(state)
+      return
+    }
+  }
+
+  const originCell = closestFootprintCell(target.col, target.row, enemy)
+  const effRange = effectiveAttackRange(battle, originCell.col, originCell.row, target.col, target.row, enemy.range)
+  if (manhattan(originCell.col, originCell.row, target.col, target.row) > effRange) return
+  if (!enemy.isBoss && !hasLineOfSight(battle, originCell.col, originCell.row, target.col, target.row, false)) return
+
+  // Lich Vaelen signature Cursed-Soul Nova (uses cooldown slot 1 independently of Raise Skeleton on slot 0)
+  const lichNova = chooseLichVaelenSoulNova(enemy)
+  if (lichNova) {
+    faceToward(enemy, target.x, target.z)
+    enemy.animState = 'cast'
+    enemy.animTimer = 0.52
+    enemy.acted = true
+    enemy.cooldowns[lichNova.cooldownSlot] = lichNova.cooldownTurns
+    state.sounds.push({ kind: 'magic', pitch: 0.76 })
+    addFloat(battle, enemy.x, enemy.y + 0.56, enemy.z, lichNova.label, '#7cffb8')
+    const affectedCells = getPatternCells(target.col, target.row, lichNova.pattern, battle.cols, battle.rows)
+    state.vfx.push({
+      kind: 'special',
+      uid: enemy.uid,
+      move: lichNova.vfxMove,
+      at: [target.x, target.y, target.z],
+      cells: cellCentres(battle, affectedCells)
+    })
+    for (const c of affectedCells) {
+      const victim = unitAt(battle, c.col, c.row)
+      if (!victim) {
+        triggerElementalCombo(state, enemy, lichNova.element, null, c.col, c.row, handleUnitDefeat)
+        continue
+      }
+      if (victim.team === 'ally') {
+        applyDamage(
+          state,
+          enemy,
+          victim,
+          enemy.atk * lichNova.powerMul,
+          lichNova.ignoreArmor,
+          false,
+          true,
+          { skillName: lichNova.label },
+          false
+        )
+        triggerElementalCombo(state, enemy, lichNova.element, victim.alive ? victim : null, c.col, c.row, handleUnitDefeat)
+        if (victim.alive) {
+          applyStatus(battle, victim, lichNova.status, lichNova.statusStacks)
+        }
+      }
+    }
+    checkBattleOutcome(state)
+    return
+  }
 
   const arcaneBossReady = hasMutator(battle, 'arcane_surge') && enemy.isBoss && enemy.cooldowns[0] === 0
   let special = chooseEnemySpecialMove(battle, enemy)
@@ -7970,10 +8182,10 @@ export function stepGame(state: GameState, dt: number): void {
     if (u.path.length > 0) {
       anyMoving = true
       const next = u.path[0]
-      const fromCell = battle.cells[u.row][u.col]
+      const fpSize = getUnitFootprintSize(u)
       const toCell = battle.cells[next.row][next.col]
-      const [fx, fy, fz] = gridToWorld(u.col, u.row, fromCell.elevation, battle.cols, battle.rows)
-      const [tx, ty, tz] = gridToWorld(next.col, next.row, toCell.elevation, battle.cols, battle.rows)
+      const [fx, fy, fz] = computeFootprintWorldCenter(battle, u.col, u.row, fpSize)
+      const [tx, ty, tz] = computeFootprintWorldCenter(battle, next.col, next.row, fpSize)
       faceToward(u, tx, tz)
 
       if (battleDt > 0 && u.moveProgress === 0) {
