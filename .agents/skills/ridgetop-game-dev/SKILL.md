@@ -18,7 +18,7 @@ WebGL 2, Canvas 2D, and Godot exports.
 Partition every game cleanly into DOM-free logic vs. browser presentation:
 
 - `<game>/types.ts` — Data types, tuning constants, terrain/map queries, save schema.
-- `<game>/simulation.ts` — **Pure, deterministic, DOM-free fixed-step (`STEP = 1/60`) rules.** Use Ridgetop's `nextRandom(seed)` / `createRng(seed)` (never `Math.random()` or `Date.now()` inside `step`), emit deterministic `sounds` and `vfx` event arrays per tick so it works with `verifyTrace`, `verifyBounded`, authoritative rooms, and `npm run compile:godot`.
+- `<game>/simulation.ts` — **Pure, deterministic, DOM-free fixed-step (`STEP = 1/60`) rules.** Use Ridgetop's `nextRandom(seed)` / `createRng(seed)` (never `Math.random()` or `Date.now()` inside `step`), emit deterministic `sounds` and `vfx` event arrays per tick so it works with `verifyTrace`, `verifyBounded`, authoritative rooms, and `pnpm ridgetop compile-godot`.
 - `<game>/art.ts` — Custom low-poly meshes (`mesh`, `revolvedMesh`, `archMesh`, `chamferedPrism`, `cylinder`, `octahedron`), articulated `createRig(...)` skeletons, `AnimationClip` tables, and static landmark builders.
 - `<game>/scene.ts` — `createLowPolyRenderer` orchestration with strict **static vs. dynamic batch separation** (`staticBatches` built once; animated rigs and `createParticles()` emitted into a `createMeshPool()` cleared each frame). Use `blend: 'alpha' | 'additive'` for translucent water, volumetric light beams, fading smoke, and halos.
 - `<game>/audio.ts` — Use `createSynthAudio` for simple motifs or `createSoundscape` (multi-bus `music`/`sfx`/`ambience`, looping filtered noise beds, noise bursts, and live music filter sweeps) for adaptive soundtracks and weather ambience.
@@ -53,7 +53,7 @@ Do not settle for stiff single-box characters or frozen scenery:
 
 ## 4. Registering an In-Repo Example Game
 
-When adding an example game directly inside the Ridgetop repository (not via `npm run create-game`), update all of:
+When adding an example game directly inside the Ridgetop repository (not via `pnpm ridgetop create`), update all of:
 1. `<game>.html` & `<game>/*.ts` (and `body.<game>-page` in `game-ui.css`)
 2. `tsconfig.build.json` (`include`)
 3. `server.ts` (add every compiled `<game>/*.js` and `<game>.html` to `files`, plus route in `aliases`)
@@ -66,7 +66,7 @@ When adding an example game directly inside the Ridgetop repository (not via `np
 ## 5. Mandatory Verification & Visual Inspection
 
 Never call a game finished on unit tests alone:
-1. Run `npm run build && npm run typecheck && npm test && npm run test:runtimes`.
-2. Test `npm run compile:godot -- <tmp-dir> <game>/simulation.ts` to ensure game logic compiles cleanly to GDScript 4.
+1. Run `pnpm rt check && pnpm rt smoke runtimes`.
+2. Test `pnpm ridgetop compile-godot <tmp-dir> <game>/simulation.ts` to ensure game logic compiles cleanly to GDScript 4.
 3. Launch the built server + headless Chrome and verify **zero console/page errors** across `?renderer=webgpu`, `?renderer=webgl2`, and `?canvas=1`.
 4. **Capture and visually inspect PNG screenshots** of title, active gameplay, modals, and Canvas 2D fallback to catch flipped normals, clipped rings, hidden NPCs, broken glyphs, or painter's-sort mismatches before handing off.

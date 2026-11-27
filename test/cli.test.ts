@@ -6,10 +6,12 @@ import { join } from 'node:path'
 import test from 'node:test'
 import { fileURLToPath } from 'node:url'
 import { promisify } from 'node:util'
+import { detectOutputMode, mergeCliFlags, parseGlobalFlags, shouldUseColor, stripAnsi } from '../packages/ridgetop/tools/cli-ui.ts'
 
 const execFileAsync = promisify(execFile)
 const repoRoot = fileURLToPath(new URL('../', import.meta.url))
 const cliBin = join(repoRoot, 'packages', 'ridgetop', 'dist', 'tools', 'cli.js')
+const rtBin = join(repoRoot, 'tools', 'cli.ts')
 const ridgetopPkgPath = join(repoRoot, 'packages', 'ridgetop', 'package.json')
 const starterRecipe = join(repoRoot, 'packages', 'ridgetop', 'templates', 'starter', 'art', 'rain-ranger.art.json')
 
@@ -312,4 +314,162 @@ test('createGame() generated project delegate scripts stay in sync with ridgetop
   await access(join(pkgOut, 'index.html'))
   await assert.rejects(access(join(pkgOut, 'framework', 'tooling.js')), 'tooling.js must be stripped')
   await assert.rejects(access(join(pkgOut, 'art', 'library')), 'art/library must be stripped')
+})
+
+test('cli-ui detects human vs agent vs json modes accurately', () => {
+  assert.equal(detectOutputMode({ isTTY: true, env: {} }), 'human')
+  assert.equal(detectOutputMode({ isTTY: false, env: {} }), 'agent')
+  assert.equal(detectOutputMode({ isTTY: true, env: { CI: 'true' } }), 'agent')
+  assert.equal(detectOutputMode({ isTTY: true, env: { CLAUDECODE: '1' } }), 'agent')
+  assert.equal(detectOutputMode({ isTTY: true, env: { ANTIGRAVITY_CLI: '1' } }), 'agent')
+  assert.equal(detectOutputMode({ isTTY: true, env: { RIDGETOP_OUTPUT: 'json' } }), 'json')
+  assert.equal(detectOutputMode({ isTTY: false, env: { RIDGETOP_OUTPUT: 'human' } }), 'human')
+  assert.equal(detectOutputMode({ flagMode: 'human', isTTY: false, env: { CI: '1' } }), 'human')
+  assert.equal(detectOutputMode({ flagMode: 'agent', isTTY: true, env: {} }), 'agent')
+
+  assert.equal(shouldUseColor('human', {}, true, false), true)
+  assert.equal(shouldUseColor('human', { NO_COLOR: '1' }, true, false), false)
+  assert.equal(shouldUseColor('human', {}, true, true), false)
+  assert.equal(shouldUseColor('agent', {}, true, false), false)
+  assert.equal(shouldUseColor('json', {}, true, false), false)
+})
+
+test('ridgetop CLI supports --agent, --human, and --json output modes', async () => {
+  const agentHelp = await runNode(cliBin, ['--agent', '--help'])
+  assert.equal(agentHelp.code, 0)
+  assert.equal(agentHelp.stdout, stripAnsi(agentHelp.stdout), 'agent mode must emit zero ANSI codes')
+  assert.match(agentHelp.stdout, /Ridgetop CLI/)
+
+  const jsonHelp = await runNode(cliBin, ['--json', '--help'])
+  assert.equal(jsonHelp.code, 0)
+  const parsedHelp = JSON.parse(jsonHelp.stdout) as { title: string; groups: unknown[] }
+  assert.equal(parsedHelp.title, 'Ridgetop CLI')
+  assert.ok(parsedHelp.groups.length > 0)
+
+  const jsonVersion = await runNode(cliBin, ['--json', '--version'])
+  assert.equal(jsonVersion.code, 0)
+  const parsedVer = JSON.parse(jsonVersion.stdout) as { version: string }
+  assert.match(parsedVer.version, /^\d+\.\d+\.\d+/)
+
+  const humanHelp = await runNode(cliBin, ['--human', '--help'])
+  assert.equal(humanHelp.code, 0)
+  assert.match(humanHelp.stdout, /Examples:/)
+  assert.ok(agentHelp.stdout.length < humanHelp.stdout.length, 'agent help should be more token-economical than human help')
+})
+
+test('monorepo rt CLI renders adaptive help and validates targets cleanly', async () => {
+  const agentHelp = await runNode(rtBin, ['--agent', '--help'])
+  assert.equal(agentHelp.code, 0, agentHelp.stderr)
+  assert.equal(agentHelp.stdout, stripAnsi(agentHelp.stdout))
+  assert.match(agentHelp.stdout, /Ridgetop Dev CLI \(rt\)/)
+  assert.match(agentHelp.stdout, /build \[target\]/)
+  assert.match(agentHelp.stdout, /smoke <suite>/)
+  assert.match(agentHelp.stdout, /check/)
+
+  const humanHelp = await runNode(rtBin, ['--human', '--help'])
+  assert.equal(humanHelp.code, 0, humanHelp.stderr)
+  assert.match(humanHelp.stdout, /Examples:/)
+  assert.ok(agentHelp.stdout.length < humanHelp.stdout.length)
+
+  const jsonHelp = await runNode(rtBin, ['--json', '--help'])
+  assert.equal(jsonHelp.code, 0, jsonHelp.stderr)
+  const parsed = JSON.parse(jsonHelp.stdout) as { title: string; groups: unknown[] }
+  assert.equal(parsed.title, 'Ridgetop Dev CLI (rt)')
+  assert.ok(parsed.groups.length >= 3)
+
+  for (const sub of ['build', 'typecheck', 'smoke', 'serve']) {
+    const res = await runNode(rtBin, [sub, '--help'])
+    assert.equal(res.code, 0, `expected exit 0 for rt ${sub} --help`)
+    assert.match(res.stdout, new RegExp(`rt ${sub}`))
+  }
+
+  const badCmd = await runNode(rtBin, ['--json', 'nonexistent'])
+  assert.equal(badCmd.code, 1)
+  const badCmdJson = JSON.parse(badCmd.stderr) as { ok: boolean; error: string }
+  assert.equal(badCmdJson.ok, false)
+  assert.match(badCmdJson.error, /Unknown rt command "nonexistent"/)
+
+  const badBuild = await runNode(rtBin, ['build', 'nope'])
+  assert.equal(badBuild.code, 1)
+  assert.match(badBuild.stderr, /Unknown build target "nope"/)
+
+  const badSmoke = await runNode(rtBin, ['smoke', 'nope'])
+  assert.equal(badSmoke.code, 1)
+  assert.match(badSmoke.stderr, /Unknown smoke suite "nope"/)
+
+  const badRuntime = await runNode(rtBin, ['serve', '--runtime', 'ruby'])
+  assert.equal(badRuntime.code, 1)
+  assert.match(badRuntime.stderr, /Unknown runtime "ruby"/)
+})
+
+test('cli-ui merges pre/post-command flags without clobbering and respects -- passthrough', () => {
+  const pre = parseGlobalFlags(['--human', '--no-color', 'build', '--verbose'], {
+    stopAtFirstPositional: true,
+    isTTY: true,
+    env: {}
+  })
+  const post = parseGlobalFlags(pre.rest.slice(1), {
+    stopAtFirstPositional: false,
+    isTTY: true,
+    env: {}
+  })
+  const merged = mergeCliFlags(pre, post, { isTTY: true, env: {} })
+  assert.equal(merged.ui.mode, 'human')
+  assert.equal(merged.ui.color, false, '--no-color from pre-command must be preserved')
+  assert.equal(merged.ui.verbose, true, '--verbose from post-command must be merged')
+
+  // Flags after `--` must not alter rt's own UI flags
+  const passthroughPre = parseGlobalFlags(['--human', 'smoke', 'browser', '--', '--agent', '--verbose'], {
+    stopAtFirstPositional: true,
+    isTTY: true,
+    env: {}
+  })
+  const passthroughPost = parseGlobalFlags(passthroughPre.rest.slice(1), {
+    stopAtFirstPositional: false,
+    isTTY: true,
+    env: {}
+  })
+  const passthroughMerged = mergeCliFlags(passthroughPre, passthroughPost, { isTTY: true, env: {} })
+  assert.equal(passthroughMerged.ui.mode, 'human')
+  assert.equal(passthroughMerged.ui.verbose, false)
+  assert.deepEqual(passthroughMerged.rest, ['browser', '--', '--agent', '--verbose'])
+
+  // Later --human overrides earlier --json so explicitJson stays in sync
+  const jsonPre = parseGlobalFlags(['--json', 'verify', '--human'], {
+    stopAtFirstPositional: true,
+    isTTY: true,
+    env: {}
+  })
+  const humanPost = parseGlobalFlags(jsonPre.rest.slice(1), {
+    stopAtFirstPositional: false,
+    isTTY: true,
+    env: {}
+  })
+  const overridden = mergeCliFlags(jsonPre, humanPost, { isTTY: true, env: {} })
+  assert.equal(overridden.ui.mode, 'human')
+  assert.equal(overridden.explicitJson, false)
+})
+
+test('ridgetop create emits JSON errors when --json is passed after the command', async t => {
+  const work = await mkdtemp(join(tmpdir(), 'ridgetop-cli-json-err-'))
+  t.after(() => rm(work, { recursive: true, force: true }))
+
+  const existing = join(work, 'already-there')
+  const first = await runNode(cliBin, ['create', existing, '--json'])
+  assert.equal(first.code, 0, first.stderr)
+  const firstJson = JSON.parse(first.stdout) as { ok: boolean; command: string; path: string }
+  assert.equal(firstJson.ok, true)
+  assert.equal(firstJson.command, 'create')
+
+  const dup = await runNode(cliBin, ['create', existing, '--json'])
+  assert.equal(dup.code, 1)
+  const dupJson = JSON.parse(dup.stderr) as { ok: boolean; error: string }
+  assert.equal(dupJson.ok, false)
+  assert.match(dupJson.error, /destination already exists/i)
+})
+
+test('rt test preserves default test/*.test.ts when value-taking flags are passed', async () => {
+  const res = await runNode(rtBin, ['test', '--test-name-pattern', 'cli-ui detects human vs agent vs json modes accurately'])
+  assert.equal(res.code, 0, res.stderr)
+  assert.match(res.stdout, /^OK test /m)
 })

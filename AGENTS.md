@@ -7,10 +7,11 @@
 - Change levels in `game/level.ts`, rules in `game/simulation.ts`, and presentation in `game/scene.ts`. Keep rules independent of the browser and use the same fixed step for solo and online play.
 - Start at `main.ts` for controls and UI, `server.ts` for authoritative rooms, and `framework/room-client.ts` for input, snapshots, and reconnects. Register browser modules in the server asset list.
 - Run `npm test` after changes to geometry, gameplay, or rooms. Build with `npm run build`, run `npm start`, and open two tabs with the same room URL after changing browser integration or transport. The browser smoke test automates this and exercises WebGPU, WebGL 2, and `?canvas=1`.
-- Check `npm run typecheck` and `npm run test:runtimes` when changing public types or hosting. Keep Signal Drift in `racing/` on the same renderer and simulation utilities.
+- Check `pnpm typecheck` and `pnpm rt smoke runtimes` when changing public types or hosting. Keep Signal Drift in `racing/` on the same renderer and simulation utilities.
 - Run `npm pack` and verify the contents before handing off a release.
 
-- For a new game, start with `npm run create-game -- <new-directory>` from a built checkout. Edit `starter/game.ts` for template defaults and `framework/art.ts` for shared art recipes. The generated project's `game/game.js` is directly editable.
+- Use `pnpm rt --help` for monorepo workflows (build, check, serve, smoke, verify, feel, sprites) and `pnpm ridgetop --help` for framework commands (create, package, compile-godot, preview-art, art-library, ota-serve, ota-keygen). Both CLIs auto-detect agent/CI vs. human TTY output (override with `--agent`, `--human`, or `--json`).
+- For a new game, start with `pnpm ridgetop create <new-directory>` from a built checkout. Edit `starter/game.ts` for template defaults and `framework/art.ts` for shared art recipes. The generated project's `game/game.js` is directly editable.
 
 <!-- BEGIN BEADS INTEGRATION v:1 profile:minimal hash:970c3bf2 -->
 ## Beads Issue Tracker

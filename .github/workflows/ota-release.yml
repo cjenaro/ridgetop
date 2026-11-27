@@ -139,8 +139,8 @@ jobs:
           GAME: ${{ steps.meta.outputs.game }}
         run: |
           set -euo pipefail
-          pnpm run build:framework
-          pnpm exec tsc -p "examples/${GAME}/tsconfig.build.json"
+          pnpm rt build framework
+          pnpm rt build "$GAME"
 
       - name: Package OTA bundle
         shell: bash
@@ -158,7 +158,7 @@ jobs:
             echo "Error: examples/${GAME}/package.json pins otaPublicKey, so RIDGETOP_OTA_SIGNING_KEY secret is required." >&2
             exit 1
           fi
-          pnpm run package \
+          pnpm ridgetop package \
             --target ota \
             --game "$GAME" \
             --ota-channel "$CHANNEL" \

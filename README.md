@@ -16,9 +16,9 @@ Bun and Deno run the same server through their Node-compatible HTTP and filesyst
 
 To make artwork, open the [sprite workshop](http://localhost:3000/sprites) on the running server.
 
-For new low-poly game assets, `createArtBuilder` supplies starter bodies, face attachments, endpoint-to-endpoint parts and open handles. It grounds the finished geometry and fits all eight sprites. Generated games include the same builder and a runnable toolbox example. Run `npm run preview-art -- <recipe.art.json>` to check the game's actual sprites and eight larger mesh views before accepting the art. [Art authoring guide](starter/ART.md)
+For new low-poly game assets, `createArtBuilder` supplies starter bodies, face attachments, endpoint-to-endpoint parts and open handles. It grounds the finished geometry and fits all eight sprites. Generated games include the same builder and a runnable toolbox example. Run `pnpm ridgetop preview-art <recipe.art.json>` to check the game's actual sprites and eight larger mesh views before accepting the art. [Art authoring guide](starter/ART.md)
 
-Use `npm run art-library -- list "<description>"` to search 13 editable references, including creatures, equipment and scenery. For example, `npm run art-library -- start field-radio weather-receiver` creates a local copy with named parts ready for a game-specific design.
+Use `pnpm ridgetop art-library list "<description>"` to search 13 editable references, including creatures, equipment and scenery. For example, `pnpm ridgetop art-library start field-radio weather-receiver` creates a local copy with named parts ready for a game-specific design.
 
 For live low-poly art, open the [3D model viewer](http://localhost:3000/models), or open `dist/low-poly-models.html` directly after a build. Orbit the headland lighthouse, field ranger, or signal lantern. **Open model file** previews your workshop’s `.art.json` at the canvas resolution. The lighthouse source in `models/headland.ts` shows how to assemble a scene with a custom cliff mesh and instanced props.
 
@@ -29,7 +29,7 @@ Compare how GPT-5.6 Sol, Terra and Luna handled 20 identical low-poly game-art b
 From a prebuilt archive, run the commands below with Node 22.18 or later. From a source checkout, run `npm ci` and `npm run build` first.
 
 ```sh
-npm run create-game -- ../my-game
+pnpm ridgetop create ../my-game
 cd ../my-game
 npm start
 ```
@@ -38,9 +38,9 @@ Open http://localhost:3000. The new project contains a playable collection game,
 
 Open **game/game.js** first. Edit the map, palette, art names, objective text, or the flower recipe and reload. **game/main.js** contains controls, movement, collection, and rendering. A prompt such as “Make the crystals amber, replace the crates with rocks, and add a second route to the lantern” maps to edits in the first file. The view selector lets you play the same state with 2D sprites or live 3D models.
 
-Run `npm run playtest` in the generated game to review art with Codex. In a framework checkout, run `npm run build` first and use the same playtest command to open Lantern Grove. **Pause & inspect** lets you click a visible model part, a 2D sprite or the inventory icon. Move and resize recipe parts directly, or pin a comment to a particular object, shared asset, frame or HUD use. Each thread saves its original image and scene under the game's `reviews/` directory. Codex can edit the referenced source and mark the thread ready. **Reload latest art** restores the saved view for comparison and sign-off. [Starter workflow](starter/README.md#review-the-art-while-playing)
+Run `npm run playtest` in the generated game to review art with Codex. In a framework checkout, run `pnpm build` first and use `pnpm rt playtest` to open Lantern Grove. **Pause & inspect** lets you click a visible model part, a 2D sprite or the inventory icon. Move and resize recipe parts directly, or pin a comment to a particular object, shared asset, frame or HUD use. Each thread saves its original image and scene under the game's `reviews/` directory. Codex can edit the referenced source and mark the thread ready. **Reload latest art** restores the saved view for comparison and sign-off. [Starter workflow](starter/README.md#review-the-art-while-playing)
 
-For any game hosted with `createGameHost({ ..., testing: true })` (or `--testing`, such as `npm run start:testing`), Ridgetop automatically injects the game-agnostic Testing Mode bar and In-Game Asset Studio drawer, handles pause/picking across 3D models, rigs, meshes, 2D sprites, and Canvas UI HUD regions, and mounts loopback-only `/__testing/*` endpoints via `createArtReviewHandler` from `ridgetop/art-review/server`. Games may optionally call `registerTestingHooks({ snapshot, restore, getArtSource })` from `ridgetop` to support state rewind on review reload.
+For any game hosted with `createGameHost({ ..., testing: true })` (or `--testing`, such as `pnpm rt serve --testing`), Ridgetop automatically injects the game-agnostic Testing Mode bar and In-Game Asset Studio drawer, handles pause/picking across 3D models, rigs, meshes, 2D sprites, and Canvas UI HUD regions, and mounts loopback-only `/__testing/*` endpoints via `createArtReviewHandler` from `ridgetop/art-review/server`. Games may optionally call `registerTestingHooks({ snapshot, restore, getArtSource })` from `ridgetop` to support state rewind on review reload.
 
 | Where the art appears | How to use it |
 | --- | --- |
@@ -88,7 +88,7 @@ Open [Signal Drift](http://localhost:3000/racing) after starting the same server
 
 To give a player the single-player racer, run `npm run build` and distribute `dist/signal-drift.html`. Open that file in a modern desktop browser or serve it over HTTPS. Its circuits, art, garage, and synthesized audio are embedded. Players can use **Save backup** on the main menu to download their championship or restore it after a browser change or game update. A restore shows the credits and event count before the player chooses to replace their current progress.
 
-Run `npm run test:player` against local Chromium with remote debugging enabled to check the downloadable file. It opens copies in two temporary browser profiles with networking disabled, drives a race, and transfers a garage upgrade between them. The game server can stay stopped.
+Run `pnpm rt smoke player` against local Chromium with remote debugging enabled to check the downloadable file. It opens copies in two temporary browser profiles with networking disabled, drives a race, and transfers a garage upgrade between them. The game server can stay stopped.
 
 - Race three AI rivals through Copper Basin, Brineworks, Cinder Switchback, and Midnight Relay. Finish in the top three in the first two events, then in the top two at Cinder Switchback. Win Midnight Relay to take the championship. Replay unlocked events from the schedule.
 - Race finishes earn credits. Select a part in the garage to inspect it on the live 3D car and compare the current stats with the next tier. Install up to three tiers each of the motor, tires, shield, and capacitor. The browser saves credits, installed upgrades, records, and event access.
@@ -187,9 +187,9 @@ The room endpoint is `/rooms/{course}/{room}`. `GET /events` sends a welcome eve
 
 - Open [localhost:3000/benchmark](http://localhost:3000/benchmark). Choose a backend, count, and workload. Static batches measure submission and retained GPU data. Animated batches exercise CPU instance construction and uploads. Results include sample count, draw calls, bytes, CPU median and p95, frame intervals, and a downloadable JSON record. CPU time covers JavaScript and submission. Frame intervals include display cadence and browser scheduling.
 - Run `npm test` to verify geometry, culling, all six courses and signal chips, campaign saves, hazards, launch pads, checkpoints, and the room protocol. The room tests bind to a loopback port.
-- Run `npm run test:browser` with the game running and Chromium started with `--remote-debugging-port=9222` and a separate `--user-data-dir`. The smoke test covers generated sprite rendering on all three backends, touch controls, context loss where supported, a full six-course Beacon Run campaign and ending, saved progress after reload, two tabs in a room, Signal Drift driving, upgrades and weapons, and both GPU workloads. Override `RIDGETOP_URL` or `CHROMIUM_DEBUG` if needed. `RIDGETOP_BACKENDS` can select available backends.
-- Run `npm run test:review` after a build, with the same Chromium debugging endpoint. It creates a temporary game and exercises part picking, recipe changes, animated sprite regions, HUD feedback and review reopening. Set `RIDGETOP_REVIEW_RENDERER` to `webgpu`, `webgl2` or `canvas`.
-- Run `npm run test:runtimes` after building to verify Node, Bun, and Deno against static assets, the character save, SSE, and authoritative input. Select a subset with `npm run test:runtimes -- bun deno`. Set `RIDGETOP_BUN` or `RIDGETOP_DENO` if a binary is outside PATH.
+- Run `pnpm rt smoke browser` with the game running and Chromium started with `--remote-debugging-port=9222` and a separate `--user-data-dir`. The smoke test covers generated sprite rendering on all three backends, touch controls, context loss where supported, a full six-course Beacon Run campaign and ending, saved progress after reload, two tabs in a room, Signal Drift driving, upgrades and weapons, and both GPU workloads. Override `RIDGETOP_URL` or `CHROMIUM_DEBUG` if needed. `RIDGETOP_BACKENDS` can select available backends.
+- Run `pnpm rt smoke review` after a build, with the same Chromium debugging endpoint. It creates a temporary game and exercises part picking, recipe changes, animated sprite regions, HUD feedback and review reopening. Set `RIDGETOP_REVIEW_RENDERER` to `webgpu`, `webgl2` or `canvas`.
+- Run `pnpm rt smoke runtimes` after building to verify Node, Bun, and Deno against static assets, the character save, SSE, and authoritative input. Select a subset with `pnpm rt smoke runtimes -- bun deno`. Set `RIDGETOP_BUN` or `RIDGETOP_DENO` if a binary is outside PATH.
 - Run `npm pack` after installing the build tools to create the self-hostable release archive. It includes both examples, source, emitted modules, declarations, art, and tests. Extract it and run any server command above inside the `package` directory.
 
 WebGPU and WebGL 2 render the 144-instance static benchmark in two draws and upload zero instance bytes after warm-up. The software-rendered Chromium checks verify behavior. Browser compatibility on Safari and Firefox and performance against Three.js on matched hardware still need validation. Compare equivalent geometry, lighting, instancing, resolution, overdraw, and update rates before drawing conclusions about speed.
@@ -214,21 +214,21 @@ Ridgetop includes a zero-dependency packager that **tree-shakes only the ES modu
 
 ```sh
 # Minimal tree-shaken static web bundle (zero native wrappers, zero studio tools)
-npm run package -- --target web --game signal-drift
+pnpm ridgetop package --target web --game signal-drift
 
 # Package Signal Drift for Steam (Electron), Mobile (Capacitor), Web, and Godot 4
-npm run package -- --target all --game signal-drift
+pnpm ridgetop package --target all --game signal-drift
 
 # Export a Godot 4 project (GLB 3D meshes, WAV audio, Control UI scene, joypad map) for Switch / consoles
-npm run package -- --target godot --project ../my-game
+pnpm ridgetop package --target godot --project ../my-game
 ```
 
-Generated projects created with `npm run create-game` include `npm run package:web`, `npm run package:steam`, `npm run package:mobile`, and `npm run package:godot` directly inside their own `package.json`.
+Generated projects created with `pnpm ridgetop create` include `npm run package:web`, `npm run package:steam`, `npm run package:mobile`, and `npm run package:godot` directly inside their own `package.json`.
 
 - **Web (`--target web`)**: Clean, tree-shaken static web bundle with zero wrappers and zero studio files.
 - **Steam / Desktop (`--target steam`)**: Electron project with a privileged `ridgetop://app/` secure protocol (WebGPU, ES modules, and `fetch()` without a local port), atomic filesystem saves ready for Steam Cloud Auto-Cloud, Steam Deck fullscreen auto-detection, optional `steamworks.js` integration (`steam_appid.txt`, achievements, overlay), `electron-builder.yml` (Win/Mac/Linux/AppImage), and a 512×512 baked `build/icon.png`.
 - **Mobile (`--target mobile`)**: Capacitor project with `viewport-fit=cover`, native bridge (`www/ridgetop-mobile-bridge.js`) connecting saves to `@capacitor/preferences`, haptics to `@capacitor/haptics`, lifecycle pause/audio suspend to `@capacitor/app`, orientation lock, and 1024×1024 baked `resources/icon.png` and `resources/splash.png`.
-- **Godot 4 (`--target godot`)**: Compiles the game's real TypeScript logic and framework modules directly to GDScript 4 via `tools/ts-to-gd.ts` (`scripts/compiled/*.gd` + `rt.gd`, also runnable standalone via `npm run compile:godot -- <out-dir> <entry.ts>`), exports binary glTF 2.0 (`.glb`) flat-shaded 3D models with linear per-color PBR/emissive materials, offline-baked 16-bit PCM `.wav` sound effects, `data/game.json`, custom `CanvasItem._draw()` low-poly Canvas UI (`scripts/ridgetop_ui.gd` — zero default Godot widgets), and a joypad/Switch-mapped `project.godot` ready for console export templates.
+- **Godot 4 (`--target godot`)**: Compiles the game's real TypeScript logic and framework modules directly to GDScript 4 via `tools/ts-to-gd.ts` (`scripts/compiled/*.gd` + `rt.gd`, also runnable standalone via `pnpm ridgetop compile-godot <out-dir> <entry.ts>`), exports binary glTF 2.0 (`.glb`) flat-shaded 3D models with linear per-color PBR/emissive materials, offline-baked 16-bit PCM `.wav` sound effects, `data/game.json`, custom `CanvasItem._draw()` low-poly Canvas UI (`scripts/ridgetop_ui.gd` — zero default Godot widgets), and a joypad/Switch-mapped `project.godot` ready for console export templates.
 
 ### Cross-platform Canvas UI & Layout SDK (`ridgetop/ui`)
 
@@ -273,7 +273,7 @@ fixedLoop({
 
 ### Generate art in code
 
-- `createSpriteSheet(frameWidth, frameHeight, columns, rows = 1)` allocates transparent RGBA pixels. Use `sheet.frame(column, row)` to draw rectangles and filled polygons in cell-local coordinates. Read `sheet.pixels`, `sheet.width`, and `sheet.height` from Node or the browser. Beacon Run's palettes and poses live in `game/sprite-art.ts`. Run `npm run generate:sprites` to rebuild its atlas, portrait, and animation JSON.
+- `createSpriteSheet(frameWidth, frameHeight, columns, rows = 1)` allocates transparent RGBA pixels. Use `sheet.frame(column, row)` to draw rectangles and filled polygons in cell-local coordinates. Read `sheet.pixels`, `sheet.width`, and `sheet.height` from Node or the browser. Beacon Run's palettes and poses live in `game/sprite-art.ts`. Run `pnpm rt sprites` to rebuild its atlas, portrait, and animation JSON.
 - `bakeSpriteDirections(batches, { span, center, frameSize, src })` renders a +Z-facing model into eight transparent views in the browser. It returns a sheet canvas as `image` and a matching `manifest`. Set `span` to the square camera width in world units. The default frame is 64 pixels square, centered at the origin with a 30-degree camera elevation. Pass `elevation` in radians or supply the same `lighting` options as the mesh renderer. Baking uses Canvas 2D and works without a GPU adapter.
 
 ## Verification for coding agents
@@ -281,9 +281,9 @@ fixedLoop({
 Ridgetop runs the same fixed-step simulation in the browser, on the authoritative server, and in its verification runner. An agent can change a mechanic, run the retained input sequences, and inspect the first violated rule with the state before and after the transition.
 
 ```sh
-npm run verify
-npm run --silent verify -- --json > verification.json
-npm run verify -- --replay counterexample.json
+pnpm rt verify
+pnpm --silent rt verify --json > verification.json
+pnpm rt verify -- --replay counterexample.json
 ```
 
 The JSON report includes the exact input alphabet, tick depth, rule IDs, source-file SHA-256 hashes, and labeled decision scores. When a check fails, save its `replay` object as `counterexample.json`. It carries the course, initial state, and input prefix needed to run the check again. The source hashes identify the implementation and fixtures used for that report.
@@ -302,11 +302,11 @@ A decision case contains an `id`, an `input` observation, `evidence` entries sha
 
 ### Opt in to a decision API
 
-Use the HTTP adapter for small, labeled decisions while the replay and bounded checks run locally. The default `npm run verify` continues to use the local reference classifier. Enable remote requests explicitly with `--decision-api`.
+Use the HTTP adapter for small, labeled decisions while the replay and bounded checks run locally. The default `pnpm rt verify` continues to use the local reference classifier. Enable remote requests explicitly with `--decision-api`.
 
 ```sh
 RIDGETOP_DECISION_URL=https://your-decision-service.example/decide \
-  npm run --silent verify -- --decision-api --json
+  pnpm --silent rt verify --decision-api --json
 ```
 
 Point `RIDGETOP_DECISION_URL` at an endpoint that accepts a JSON POST with `{ labels, rubric, input, evidence }` and returns `{ label, evidence: [id, ...] }`. The endpoint can implement the decision itself or wrap a model. Configure `RIDGETOP_DECISION_TOKEN` in the process environment for optional bearer authentication. Fixture IDs and expected answers stay in the runner.
@@ -323,14 +323,14 @@ The same evaluator also connects directly to these providers. Set `RIDGETOP_DECI
 | Custom HTTP | `http` (default) | Endpoint-managed | Set `RIDGETOP_DECISION_URL`. |
 
 ```sh
-RIDGETOP_DECISION_PROVIDER=jev npm run verify -- --decision-api
+RIDGETOP_DECISION_PROVIDER=jev pnpm rt verify --decision-api
 ```
 
 Set `RIDGETOP_DECISION_MODEL` to select a model offered by the chosen native service. Each native adapter batches a label choice and one evidence judgment per supplied item in the same request. A yes probability above 0.5 yields a citation. The evaluator scores the normalized label and citations with the existing answer key and reports the provider and requested model. Request caps, response limits, and deduplication apply to every provider.
 
 ### Evaluate game feel
 
-Run `npm run --silent feel` for the jump-timing experiment. It runs the game's fixed-step simulation with candidate coyote-time and jump-buffer windows. Each probe labels an input by intended behavior. A slightly late press after leaving an edge or a slightly early press before landing should jump. A stale press should expire.
+Run `pnpm rt feel` for the jump-timing experiment. It runs the game's fixed-step simulation with candidate coyote-time and jump-buffer windows. Each probe labels an input by intended behavior. A slightly late press after leaving an edge or a slightly early press before landing should jump. A stale press should expire.
 
 The runner ranks candidates on the tuning courses. It gives the selected candidate one pass through separate courses and timings that were held out from ranking. The candidate must accept more intentional inputs on that pass, preserve every previously correct probe, avoid stale jumps, and clear all six retained course replays without falling. The JSON report includes the baseline, proposed settings, each measured input, and replay results. The experiment leaves the shipped timing settings in place.
 

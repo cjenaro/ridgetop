@@ -58,7 +58,7 @@ Do not stop at the first bug. Work through prioritized findings (critical/correc
 Once all fixes are committed, build and run the complete verification matrix:
 
 ```sh
-npm run build && npm run typecheck && npm test && npm run verify && npm run test:runtimes
+pnpm rt check && pnpm rt verify && pnpm rt smoke runtimes
 node .agents/skills/bug-hunt/scripts/godot-smoke.mjs
 ```
 
@@ -74,10 +74,10 @@ Verify all example games in real Chrome across **WebGPU**, **WebGL 2**, and **Ca
    ```
 2. Run all browser suites:
    ```sh
-   npm run test:browser
-   npm run test:player
-   npm run test:review
-   RIDGETOP_REVIEW_RENDERER=webgpu npm run test:review
+   pnpm rt smoke browser
+   pnpm rt smoke player
+   pnpm rt smoke review
+   RIDGETOP_REVIEW_RENDERER=webgpu pnpm rt smoke review
    ```
 3. Stop temporary server/Chrome processes and verify package contents & size:
    ```sh
