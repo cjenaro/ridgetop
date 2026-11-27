@@ -306,6 +306,35 @@ export type {
   MonasteryReinforcementSpawnSpec, MonasteryWaveResult, MonasteryWaveSpec,
   OakhavenExchangeDealSpec, OakhavenExchangeOffer, OakhavenPurchaseResult
 } from './expansion-act1.ts'
+import {
+  MASTERY_MILESTONES, MAX_STAGE_MASTERY_STARS,
+  canClaimMasteryMilestone, canClaimStageMasteryChest,
+  claimMasteryMilestone, claimStageMasteryChest, createEmptyStageMasteryRecord,
+  didFinishWithZeroHeroKos, evaluateAndRecordBattleMastery,
+  getBattleHeroKoCount, getBattleTurnsTaken, getClaimableMasteryMilestones,
+  getMasteryMilestoneSpec, getMaxMasteryStars, getNextMasteryMilestone,
+  getStageMasteryChestReward, getStageMasteryObjectives, getStageMasteryRecord,
+  getStageMasteryTurnLimit, getThreeStarStageCount, getTotalMasteryStars,
+  hasClaimedMasteryMilestone, hasClaimedStageMasteryChest,
+  sanitizeClaimedMasteryMilestones, sanitizeClaimedStageMasteryChests, sanitizeStageMastery
+} from './mastery.ts'
+export {
+  MASTERY_MILESTONES, MAX_STAGE_MASTERY_STARS,
+  canClaimMasteryMilestone, canClaimStageMasteryChest,
+  claimMasteryMilestone, claimStageMasteryChest, createEmptyStageMasteryRecord,
+  didFinishWithZeroHeroKos, evaluateAndRecordBattleMastery,
+  getBattleHeroKoCount, getBattleTurnsTaken, getClaimableMasteryMilestones,
+  getMasteryMilestoneSpec, getMaxMasteryStars, getNextMasteryMilestone,
+  getStageMasteryChestReward, getStageMasteryObjectives, getStageMasteryRecord,
+  getStageMasteryTurnLimit, getThreeStarStageCount, getTotalMasteryStars,
+  hasClaimedMasteryMilestone, hasClaimedStageMasteryChest,
+  sanitizeClaimedMasteryMilestones, sanitizeClaimedStageMasteryChests, sanitizeStageMastery
+}
+export type { MasteryMilestoneClaimResult, StageMasteryChestClaimResult } from './mastery.ts'
+export type {
+  BattleMasteryEvaluation, MasteryMilestoneSpec, StageMasteryChestReward,
+  StageMasteryObjectiveId, StageMasteryObjectiveSpec, StageMasteryRecord, StageMasteryStars
+} from './types.ts'
 import type {
   AttackArc, BattleCellSnapshot, BattleHeroXpGain, BattleObjectiveEvaluation, BattleObjectiveKind,
   BattleObjectiveSnapshot, BattleObjectiveState, BattleReward, BattleSaveSnapshot, BattleSpeedMultiplier,
@@ -980,6 +1009,9 @@ export function createInitialCampaign(seed = 1337): CampaignState {
     chaptersCleared: 0,
     clearedStageIds: [],
     clearedStageTiers: {},
+    stageMastery: {},
+    claimedStageMasteryChests: [],
+    claimedMasteryMilestones: [],
     selectedStageId: CHAPTERS[0].id,
     endlessBest: 0,
     crownlessDeepFloor: 0,
@@ -1146,6 +1178,9 @@ function cloneCampaignFromSave(c: SavedCampaignState, fallbackSeed: number): Cam
     chaptersCleared: dedupCleared.length,
     clearedStageIds: dedupCleared,
     clearedStageTiers: sanitizeClearedStageTiers(c.clearedStageTiers, dedupCleared),
+    stageMastery: sanitizeStageMastery(c.stageMastery, dedupCleared),
+    claimedStageMasteryChests: sanitizeClaimedStageMasteryChests(c.claimedStageMasteryChests),
+    claimedMasteryMilestones: sanitizeClaimedMasteryMilestones(c.claimedMasteryMilestones),
     selectedStageId: typeof c.selectedStageId === 'string' && CHAPTER_BY_ID[c.selectedStageId]
       ? c.selectedStageId
       : CHAPTERS[0].id,
@@ -1423,6 +1458,8 @@ export function serializeBattleState(
     ...(battle.stageMechanic ? { stageMechanic: cloneStageMechanicState(battle.stageMechanic) } : {}),
     xpEarnedByHero: { ...battle.xpEarnedByHero },
     heroStartLevelByUid: { ...battle.heroStartLevelByUid },
+    ...(battle.heroKoCount > 0 ? { heroKoCount: Math.floor(battle.heroKoCount) } : {}),
+    ...(battle.anyHeroFallen ? { anyHeroFallen: true } : {}),
     combatLog: battle.combatLog.slice(-MAX_COMBAT_LOG_ENTRIES).map(e => ({ ...e })),
     nextLogId: Math.max(1, Math.floor(battle.nextLogId || 1))
   }
@@ -1743,6 +1780,8 @@ export function validateBattleSnapshot(raw: unknown): BattleSaveSnapshot | null 
     }
   }
   const combatLog = raw.combatLog !== undefined ? sanitizeCombatLogEntries(raw.combatLog) : undefined
+  const heroKoCount = isFiniteNum(raw.heroKoCount) && raw.heroKoCount >= 0 ? Math.floor(raw.heroKoCount) : undefined
+  const anyHeroFallen = raw.anyHeroFallen === true ? true : undefined
   const maxLogId = combatLog ? combatLog.reduce((m, e) => (e.id > m ? e.id : m), 0) : 0
   const nextLogId = isFiniteNum(raw.nextLogId) && raw.nextLogId >= 1
     ? Math.max(Math.floor(raw.nextLogId), maxLogId + 1)
@@ -1782,6 +1821,8 @@ export function validateBattleSnapshot(raw: unknown): BattleSaveSnapshot | null 
     ...(stageMechanic !== undefined ? { stageMechanic } : {}),
     ...(xpEarnedByHero !== undefined ? { xpEarnedByHero } : {}),
     ...(heroStartLevelByUid !== undefined ? { heroStartLevelByUid } : {}),
+    ...(heroKoCount !== undefined ? { heroKoCount } : {}),
+    ...(anyHeroFallen !== undefined ? { anyHeroFallen } : {}),
     ...(combatLog !== undefined ? { combatLog } : {}),
     ...(nextLogId !== undefined ? { nextLogId } : {})
   }
@@ -1982,6 +2023,15 @@ export function restoreBattleState(state: GameState, snapshot: unknown): boolean
     heroStartLevelByUid: valid.heroStartLevelByUid
       ? { ...valid.heroStartLevelByUid }
       : Object.fromEntries(units.filter(u => u.team === 'ally').map(u => [u.uid, normalizeHeroLevel(u.level)])),
+    heroKoCount: Math.max(
+      valid.heroKoCount ?? 0,
+      units.filter(u => u.team === 'ally' && !u.alive && !isUnitDowned(u)).length
+    ),
+    anyHeroFallen: Boolean(
+      valid.anyHeroFallen ||
+      (valid.heroKoCount ?? 0) > 0 ||
+      units.some(u => u.team === 'ally' && !u.alive && !isUnitDowned(u))
+    ),
     reward: null,
     activeTipId: null,
     tipQueue: []
@@ -2077,6 +2127,9 @@ export function serializeSave(state: GameState): SaveData {
       ...state.campaign,
       clearedStageIds: state.campaign.clearedStageIds.slice(),
       clearedStageTiers: sanitizeClearedStageTiers(state.campaign.clearedStageTiers, state.campaign.clearedStageIds),
+      stageMastery: sanitizeStageMastery(state.campaign.stageMastery, state.campaign.clearedStageIds),
+      claimedStageMasteryChests: sanitizeClaimedStageMasteryChests(state.campaign.claimedStageMasteryChests),
+      claimedMasteryMilestones: sanitizeClaimedMasteryMilestones(state.campaign.claimedMasteryMilestones),
       heroes: state.campaign.heroes.map(h => {
         const level = normalizeHeroLevel(h.level)
         const xp = normalizeHeroXp(level, h.xp)
@@ -2155,6 +2208,16 @@ export function loadSave(storage: StorageLike | null | undefined): SaveData | nu
         clearedStageTiers: sanitizeClearedStageTiers(
           'clearedStageTiers' in camp ? camp.clearedStageTiers : undefined,
           clearedStageIds
+        ),
+        stageMastery: sanitizeStageMastery(
+          'stageMastery' in camp ? camp.stageMastery : undefined,
+          clearedStageIds
+        ),
+        claimedStageMasteryChests: sanitizeClaimedStageMasteryChests(
+          'claimedStageMasteryChests' in camp ? camp.claimedStageMasteryChests : undefined
+        ),
+        claimedMasteryMilestones: sanitizeClaimedMasteryMilestones(
+          'claimedMasteryMilestones' in camp ? camp.claimedMasteryMilestones : undefined
         ),
         selectedStageId,
         endlessBest: 'endlessBest' in camp && typeof camp.endlessBest === 'number' ? camp.endlessBest : 0,
@@ -3080,6 +3143,8 @@ export function startChapterBattle(
     heroStartLevelByUid: Object.fromEntries(
       squad.map(h => [h.uid, normalizeHeroLevel(h.level)])
     ),
+    heroKoCount: 0,
+    anyHeroFallen: false,
     reward: null,
     activeTipId: null,
     tipQueue: []
@@ -6101,6 +6166,10 @@ function awardBattleVictory(state: GameState): void {
   if (bonusShards > 0) campaign.shards += bonusShards
   campaign.battlesWon += 1
 
+  const masteryEarned = battle.endlessWave === 0
+    ? evaluateAndRecordBattleMastery(campaign, battle, chapter)
+    : undefined
+
   let unlockedSlot4 = false
   let campaignWon = false
   let abyssCompleted = false
@@ -6308,7 +6377,8 @@ function awardBattleVictory(state: GameState): void {
     ...(battle.abyssFloor !== undefined ? { abyssFloor: battle.abyssFloor } : {}),
     ...(abyssCompleted ? { abyssCompleted: true } : {}),
     ...(battle.gauntletMaxRounds ? { gauntletRoundsCleared: battle.gauntletMaxRounds } : {}),
-    heroXpGains
+    heroXpGains,
+    ...(masteryEarned !== undefined ? { masteryEarned } : {})
   }
   battle.reward = reward
   battle.bannerText = abyssPlan
@@ -7663,6 +7733,8 @@ function advanceToNextUnitTurn(state: GameState, initial = false): void {
         )
       } else {
         readyDowned.downed = false
+        battle.heroKoCount += 1
+        battle.anyHeroFallen = true
         addFloat(battle, readyDowned.x, readyDowned.y + 0.35, readyDowned.z, 'FALLEN!', '#ff5768')
         appendCombatLog(battle, 'ko', formatKoLog({ unitName: readyDowned.name, kind: 'fallen' }))
         state.sounds.push({ kind: 'ko', pitch: 0.78 })

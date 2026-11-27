@@ -39,6 +39,7 @@
       "crownshard/forced-movement.ts",
       "crownshard/leveling.ts",
       "crownshard/inventory-ops.ts",
+      "crownshard/mastery.ts",
       "crownshard/mutators.ts",
       "crownshard/pincer.ts",
       "crownshard/zoc.ts",
