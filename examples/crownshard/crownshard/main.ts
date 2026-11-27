@@ -20,18 +20,18 @@ import {
   STARFALL_ATOLL_FIRST_CLEAR_DUST, STARFALL_ATOLL_FIRST_CLEAR_SHARDS,
   STAGE_DIFFICULTY_TIERS, STAGE_MUTATOR_IDS, STAGE_MUTATOR_SPECS, STAGE_TIER_SPECS,
   abandonBattle, areDiscoveryTipsEnabled, armSkill, armTacticCard, autoBuildTacticDeck, autoEquipBestFit, beginWaitFacingPicker,
-  bulkSalvageCommonDupes, buyOakhavenDeal, buyPack, canBuyPack, canCraftEquipment, canCraftHero, canMergeHero, canUndoMove,
-  cancelAutoBattle, cancelWaitFacingPicker, checkDiscoveryTipForBattle, clearSave, computeChallengeRewards,
+  bulkSalvageCommonDupes, buyOakhavenDeal, buyPack, canBuyPack, canClaimStageMasteryChest, canCraftEquipment, canCraftHero, canMergeHero, canUndoMove,
+  cancelAutoBattle, cancelWaitFacingPicker, checkDiscoveryTipForBattle, claimMasteryMilestone, claimStageMasteryChest, clearSave, computeChallengeRewards,
   computeCombatForecast, computeDangerZone, computeDeckValue,
   computeEnemyThreat, computeHeroStats, computeSquadPower, computeTacticDeckCurve, computeZocPerimeterTiles,
   confirmDeployment, confirmWaitFacingPicker, craftEquipment, craftHero, createInitialState,
   createTurnBoundaryTracker, dismissDiscoveryTip, effectiveSpeed, equipItem, evaluateAllFacingExposures, evaluateFacingExposure,
   findBestFitUpgrades, findEquipOwner, findGridPath, formatAbyssFloorLabel, formatBattleSpeedLabel, formatOpportunityWarning,
   getAct1StageMechanicStatus, getActiveDiscoveryTip, getActiveTacticDeckUids,
-  getChapterObjectiveSummary, getCraftableEquipment, getCraftableHeroes, getCrownlessDeepFloorSpec, getEquipCraftCost, getEquipEffect,
+  getChapterObjectiveSummary, getClaimableMasteryMilestones, getCraftableEquipment, getCraftableHeroes, getCrownlessDeepFloorSpec, getEquipCraftCost, getEquipEffect,
   getEquipSalvageDust, getEquipmentByUid, getHeroByUid, getHeroCraftCost, getHeroPassive, getHeroSalvageShards,
-  getHeroSkill, getHighestClearedStageTier, getMaxCombatLogScroll, getMaxSelectableCrownlessDeepFloor, getMergeCandidates, getNextRecommendedStage, getOakhavenExchangeOffers, getObjectiveProgressText, getPackPityStatus,
-  getSelectedCrownlessDeepFloor, getStageUnlockHint, getTacticByUid, getUnitByUid, hasMaxedHero, hasOakhavenPatronDiscount, heroLevelProgress, isChestClaimed,
+  getHeroSkill, getHighestClearedStageTier, getMaxCombatLogScroll, getMaxMasteryStars, getMaxSelectableCrownlessDeepFloor, getMergeCandidates, getNextMasteryMilestone, getNextRecommendedStage, getOakhavenExchangeOffers, getObjectiveProgressText, getPackPityStatus,
+  getSelectedCrownlessDeepFloor, getStageMasteryChestReward, getStageMasteryObjectives, getStageMasteryRecord, getStageUnlockHint, getTacticByUid, getTotalMasteryStars, getUnitByUid, hasClaimedStageMasteryChest, hasMaxedHero, hasOakhavenPatronDiscount, heroLevelProgress, isChestClaimed,
   isCrownlessDeepStage, isDeployTile, isEndlessUnlocked, isEnemyShrouded, isOakhavenExchangeUnlocked, isStageCleared, isStageUnlocked, loadSave, maxSquadSize, mergeHero,
   moveDeployUnit, persistSave, previewBulkSalvageCommonDupes, previewPathOpportunityAttacks,
   previewTurnOrderAfterAction, previewWaitFacing, resetDiscoveryTips, resolveStageChallenge, restoreBattleState, rotateDeployUnit, salvageEquipCard,
@@ -54,11 +54,11 @@ import {
   drawForgeBalanceBanner, drawForgeRecipeCard, drawHeroHeader, drawHeroRosterCard, drawHeroXpSummaryAnimated, drawHintPill, drawIconButton, drawLabel, drawLetterbox,
   drawLootRow, drawModal, drawMutatorChipButton, drawObjectiveBadge, drawOverline, drawPackCeremonyBackdrop, drawPanel, drawPassiveBanner, drawPityBanner, drawPortraitTile,
   drawResultHeadlineAnimated, drawRevealCard, drawRewardRowAnimated, drawSegmentTrack,
-  drawSettingRow, drawSheet, drawSkillRow, drawSkillTile, drawSpeakerPortrait, drawStageTierSegment, drawStatStrip,
+  drawSettingRow, drawSheet, drawSkillRow, drawSkillTile, drawSpeakerPortrait, drawStageMasteryChecklist, drawStageTierSegment, drawStatStrip,
   drawStoryHeading, drawTab, drawTacticCard, drawTacticDeckCard, drawTacticDeckHeader, drawText, drawTimelineBg, drawTitleCard,
   drawTitleLogo, drawToast, drawToolbarBg, drawTopFade, drawTurnOrderCallout,
   drawTurnOrderPreviewBanner, drawTurnTimelinePreviewOverlay, drawTurnToken, drawUnitCard,
-  drawVictoryBackdrop, drawWell, drawWorldMapCanvas, drawWorldMapNode, worldMapScale, worldMapToScreen,
+  drawVictoryBackdrop, drawVictoryMasteryAnimated, drawWell, drawWorldMapCanvas, drawWorldMapNode, worldMapScale, worldMapToScreen,
   FANFARE_DURATION, drawFanfare
 } from './ui-art.ts'
 import type { FanfareDrawOpts, IconName, StatStripItem, WorldMapViewport } from './ui-art.ts'
@@ -1759,7 +1759,7 @@ async function start() {
     const mapRect: LayoutRect = { x: 0, y: 0, width: w, height: h }
 
     const nodeW = mobile ? 88 : 118
-    const nodeH = mobile ? 64 : 72
+    const nodeH = mobile ? 76 : 86
     const pinCenterY = mobile ? 21 : 25
 
     // Position all visible continent landmarks directly onto the full-viewport map canvas!
@@ -1772,6 +1772,8 @@ async function start() {
       const unlocked = unlockedSet.has(stage.id)
       const cleared = clearedSet.has(stage.id)
       const isSel = selected.id === stage.id
+      const nodeMastery = cleared ? getStageMasteryRecord(camp, stage.id) : null
+      const nodeChestReady = cleared && canClaimStageMasteryChest(camp, stage.id)
       mapNodes.push(boxNode({
         id: `map-node-${stage.id}`,
         style: { anchor: 'top-left', inset: [left, top], width: nodeW, height: nodeH },
@@ -1796,6 +1798,8 @@ async function start() {
               unlocked,
               cleared,
               clearedTier: cleared ? getHighestClearedStageTier(camp, stage.id) : null,
+              masteryStars: nodeMastery ? nodeMastery.stars : 0,
+              masteryChestReady: nodeChestReady,
               selected: isSel,
               time: worldMapTime,
               compact: mobile
@@ -1933,21 +1937,38 @@ async function start() {
     const showOakhavenExchange = selected.id === OAKHAVEN_STAGE_ID && !selectedSoon && isOakhavenExchangeUnlocked(camp)
     const oakhavenOffers = showOakhavenExchange ? getOakhavenExchangeOffers(camp) : []
     const oakhavenPatron = showOakhavenExchange && hasOakhavenPatronDiscount(camp)
-    const inspW = mobile ? Math.min(w - 16, 460) : 344
+    const showMasteryPanel = !selectedSoon
+    const selectedMastery = getStageMasteryRecord(camp, selected.id)
+    const selectedMasteryObjectives = getStageMasteryObjectives(selected, selectedMastery)
+    const selectedChestReward = getStageMasteryChestReward(selected)
+    const selectedChestClaimable = canClaimStageMasteryChest(camp, selected.id)
+    const selectedChestClaimed = hasClaimedStageMasteryChest(camp, selected.id)
+    const totalMasteryStars = getTotalMasteryStars(camp)
+    const maxMasteryStars = getMaxMasteryStars()
+    const claimableMilestones = getClaimableMasteryMilestones(camp)
+    const nextReadyMilestone = claimableMilestones[0] ?? null
+    const nextUpcomingMilestone = getNextMasteryMilestone(camp)
+
+    const inspW = mobile ? Math.min(w - 16, 460) : 348
     const extraPanels = (showChallengeControls ? 1 : 0) + (showOakhavenExchange ? 1 : 0)
     const abyssExtraH = selectedIsAbyss ? 42 : 0
+    const masteryExtraH = showMasteryPanel
+      ? (selectedChestClaimable ? (isCompact ? 68 : 94) : (isCompact ? 44 : 66))
+      : 0
     const inspH = mobile
       ? Math.min(
-          Math.min(h - topH - 36, Math.round(h * (extraPanels > 0 ? 0.72 : selectedIsAbyss ? 0.50 : 0.42))),
-          (extraPanels > 1 ? 464 : extraPanels > 0 ? 408 : 258) + abyssExtraH
+          Math.min(h - topH - 28, Math.round(h * (extraPanels > 0 ? 0.78 : selectedIsAbyss ? 0.56 : 0.49))),
+          (extraPanels > 1 ? 470 : extraPanels > 0 ? 424 : 272) + abyssExtraH + masteryExtraH
         )
-      : Math.min(h - topH - outerPad * 3 - 8, (extraPanels > 1 ? 690 : extraPanels > 0 ? 624 : 512) + abyssExtraH)
+      : Math.min(h - topH - outerPad * 3 - 8, (extraPanels > 1 ? 664 : extraPanels > 0 ? 648 : 548) + abyssExtraH + (selectedChestClaimable ? 26 : 0))
+    const hideFoesForRoom = isCompact || extraPanels > 1 || (showChallengeControls && h < 700)
+    const hideHintForRoom = isCompact && (extraPanels > 0 || selectedChestClaimable)
 
     const inspectorPanel = column({
       id: 'wm-inspector',
       style: mobile
-        ? { anchor: 'bottom', width: inspW, height: inspH, inset: [8, 8], padding: [10, 12], gap: 6, respectSafeArea: true }
-        : { anchor: 'top-right', width: inspW, height: inspH, inset: [outerPad, topH + outerPad + 10], padding: [13, 14], gap: 8, respectSafeArea: true },
+        ? { anchor: 'bottom', width: inspW, height: inspH, inset: [8, 8], padding: [9, 11], gap: 5, respectSafeArea: true }
+        : { anchor: 'top-right', width: inspW, height: inspH, inset: [outerPad, topH + outerPad + 10], padding: [11, 13], gap: extraPanels > 0 ? 6 : 7, respectSafeArea: true },
       widget: {
         type: 'panel',
         blocksPointer: true,
@@ -2012,7 +2033,7 @@ async function start() {
       // Difficulty + Arena Size + Recommended Power strip
       boxNode({
         id: 'wm-st-meta',
-        style: { height: isCompact ? 42 : 50 },
+        style: { height: isCompact ? 42 : 48 },
         widget: {
           type: 'panel',
           draw: (ctx: CanvasRenderingContext2D, rect: LayoutRect) => {
@@ -2037,9 +2058,9 @@ async function start() {
       }),
 
       // Hostile Forces OR Expansion Feature Teaser
-      ...(isCompact ? [] : [boxNode({
+      ...(hideFoesForRoom ? [] : [boxNode({
         id: 'wm-st-foes',
-        style: { height: 72 },
+        style: { height: showChallengeControls ? 60 : 68 },
         widget: {
           type: 'panel',
           draw: (ctx: CanvasRenderingContext2D, rect: LayoutRect) => {
@@ -2048,16 +2069,16 @@ async function start() {
               drawOverline(ctx, 'Upcoming Expansion Preview', rect.x + 10, rect.y + 12, rect.width - 20, '#f5d193')
               drawLabel(
                 ctx,
-                { x: rect.x + 10, y: rect.y + 22, width: rect.width - 20, height: 44 },
+                { x: rect.x + 10, y: rect.y + 22, width: rect.width - 20, height: 42 },
                 selected.soonNote ?? selected.introText,
                 { size: 11.5, weight: 600, color: '#f2e6d0', wrap: true, lineHeight: 15 }
               )
               return
             }
-            drawOverline(ctx, `Hostile Forces (${inspectEnemies.length})`, rect.x + 10, rect.y + 12, rect.width - 20)
+            drawOverline(ctx, `Hostile Forces (${inspectEnemies.length})`, rect.x + 10, rect.y + 11, rect.width - 20)
             let ex = rect.x + 10
-            const ey = rect.y + 23
-            const ps = 40
+            const ps = showChallengeControls ? 34 : 38
+            const ey = rect.y + 21
             for (const [eid, count] of enemyList) {
               if (ex + ps > rect.x + rect.width - 8) break
               const spec = ENEMY_SPECS[eid]
@@ -2074,6 +2095,59 @@ async function start() {
           }
         }
       })]),
+
+      // 3-Star Stage Mastery Checklist + One-Click 3★ Mastery Chest Claim CTA
+      ...(showMasteryPanel ? [column({
+        id: 'wm-st-mastery',
+        style: {
+          height: selectedChestClaimable ? (isCompact ? 66 : 92) : (isCompact ? 40 : 62),
+          gap: 4
+        }
+      }, [
+        boxNode({
+          id: 'wm-st-mastery-list',
+          style: { height: isCompact ? 38 : 62 },
+          widget: {
+            type: 'panel',
+            draw: (ctx: CanvasRenderingContext2D, rect: LayoutRect) => drawStageMasteryChecklist(ctx, rect, {
+              record: selectedMastery,
+              objectives: selectedMasteryObjectives,
+              chestReward: selectedChestReward,
+              chestClaimable: selectedChestClaimable,
+              chestClaimed: selectedChestClaimed,
+              compact: isCompact
+            })
+          }
+        }),
+        ...(selectedChestClaimable ? [boxNode({
+          id: 'cs-world-claim-mastery-chest',
+          style: { height: isCompact ? 24 : 26 },
+          widget: {
+            type: 'button',
+            label: `Claim 3★ Mastery Chest (+${selectedChestReward.gold}g, +${selectedChestReward.dust} Dust, +${selectedChestReward.shards} Shards)`,
+            primary: true,
+            onPress: () => {
+              audio.unlock()
+              const res = claimStageMasteryChest(state, selected.id)
+              if (res.ok) {
+                showToast(`3★ Mastery Chest: +${res.gold}g · +${res.dust} Dust · +${res.shards} Shards`)
+                saveNow()
+                uiDirty = true
+                hudRev++
+              } else if (res.reason) {
+                showToast(res.reason)
+              }
+            },
+            draw: (ctx: CanvasRenderingContext2D, rect: LayoutRect, st: CanvasWidgetDrawState) => drawButton(
+              ctx,
+              rect,
+              `Claim 3★ Chest (+${selectedChestReward.gold}g · +${selectedChestReward.dust}D · +${selectedChestReward.shards}S)`,
+              st,
+              { variant: 'primary', icon: 'chest', size: isCompact ? 9.5 : 10.5 }
+            )
+          }
+        })] : [])
+      ])] : []),
 
       // Crownless Deep 10-Floor Selector (push deeper or replay cleared floors)
       ...(selectedIsAbyss && abyssFloorSpec ? [row({
@@ -2273,7 +2347,7 @@ async function start() {
       // Possible Rewards: One-Time First-Clear vs Replayable
       boxNode({
         id: 'wm-st-rewards',
-        style: { grow: 1, minHeight: isCompact ? 70 : 108 },
+        style: { grow: 1, minHeight: isCompact ? 50 : 76 },
         widget: {
           type: 'panel',
           draw: (ctx: CanvasRenderingContext2D, rect: LayoutRect) => {
@@ -2360,7 +2434,7 @@ async function start() {
       }),
 
       // Unlock hint or modifier blurb
-      boxNode({
+      ...(hideHintForRoom ? [] : [boxNode({
         id: 'wm-st-hint',
         style: { height: 20 },
         widget: {
@@ -2381,7 +2455,7 @@ async function start() {
             }
           )
         }
-      }),
+      })]),
 
       // Deploy / Replay / Coming Soon CTA
       boxNode({
@@ -2431,10 +2505,10 @@ async function start() {
       // Interactive landmark medallions floating directly over the illustrated continent!
       ...mapNodes,
 
-      // Floating Top-Left Realm Title + Progress + Gold Pill
+      // Floating Top-Left Realm Title + Continent Mastery Stars + Gold Pill
       ...(() => {
         const wmTopActionsW = (mobile ? 92 : 164) + zoomCtrlW + (endlessReady ? (mobile ? 88 : 134) : 0) + (endlessReady ? 16 : 8)
-        const wmHeaderW = Math.max(176, Math.min(mobile ? 250 : 410, w - wmTopActionsW - outerPad * 2 - 28))
+        const wmHeaderW = Math.max(186, Math.min(mobile ? 264 : 460, w - wmTopActionsW - outerPad * 2 - 24))
         return [boxNode({
           id: 'wm-header',
           style: {
@@ -2451,19 +2525,42 @@ async function start() {
               drawPanel(ctx, rect, { r: RADIUS.lg, lipH: 4, fill: '#263459eb', fillBot: '#151e38f0' })
               const cy = rect.y + (rect.height - 4) / 2
               const prog = `${camp.clearedStageIds.length}/${PLAYABLE_CHAPTERS.length}`
-              const chipW = drawChip(ctx, rect.x + rect.width - 10, cy - 10, `${camp.gold}g · ${prog}`, {
-                icon: 'coin',
+              const starText = `${totalMasteryStars}/${maxMasteryStars}`
+              let rightEdge = rect.x + rect.width - 10
+              const starChipW = drawChip(ctx, rightEdge, cy - 10, starText, {
+                icon: 'star',
                 h: 21,
                 size: 10.5,
-                color: COLOR.accentHi,
-                bg: COLOR.wellDeep,
+                color: nextReadyMilestone ? COLOR.accentText : COLOR.accentHi,
+                bg: nextReadyMilestone ? COLOR.accent : '#2a2210',
+                border: nextReadyMilestone ? COLOR.accentHi : '#705820',
                 align: 'right'
               })
-              drawText(ctx, mobile || rect.width < 290 ? 'SOLIS MAP' : 'REALM OF SOLIS', rect.x + 12, cy + 0.5, {
-                size: isCompact || rect.width < 290 ? 12.5 : 15.5,
+              rightEdge -= starChipW + 6
+              const showSeparateGold = rect.width >= 300
+              const goldChipW = showSeparateGold
+                ? drawChip(ctx, rightEdge, cy - 10, `${camp.gold}g · ${prog}`, {
+                    icon: 'coin',
+                    h: 21,
+                    size: 10.5,
+                    color: COLOR.accentHi,
+                    bg: COLOR.wellDeep,
+                    align: 'right'
+                  })
+                : drawChip(ctx, rightEdge, cy - 10, `${camp.gold}g`, {
+                    icon: 'coin',
+                    h: 21,
+                    size: 10,
+                    color: COLOR.accentHi,
+                    bg: COLOR.wellDeep,
+                    align: 'right'
+                  })
+              const usedRight = starChipW + goldChipW + 26
+              drawText(ctx, mobile || rect.width < 320 ? 'SOLIS' : 'REALM OF SOLIS', rect.x + 12, cy + 0.5, {
+                size: isCompact || rect.width < 320 ? 12 : 15,
                 weight: 900,
                 color: COLOR.accentHi,
-                maxW: Math.max(40, rect.width - chipW - 28),
+                maxW: Math.max(36, rect.width - usedRight - 14),
                 display: true,
                 stroke: true,
                 strokeWidth: 2.6
@@ -2472,6 +2569,46 @@ async function start() {
           }
         })]
       })(),
+
+      // Floating Top-Left Continent Mastery Milestone Chest Banner (when a star milestone is ready to claim!)
+      ...(nextReadyMilestone ? (() => {
+        const ms = nextReadyMilestone
+        const msTopOffset = topH + outerPad + 10 + (resumableBattle ? (isCompact ? 48 : 54) : 0)
+        const msW = mobile ? Math.min(w - 16, 400) : 390
+        const msLabel = mobile
+          ? `Claim ★${ms.threshold} Chest (+${ms.gold}g · +${ms.dust}D · +${ms.shards}S)`
+          : `Claim ${ms.threshold}★ ${ms.title} (+${ms.gold}g · +${ms.dust}D · +${ms.shards}S)`
+        return [boxNode({
+          id: 'cs-world-claim-milestone',
+          style: {
+            anchor: 'top-left',
+            width: msW,
+            height: isCompact ? 34 : 38,
+            inset: [outerPad, msTopOffset],
+            respectSafeArea: true
+          },
+          widget: {
+            type: 'button',
+            label: msLabel,
+            primary: true,
+            onPress: () => {
+              audio.unlock()
+              const res = claimMasteryMilestone(state, ms.threshold)
+              if (res.ok) {
+                showToast(`★ ${res.threshold}★ ${res.title}: +${res.gold}g · +${res.dust} Dust · +${res.shards} Shards`)
+                saveNow()
+                uiDirty = true
+                hudRev++
+              } else if (res.reason) {
+                showToast(res.reason)
+              }
+            },
+            draw: (ctx: CanvasRenderingContext2D, rect: LayoutRect, st: CanvasWidgetDrawState) => drawButton(
+              ctx, rect, msLabel, st, { variant: 'primary', icon: 'chest', size: isCompact ? 10.5 : 11.5 }
+            )
+          }
+        })]
+      })() : []),
 
       // Floating Top-Left Resume Battle Banner (when a mid-battle auto-save exists)
       ...(resumableBattle ? (() => {
@@ -2620,8 +2757,8 @@ async function start() {
             ctx,
             rect,
             soonCount > 0
-              ? `Drag to Pan · Scroll to Zoom · 9 Regions · ${PLAYABLE_CHAPTERS.length} Playable · ${soonCount} Future (Tier VI–VIII)`
-              : `Drag to Pan · Scroll to Zoom · 9 Regions · ${PLAYABLE_CHAPTERS.length} Playable (Tier I–VIII)`,
+              ? `Drag to Pan · Scroll to Zoom · ★ ${totalMasteryStars}/${maxMasteryStars}${nextUpcomingMilestone ? ` (Next Chest: ${nextUpcomingMilestone.threshold}★)` : ' · All Chests Claimed!'}`
+              : `Drag to Pan · Scroll to Zoom · ★ ${totalMasteryStars}/${maxMasteryStars}${nextUpcomingMilestone ? ` (Next Milestone: ${nextUpcomingMilestone.threshold}★)` : ' · Grandmaster!'}`,
             COLOR.accentHi
           )
         }
@@ -6133,7 +6270,7 @@ async function start() {
       ? `${ch.outroSpeaker}: "${ch.outroText}"`
       : 'Return to Vanguard Camp to equip stronger gear, open booster decks, or merge 3 identical heroes to unlock Tier 2 skills.'
 
-    const rowH = shortH ? 38 : 48
+    const rowH = shortH ? 35 : 44
     const rewardRows: LayoutNode[] = []
     if (won && reward) {
       const goldRollU = Math.max(0, Math.min(1, (resultAnimTime - 0.22) / 0.6))
@@ -6141,6 +6278,22 @@ async function start() {
       const rowReveal = (idx: number) => Math.max(0, Math.min(1, (resultAnimTime - (0.28 + idx * 0.16)) / 0.34))
 
       let rIdx = 0
+      if (reward.masteryEarned) {
+        const mastery = reward.masteryEarned
+        const mIdx = rIdx++
+        rewardRows.push(
+          boxNode({
+            id: 'res-mastery',
+            style: { height: shortH ? 46 : 58 },
+            widget: {
+              type: 'panel',
+              draw: (ctx: CanvasRenderingContext2D, rect: LayoutRect) => drawVictoryMasteryAnimated(
+                ctx, rect, mastery, rowReveal(mIdx)
+              )
+            }
+          })
+        )
+      }
       const goldIdx = rIdx++
       rewardRows.push(
         boxNode({

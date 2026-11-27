@@ -707,6 +707,56 @@ export interface BattleHeroXpGain {
   readonly survived: boolean
 }
 
+export type StageMasteryStars = 0 | 1 | 2 | 3
+
+export type StageMasteryObjectiveId = 'clear' | 'no_ko' | 'turn_par'
+
+export interface StageMasteryRecord {
+  readonly stars: StageMasteryStars
+  readonly cleared: boolean
+  readonly noKo: boolean
+  readonly underPar: boolean
+  readonly bestTurns?: number
+}
+
+export interface StageMasteryObjectiveSpec {
+  readonly id: StageMasteryObjectiveId
+  readonly label: string
+  readonly detail: string
+  readonly completed: boolean
+}
+
+export interface StageMasteryChestReward {
+  readonly gold: number
+  readonly dust: number
+  readonly shards: number
+}
+
+export interface MasteryMilestoneSpec {
+  readonly threshold: number
+  readonly title: string
+  readonly gold: number
+  readonly dust: number
+  readonly shards: number
+}
+
+export interface BattleMasteryEvaluation {
+  readonly stageId: string
+  readonly starsEarnedThisRun: StageMasteryStars
+  readonly prevStars: StageMasteryStars
+  readonly totalStars: StageMasteryStars
+  readonly newlyEarnedStars: number
+  readonly cleared: boolean
+  readonly noKo: boolean
+  readonly underPar: boolean
+  readonly turnsTaken: number
+  readonly turnPar: number
+  readonly heroKoCount: number
+  readonly chestUnlockedNow: boolean
+  readonly chestClaimable: boolean
+  readonly newlyUnlockedMilestones: readonly number[]
+}
+
 export interface BattleReward {
   readonly gold: number
   readonly bonusDust?: number
@@ -726,6 +776,7 @@ export interface BattleReward {
   readonly abyssCompleted?: boolean
   readonly gauntletRoundsCleared?: number
   readonly heroXpGains: readonly BattleHeroXpGain[]
+  readonly masteryEarned?: BattleMasteryEvaluation
 }
 
 export interface TurnPreviewEntry {
@@ -1005,6 +1056,8 @@ export interface BattleState {
   shake: number
   xpEarnedByHero: Record<string, number>
   heroStartLevelByUid: Record<string, number>
+  heroKoCount: number
+  anyHeroFallen: boolean
   reward: BattleReward | null
   activeTipId: DiscoveryTipId | null
   tipQueue: DiscoveryTipId[]
@@ -1100,6 +1153,8 @@ export interface BattleSaveSnapshot {
   readonly stageMechanic?: StageMechanicState
   readonly xpEarnedByHero?: Record<string, number>
   readonly heroStartLevelByUid?: Record<string, number>
+  readonly heroKoCount?: number
+  readonly anyHeroFallen?: boolean
   readonly combatLog?: readonly CombatLogEntry[]
   readonly nextLogId?: number
 }
@@ -1113,6 +1168,9 @@ export interface CampaignState {
   chaptersCleared: number
   clearedStageIds: string[]
   clearedStageTiers?: Record<string, StageDifficultyTier>
+  stageMastery: Record<string, StageMasteryRecord>
+  claimedStageMasteryChests: string[]
+  claimedMasteryMilestones: number[]
   selectedStageId: string
   endlessBest: number
   crownlessDeepFloor: number
@@ -1152,6 +1210,9 @@ export type SavedCampaignState = Omit<
   | 'seenTips'
   | 'battleSpeed'
   | 'crownlessDeepFloor'
+  | 'stageMastery'
+  | 'claimedStageMasteryChests'
+  | 'claimedMasteryMilestones'
 > & {
   dust?: number
   shards?: number
@@ -1164,6 +1225,9 @@ export type SavedCampaignState = Omit<
   crownlessDeepFloor?: number
   crownlessDeepSelectedFloor?: number
   crownlessDeepRewardClaimed?: boolean
+  stageMastery?: Record<string, StageMasteryRecord>
+  claimedStageMasteryChests?: string[]
+  claimedMasteryMilestones?: number[]
 }
 
 export interface SaveData {

@@ -1,9 +1,9 @@
 import type { CanvasWidgetDrawState, LayoutRect } from 'ridgetop/ui'
 import type {
-  BattleHeroXpGain, BattleUnit, ChapterSpec, CombatForecast, CombatForecastAlt, CombatLogEntry, DifficultyLevel,
+  BattleHeroXpGain, BattleMasteryEvaluation, BattleUnit, ChapterSpec, CombatForecast, CombatForecastAlt, CombatLogEntry, DifficultyLevel,
   ElementalComboPreview, EquipSlot, EquipmentSpec, FacingDir, FacingExposureLevel, HeroSpec,
   LandmarkKind, OwnedHeroCard, PackPityStatus, PackRevealItem, PackSpec, Rarity, SkillSpec,
-  StageDifficultyTier, StageMutatorId, StatusKind,
+  StageDifficultyTier, StageMasteryChestReward, StageMasteryObjectiveSpec, StageMasteryRecord, StageMasteryStars, StageMutatorId, StatusKind,
   TacticCardSpec, TurnOrderActionPreview, TurnPreviewEntry
 } from './types.ts'
 import { ARMORY_STAT_ORDER, formatStatDelta, formatStatValue } from './armory-diff.ts'
@@ -7760,6 +7760,8 @@ export function drawWorldMapNode(
     unlocked: boolean
     cleared: boolean
     clearedTier?: StageDifficultyTier | null
+    masteryStars?: StageMasteryStars
+    masteryChestReady?: boolean
     selected: boolean
     time: number
     compact?: boolean
@@ -7945,7 +7947,117 @@ export function drawWorldMapNode(
     display: true
   })
 
+  // Crisp 3-star mastery pips pill directly beneath cleared World Map pins
+  if (!isSoon && opts.cleared) {
+    const stars = opts.masteryStars ?? 1
+    const starSize = opts.compact ? 7.8 : 9.2
+    const pillW = opts.compact ? 36 : 44
+    const pillH = opts.compact ? 11.5 : 13.5
+    const pillX = cx - pillW / 2
+    const pillY = plaqueY + plaqueH + 1.5
+    rr(ctx, pillX, pillY, pillW, pillH, pillH / 2)
+    ctx.fillStyle = opts.masteryChestReady ? '#3a2b0d' : 'rgba(13, 19, 36, 0.92)'
+    ctx.fill()
+    ctx.strokeStyle = opts.masteryChestReady
+      ? COLOR.accentHi
+      : stars === 3
+        ? '#e5a825'
+        : COLOR.outline
+    ctx.lineWidth = opts.masteryChestReady ? 1.7 : 1.3
+    ctx.stroke()
+    drawStars(ctx, cx, pillY + pillH / 2 + 0.2, stars, 3, starSize, 'center', COLOR.accent)
+  }
+
   if (st.focused) drawFocusRing(ctx, cx - r - 2, cy - r - 2, r * 2 + 4, r * 2 + 4, r + 2)
+  ctx.restore()
+}
+
+/** Compact 3-star Stage Mastery checklist panel rendered inside the World Map stage inspector. */
+export function drawStageMasteryChecklist(
+  ctx: CanvasRenderingContext2D,
+  rect: LayoutRect,
+  opts: {
+    record: StageMasteryRecord
+    objectives: readonly StageMasteryObjectiveSpec[]
+    chestReward: StageMasteryChestReward
+    chestClaimable: boolean
+    chestClaimed: boolean
+    compact?: boolean
+  }
+) {
+  drawWell(ctx, rect, RADIUS.md)
+  ctx.save()
+  ctx.beginPath()
+  ctx.rect(rect.x + 1, rect.y + 1, Math.max(0, rect.width - 2), Math.max(0, rect.height - 2))
+  ctx.clip()
+
+  const px = rect.x + 9
+  const pw = Math.max(20, rect.width - 18)
+  const compact = Boolean(opts.compact)
+  const headY = rect.y + (compact ? 10 : 12)
+
+  // Header: Overline + 3 star pips + right-side chest/best turns badge
+  const labelW = drawOverline(ctx, 'Mastery', px, headY, 72, COLOR.accentHi)
+  drawStars(ctx, px + labelW + 8, headY, opts.record.stars, 3, compact ? 9 : 10.5, 'left', COLOR.accent)
+
+  const rightStatus = opts.chestClaimed
+    ? { text: '3★ CLAIMED', color: '#8ef5b4', bg: '#153826' }
+    : opts.chestClaimable
+      ? { text: '3★ CHEST READY!', color: COLOR.accentText, bg: COLOR.accent }
+      : opts.record.bestTurns !== undefined
+        ? { text: `BEST ${opts.record.bestTurns}T`, color: '#b7d4ff', bg: '#1b2745' }
+        : { text: `+${opts.chestReward.gold}g · +${opts.chestReward.dust}D`, color: '#e9d399', bg: '#262018' }
+  drawChip(ctx, rect.x + rect.width - 8, rect.y + (compact ? 3 : 4), rightStatus.text, {
+    h: compact ? 14 : 16,
+    size: compact ? 7.8 : 8.5,
+    color: rightStatus.color,
+    bg: rightStatus.bg,
+    align: 'right'
+  })
+
+  if (compact) {
+    // Ultra-compact 3-column inline strip so mobile & short landscape never overflow
+    const rowY = rect.y + 28
+    const colW = pw / 3
+    for (let i = 0; i < opts.objectives.length; i++) {
+      const obj = opts.objectives[i]
+      const cx = px + i * colW
+      const shortLabel = obj.id === 'clear'
+        ? 'Clear'
+        : obj.id === 'no_ko'
+          ? '0 KOs'
+          : obj.label.replace(/^Win in /, '').replace(/^Hold intact /, '')
+      const iconCol = obj.completed ? COLOR.good : '#5b6c94'
+      const textCol = obj.completed ? '#d9ffe8' : COLOR.muted
+      drawText(ctx, `${obj.completed ? '✓' : '○'} ${shortLabel}`, cx, rowY, {
+        size: 9.2,
+        weight: obj.completed ? 800 : 700,
+        color: obj.completed ? textCol : iconCol,
+        maxW: colW - 4
+      })
+    }
+  } else {
+    // Crisp 3-row checklist on desktop (or 2-line + chest row if claimable)
+    const startY = rect.y + 26
+    const stepY = opts.chestClaimable ? 12.5 : 13.5
+    for (let i = 0; i < opts.objectives.length; i++) {
+      const obj = opts.objectives[i]
+      const ry = startY + i * stepY
+      const mark = obj.completed ? '✓' : '○'
+      drawText(ctx, mark, px + 1, ry, {
+        size: 10.5,
+        weight: 900,
+        color: obj.completed ? COLOR.good : '#62739c'
+      })
+      drawText(ctx, obj.label, px + 14, ry, {
+        size: 10.2,
+        weight: obj.completed ? 800 : 600,
+        color: obj.completed ? '#e6fff0' : COLOR.muted,
+        maxW: pw - 18
+      })
+    }
+  }
+
   ctx.restore()
 }
 
@@ -8472,6 +8584,88 @@ export function drawRewardRowAnimated(
     ctx.fillRect(rect.x, rect.y, rect.width, rect.height)
     ctx.restore()
   }
+  ctx.restore()
+}
+
+/** Victory modal 3-star Stage Mastery breakdown banner with animated reveal. */
+export function drawVictoryMasteryAnimated(
+  ctx: CanvasRenderingContext2D,
+  rect: LayoutRect,
+  mastery: BattleMasteryEvaluation,
+  revealT: number
+) {
+  const t = Math.max(0, Math.min(1, revealT))
+  if (t <= 0.01) return
+  const eased = easeOutCubic(t)
+  const slide = (1 - eased) * 18
+
+  ctx.save()
+  ctx.globalAlpha = Math.min(1, t * 1.4)
+  ctx.translate(slide, 0)
+  const golden = mastery.totalStars === 3 || mastery.newlyEarnedStars > 0
+  drawSurface(ctx, rect, {
+    r: RADIUS.md,
+    lipH: 3,
+    fill: golden ? '#35446b' : '#253459',
+    fillBot: golden ? '#1c2645' : '#17213c',
+    border: golden ? COLOR.accent : COLOR.outline,
+    shadow: false
+  })
+
+  const { x, y, width: w, height: h } = rect
+  const compact = h <= 48
+  const topY = y + (compact ? 14 : 18)
+
+  // 3 big stars on the left
+  const starsW = drawStars(ctx, x + 12, topY, mastery.totalStars, 3, compact ? 12 : 14.5, 'left', COLOR.accent)
+  const titleX = x + 12 + starsW + 10
+
+  // Status badge on the right
+  const badge = mastery.chestUnlockedNow
+    ? { text: '3★ CHEST READY!', color: COLOR.accentText, bg: COLOR.accent }
+    : mastery.newlyUnlockedMilestones.length > 0
+      ? { text: `★ ${mastery.newlyUnlockedMilestones[0]}★ MILESTONE!`, color: COLOR.accentText, bg: COLOR.accentHi }
+      : mastery.newlyEarnedStars > 0
+        ? { text: `+${mastery.newlyEarnedStars} NEW ★`, color: '#072b16', bg: COLOR.good }
+        : mastery.totalStars === 3
+          ? { text: '3★ MASTERED', color: COLOR.accentHi, bg: '#2c2410' }
+          : { text: `${mastery.totalStars}/3 ★`, color: COLOR.muted, bg: '#18213a' }
+  const badgeW = drawChip(ctx, x + w - 10, topY - (compact ? 8 : 9), badge.text, {
+    h: compact ? 16 : 18,
+    size: compact ? 8.5 : 9.2,
+    color: badge.color,
+    bg: badge.bg,
+    align: 'right'
+  })
+
+  drawText(ctx, `Stage Mastery ${mastery.totalStars}/3`, titleX, topY + 0.5, {
+    size: compact ? 11.5 : 13,
+    weight: 900,
+    color: golden ? COLOR.accentHi : '#ffffff',
+    maxW: Math.max(40, w - (titleX - x) - badgeW - 18),
+    display: true,
+    shadow: true
+  })
+
+  // Bottom 3-criteria breakdown strip
+  const critY = y + h - (compact ? 12 : 15)
+  const criteria = [
+    { ok: mastery.cleared, text: 'Clear' },
+    { ok: mastery.noKo, text: mastery.noKo ? '0 Hero KOs' : `${mastery.heroKoCount} Hero KO` },
+    { ok: mastery.underPar, text: `${mastery.turnsTaken}/${mastery.turnPar} Turns` }
+  ]
+  const colW = (w - 24) / 3
+  for (let i = 0; i < criteria.length; i++) {
+    const c = criteria[i]
+    const cx = x + 12 + i * colW
+    drawText(ctx, `${c.ok ? '✓' : '✗'} ${c.text}`, cx, critY, {
+      size: compact ? 9.5 : 10.5,
+      weight: 800,
+      color: c.ok ? '#8ef5b4' : '#ff9ca6',
+      maxW: colW - 6
+    })
+  }
+
   ctx.restore()
 }
 
