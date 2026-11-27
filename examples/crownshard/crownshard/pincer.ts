@@ -1,5 +1,6 @@
 import { cellHeightAt, terrainDefBonus } from './types.ts'
 import type { BattleState, BattleUnit, SkillSpec } from './types.ts'
+import { mutatorDamageMultiplier } from './mutators.ts'
 
 export const PINCER_DAMAGE_RATIO = 0.5
 export const PINCER_MIN_DAMAGE = 4
@@ -69,7 +70,7 @@ export function findPincerAssisters(
  * damage accounting for elevation, empower, and target DEF + terrain DEF (minimum 4 DMG).
  */
 export function computePincerAssistDamage(
-  battle: Pick<BattleState, 'cells' | 'cols' | 'rows'>,
+  battle: Pick<BattleState, 'cells' | 'cols' | 'rows'> & Partial<Pick<BattleState, 'mutators'>>,
   assister: Pick<BattleUnit, 'col' | 'row' | 'atk' | 'empowerTurns'>,
   target: Pick<BattleUnit, 'col' | 'row' | 'def'>
 ): number {
@@ -78,6 +79,7 @@ export function computePincerAssistDamage(
   const dLvl = cellHeightAt(battle, target.col, target.row)
   dmg *= pincerElevationMultiplier(aLvl, dLvl)
   if (assister.empowerTurns > 0) dmg *= 1.35
+  dmg *= mutatorDamageMultiplier(battle)
 
   const cell = battle.cells[target.row]?.[target.col]
   const terrainDef = cell ? terrainDefBonus(cell.terrain) : 0

@@ -159,6 +159,36 @@ export {
   nextBattleSpeed, normalizeBattleSpeed, planAutoBattleAction, scaleBattleDt
 }
 export type { AutoBattleActionKind, AutoBattleActionPlan } from './auto-battle.ts'
+import {
+  ARCANE_SURGE_EXTRA_CD_TICK, ARCANE_SURGE_MAX_AP_BONUS, ARCANE_SURGE_START_AP_BONUS,
+  BLOOD_MOON_DAMAGE_MUL, BLOOD_MOON_MELEE_DRAIN, FOG_OF_WAR_VISION_RADIUS,
+  IRON_VANGUARD_DEF_BONUS, IRON_VANGUARD_SHIELD_RATIO, STAGE_DIFFICULTY_TIERS,
+  STAGE_MUTATOR_IDS, STAGE_MUTATOR_SPECS, STAGE_TIER_SPECS, VENOM_MIST_POISON_STACKS,
+  arcaneSurgeApBonuses, baseReplayWeightsForDifficulty, computeChallengeRewards,
+  computeIronVanguardShield, computeScaledEnemyStats, cooldownTickStep,
+  getHighestClearedStageTier, getStageMutatorSpec, getStageTierSpec, hasMutator,
+  isEnemyShrouded, isStageDifficultyTier, isStageMutatorId, isTileRevealedInFog,
+  isUnitVisibleToPlayer, mutatorDamageMultiplier, mutatorMeleeDrainBonus,
+  normalizeStageDifficultyTier, normalizeStageMutators, recordClearedStageTier,
+  resolveStageChallenge, sanitizeClearedStageTiers, stageTierRank
+} from './mutators.ts'
+export {
+  ARCANE_SURGE_EXTRA_CD_TICK, ARCANE_SURGE_MAX_AP_BONUS, ARCANE_SURGE_START_AP_BONUS,
+  BLOOD_MOON_DAMAGE_MUL, BLOOD_MOON_MELEE_DRAIN, FOG_OF_WAR_VISION_RADIUS,
+  IRON_VANGUARD_DEF_BONUS, IRON_VANGUARD_SHIELD_RATIO, STAGE_DIFFICULTY_TIERS,
+  STAGE_MUTATOR_IDS, STAGE_MUTATOR_SPECS, STAGE_TIER_SPECS, VENOM_MIST_POISON_STACKS,
+  arcaneSurgeApBonuses, baseReplayWeightsForDifficulty, computeChallengeRewards,
+  computeIronVanguardShield, computeScaledEnemyStats, cooldownTickStep,
+  getHighestClearedStageTier, getStageMutatorSpec, getStageTierSpec, hasMutator,
+  isEnemyShrouded, isStageDifficultyTier, isStageMutatorId, isTileRevealedInFog,
+  isUnitVisibleToPlayer, mutatorDamageMultiplier, mutatorMeleeDrainBonus,
+  normalizeStageDifficultyTier, normalizeStageMutators, recordClearedStageTier,
+  resolveStageChallenge, sanitizeClearedStageTiers, stageTierRank
+}
+export type {
+  ChallengeRewardSummary, ResolvedStageChallenge, ScaledEnemyStats,
+  StageMutatorSpec, StageTierSpec
+} from './mutators.ts'
 import type {
   AttackArc, BattleCellSnapshot, BattleHeroXpGain, BattleObjectiveEvaluation, BattleObjectiveKind,
   BattleObjectiveSnapshot, BattleObjectiveState, BattleReward, BattleSaveSnapshot, BattleSpeedMultiplier,
@@ -167,7 +197,8 @@ import type {
   ElementalComboPreview, EnemyArchetypeId, EnemyThreatMap, EquipSlot,
   EquipmentSpec, FacingDir, FacingExposureLevel, FacingExposureReport, FacingThreatEntry,
   FlankThreatTile, GameState, GridCell, GridCoord, HeroClassId, MoveAttackTile, OwnedEquipCard,
-  OwnedHeroCard, OwnedTacticCard, PackId, PackRevealItem, Rarity, SaveData, SavedCampaignState, SkillSpec, StatusKind,
+  OwnedHeroCard, OwnedTacticCard, PackId, PackRevealItem, Rarity, SaveData, SavedCampaignState, SkillSpec,
+  StageDifficultyTier, StageMutatorId, StatusKind,
   TacticCardSpec, TileTerrain, TurnActionKind, TurnOrderActionPreview, TurnPreviewEntry
 } from './types.ts'
 
@@ -831,6 +862,7 @@ export function createInitialCampaign(seed = 1337): CampaignState {
     shards: 0,
     chaptersCleared: 0,
     clearedStageIds: [],
+    clearedStageTiers: {},
     selectedStageId: CHAPTERS[0].id,
     endlessBest: 0,
     battlesWon: 0,
@@ -984,6 +1016,7 @@ function cloneCampaignFromSave(c: SavedCampaignState, fallbackSeed: number): Cam
     shards: isFiniteNum(c.shards) && c.shards >= 0 ? Math.floor(c.shards) : 0,
     chaptersCleared: dedupCleared.length,
     clearedStageIds: dedupCleared,
+    clearedStageTiers: sanitizeClearedStageTiers(c.clearedStageTiers, dedupCleared),
     selectedStageId: typeof c.selectedStageId === 'string' && CHAPTER_BY_ID[c.selectedStageId]
       ? c.selectedStageId
       : CHAPTERS[0].id,
@@ -1208,6 +1241,8 @@ export function serializeBattleState(
     chapterIndex: battle.chapterIndex,
     endlessWave: battle.endlessWave,
     difficulty: battle.difficulty,
+    difficultyTier: battle.difficultyTier,
+    mutators: battle.mutators.slice(),
     cols: battle.cols,
     rows: battle.rows,
     biome: battle.biome,
@@ -1251,6 +1286,20 @@ export function validateBattleSnapshot(raw: unknown): BattleSaveSnapshot | null 
 
   const rawDiff = isFiniteNum(raw.difficulty) ? raw.difficulty : chapter.difficulty
   const difficulty: DifficultyLevel = toDifficultyLevel(rawDiff)
+
+  let difficultyTier: StageDifficultyTier = 'normal'
+  if (raw.difficultyTier !== undefined) {
+    if (!isStageDifficultyTier(raw.difficultyTier)) return null
+    difficultyTier = raw.difficultyTier
+  }
+  let mutators: StageMutatorId[] = []
+  if (raw.mutators !== undefined) {
+    if (!Array.isArray(raw.mutators)) return null
+    for (const item of raw.mutators) {
+      if (!isStageMutatorId(item)) return null
+    }
+    mutators = normalizeStageMutators(raw.mutators)
+  }
 
   const biome = typeof raw.biome === 'string' ? BIOME_LOOKUP.get(raw.biome) : undefined
   if (!biome) return null
@@ -1512,6 +1561,8 @@ export function validateBattleSnapshot(raw: unknown): BattleSaveSnapshot | null 
     chapterIndex,
     endlessWave,
     difficulty,
+    difficultyTier,
+    mutators,
     cols,
     rows,
     biome,
@@ -1668,6 +1719,8 @@ export function restoreBattleState(state: GameState, snapshot: unknown): boolean
     chapterIndex: valid.chapterIndex,
     endlessWave: valid.endlessWave,
     difficulty: valid.difficulty,
+    difficultyTier: valid.difficultyTier ?? 'normal',
+    mutators: valid.mutators ? valid.mutators.slice() : [],
     cols: valid.cols,
     rows: valid.rows,
     biome: valid.biome,
@@ -1811,6 +1864,7 @@ export function serializeSave(state: GameState): SaveData {
     campaign: {
       ...state.campaign,
       clearedStageIds: state.campaign.clearedStageIds.slice(),
+      clearedStageTiers: sanitizeClearedStageTiers(state.campaign.clearedStageTiers, state.campaign.clearedStageIds),
       heroes: state.campaign.heroes.map(h => {
         const level = normalizeHeroLevel(h.level)
         const xp = normalizeHeroXp(level, h.xp)
@@ -1885,6 +1939,10 @@ export function loadSave(storage: StorageLike | null | undefined): SaveData | nu
         shards: 'shards' in camp && isFiniteNum(camp.shards) && camp.shards >= 0 ? Math.floor(camp.shards) : 0,
         chaptersCleared: clearedStageIds.length,
         clearedStageIds,
+        clearedStageTiers: sanitizeClearedStageTiers(
+          'clearedStageTiers' in camp ? camp.clearedStageTiers : undefined,
+          clearedStageIds
+        ),
         selectedStageId,
         endlessBest: 'endlessBest' in camp && typeof camp.endlessBest === 'number' ? camp.endlessBest : 0,
         battlesWon: 'battlesWon' in camp && typeof camp.battlesWon === 'number' ? camp.battlesWon : 0,
@@ -2056,6 +2114,8 @@ function drawTacticCards(battle: BattleState, campaign: CampaignState, targetHan
 
 export interface StartBattleOptions {
   readonly deployPhase?: boolean
+  readonly tier?: StageDifficultyTier
+  readonly mutators?: readonly StageMutatorId[]
 }
 
 export function isChestClaimed(
@@ -2490,23 +2550,36 @@ export const beginBattleFromDeploy = confirmDeployment
 export function startStageBattle(
   state: GameState,
   stageId: string,
-  endlessWave = 0,
+  endlessWaveOrOptions: number | StartBattleOptions = 0,
   options?: StartBattleOptions
 ): BattleState {
   const stage = CHAPTER_BY_ID[stageId] ?? CHAPTERS[0]
-  return startChapterBattle(state, stage.index, endlessWave, options)
+  return startChapterBattle(state, stage.index, endlessWaveOrOptions, options)
 }
 
 export function startChapterBattle(
   state: GameState,
   chapterIndex: number,
-  endlessWave = 0,
+  endlessWaveOrOptions: number | StartBattleOptions = 0,
   options?: StartBattleOptions
 ): BattleState {
+  const endlessWave = typeof endlessWaveOrOptions === 'number' ? endlessWaveOrOptions : 0
+  const resolvedOpts: StartBattleOptions | undefined = typeof endlessWaveOrOptions === 'object' && endlessWaveOrOptions !== null
+    ? endlessWaveOrOptions
+    : options
   const { campaign } = state
   const safeIdx = clamp(chapterIndex, 0, CHAPTERS.length - 1)
   const chapter = CHAPTERS[safeIdx]
   campaign.selectedStageId = chapter.id
+  const challenge = resolveStageChallenge(
+    campaign,
+    chapter.id,
+    resolvedOpts?.tier,
+    resolvedOpts?.mutators,
+    endlessWave
+  )
+  const difficultyTier = challenge.tier
+  const mutators = challenge.mutators.slice()
   const biome: BiomeId = chapter.biome
   const cells = buildCells(chapter.grid, chapter.heights)
   const rows = cells.length
@@ -2600,6 +2673,17 @@ export function startChapterBattle(
     const spawn = chapter.enemies[i]
     const spec = ENEMY_SPECS[spawn.id]
     const scale = (spawn.levelScale ?? 1) * waveScale
+    const scaled = computeScaledEnemyStats(
+      {
+        maxHp: Math.round(spec.maxHp * scale),
+        atk: Math.round(spec.atk * scale),
+        def: Math.round(spec.def * (1 + (scale - 1) * 0.5)),
+        speed: spec.speed,
+        baseShield: spec.isBoss ? 25 : 0
+      },
+      difficultyTier,
+      mutators
+    )
     const cell = cells[spawn.row][spawn.col]
     const [wx, wy, wz] = gridToWorld(spawn.col, spawn.row, cell.elevation, cols, rows)
     units.push({
@@ -2619,13 +2703,13 @@ export function startChapterBattle(
       facing: 'w',
       path: [],
       moveProgress: 0,
-      hp: Math.round(spec.maxHp * scale),
-      maxHp: Math.round(spec.maxHp * scale),
-      shield: spec.isBoss ? 25 : 0,
-      atk: Math.round(spec.atk * scale),
-      def: Math.round(spec.def * (1 + (scale - 1) * 0.5)),
-      speed: spec.speed,
-      ct: spec.speed * 3,
+      hp: scaled.maxHp,
+      maxHp: scaled.maxHp,
+      shield: scaled.shield,
+      atk: scaled.atk,
+      def: scaled.def,
+      speed: scaled.speed,
+      ct: scaled.speed * 3,
       move: spec.move,
       jump: spec.jump,
       range: spec.range,
@@ -2654,13 +2738,16 @@ export function startChapterBattle(
 
   const objective = buildBattleObjective(chapter, units, endlessWave)
   const deployTiles = computeDeployTiles(chapter, cells, objective)
-  const useDeploy = Boolean(options?.deployPhase)
+  const useDeploy = Boolean(resolvedOpts?.deployPhase)
+  const apBonus = arcaneSurgeApBonuses(mutators)
   const deckUids = shuffleStrings(getActiveTacticDeckUids(campaign), campaign)
   const battle: BattleState = {
     stageId: chapter.id,
     chapterIndex: safeIdx,
     endlessWave,
     difficulty: chapter.difficulty,
+    difficultyTier,
+    mutators,
     cols,
     rows,
     biome,
@@ -2675,8 +2762,8 @@ export function startChapterBattle(
     turnOrder: [],
     armedSkillIndex: null,
     armedTacticUid: null,
-    ap: 2,
-    maxAp: 4,
+    ap: 2 + apBonus.startApBonus,
+    maxAp: 4 + apBonus.maxApBonus,
     drawPile: deckUids,
     hand: [],
     discardPile: [],
@@ -3834,9 +3921,10 @@ export function computeTargetTiles(
   const targets: { col: number; row: number }[] = []
 
   if (skillIndex === null || skillIndex === -1) {
-    // Basic attack targets all enemies & intact destructible barricades within elevation-adjusted range & direct LoS
+    // Basic attack targets all visible enemies & intact destructible barricades within elevation-adjusted range & direct LoS
     for (const other of battle.units) {
       if (!other.alive || other.team === unit.team) continue
+      if (unit.team === 'ally' && isEnemyShrouded(battle, other)) continue
       const effRange = effectiveAttackRange(battle, unit.col, unit.row, other.col, other.row, unit.range, unit)
       if (
         manhattan(unit.col, unit.row, other.col, other.row) <= effRange &&
@@ -3874,6 +3962,10 @@ export function computeTargetTiles(
     for (let col = 0; col < battle.cols; col++) {
       const terrain = battle.cells[row][col].terrain
       if (terrain === 'pillar' || terrain === 'void') continue
+      if (unit.team === 'ally') {
+        const occ = unitAt(battle, col, row)
+        if (occ && isEnemyShrouded(battle, occ)) continue
+      }
       const d = manhattan(unit.col, unit.row, col, row)
       const effRange = effectiveAttackRange(battle, unit.col, unit.row, col, row, skill.range, unit)
       if (d >= minDist && d <= effRange && hasLineOfSight(battle, unit.col, unit.row, col, row, indirect)) {
@@ -3912,7 +4004,9 @@ export function computeTacticTargetTiles(
     return out
   }
   if (spec.target === 'enemy') {
-    for (const u of battle.units) if (u.alive && u.team === 'enemy') out.push({ col: u.col, row: u.row })
+    for (const u of battle.units) {
+      if (u.alive && u.team === 'enemy' && !isEnemyShrouded(battle, u)) out.push({ col: u.col, row: u.row })
+    }
     if (spec.damage > 0) {
       for (let row = 0; row < battle.rows; row++) {
         for (let col = 0; col < battle.cols; col++) {
@@ -4041,6 +4135,7 @@ export function computeMoveAttackTiles(
     if (!u.alive && !downedAlly) continue
     if (targetKind === 'ally' && u.team !== unit.team) continue
     if ((targetKind === 'enemy' || targetKind === 'tile') && u.team === unit.team) continue
+    if (unit.team === 'ally' && isEnemyShrouded(battle, u)) continue
     if (directTargets.some(t => t.col === u.col && t.row === u.row)) continue
     const approach = pickBestApproachTile(battle, unit, moveTiles, u.col, u.row, range, indirect)
     if (approach) {
@@ -4134,6 +4229,7 @@ function previewDamageMath(
       empowered = true
     }
     dmg *= computeAttackerDamageMultiplier(attacker, defender)
+    dmg *= mutatorDamageMultiplier(battle)
   }
   dmg *= computeDefenderIncomingDamageMultiplier(defender, isSkillDamage)
   const totalIgnoreArmor = clamp(ignoreArmor + computeBonusIgnoreArmor(attacker, defender.def), 0, 1)
@@ -4180,6 +4276,8 @@ export function computeCombatForecast(state: GameState, col: number, row: number
   const battle = state.battle
   if (!battle || battle.phase !== 'player' || !isCellInBounds(col, row, battle.cols, battle.rows)) return null
   if (battle.units.some(u => u.path.length > 0)) return null
+  const hoveredOcc = unitAt(battle, col, row)
+  if (hoveredOcc && isEnemyShrouded(battle, hoveredOcc)) return null
 
   const active = getUnitByUid(battle, battle.activeUnitUid)
 
@@ -4675,7 +4773,8 @@ export function computeCombatForecast(state: GameState, col: number, row: number
         incomingStun: equipInflictsStun
       })
       const strikeHitHp = Math.max(0, m.normalDmg - primary.shield)
-      const strikeLifesteal = active.lifesteal > 0 && strikeHitHp > 0 ? Math.max(2, Math.round(strikeHitHp * active.lifesteal)) : 0
+      const strikeDrain = active.lifesteal + mutatorMeleeDrainBonus(battle, !strikeRanged)
+      const strikeLifesteal = strikeDrain > 0 && strikeHitHp > 0 ? Math.max(2, Math.round(strikeHitHp * strikeDrain)) : 0
       const strikePalBonus = computePaladinCounterBonus(primary, m.attackArc, Math.min(primary.shield, m.normalDmg))
       const altCounter = altCanCounter
         ? computeCounterDamage(battle, primary, active, {
@@ -4792,7 +4891,9 @@ export function computeCombatForecast(state: GameState, col: number, row: number
         incomingStun: sk.status === 'stun' || skCombo?.extraStatus === 'stun' || Boolean(skDispPreview?.causesStun) || equipInflictsStun
       })
       const skHitHp = Math.max(0, m.normalDmg - primary.shield)
-      const skLifesteal = active.lifesteal > 0 && skHitHp > 0 ? Math.max(2, Math.round(skHitHp * active.lifesteal)) : 0
+      const skIsMelee = sk.range <= 1 && manhattan(skApproach.col, skApproach.row, primary.col, primary.row) === 1
+      const skDrain = active.lifesteal + mutatorMeleeDrainBonus(battle, skIsMelee)
+      const skLifesteal = skDrain > 0 && skHitHp > 0 ? Math.max(2, Math.round(skHitHp * skDrain)) : 0
       const skSelfHeal = sk.healAmount > 0 && sk.pattern === 'single' ? sk.healAmount : 0
       const skSelfShield = sk.shieldAmount > 0 && sk.pattern !== 'aura' ? sk.shieldAmount : 0
       const skPalBonus = computePaladinCounterBonus(primary, m.attackArc, Math.min(primary.shield, m.normalDmg))
@@ -4855,8 +4956,12 @@ export function computeCombatForecast(state: GameState, col: number, row: number
     counterAvoidReason = getCounterAvoidReason(battle, active, primary, attackArc, isRangedOrSkill, counterOpts)
     if (canCounter) {
       const primaryHitHp = Math.max(0, normalDmg - primary.shield)
-      const primaryLifesteal = active.lifesteal > 0 && primaryHitHp > 0
-        ? Math.max(2, Math.round(primaryHitHp * active.lifesteal))
+      const primaryIsMelee = armedSkill
+        ? (armedSkill.range <= 1 && primaryDist === 1)
+        : (active.range <= 1 && primaryDist === 1)
+      const primaryDrain = active.lifesteal + mutatorMeleeDrainBonus(battle, primaryIsMelee)
+      const primaryLifesteal = primaryDrain > 0 && primaryHitHp > 0
+        ? Math.max(2, Math.round(primaryHitHp * primaryDrain))
         : 0
       const primarySelfHeal = armedSkill && armedSkill.healAmount > 0 && armedSkill.pattern === 'single'
         && armedSkill.target !== 'ally' && armedSkill.target !== 'self'
@@ -5100,7 +5205,8 @@ function applyDamageDetailed(
   ignoreArmor: number,
   canCrit: boolean,
   isSkillDamage = false,
-  logOpts?: ApplyDamageLogOpts
+  logOpts?: ApplyDamageLogOpts,
+  isMeleeAttack?: boolean
 ): DamageResult {
   const battle = state.battle
   if (!battle || !defender.alive) {
@@ -5123,6 +5229,7 @@ function applyDamageDetailed(
     arcCritBonus = arcMod.critBonus + computeBackstabPassiveCritBonus(attacker, attackArc)
     if (attacker.empowerTurns > 0) dmg *= 1.35
     dmg *= computeAttackerDamageMultiplier(attacker, defender)
+    dmg *= mutatorDamageMultiplier(battle)
   }
   dmg *= computeDefenderIncomingDamageMultiplier(defender, isSkillDamage)
 
@@ -5209,8 +5316,14 @@ function applyDamageDetailed(
     state.sounds.push({ kind: 'shield' })
   }
 
-  if (attacker && attacker.lifesteal > 0 && finalDmg > 0 && attacker.alive) {
-    const heal = Math.max(2, Math.round(finalDmg * attacker.lifesteal))
+  const resolvedMelee = isMeleeAttack !== undefined
+    ? isMeleeAttack
+    : Boolean(attacker && attacker.range <= 1 && manhattan(attacker.col, attacker.row, defender.col, defender.row) === 1)
+  const effectiveLifesteal = attacker
+    ? attacker.lifesteal + mutatorMeleeDrainBonus(battle, resolvedMelee)
+    : 0
+  if (attacker && effectiveLifesteal > 0 && finalDmg > 0 && attacker.alive) {
+    const heal = Math.max(2, Math.round(finalDmg * effectiveLifesteal))
     attacker.hp = Math.min(attacker.maxHp, attacker.hp + heal)
     addFloat(battle, attacker.x, attacker.y, attacker.z, `+${heal}`, '#6effa8')
     appendCombatLog(
@@ -5242,9 +5355,10 @@ function applyDamage(
   ignoreArmor: number,
   canCrit: boolean,
   isSkillDamage = false,
-  logOpts?: ApplyDamageLogOpts
+  logOpts?: ApplyDamageLogOpts,
+  isMeleeAttack?: boolean
 ): number {
-  return applyDamageDetailed(state, attacker, defender, rawDamage, ignoreArmor, canCrit, isSkillDamage, logOpts).hpDamage
+  return applyDamageDetailed(state, attacker, defender, rawDamage, ignoreArmor, canCrit, isSkillDamage, logOpts, isMeleeAttack).hpDamage
 }
 
 function handleUnitDefeat(state: GameState, unit: BattleUnit): void {
@@ -5571,11 +5685,7 @@ function checkBattleOutcome(state: GameState): void {
 }
 
 function replayWeightsForDifficulty(diff: DifficultyLevel): Record<Rarity, number> {
-  if (diff === 1) return { common: 84, uncommon: 15, rare: 1, epic: 0, legendary: 0 }
-  if (diff === 2) return { common: 72, uncommon: 24, rare: 4, epic: 0, legendary: 0 }
-  if (diff === 3) return { common: 58, uncommon: 32, rare: 9.5, epic: 0.5, legendary: 0 }
-  if (diff === 4) return { common: 46, uncommon: 36, rare: 16.5, epic: 1.5, legendary: 0 }
-  return { common: 36, uncommon: 38, rare: 22.5, epic: 3.2, legendary: 0.3 }
+  return baseReplayWeightsForDifficulty(diff)
 }
 
 function awardBattleVictory(state: GameState): void {
@@ -5584,11 +5694,20 @@ function awardBattleVictory(state: GameState): void {
   const { campaign } = state
   const chapter = CHAPTERS[battle.chapterIndex]
   const firstClear = battle.endlessWave === 0 && !isStageCleared(campaign, chapter.id)
+  const challengeRewards = battle.endlessWave === 0 && !firstClear
+    ? computeChallengeRewards(chapter.replayGold, chapter.difficulty, battle.difficultyTier, battle.mutators)
+    : null
   const gold = battle.endlessWave > 0
     ? 130 + battle.endlessWave * 35
-    : firstClear ? chapter.rewardGold : chapter.replayGold
+    : firstClear
+      ? chapter.rewardGold
+      : (challengeRewards?.replayGold ?? chapter.replayGold)
+  const bonusDust = challengeRewards?.bonusDust ?? 0
+  const bonusShards = challengeRewards?.bonusShards ?? 0
 
   campaign.gold += gold
+  if (bonusDust > 0) campaign.dust += bonusDust
+  if (bonusShards > 0) campaign.shards += bonusShards
   campaign.battlesWon += 1
 
   let unlockedSlot4 = false
@@ -5599,8 +5718,11 @@ function awardBattleVictory(state: GameState): void {
     const prevSlots = maxSquadSize(campaign)
     campaign.clearedStageIds.push(chapter.id)
     campaign.chaptersCleared = campaign.clearedStageIds.length
+    recordClearedStageTier(campaign, chapter.id, 'normal')
     if (maxSquadSize(campaign) > prevSlots) unlockedSlot4 = true
     if (chapter.unlocksEndless) campaignWon = true
+  } else {
+    recordClearedStageTier(campaign, chapter.id, battle.difficultyTier)
   }
 
   let equipCard: OwnedEquipCard | null = null
@@ -5658,9 +5780,10 @@ function awardBattleVictory(state: GameState): void {
       campaign.heroes.push(heroCard)
     }
   } else {
-    // Replaying an already-cleared stage: awards replay gold + one modest repeatable drop (never one-time uniques!)
-    const repWeights = replayWeightsForDifficulty(chapter.difficulty)
-    const rarity = rollRarity(campaign, repWeights, 'common')
+    // Replaying an already-cleared stage: awards replay gold + repeatable drop scaled by difficulty tier & mutators
+    const repWeights = challengeRewards?.dropWeights ?? replayWeightsForDifficulty(chapter.difficulty)
+    const minDropRarity = challengeRewards?.minDropRarity ?? 'common'
+    const rarity = rollRarity(campaign, repWeights, minDropRarity)
     const kindRoll = randFloat(campaign)
     if (kindRoll < 0.45) {
       const eqSpec = pickNearestByRarity(EQUIPMENT_LIST, rarity, campaign)
@@ -5712,6 +5835,10 @@ function awardBattleVictory(state: GameState): void {
 
   const reward: BattleReward = {
     gold,
+    bonusDust,
+    bonusShards,
+    difficultyTier: battle.difficultyTier,
+    mutators: battle.mutators.slice(),
     equipCard,
     heroCard,
     tacticCard,
@@ -5985,6 +6112,12 @@ function executeCounterAttack(
   if (hpDmg > 0) {
     addFloat(battle, attacker.x, attacker.y + 0.12, attacker.z, `-${hpDmg}`, '#ff6b7a')
     state.sounds.push({ kind: 'hit', pitch: 1.06 })
+    const counterDrain = defender.lifesteal + mutatorMeleeDrainBonus(battle, true)
+    if (counterDrain > 0 && defender.alive) {
+      const heal = Math.max(2, Math.round(hpDmg * counterDrain))
+      defender.hp = Math.min(defender.maxHp, defender.hp + heal)
+      addFloat(battle, defender.x, defender.y, defender.z, `+${heal}`, '#6effa8')
+    }
   } else if (absorbed > 0) {
     addFloat(battle, attacker.x, attacker.y + 0.12, attacker.z, `BLOCK ${absorbed}`, '#7ed9ff')
     state.sounds.push({ kind: 'shield' })
@@ -6053,7 +6186,7 @@ function executeBasicAttack(state: GameState, attacker: BattleUnit, target: Batt
   if (archMul > 1) {
     addFloat(battle, target.x, target.y + 0.62, target.z, 'FROSTBITE!', '#80e8ff')
   }
-  const dmgRes = applyDamageDetailed(state, attacker, target, attacker.atk * archMul, 0, true, false)
+  const dmgRes = applyDamageDetailed(state, attacker, target, attacker.atk * archMul, 0, true, false, undefined, !isRanged)
   // Frostguard Plate (`frostguard_plate`): chills adjacent melee attackers with slowTurns = 1
   if (!isRanged && attacker.alive && attacker.team !== target.team && shouldChillMeleeAttacker(target)) {
     attacker.slowTurns = Math.max(attacker.slowTurns, 1)
@@ -6102,6 +6235,7 @@ function advanceTurnIfActiveHeroDowned(state: GameState): void {
     battle.oaTriggeredUids = []
     battle.facingPicker = null
     battle.objective.roundsElapsed += 1
+    applyRoundBoundaryMutators(state)
     advanceToNextUnitTurn(state)
   }
 }
@@ -6232,7 +6366,8 @@ function executeHeroSkill(
       if (skill.powerMul > 0) {
         const hitArc = computeAttackArc(caster.col, caster.row, target.col, target.row, target.facing)
         const raw = caster.atk * skill.powerMul + skill.flatBonus
-        const dmgRes = applyDamageDetailed(state, caster, target, raw, skill.ignoreArmor, true, true, { skillName: skill.name })
+        const skillIsMelee = skill.range <= 1 && manhattan(caster.col, caster.row, target.col, target.row) === 1
+        const dmgRes = applyDamageDetailed(state, caster, target, raw, skill.ignoreArmor, true, true, { skillName: skill.name }, skillIsMelee)
         // Frostguard Plate chills adjacent melee skill attackers
         if (
           skill.range <= 1 &&
@@ -6551,8 +6686,8 @@ export function selectTile(state: GameState, col: number, row: number): boolean 
       return false
     }
 
-    // Allow inspecting enemies on the board during deployment without allowing placement outside deployTiles
-    if (clicked && clicked.team === 'enemy') {
+    // Allow inspecting visible enemies on the board during deployment without allowing placement outside deployTiles
+    if (clicked && clicked.team === 'enemy' && !isEnemyShrouded(battle, clicked)) {
       battle.selectedUnitUid = clicked.uid
       state.sounds.push({ kind: 'card', pitch: 1.05 })
       return true
@@ -6682,8 +6817,8 @@ export function selectTile(state: GameState, col: number, row: number): boolean 
     }
   }
 
-  // 5. Click any unit to inspect them on the HUD without losing the active hero's turn
-  if (clickedUnit) {
+  // 5. Click any visible unit to inspect them on the HUD without losing the active hero's turn
+  if (clickedUnit && !isEnemyShrouded(battle, clickedUnit)) {
     return selectHeroByUid(state, clickedUnit.uid)
   }
 
@@ -6915,6 +7050,32 @@ function triggerStepOnHazard(state: GameState, unit: BattleUnit, cell: GridCell)
   }
 }
 
+/** Apply round-boundary tactical mutator effects (`venom_mist` poison & `arcane_surge` enemy cooldown surge). */
+function applyRoundBoundaryMutators(state: GameState): void {
+  const battle = state.battle
+  if (!battle || isBattleEnded(battle) || battle.mutators.length === 0) return
+
+  if (hasMutator(battle, 'arcane_surge')) {
+    for (const u of battle.units) {
+      if (!u.alive || u.team !== 'enemy') continue
+      for (let i = 0; i < 3; i++) {
+        if (u.cooldowns[i] > 0) {
+          u.cooldowns[i] = Math.max(0, u.cooldowns[i] - ARCANE_SURGE_EXTRA_CD_TICK)
+        }
+      }
+    }
+  }
+
+  if (hasMutator(battle, 'venom_mist')) {
+    for (const u of battle.units) {
+      if (!u.alive) continue
+      const cell = battle.cells[u.row]?.[u.col]
+      if (cell && cell.terrain === 'shrine') continue
+      applyStatus(battle, u, 'poison', VENOM_MIST_POISON_STACKS)
+    }
+  }
+}
+
 function advanceToNextUnitTurn(state: GameState, initial = false): void {
   const battle = state.battle
   if (!battle || isBattleEnded(battle)) return
@@ -6986,8 +7147,9 @@ function advanceToNextUnitTurn(state: GameState, initial = false): void {
     next.acted = false
 
     // Start-of-unit-turn ticks (cooldowns, burn, poison, active lava geyser, slow, haste, empower, taunt, shrine heal)
+    const cdTick = next.team === 'ally' ? cooldownTickStep(battle) : 1
     for (let i = 0; i < 3; i++) {
-      if (next.cooldowns[i] > 0) next.cooldowns[i] -= 1
+      if (next.cooldowns[i] > 0) next.cooldowns[i] = Math.max(0, next.cooldowns[i] - cdTick)
     }
     const hadBurnAtTurnStart = next.burnTurns > 0
     const hadPoisonAtTurnStart = next.poisonStacks > 0
@@ -7065,7 +7227,10 @@ function advanceToNextUnitTurn(state: GameState, initial = false): void {
     if (next.stunTurns > 0) {
       next.stunTurns -= 1
       next.ct = Math.max(0, next.ct - 100)
-      if (next.team === 'ally') battle.objective.roundsElapsed += 1
+      if (next.team === 'ally') {
+        battle.objective.roundsElapsed += 1
+        applyRoundBoundaryMutators(state)
+      }
       addFloat(battle, next.x, next.y, next.z, 'STUNNED', '#ffdf59')
       appendCombatLog(battle, 'status', formatStatusLog({ targetName: next.name, status: 'stun', phase: 'stun_skip' }))
       continue
@@ -7116,6 +7281,7 @@ export function endPlayerTurn(state: GameState): void {
     }
   }
   battle.objective.roundsElapsed += 1
+  applyRoundBoundaryMutators(state)
   advanceToNextUnitTurn(state)
 }
 
@@ -7320,7 +7486,21 @@ function performEnemyAttack(state: GameState, enemy: BattleUnit, target: BattleU
   if (manhattan(enemy.col, enemy.row, target.col, target.row) > effRange) return
   if (!enemy.isBoss && !hasLineOfSight(battle, enemy.col, enemy.row, target.col, target.row, false)) return
 
-  const special = chooseEnemySpecialMove(battle, enemy)
+  const arcaneBossReady = hasMutator(battle, 'arcane_surge') && enemy.isBoss && enemy.cooldowns[0] === 0
+  let special = chooseEnemySpecialMove(battle, enemy)
+  if (!special && arcaneBossReady) {
+    special = {
+      move: 'eclipse_nova',
+      vfxMove: 'eclipse_nova',
+      cooldownTurns: 2,
+      pattern: 'cross',
+      powerMul: 1.15,
+      ignoreArmor: 0.35,
+      status: 'burn',
+      element: 'fire',
+      label: 'ECLIPSE NOVA!'
+    }
+  }
   if (special) {
     faceToward(enemy, target.x, target.z)
     enemy.animState = 'cast'
@@ -7328,6 +7508,8 @@ function performEnemyAttack(state: GameState, enemy: BattleUnit, target: BattleU
     enemy.acted = true
     if (special.cooldownTurns > 0) {
       enemy.cooldowns[0] = special.cooldownTurns
+    } else if (hasMutator(battle, 'arcane_surge') && enemy.isBoss) {
+      enemy.cooldowns[0] = 2
     }
     state.sounds.push({ kind: special.knockbackDistance ? 'slash' : 'magic', pitch: 0.78 })
     addFloat(battle, enemy.x, enemy.y + 0.52, enemy.z, special.label, '#ffd166')
@@ -7367,7 +7549,7 @@ function performEnemyAttack(state: GameState, enemy: BattleUnit, target: BattleU
       }
       if (victim.team === 'ally') {
         const archMul = computeEnemyArchetypeDamageMul(enemy, victim)
-        applyDamage(state, enemy, victim, enemy.atk * special.powerMul * archMul, special.ignoreArmor, false, true, { skillName: special.name })
+        applyDamage(state, enemy, victim, enemy.atk * special.powerMul * archMul, special.ignoreArmor, false, true, { skillName: special.label }, false)
         if (special.element) {
           triggerElementalCombo(state, enemy, special.element, victim.alive ? victim : null, c.col, c.row, handleUnitDefeat)
         }
@@ -7625,6 +7807,7 @@ export function stepGame(state: GameState, dt: number): void {
             battle.facingPicker = null
             if (battle.phase === 'player') {
               battle.objective.roundsElapsed += 1
+              applyRoundBoundaryMutators(state)
             }
             advanceToNextUnitTurn(state)
             break
@@ -7657,6 +7840,7 @@ export function stepGame(state: GameState, dt: number): void {
             battle.facingPicker = null
             if (battle.phase === 'player') {
               battle.objective.roundsElapsed += 1
+              applyRoundBoundaryMutators(state)
             }
             advanceToNextUnitTurn(state)
             break
