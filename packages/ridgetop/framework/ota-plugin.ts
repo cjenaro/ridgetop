@@ -367,9 +367,7 @@ public class RidgetopOtaPlugin: CAPPlugin, CAPBridgedPlugin {
                     vc.setServerBasePath(path: path)
                 } else {
                     bridge.setServerBasePath(path)
-                    if let url = bridge.config.serverURL {
-                        bridge.webView?.load(URLRequest(url: url))
-                    }
+                    bridge.webView?.load(URLRequest(url: bridge.config.serverURL))
                 }
             } else {
                 bridge.setServerBasePath(path)
