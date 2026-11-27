@@ -26,7 +26,7 @@ import {
   findBestFitUpgrades, findEquipOwner, findGridPath, formatOpportunityWarning, getActiveDiscoveryTip, getActiveTacticDeckUids,
   getChapterObjectiveSummary, getCraftableEquipment, getCraftableHeroes, getEquipCraftCost, getEquipEffect,
   getEquipSalvageDust, getEquipmentByUid, getHeroByUid, getHeroCraftCost, getHeroPassive, getHeroSalvageShards,
-  getHeroSkill, getMergeCandidates, getNextRecommendedStage, getObjectiveProgressText, getPackPityStatus,
+  getHeroSkill, getMaxCombatLogScroll, getMergeCandidates, getNextRecommendedStage, getObjectiveProgressText, getPackPityStatus,
   getStageUnlockHint, getTacticByUid, getUnitByUid, hasMaxedHero, heroLevelProgress, isChestClaimed,
   isDeployTile, isEndlessUnlocked, isStageCleared, isStageUnlocked, loadSave, maxSquadSize, mergeHero,
   moveDeployUnit, persistSave, previewBulkSalvageCommonDupes, previewPathOpportunityAttacks,
@@ -44,7 +44,7 @@ import type {
 import {
   COLOR, RADIUS, TIER_COLOR, TYPE, UI_THEME_PALETTE, WORLD_MAP_H, WORLD_MAP_W,
   drawAnimatedRevealCard, drawApMeter, drawArmoryStatDiffPanel, drawBattleInfo, drawBoosterPack, drawButton, drawCameraCompassButton, drawCampHeader,
-  drawChapterPicker, drawChip, drawCombatForecast, drawControlHints, drawDefeatBackdrop, drawDeployHeroChip,
+  drawChapterPicker, drawChip, drawCombatForecast, drawCombatLogPanel, drawCombatLogToggleButton, drawControlHints, drawDefeatBackdrop, drawDeployHeroChip,
   drawDifficultyBadge, drawDiscoveryTipCard, drawEmptyNote, drawEndTurnButton, drawEquipCard, drawForecastAltChip,
   drawForgeBalanceBanner, drawForgeRecipeCard, drawHeroHeader, drawHeroRosterCard, drawHeroXpSummaryAnimated, drawHintPill, drawIconButton, drawLabel, drawLetterbox,
   drawLootRow, drawModal, drawObjectiveBadge, drawOverline, drawPackCeremonyBackdrop, drawPanel, drawPassiveBanner, drawPityBanner, drawPortraitTile,
@@ -213,6 +213,10 @@ async function start() {
   let lastSimMs = 0
   let lockedForecastCell: { col: number; row: number } | null = null
   let dangerZoneOn = false
+  let combatLogOpen = false
+  let combatLogScroll = 0
+  let combatLogSeenId = 0
+  let lastCombatLogId = 0
   let hoveredTurnUnitUid: string | null = null
   let hoveredTurnSlotIdx = -1
   let hoveredActionKind: TurnActionKind | null = null
@@ -446,6 +450,7 @@ async function start() {
     lastBattlePhase = state.battle.phase
     lastActiveUid = state.battle.activeUnitUid
     lastBattleTurn = state.battle.turn
+    resetCombatLogUi()
     syncTurnBoundaryTracker(turnSaveTracker, state.battle)
     scene.resetCamera()
     scene.setCameraYaw(0, true)
@@ -554,6 +559,10 @@ async function start() {
     screen = next
     lockedForecastCell = null
     mobileHandOpen = false
+    if (next !== 'battle') {
+      combatLogOpen = false
+      combatLogScroll = 0
+    }
     clearBattleHoverFeedback()
     clearArmoryHover(true)
     if (next !== 'camp') { packAnim = null; fanfare = null }
@@ -615,6 +624,7 @@ async function start() {
     lastBattlePhase = state.battle?.phase ?? null
     lastActiveUid = state.battle?.activeUnitUid ?? null
     lastBattleTurn = state.battle?.turn ?? 0
+    resetCombatLogUi()
     syncTurnBoundaryTracker(turnSaveTracker, state.battle)
     scene.resetCamera()
     scene.setCameraYaw(0, true)
@@ -711,6 +721,39 @@ async function start() {
     dangerZoneOn = !dangerZoneOn
     scene.setDangerZoneVisible(dangerZoneOn)
     state.sounds.push({ kind: 'card', pitch: dangerZoneOn ? 1.18 : 0.92 })
+    uiDirty = true
+    hudRev++
+  }
+
+  function latestBattleLogId(): number {
+    const log = state.battle?.combatLog
+    return log && log.length > 0 ? log[log.length - 1].id : 0
+  }
+
+  function resetCombatLogUi() {
+    const latest = latestBattleLogId()
+    combatLogOpen = false
+    combatLogScroll = 0
+    combatLogSeenId = latest
+    lastCombatLogId = latest
+  }
+
+  function toggleCombatLog() {
+    audio.unlock()
+    combatLogOpen = !combatLogOpen
+    combatLogScroll = 0
+    combatLogSeenId = latestBattleLogId()
+    state.sounds.push({ kind: 'card', pitch: combatLogOpen ? 1.15 : 0.95 })
+    uiDirty = true
+    hudRev++
+  }
+
+  function scrollCombatLog(delta: number, visibleRows: number) {
+    const total = state.battle?.combatLog.length ?? 0
+    const maxScroll = getMaxCombatLogScroll(total, visibleRows)
+    const next = Math.max(0, Math.min(maxScroll, combatLogScroll + delta))
+    if (next === combatLogScroll) return
+    combatLogScroll = next
     uiDirty = true
     hudRev++
   }
@@ -1257,9 +1300,10 @@ async function start() {
           }
           return
         }
-        if (lockedForecastCell || mobileHandOpen) {
+        if (lockedForecastCell || mobileHandOpen || combatLogOpen) {
           lockedForecastCell = null
           mobileHandOpen = false
+          combatLogOpen = false
           uiDirty = true
           hudRev++
           return
@@ -1325,6 +1369,11 @@ async function start() {
       if (event.code === 'KeyT' && !event.repeat) {
         event.preventDefault()
         toggleDangerZone()
+        return
+      }
+      if (event.code === 'KeyL' && !event.repeat) {
+        event.preventDefault()
+        toggleCombatLog()
         return
       }
       if (event.code === 'Space' && !event.repeat && state.battle.phase === 'deploy') {
@@ -3203,6 +3252,115 @@ async function start() {
     const objBadgeH = isPhone ? 26 : 30
     const objBadgeW = mobilePortrait ? Math.min(w - 16, 250) : mobileLandscape ? 208 : 264
 
+    // Collapsible Combat Log toggle + translucent drawer (starts collapsed!)
+    const combatLogEntries = battle.combatLog
+    const latestLogId = combatLogEntries.length > 0 ? combatLogEntries[combatLogEntries.length - 1].id : 0
+    if (combatLogOpen) {
+      combatLogSeenId = latestLogId
+    }
+    const combatLogUnread = combatLogOpen
+      ? 0
+      : combatLogEntries.reduce((cnt, e) => (e.id > combatLogSeenId ? cnt + 1 : cnt), 0)
+    const logEdgeX = isPhone ? 6 : 8
+    const logToggleH = isPhone ? 26 : 28
+    const logToggleW = isPhone ? 90 : 112
+    const logToggleY = mobilePortrait
+      ? 114
+      : (isPhone ? 6 : 8) + topBarH + 6 + objBadgeH + 6
+
+    const combatLogPanelNodes: LayoutNode[] = []
+    if (combatLogOpen && !mobileHandOpen) {
+      const logPanelW = mobilePortrait
+        ? Math.min(w - 56, 336)
+        : mobileLandscape
+          ? Math.min(w - 64, 300)
+          : narrow
+            ? Math.min(308, w - 24)
+            : 344
+      const clampedTimelineW = Math.min(w - 16, timelineW)
+      const timelineLeftEdge = (w - clampedTimelineW) * 0.5
+      const timelineBottomY = timelineInset[1] + tokenH + (isPhone ? 16 : 18)
+      let logPanelY = logToggleY + logToggleH + 6
+      if (!mobilePortrait && logEdgeX + logPanelW > timelineLeftEdge - 8 && logPanelY < timelineBottomY) {
+        logPanelY = timelineBottomY
+      }
+      const bottomClearance = dockH + (isPhone ? 46 : 52)
+      const maxPanelH = Math.max(114, h - bottomClearance - logPanelY)
+      const logPanelH = Math.min(mobileLandscape ? 168 : isPhone ? 206 : 232, maxPanelH)
+      const logHeaderH = isPhone ? 26 : 28
+      const logRowH = isPhone ? 20 : 22
+      const logVisibleRows = Math.max(3, Math.floor((logPanelH - logHeaderH - 14) / logRowH))
+      const logMaxScroll = getMaxCombatLogScroll(combatLogEntries.length, logVisibleRows)
+      if (combatLogScroll > logMaxScroll) combatLogScroll = logMaxScroll
+      const logBtnS = 22
+
+      combatLogPanelNodes.push(
+        column({
+          id: 'combat-log-panel',
+          style: {
+            anchor: 'top-left',
+            width: logPanelW,
+            height: logPanelH,
+            inset: [logEdgeX, logPanelY],
+            padding: [3, isPhone ? 6 : 8],
+            gap: 0,
+            respectSafeArea: true
+          },
+          widget: {
+            type: 'panel',
+            blocksPointer: true,
+            draw: (ctx: CanvasRenderingContext2D, rect: LayoutRect) => drawCombatLogPanel(ctx, rect, combatLogEntries, {
+              scrollOffset: combatLogScroll,
+              visibleRows: logVisibleRows,
+              compact: isPhone,
+              headerControlsWidth: logBtnS * 3 + 12
+            })
+          }
+        }, [
+          row({ id: 'combat-log-header-bar', style: { height: logHeaderH - 4, gap: 4, align: 'center' } }, [
+            spacerNode(1),
+            boxNode({
+              id: 'cs-log-up',
+              style: { width: logBtnS, height: logBtnS },
+              widget: {
+                type: 'button',
+                label: 'Scroll Combat Log Up',
+                disabled: combatLogScroll >= logMaxScroll,
+                onPress: () => scrollCombatLog(2, logVisibleRows),
+                draw: (ctx: CanvasRenderingContext2D, rect: LayoutRect, st: CanvasWidgetDrawState) => drawIconButton(ctx, rect, 'chevron-up', st)
+              }
+            }),
+            boxNode({
+              id: 'cs-log-down',
+              style: { width: logBtnS, height: logBtnS },
+              widget: {
+                type: 'button',
+                label: 'Scroll Combat Log Down',
+                disabled: combatLogScroll <= 0,
+                onPress: () => scrollCombatLog(-2, logVisibleRows),
+                draw: (ctx: CanvasRenderingContext2D, rect: LayoutRect, st: CanvasWidgetDrawState) => drawIconButton(ctx, rect, 'chevron-down', st)
+              }
+            }),
+            boxNode({
+              id: 'cs-log-close',
+              style: { width: logBtnS, height: logBtnS },
+              widget: {
+                type: 'button',
+                label: 'Close Combat Log (L)',
+                onPress: () => {
+                  combatLogOpen = false
+                  combatLogScroll = 0
+                  uiDirty = true
+                  hudRev++
+                },
+                draw: (ctx: CanvasRenderingContext2D, rect: LayoutRect, st: CanvasWidgetDrawState) => drawIconButton(ctx, rect, 'close', st)
+              }
+            })
+          ])
+        ])
+      )
+    }
+
     return overlay({ id: 'root', style: { anchor: 'fill' } }, [
       // Top-left chapter + gold capsule
       boxNode({
@@ -3572,6 +3730,31 @@ async function start() {
             }
           })] : []),
 
+      // Compact Collapsible Combat Log toggle button (starts collapsed, hotkey L)
+      boxNode({
+        id: 'cs-combat-log-toggle',
+        style: {
+          anchor: 'top-left',
+          width: logToggleW,
+          height: logToggleH,
+          inset: [logEdgeX, logToggleY],
+          respectSafeArea: true
+        },
+        widget: {
+          type: 'button',
+          label: combatLogOpen ? 'Hide Combat Log (L)' : `Combat Log (${combatLogEntries.length}) (L)`,
+          selected: combatLogOpen,
+          onPress: toggleCombatLog,
+          draw: (ctx: CanvasRenderingContext2D, rect: LayoutRect, st: CanvasWidgetDrawState) => drawCombatLogToggleButton(ctx, rect, st, {
+            open: combatLogOpen,
+            unreadCount: combatLogUnread,
+            totalCount: combatLogEntries.length,
+            compact: isPhone
+          })
+        }
+      }),
+
+      ...combatLogPanelNodes,
       ...forecastNodes,
       ...phoneHandNodes,
       dockNode
@@ -6192,6 +6375,11 @@ async function start() {
         renderUiNow()
         return dangerZoneOn
       },
+      toggleCombatLog: () => {
+        toggleCombatLog()
+        renderUiNow()
+        return combatLogOpen
+      },
       previewTile: (col: number, row: number) => {
         const fc = computeCombatForecast(state, col, row)
         if (!fc) {
@@ -6287,6 +6475,13 @@ async function start() {
       const activeUid = state.battle?.activeUnitUid ?? null
       const bTurn = state.battle?.turn ?? 0
       const downedCount = state.battle ? state.battle.units.filter(u => isUnitDowned(u)).length : 0
+      const curLogId = latestBattleLogId()
+      if (curLogId !== lastCombatLogId) {
+        lastCombatLogId = curLogId
+        if (combatLogOpen) combatLogSeenId = curLogId
+        uiDirty = true
+        hudRev++
+      }
       if (bPhase !== lastBattlePhase || activeUid !== lastActiveUid || bTurn !== lastBattleTurn || downedCount !== lastDownedCount) {
         lastBattlePhase = bPhase
         lastActiveUid = activeUid

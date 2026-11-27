@@ -18,6 +18,22 @@ export {
   getEquipSalvageDust, getHeroCraftCost, getHeroSalvageShards, getPackPityStatus, hasMaxedHero,
   resolvePackPityFloor, selectProtectedEquipment, selectProtectedHero, updatePackPityCounters
 }
+import {
+  COMBAT_LOG_ACCENT, COMBAT_LOG_CATEGORIES, MAX_COMBAT_LOG_ENTRIES, appendCombatLog,
+  formatCombatLogLine, formatComboLog, formatDamageLog, formatHazardLog, formatHealLog,
+  formatKoLog, formatReactionLog, formatStatusLog, getMaxCombatLogScroll, getRecentCombatLog,
+  sanitizeCombatLogEntries
+} from './combat-log.ts'
+export {
+  COMBAT_LOG_ACCENT, COMBAT_LOG_CATEGORIES, MAX_COMBAT_LOG_ENTRIES, appendCombatLog,
+  formatCombatLogLine, formatComboLog, formatDamageLog, formatHazardLog, formatHealLog,
+  formatKoLog, formatReactionLog, formatStatusLog, getMaxCombatLogScroll, getRecentCombatLog,
+  sanitizeCombatLogEntries
+}
+export type {
+  AppendCombatLogOptions, CombatLogCategory, CombatLogEntry, ComboLogOptions, DamageLogOptions,
+  HazardLogOptions, HealLogOptions, KoLogOptions, ReactionLogOptions, StatusLogOptions
+} from './combat-log.ts'
 import { computePincerAssistDamage, findPincerAssisters, isPincerMeleeSkill } from './pincer.ts'
 export { computePincerAssistDamage, findPincerAssisters, isPincerMeleeSkill } from './pincer.ts'
 import {
@@ -1165,7 +1181,9 @@ export function serializeBattleState(
     ...(rngSeed !== undefined && Number.isFinite(rngSeed) ? { rngSeed: (rngSeed >>> 0) || 1337 } : {}),
     objective: serializeObjective(battle.objective),
     xpEarnedByHero: { ...battle.xpEarnedByHero },
-    heroStartLevelByUid: { ...battle.heroStartLevelByUid }
+    heroStartLevelByUid: { ...battle.heroStartLevelByUid },
+    combatLog: battle.combatLog.slice(-MAX_COMBAT_LOG_ENTRIES).map(e => ({ ...e })),
+    nextLogId: Math.max(1, Math.floor(battle.nextLogId || 1))
   }
 }
 
@@ -1431,6 +1449,11 @@ export function validateBattleSnapshot(raw: unknown): BattleSaveSnapshot | null 
       if (isFiniteNum(v)) heroStartLevelByUid[k] = normalizeHeroLevel(v)
     }
   }
+  const combatLog = raw.combatLog !== undefined ? sanitizeCombatLogEntries(raw.combatLog) : undefined
+  const maxLogId = combatLog ? combatLog.reduce((m, e) => (e.id > m ? e.id : m), 0) : 0
+  const nextLogId = isFiniteNum(raw.nextLogId) && raw.nextLogId >= 1
+    ? Math.max(Math.floor(raw.nextLogId), maxLogId + 1)
+    : (combatLog !== undefined ? Math.max(1, maxLogId + 1) : undefined)
 
   return {
     version: 1,
@@ -1458,7 +1481,9 @@ export function validateBattleSnapshot(raw: unknown): BattleSaveSnapshot | null 
     ...(rngSeed !== undefined ? { rngSeed } : {}),
     ...(objective !== undefined ? { objective } : {}),
     ...(xpEarnedByHero !== undefined ? { xpEarnedByHero } : {}),
-    ...(heroStartLevelByUid !== undefined ? { heroStartLevelByUid } : {})
+    ...(heroStartLevelByUid !== undefined ? { heroStartLevelByUid } : {}),
+    ...(combatLog !== undefined ? { combatLog } : {}),
+    ...(nextLogId !== undefined ? { nextLogId } : {})
   }
 }
 
@@ -1621,6 +1646,12 @@ export function restoreBattleState(state: GameState, snapshot: unknown): boolean
     enemyActedThisTurn: valid.enemyActedThisTurn,
     floatingNumbers: [],
     nextFloatId: 1,
+    combatLog: valid.combatLog ? valid.combatLog.slice(-MAX_COMBAT_LOG_ENTRIES).map(e => ({ ...e })) : [],
+    nextLogId: Math.max(
+      valid.nextLogId ?? 1,
+      (valid.combatLog ? valid.combatLog.reduce((m, e) => (e.id > m ? e.id : m), 0) : 0) + 1,
+      1
+    ),
     bannerText: '',
     bannerTimer: 0,
     shake: 0,
@@ -2386,6 +2417,9 @@ export function confirmDeployment(state: GameState): boolean {
   battle.selectedUnitUid = null
   battle.bannerText = 'BATTLE START!'
   battle.bannerTimer = 1.4
+  const ch = CHAPTERS[battle.chapterIndex]
+  const stageTitle = battle.endlessWave > 0 ? `Endless Wave ${battle.endlessWave}` : (ch?.title ?? battle.stageId)
+  appendCombatLog(battle, 'system', `Battle started — ${stageTitle} (${battle.objective.label})`, { turn: 1 })
   advanceToNextUnitTurn(state, true)
   checkDiscoveryTipForBattle(state)
   return true
@@ -2598,6 +2632,8 @@ export function startChapterBattle(
     enemyActedThisTurn: false,
     floatingNumbers: [],
     nextFloatId: 1,
+    combatLog: [],
+    nextLogId: 1,
     bannerText: useDeploy ? 'DEPLOY SQUAD' : endlessWave > 0 ? `Endless Wave ${endlessWave}` : chapter.title,
     bannerTimer: 2.1,
     shake: 0,
@@ -2615,6 +2651,8 @@ export function startChapterBattle(
   if (useDeploy) {
     battle.turnOrder = computeTurnOrderPreview(battle, 8)
   } else {
+    const stageTitle = endlessWave > 0 ? `Endless Wave ${endlessWave}` : chapter.title
+    appendCombatLog(battle, 'system', `Battle started — ${stageTitle} (${objective.label})`, { turn: 1 })
     advanceToNextUnitTurn(state, true)
   }
   checkDiscoveryTipForBattle(state)
@@ -4907,12 +4945,13 @@ function triggerOnKoEffects(
     attacker.empowerTurns = Math.max(attacker.empowerTurns, 1)
     attacker.ct += CHAMPION_KO_CT_SURGE
     addFloat(battle, attacker.x, attacker.y + 0.62, attacker.z, `MOMENTUM! +${CHAMPION_KO_CT_SURGE} CT`, '#ff9c66')
+    appendCombatLog(battle, 'status', formatStatusLog({ targetName: attacker.name, status: 'empower', phase: 'apply' }))
   }
 
   // Crimson Pendant (`blood_amulet`): Heal +14 HP on KO
   const koHeal = computeKoHealAmount(attacker)
   if (koHeal > 0) {
-    applyHealAndShield(state, attacker, koHeal, 0, attacker)
+    applyHealAndShield(state, attacker, koHeal, 0, attacker, { sourceLabel: 'Crimson Pendant' })
   }
 
   // Solis Crownblade (`solis_crownblade`): +1 AP on first KO
@@ -4962,6 +5001,17 @@ function triggerOnKoEffects(
         damage: rem
       })
       addFloat(battle, splashTarget.x, splashTarget.y + 0.35, splashTarget.z, rem > 0 ? `CONDUIT -${rem}` : `BLOCK ${absorbed}`, '#a5b8ff')
+      appendCombatLog(
+        battle,
+        'attack',
+        formatDamageLog({
+          attackerName: attacker.name,
+          targetName: splashTarget.name,
+          hpDamage: rem,
+          absorbed,
+          skillName: 'Arcane Conduit'
+        })
+      )
       if (splashTarget.hp <= 0) {
         handleUnitDefeat(state, splashTarget)
         if (attacker.team === 'ally' && splashTarget.team === 'enemy') {
@@ -4972,6 +5022,11 @@ function triggerOnKoEffects(
   }
 }
 
+interface ApplyDamageLogOpts {
+  readonly skillName?: string | null
+  readonly suppressLog?: boolean
+}
+
 function applyDamageDetailed(
   state: GameState,
   attacker: BattleUnit | null,
@@ -4979,7 +5034,8 @@ function applyDamageDetailed(
   rawDamage: number,
   ignoreArmor: number,
   canCrit: boolean,
-  isSkillDamage = false
+  isSkillDamage = false,
+  logOpts?: ApplyDamageLogOpts
 ): DamageResult {
   const battle = state.battle
   if (!battle || !defender.alive) {
@@ -5044,6 +5100,27 @@ function applyDamageDetailed(
   defender.animTimer = 0.30
   battle.shake = Math.max(battle.shake, isCrit || attackArc === 'back' ? 0.36 : 0.18)
 
+  const friendlyFire = Boolean(attacker && attacker.team === defender.team)
+  if (!logOpts?.suppressLog) {
+    const logCat = isCrit && finalDmg > 0 ? 'crit' : 'attack'
+    const blockAccent = finalDmg === 0 && absorbed > 0 ? '#7ed9ff' : undefined
+    appendCombatLog(
+      battle,
+      logCat,
+      formatDamageLog({
+        attackerName: attacker?.name ?? null,
+        targetName: defender.name,
+        hpDamage: finalDmg,
+        absorbed,
+        isCrit,
+        attackArc,
+        skillName: logOpts?.skillName ?? null,
+        friendlyFire
+      }),
+      blockAccent ? { accentHex: blockAccent } : undefined
+    )
+  }
+
   if (finalDmg > 0) {
     addFloat(
       battle,
@@ -5058,7 +5135,7 @@ function applyDamageDetailed(
     } else if (attackArc === 'flank') {
       addFloat(battle, defender.x, defender.y + 0.42, defender.z, 'FLANK +15%', '#ffd166')
     }
-    if (attacker && attacker.team === defender.team) {
+    if (friendlyFire) {
       addFloat(battle, defender.x, defender.y + 0.76, defender.z, 'ALLY HIT!', '#ff66a8')
     }
     state.sounds.push({ kind: isCrit ? 'crit' : 'hit' })
@@ -5071,6 +5148,11 @@ function applyDamageDetailed(
     const heal = Math.max(2, Math.round(finalDmg * attacker.lifesteal))
     attacker.hp = Math.min(attacker.maxHp, attacker.hp + heal)
     addFloat(battle, attacker.x, attacker.y, attacker.z, `+${heal}`, '#6effa8')
+    appendCombatLog(
+      battle,
+      'heal',
+      formatHealLog({ sourceName: attacker.name, targetName: attacker.name, healAmount: heal, sourceLabel: 'Lifesteal' })
+    )
   }
 
   if (defender.hp <= 0) {
@@ -5094,9 +5176,10 @@ function applyDamage(
   rawDamage: number,
   ignoreArmor: number,
   canCrit: boolean,
-  isSkillDamage = false
+  isSkillDamage = false,
+  logOpts?: ApplyDamageLogOpts
 ): number {
-  return applyDamageDetailed(state, attacker, defender, rawDamage, ignoreArmor, canCrit, isSkillDamage).hpDamage
+  return applyDamageDetailed(state, attacker, defender, rawDamage, ignoreArmor, canCrit, isSkillDamage, logOpts).hpDamage
 }
 
 function handleUnitDefeat(state: GameState, unit: BattleUnit): void {
@@ -5121,11 +5204,13 @@ function handleUnitDefeat(state: GameState, unit: BattleUnit): void {
     unit.koCountdown = KO_COUNTDOWN_TURNS
     unit.ct = 0
     addFloat(battle, unit.x, unit.y + 0.35, unit.z, `DOWNED (${KO_COUNTDOWN_TURNS})`, '#ffb84d')
+    appendCombatLog(battle, 'ko', formatKoLog({ unitName: unit.name, kind: 'downed', countdown: KO_COUNTDOWN_TURNS }))
     state.sounds.push({ kind: 'ko' })
     state.vfx.push({ kind: 'ko', at: [unit.x, unit.y + 0.6, unit.z], isBoss: false, downed: true })
   } else {
     unit.downed = false
     unit.koCountdown = 0
+    appendCombatLog(battle, 'ko', formatKoLog({ unitName: unit.name, kind: 'ko', isBoss: unit.isBoss }))
     state.sounds.push({ kind: 'ko' })
     state.vfx.push({ kind: 'ko', at: [unit.x, unit.y + 0.6, unit.z], isBoss: unit.isBoss })
   }
@@ -5135,7 +5220,9 @@ function reviveHero(
   state: GameState,
   target: BattleUnit,
   reviveHp: number,
-  shieldAmount = 0
+  shieldAmount = 0,
+  reviverName?: string | null,
+  sourceLabel?: string | null
 ): boolean {
   const battle = state.battle
   if (!battle || !isUnitDowned(target)) return false
@@ -5161,6 +5248,18 @@ function reviveHero(
   if (shieldAmount > 0) {
     addFloat(battle, target.x, target.y + 0.22, target.z, `+${shieldAmount} SHD`, '#7ed9ff')
   }
+  appendCombatLog(
+    battle,
+    'heal',
+    formatHealLog({
+      sourceName: reviverName ?? null,
+      targetName: target.name,
+      healAmount: target.hp,
+      shieldAmount,
+      revived: true,
+      sourceLabel: sourceLabel ?? null
+    })
+  )
   state.vfx.push({ kind: 'revive', at: [target.x, target.y, target.z], uid: target.uid })
   state.vfx.push({ kind: 'heal', at: [target.x, target.y + 0.5, target.z] })
   state.sounds.push({ kind: 'heal', pitch: 1.2 })
@@ -5172,15 +5271,17 @@ function applyHealAndShield(
   target: BattleUnit,
   healAmount: number,
   shieldAmount: number,
-  healer?: BattleUnit | null
+  healer?: BattleUnit | null,
+  opts?: { readonly sourceLabel?: string | null; readonly suppressLog?: boolean }
 ): void {
   const battle = state.battle
   if (!battle || !target.alive) return
   const overhealShield = computeOverhealShield(healer, target, healAmount, shieldAmount)
+  let gained = 0
   if (healAmount > 0) {
     const before = target.hp
     target.hp = Math.min(target.maxHp, target.hp + healAmount)
-    const gained = target.hp - before
+    gained = target.hp - before
     addFloat(battle, target.x, target.y, target.z, `+${gained > 0 ? gained : healAmount} HP`, '#6effa8')
     state.vfx.push({ kind: 'heal', at: [target.x, target.y + 0.5, target.z] })
     state.sounds.push({ kind: 'heal' })
@@ -5198,6 +5299,19 @@ function applyHealAndShield(
     )
     state.vfx.push({ kind: 'shield', at: [target.x, target.y + 0.5, target.z] })
     state.sounds.push({ kind: 'shield' })
+  }
+  if (!opts?.suppressLog && (healAmount > 0 || totalShield > 0)) {
+    appendCombatLog(
+      battle,
+      'heal',
+      formatHealLog({
+        sourceName: healer?.name ?? null,
+        targetName: target.name,
+        healAmount: healAmount > 0 ? (gained > 0 ? gained : healAmount) : 0,
+        shieldAmount: totalShield,
+        sourceLabel: opts?.sourceLabel ?? null
+      })
+    )
   }
 }
 
@@ -5223,6 +5337,7 @@ function applyPoisonTick(state: GameState, unit: BattleUnit, dmg: number): void 
   unit.animState = 'hit'
   unit.animTimer = 0.28
   addFloat(battle, unit.x, unit.y, unit.z, `POISON -${dmg}`, '#8dff4f')
+  appendCombatLog(battle, 'status', formatStatusLog({ targetName: unit.name, status: 'poison', phase: 'tick', damage: dmg }))
   state.sounds.push({ kind: 'hit', pitch: 0.85 })
   if (unit.hp <= 0) {
     handleUnitDefeat(state, unit)
@@ -5269,6 +5384,16 @@ export function applyStatus(
     target.poisonStacks = Math.min(MAX_POISON_STACKS, target.poisonStacks + add)
     addFloat(battle, target.x, target.y + 0.55, target.z, `POISON x${target.poisonStacks}`, '#8dff4f')
   }
+  appendCombatLog(
+    battle,
+    'status',
+    formatStatusLog({
+      targetName: target.name,
+      status,
+      phase: 'apply',
+      stacks: status === 'poison' ? target.poisonStacks : undefined
+    })
+  )
 }
 
 function faceToward(unit: BattleUnit, tx: number, tz: number): void {
@@ -5347,6 +5472,12 @@ function checkBattleOutcome(state: GameState): void {
     if (outcome.reason) {
       battle.bannerText = `VICTORY — ${outcome.reason}`
     }
+    appendCombatLog(
+      battle,
+      'system',
+      outcome.reason ? `Victory! ${outcome.reason}` : 'Victory! All enemies defeated.',
+      { accentHex: '#5ef29b' }
+    )
     state.sounds.push({ kind: 'victory' })
   } else if (outcome.status === 'defeat') {
     battle.phase = 'defeat'
@@ -5362,6 +5493,12 @@ function checkBattleOutcome(state: GameState): void {
     battle.armedTacticUid = null
     battle.bannerText = outcome.reason ?? 'Vanguard Defeated'
     battle.bannerTimer = 3.0
+    appendCombatLog(
+      battle,
+      'system',
+      outcome.reason ? `Defeat — ${outcome.reason}` : 'Defeat — Vanguard defeated.',
+      { accentHex: '#ff5266' }
+    )
     state.sounds.push({ kind: 'defeat' })
   }
 }
@@ -5576,6 +5713,17 @@ function damageBarricade(
     state.vfx.push({ kind: 'burst', style: 'gold', at: [tx, ty + 0.5, tz], radius: 1.35 })
     state.sounds.push({ kind: 'ko', pitch: 1.15 })
     battle.shake = Math.max(battle.shake, 0.34)
+    appendCombatLog(
+      battle,
+      'hazard',
+      formatHazardLog({ kind: 'barricade_smash', actorName: attacker?.name ?? null, damage: dmg })
+    )
+  } else {
+    appendCombatLog(
+      battle,
+      'hazard',
+      formatHazardLog({ kind: 'barricade_hit', actorName: attacker?.name ?? null, damage: dmg })
+    )
   }
   return dmg
 }
@@ -5655,6 +5803,17 @@ function executePincerFollowUp(state: GameState, attacker: BattleUnit, target: B
     totalDealt += finalDmg
 
     addFloat(battle, target.x, target.y + 0.64, target.z, 'PINCER!', '#5ce1ff')
+    appendCombatLog(
+      battle,
+      'reaction',
+      formatReactionLog({
+        kind: 'pincer',
+        actorName: assister.name,
+        targetName: target.name,
+        hpDamage: finalDmg,
+        absorbed
+      })
+    )
     if (finalDmg > 0) {
       addFloat(battle, target.x, target.y + 0.26, target.z, `-${finalDmg}`, '#ffe16b')
       state.sounds.push({ kind: 'slash', pitch: 1.25 })
@@ -5744,6 +5903,18 @@ function executeCounterAttack(
   battle.shake = Math.max(battle.shake, 0.22)
 
   addFloat(battle, defender.x, defender.y + 0.46, defender.z, paladinBonus && paladinBonus.counterMul > 1 ? 'AEGIS COUNTER!' : 'COUNTER!', '#ff9f43')
+  appendCombatLog(
+    battle,
+    'reaction',
+    formatReactionLog({
+      kind: 'counter',
+      actorName: defender.name,
+      targetName: attacker.name,
+      hpDamage: hpDmg,
+      absorbed,
+      aegisBonus: Boolean(paladinBonus && paladinBonus.counterMul > 1)
+    })
+  )
   if (hpDmg > 0) {
     addFloat(battle, attacker.x, attacker.y + 0.12, attacker.z, `-${hpDmg}`, '#ff6b7a')
     state.sounds.push({ kind: 'hit', pitch: 1.06 })
@@ -5816,6 +5987,11 @@ function executeBasicAttack(state: GameState, attacker: BattleUnit, target: Batt
   if (!isRanged && attacker.alive && attacker.team !== target.team && shouldChillMeleeAttacker(target)) {
     attacker.slowTurns = Math.max(attacker.slowTurns, 1)
     addFloat(battle, attacker.x, attacker.y + 0.55, attacker.z, 'CHILLED!', '#7fdfff')
+    appendCombatLog(
+      battle,
+      'status',
+      formatStatusLog({ targetName: attacker.name, status: 'slow', phase: 'apply', sourceName: target.name })
+    )
     state.vfx.push({ kind: 'burst', style: 'frost', at: [attacker.x, attacker.y + 0.65, attacker.z], radius: 0.75 })
   }
   if (target.alive) {
@@ -5893,7 +6069,7 @@ function executeHeroSkill(
     for (const c of affected) {
       const downed = skill.canRevive ? downedHeroAt(battle, c.col, c.row) : undefined
       if (downed && downed.team === caster.team) {
-        if (reviveHero(state, downed, computeReviveHp(downed, skill.reviveHpRatio), skill.shieldAmount)) {
+        if (reviveHero(state, downed, computeReviveHp(downed, skill.reviveHpRatio), skill.shieldAmount, caster.name, skill.name)) {
           supportXp += XP_ACTION_REVIVE
         }
         if (skill.status && isBeneficialStatus(skill.status)) applyStatus(battle, downed, skill.status, skill.statusStacks)
@@ -5902,7 +6078,7 @@ function executeHeroSkill(
       }
       const ally = unitAt(battle, c.col, c.row)
       if (!ally || ally.team !== caster.team) continue
-      applyHealAndShield(state, ally, skill.healAmount, skill.shieldAmount, caster)
+      applyHealAndShield(state, ally, skill.healAmount, skill.shieldAmount, caster, { sourceLabel: skill.name })
       if (skill.healAmount > 0 || skill.shieldAmount > 0) supportXp += XP_ACTION_SUPPORT
       if (skill.status && isBeneficialStatus(skill.status)) applyStatus(battle, ally, skill.status, skill.statusStacks)
       hitAny = true
@@ -5913,7 +6089,7 @@ function executeHeroSkill(
     for (const c of affected) {
       const downed = skill.canRevive ? downedHeroAt(battle, c.col, c.row) : undefined
       if (downed && downed.team === caster.team) {
-        if (reviveHero(state, downed, computeReviveHp(downed, skill.reviveHpRatio), skill.shieldAmount)) {
+        if (reviveHero(state, downed, computeReviveHp(downed, skill.reviveHpRatio), skill.shieldAmount, caster.name, skill.name)) {
           supportXp += XP_ACTION_REVIVE
         }
         if (skill.status && isBeneficialStatus(skill.status)) applyStatus(battle, downed, skill.status, skill.statusStacks)
@@ -5922,7 +6098,7 @@ function executeHeroSkill(
       }
       const unit = unitAt(battle, c.col, c.row)
       if (!unit) continue
-      applyHealAndShield(state, unit, skill.healAmount, skill.shieldAmount, caster)
+      applyHealAndShield(state, unit, skill.healAmount, skill.shieldAmount, caster, { sourceLabel: skill.name })
       if (unit.team === caster.team && (skill.healAmount > 0 || skill.shieldAmount > 0)) supportXp += XP_ACTION_SUPPORT
       if (skill.status && isBeneficialStatus(skill.status)) applyStatus(battle, unit, skill.status, skill.statusStacks)
       hitAny = true
@@ -5935,10 +6111,10 @@ function executeHeroSkill(
     const skillAllowsCounter = isMeleeSkillEligibleForCounter(skill)
     let counterCandidate: { target: BattleUnit; arc: AttackArc; absorbed: number } | null = null
     if (skill.shieldAmount > 0 && skill.pattern !== 'aura') {
-      applyHealAndShield(state, caster, 0, skill.shieldAmount, caster)
+      applyHealAndShield(state, caster, 0, skill.shieldAmount, caster, { sourceLabel: skill.name })
     }
     if (skill.healAmount > 0 && skill.pattern === 'single') {
-      applyHealAndShield(state, caster, skill.healAmount, 0, caster)
+      applyHealAndShield(state, caster, skill.healAmount, 0, caster, { sourceLabel: skill.name })
     }
     const displaceTargets: BattleUnit[] = []
     const skillElement = skill.powerMul > 0 ? classifyElement(skill) : null
@@ -5946,7 +6122,7 @@ function executeHeroSkill(
       if (isDawnsJudgmentSafe && skill.canRevive) {
         const downed = downedHeroAt(battle, c.col, c.row)
         if (downed && downed.team === caster.team) {
-          if (reviveHero(state, downed, computeReviveHp(downed, skill.reviveHpRatio), skill.shieldAmount)) {
+          if (reviveHero(state, downed, computeReviveHp(downed, skill.reviveHpRatio), skill.shieldAmount, caster.name, skill.name)) {
             supportXp += XP_ACTION_REVIVE
           }
           hitAny = true
@@ -5968,7 +6144,7 @@ function executeHeroSkill(
       // Don't self-hit from splash around an adjacent tile unless caster directly targeted own space
       if (target.uid === caster.uid && !(col === caster.col && row === caster.row)) continue
       if (isDawnsJudgmentSafe && target.team === caster.team) {
-        applyHealAndShield(state, target, skill.healAmount, skill.shieldAmount, caster)
+        applyHealAndShield(state, target, skill.healAmount, skill.shieldAmount, caster, { sourceLabel: skill.name })
         if (skill.healAmount > 0 || skill.shieldAmount > 0) supportXp += XP_ACTION_SUPPORT
         hitAny = true
         continue
@@ -5976,7 +6152,7 @@ function executeHeroSkill(
       if (skill.powerMul > 0) {
         const hitArc = computeAttackArc(caster.col, caster.row, target.col, target.row, target.facing)
         const raw = caster.atk * skill.powerMul + skill.flatBonus
-        const dmgRes = applyDamageDetailed(state, caster, target, raw, skill.ignoreArmor, true, true)
+        const dmgRes = applyDamageDetailed(state, caster, target, raw, skill.ignoreArmor, true, true, { skillName: skill.name })
         // Frostguard Plate chills adjacent melee skill attackers
         if (
           skill.range <= 1 &&
@@ -5987,6 +6163,11 @@ function executeHeroSkill(
         ) {
           caster.slowTurns = Math.max(caster.slowTurns, 1)
           addFloat(battle, caster.x, caster.y + 0.55, caster.z, 'CHILLED!', '#7fdfff')
+          appendCombatLog(
+            battle,
+            'status',
+            formatStatusLog({ targetName: caster.name, status: 'slow', phase: 'apply', sourceName: target.name })
+          )
           state.vfx.push({ kind: 'burst', style: 'frost', at: [caster.x, caster.y + 0.65, caster.z], radius: 0.75 })
         }
         const aliveAfterDirect = target.alive
@@ -6047,6 +6228,7 @@ function executeHeroSkill(
 
   if (!hitAny) {
     addFloat(battle, tx, ty + 0.1, tz, 'NO TARGET', '#b8c7e6')
+    appendCombatLog(battle, 'attack', `${caster.name} casts ${skill.name} — no target`)
   }
 
   checkBattleOutcome(state)
@@ -6075,6 +6257,13 @@ function executeTacticCard(state: GameState, tacticUid: string, col: number, row
   battle.moveUndo = null
   state.sounds.push({ kind: 'card' })
 
+  const tacticActor = getUnitByUid(battle, battle.activeUnitUid) ?? null
+  appendCombatLog(
+    battle,
+    'system',
+    `${tacticActor ? `${tacticActor.name} plays` : 'Played'} Tactic: ${spec.name} (${spec.cost} AP${spec.apGain > 0 ? `, +${spec.apGain} AP` : ''})`
+  )
+
   const cell = battle.cells[row][col]
   const [tx, ty, tz] = gridToWorld(col, row, cell.elevation, battle.cols, battle.rows)
 
@@ -6082,12 +6271,12 @@ function executeTacticCard(state: GameState, tacticUid: string, col: number, row
     for (const u of battle.units) {
       if (u.team !== 'ally') continue
       if (spec.canRevive && isUnitDowned(u)) {
-        reviveHero(state, u, computeReviveHp(u, spec.reviveHpRatio), spec.shield)
+        reviveHero(state, u, computeReviveHp(u, spec.reviveHpRatio), spec.shield, tacticActor?.name ?? null, spec.name)
         if (spec.status && isBeneficialStatus(spec.status)) applyStatus(battle, u, spec.status, spec.statusStacks)
         continue
       }
       if (!u.alive) continue
-      applyHealAndShield(state, u, spec.heal, spec.shield)
+      applyHealAndShield(state, u, spec.heal, spec.shield, null, { sourceLabel: spec.name })
       if (spec.status) applyStatus(battle, u, spec.status, spec.statusStacks)
     }
     const allyCells: Vec3[] = []
@@ -6105,14 +6294,13 @@ function executeTacticCard(state: GameState, tacticUid: string, col: number, row
       cells: cellCentres(battle, cells),
       casterUid: tacticCasterUid(battle)
     })
-    const tacticActor = getUnitByUid(battle, battle.activeUnitUid) ?? null
     const displaceTargets: BattleUnit[] = []
     const tacticElement = spec.damage > 0 ? classifyElement(spec) : null
     for (const c of cells) {
       if (spec.canRevive) {
         const downed = downedHeroAt(battle, c.col, c.row)
         if (downed && downed.team === 'ally') {
-          reviveHero(state, downed, computeReviveHp(downed, spec.reviveHpRatio), spec.shield)
+          reviveHero(state, downed, computeReviveHp(downed, spec.reviveHpRatio), spec.shield, tacticActor?.name ?? null, spec.name)
           if (spec.status && isBeneficialStatus(spec.status)) applyStatus(battle, downed, spec.status, spec.statusStacks)
           continue
         }
@@ -6122,16 +6310,16 @@ function executeTacticCard(state: GameState, tacticUid: string, col: number, row
         if (spec.damage > 0 && isIntactBarricade(battle.cells[c.row][c.col])) {
           damageBarricade(state, null, c.col, c.row, spec.damage)
         } else if (tacticElement) {
-          triggerElementalCombo(state, null, tacticElement, null, c.col, c.row, handleUnitDefeat)
+          triggerElementalCombo(state, tacticActor, tacticElement, null, c.col, c.row, handleUnitDefeat)
         }
         continue
       }
       if (target.team === 'enemy') {
         if (spec.damage > 0) {
-          applyDamage(state, null, target, spec.damage, 0.6, false, true)
+          applyDamage(state, null, target, spec.damage, 0.6, false, true, { skillName: spec.name })
         }
         if (tacticElement) {
-          triggerElementalCombo(state, null, tacticElement, target.alive ? target : null, c.col, c.row, handleUnitDefeat)
+          triggerElementalCombo(state, tacticActor, tacticElement, target.alive ? target : null, c.col, c.row, handleUnitDefeat)
         }
         if (spec.status && !isBeneficialStatus(spec.status) && target.alive) {
           applyStatus(battle, target, spec.status, spec.statusStacks)
@@ -6141,7 +6329,7 @@ function executeTacticCard(state: GameState, tacticUid: string, col: number, row
         }
       }
       if (target.team === 'ally') {
-        if (spec.heal > 0 || spec.shield > 0) applyHealAndShield(state, target, spec.heal, spec.shield)
+        if (spec.heal > 0 || spec.shield > 0) applyHealAndShield(state, target, spec.heal, spec.shield, null, { sourceLabel: spec.name })
         if (spec.status && isBeneficialStatus(spec.status)) applyStatus(battle, target, spec.status, spec.statusStacks)
         if (spec.refreshMove) {
           target.moved = false
@@ -6523,7 +6711,18 @@ function triggerLeavingZocOpportunityAttacks(
     state.vfx.push({ kind: 'burst', style: 'slash', at: [mover.x, mover.y + 0.75, mover.z], uid: sentinel.uid })
     addFloat(battle, mover.x, mover.y + 0.72, mover.z, 'OPPORTUNITY!', '#ffaa33')
 
-    applyDamage(state, sentinel, mover, sentinel.atk * OPPORTUNITY_ATTACK_DAMAGE_MUL, 0, false)
+    const oaRes = applyDamageDetailed(state, sentinel, mover, sentinel.atk * OPPORTUNITY_ATTACK_DAMAGE_MUL, 0, false, false, { suppressLog: true })
+    appendCombatLog(
+      battle,
+      'reaction',
+      formatReactionLog({
+        kind: 'opportunity',
+        actorName: sentinel.name,
+        targetName: mover.name,
+        hpDamage: oaRes.hpDamage,
+        absorbed: oaRes.absorbed
+      })
+    )
     if (!mover.alive) {
       // If mover was stepping through an ally's tile when downed, avoid stacking two units on one cell
       const stacked = battle.units.some(
@@ -6555,7 +6754,12 @@ function applyLavaGeyserHazard(state: GameState, unit: BattleUnit, cell: GridCel
   const [tx, ty, tz] = gridToWorld(cell.col, cell.row, cell.elevation, battle.cols, battle.rows)
   state.vfx.push({ kind: 'burst', style: 'fire', at: [tx, ty + 0.4, tz], radius: 0.95 })
   addFloat(battle, unit.x, unit.y + 0.45, unit.z, 'GEYSER!', '#ff7a38')
-  applyDamage(state, null, unit, LAVA_GEYSER_DAMAGE, 0.5, false)
+  const geyserRes = applyDamageDetailed(state, null, unit, LAVA_GEYSER_DAMAGE, 0.5, false, false, { suppressLog: true })
+  appendCombatLog(
+    battle,
+    'hazard',
+    formatHazardLog({ kind: 'lava_geyser', targetName: unit.name, damage: geyserRes.hpDamage, absorbed: geyserRes.absorbed })
+  )
   if (unit.alive) {
     triggerElementalCombo(state, null, classifyHazardElement(cell.terrain), unit, cell.col, cell.row, handleUnitDefeat)
   }
@@ -6603,6 +6807,16 @@ function triggerStepOnHazard(state: GameState, unit: BattleUnit, cell: GridCell)
       unit.team === 'ally' ? 'DARK PACT! +EMPOWER +1 AP' : 'DARK PACT! +EMPOWER',
       '#e28cff'
     )
+    appendCombatLog(
+      battle,
+      'hazard',
+      formatHazardLog({
+        kind: 'cursed_altar',
+        targetName: unit.name,
+        damage: hpDrain,
+        detail: unit.team === 'ally' ? '+1 AP' : undefined
+      })
+    )
     battle.shake = Math.max(battle.shake, 0.22)
     return
   }
@@ -6638,9 +6852,15 @@ function advanceToNextUnitTurn(state: GameState, initial = false): void {
           `KO IN ${readyDowned.koCountdown}...`,
           readyDowned.koCountdown === 1 ? '#ff5768' : '#ff9f43'
         )
+        appendCombatLog(
+          battle,
+          'ko',
+          formatKoLog({ unitName: readyDowned.name, kind: 'countdown', countdown: readyDowned.koCountdown })
+        )
       } else {
         readyDowned.downed = false
         addFloat(battle, readyDowned.x, readyDowned.y + 0.35, readyDowned.z, 'FALLEN!', '#ff5768')
+        appendCombatLog(battle, 'ko', formatKoLog({ unitName: readyDowned.name, kind: 'fallen' }))
         state.sounds.push({ kind: 'ko', pitch: 0.78 })
         state.vfx.push({ kind: 'ko', at: [readyDowned.x, readyDowned.y + 0.6, readyDowned.z], isBoss: false, downed: false })
       }
@@ -6682,7 +6902,18 @@ function advanceToNextUnitTurn(state: GameState, initial = false): void {
     }
     if (next.burnTurns > 0) {
       next.burnTurns -= 1
-      applyDamage(state, null, next, 8, 1, false)
+      const burnRes = applyDamageDetailed(state, null, next, 8, 1, false, false, { suppressLog: true })
+      appendCombatLog(
+        battle,
+        'status',
+        formatStatusLog({
+          targetName: next.name,
+          status: 'burn',
+          phase: 'tick',
+          damage: burnRes.hpDamage,
+          absorbed: burnRes.absorbed
+        })
+      )
       if (!next.alive) {
         checkBattleOutcome(state)
         continue
@@ -6709,11 +6940,19 @@ function advanceToNextUnitTurn(state: GameState, initial = false): void {
     if (next.empowerTurns > 0) next.empowerTurns -= 1
     if (next.tauntTurns > 0) next.tauntTurns -= 1
     if (next.team === 'ally' && startCell.terrain === 'shrine' && next.hp < next.maxHp) {
-      applyHealAndShield(state, next, 14, 0)
+      const hpBefore = next.hp
+      applyHealAndShield(state, next, 14, 0, null, { suppressLog: true })
+      const gained = Math.max(0, next.hp - hpBefore)
+      appendCombatLog(
+        battle,
+        'hazard',
+        formatHazardLog({ kind: 'shrine', targetName: next.name, healAmount: gained > 0 ? gained : 14 }),
+        { accentHex: '#5ef29b' }
+      )
     }
     const turnStartGear = computeTurnStartGearEffects(next)
     if (turnStartGear.hpRegen > 0 || turnStartGear.shieldGain > 0) {
-      applyHealAndShield(state, next, turnStartGear.hpRegen, turnStartGear.shieldGain)
+      applyHealAndShield(state, next, turnStartGear.hpRegen, turnStartGear.shieldGain, null, { sourceLabel: 'Gear' })
     }
 
     if (next.stunTurns > 0) {
@@ -6721,6 +6960,7 @@ function advanceToNextUnitTurn(state: GameState, initial = false): void {
       next.ct = Math.max(0, next.ct - 100)
       if (next.team === 'ally') battle.objective.roundsElapsed += 1
       addFloat(battle, next.x, next.y, next.z, 'STUNNED', '#ffdf59')
+      appendCombatLog(battle, 'status', formatStatusLog({ targetName: next.name, status: 'stun', phase: 'stun_skip' }))
       continue
     }
 
@@ -6830,6 +7070,7 @@ function executeEnemyUnitTurn(state: GameState, enemy: BattleUnit): void {
   if (enemy.stunTurns > 0) {
     enemy.stunTurns -= 1
     addFloat(battle, enemy.x, enemy.y, enemy.z, 'STUNNED', '#ffdf59')
+    appendCombatLog(battle, 'status', formatStatusLog({ targetName: enemy.name, status: 'stun', phase: 'stun_skip' }))
     return
   }
 
@@ -6849,7 +7090,7 @@ function executeEnemyUnitTurn(state: GameState, enemy: BattleUnit): void {
       enemy.animState = 'cast'
       enemy.animTimer = 0.42
       state.vfx.push({ kind: 'special', uid: enemy.uid, move: 'shaman_mend', at: [hurt.x, hurt.y, hurt.z], cells: [[hurt.x, hurt.y, hurt.z]] })
-      applyHealAndShield(state, hurt, 22, 6)
+      applyHealAndShield(state, hurt, 22, 6, enemy, { sourceLabel: 'Totem Mend' })
       return
     }
   }
@@ -6957,7 +7198,7 @@ function performEnemyAttack(state: GameState, enemy: BattleUnit, target: BattleU
     for (const c of novaCells) {
       const victim = unitAt(battle, c.col, c.row)
       if (victim && victim.team === 'ally') {
-        applyDamage(state, enemy, victim, enemy.atk * 1.15, 0.35, false, true)
+        applyDamage(state, enemy, victim, enemy.atk * 1.15, 0.35, false, true, { skillName: 'Eclipse Nova' })
         if (victim.alive) applyStatus(battle, victim, 'burn')
       }
     }
