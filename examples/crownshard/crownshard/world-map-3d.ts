@@ -607,9 +607,10 @@ export function startDioramaFlyIn(
   stageId: string,
   mapX: number,
   mapY: number,
-  duration = DIORAMA_FLY_IN_DURATION
+  duration = DIORAMA_FLY_IN_DURATION,
+  aspect = 16 / 9
 ): void {
-  const current = computeBaseCameraVectors(cam, 16 / 9)
+  const current = computeBaseCameraVectors(cam, aspect)
   const dest = worldMapNormToDiorama(mapX, mapY)
   const safeDur = Math.max(0.05, Number.isFinite(duration) ? duration : DIORAMA_FLY_IN_DURATION)
   const endEye: DioramaVec3 = [

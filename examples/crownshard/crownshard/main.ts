@@ -207,6 +207,7 @@ async function start() {
 
   const existingSave = loadSave(page.storage)
   let state: GameState = createInitialState(1337, existingSave)
+  scene.setActionCameraEnabled(isActionCameraEnabled(state.campaign))
   let resumableBattle: BattleSaveSnapshot | null = state.battle
     ? serializeBattleState(state.battle, state.campaign.seed)
     : null
@@ -302,6 +303,8 @@ async function start() {
   let lastPointerType = 'mouse'
   const gridCursor = createGridCursorState()
   const gamepadTracker = createGamepadNavTracker()
+  let gamepadScreenGuardFrames = 0
+  let suppressUiBackUntil = 0
   const armoryEquipIdByWidget = new Map<string, string>()
   let mobileHandOpen = false
   let mobileCampCollapsed = false
@@ -391,6 +394,13 @@ async function start() {
     resetDioramaCamera(worldMap3DCam, instant)
   }
 
+  function cancelWorldDeployFlyIn() {
+    if (!pendingWorldFlyIn && !worldMap3DCam.flyIn?.active) return
+    pendingWorldFlyIn = null
+    worldMap3DCam.flyIn = null
+    uiDirty = true
+  }
+
   function finishWorldDeployFlyInNow() {
     const action = pendingWorldFlyIn
     pendingWorldFlyIn = null
@@ -408,7 +418,9 @@ async function start() {
       return
     }
     pendingWorldFlyIn = onComplete
-    startDioramaFlyIn(worldMap3DCam, stageId, mapX, mapY)
+    const cw = Math.max(1, renderer.canvas.clientWidth)
+    const ch = Math.max(1, renderer.canvas.clientHeight)
+    startDioramaFlyIn(worldMap3DCam, stageId, mapX, mapY, undefined, cw / ch)
     state.sounds.push({ kind: 'card', pitch: 1.24 })
     uiDirty = true
   }
@@ -660,6 +672,7 @@ async function start() {
     if (next === 'paused' || next === 'victory' || next === 'defeat') {
       cancelAutoBattle(state)
     }
+    gamepadScreenGuardFrames = 2
     lockedForecastCell = null
     mobileHandOpen = false
     if (next !== 'battle') {
@@ -861,6 +874,7 @@ async function start() {
       syncTurnBoundaryTracker(turnSaveTracker, null)
       clearSave(page.storage)
       state = createInitialState((Date.now() & 0xffff) || 1337)
+      scene.setActionCameraEnabled(isActionCameraEnabled(state.campaign))
       saveNow()
       openWorldMap(CHAPTERS[0].id)
     } else {
@@ -889,6 +903,7 @@ async function start() {
         commitWaitFacing()
       } else if (beginWaitFacingPicker(state)) {
         clearBattleHoverFeedback()
+        scene.setGridCursor(null)
         scene.setHoveredCell(null)
         scene.setForecast(null)
         refreshBattleDiscoveryTips(false)
@@ -1132,6 +1147,7 @@ async function start() {
     safeArea: { top: 8, right: 8, bottom: 8, left: 8 },
     keyboardEnabled: () => screen !== 'battle',
     onBack: () => {
+      if (performance.now() < suppressUiBackUntil) return
       if (fanfare) dismissFanfare()
       else if (packAnim) {
         if (isPackCeremonyComplete()) { packAnim = null; uiDirty = true }
@@ -1376,6 +1392,10 @@ async function start() {
   function dispatchGamepadActions(dt: number) {
     if (isTestingPaused()) return
     const actions = pollGamepadActions(gamepadTracker, readPrimaryGamepadSnapshot(), dt)
+    if (gamepadScreenGuardFrames > 0) {
+      gamepadScreenGuardFrames--
+      return
+    }
     if (actions.length === 0) return
 
     for (let i = 0; i < actions.length; i++) {
@@ -1398,7 +1418,11 @@ async function start() {
             confirmBoardTile(gridCursor.col, gridCursor.row)
           }
         } else if (act.kind === 'cancel') {
+          const prevScreen = screen
           handleBattleCancelAction(true)
+          if (screen !== prevScreen) {
+            suppressUiBackUntil = performance.now() + 180
+          }
         } else if (act.kind === 'actionX') {
           audio.unlock()
           if (state.battle.phase === 'deploy') {
@@ -1426,7 +1450,11 @@ async function start() {
           uiDirty = true
           hudRev++
         } else if (act.kind === 'pause') {
+          const prevScreen = screen
           togglePauseScreen()
+          if (screen !== prevScreen) {
+            suppressUiBackUntil = performance.now() + 180
+          }
         }
       } else if (act.kind === 'pause') {
         audio.unlock()
@@ -1444,7 +1472,7 @@ async function start() {
         } else if (screen === 'world') {
           const sel = getSelectedStage()
           if (isStageUnlocked(state.campaign, sel.id)) {
-            openStory(sel.index, 0)
+            triggerWorldDeployFlyIn(sel.id, sel.mapX, sel.mapY, () => openStory(sel.index, 0))
           }
         }
       }
@@ -1682,11 +1710,11 @@ async function start() {
     lastPointerType = event.pointerType || 'mouse'
     const { x, y, w, h } = pointerToCss(event)
     if (screen === 'world') {
+      if (ui.blocksPoint(x, y)) return
       if (worldMap3DCam.flyIn?.active && pendingWorldFlyIn) {
         finishWorldDeployFlyInNow()
         return
       }
-      if (ui.blocksPoint(x, y)) return
       audio.unlock()
       if (event.pointerType === 'touch') {
         worldMapTouches.set(event.pointerId, { x, y })
@@ -1920,6 +1948,11 @@ async function start() {
       return
     }
     if (screen === 'world') {
+      if (event.code === 'Escape' && !event.repeat && (worldMap3DCam.flyIn?.active || pendingWorldFlyIn)) {
+        event.preventDefault()
+        cancelWorldDeployFlyIn()
+        return
+      }
       if (event.code === 'KeyQ') {
         event.preventDefault()
         rotateDioramaCamera(worldMap3DCam, -0.14)
@@ -2355,7 +2388,7 @@ async function start() {
     }
 
     // Project all 33 continent landmarks directly onto their live 3D banner pins!
-    const mapNodes: LayoutNode[] = []
+    const mapNodeEntries: { readonly node: LayoutNode; readonly cx: number; readonly cy: number }[] = []
     for (const stage of CHAPTERS) {
       const pt = scene.projectWorldMapPoint(stage.mapX, stage.mapY, worldMap3DCam, w, h, 0.52)
       if (!pt) continue
@@ -2367,7 +2400,10 @@ async function start() {
       const isSel = !selectedEvent && selected.id === stage.id
       const nodeMastery = cleared ? getStageMasteryRecord(camp, stage.id) : null
       const nodeChestReady = cleared && canClaimStageMasteryChest(camp, stage.id)
-      mapNodes.push(boxNode({
+      mapNodeEntries.push({
+        cx: pt.x,
+        cy: pt.y,
+        node: boxNode({
         id: `map-node-${stage.id}`,
         style: { anchor: 'top-left', inset: [left, top], width: nodeW, height: nodeH },
         widget: {
@@ -2376,6 +2412,7 @@ async function start() {
           selected: isSel,
           onPress: () => {
             audio.unlock()
+            cancelWorldDeployFlyIn()
             selectedWorldEventId = null
             camp.selectedStageId = stage.id
             if (!stage.comingSoon) pendingChapter = stage.index
@@ -2401,7 +2438,8 @@ async function start() {
             st
           )
         }
-      }))
+      })
+      })
     }
 
     // Dynamic temporary World Map event medallions projected directly onto their 3D road beacons!
@@ -2415,7 +2453,10 @@ async function start() {
       const top = Math.round(pt.y - evPinCenterY)
       if (left + evNodeW < -20 || left > w + 20 || top + evNodeH < -20 || top > h + 20) continue
       const isEvSel = selectedEvent?.id === ev.id
-      mapNodes.push(boxNode({
+      mapNodeEntries.push({
+        cx: pt.x,
+        cy: pt.y,
+        node: boxNode({
         id: `map-event-${ev.id}`,
         style: { anchor: 'top-left', inset: [left, top], width: evNodeW, height: evNodeH },
         widget: {
@@ -2424,6 +2465,7 @@ async function start() {
           selected: isEvSel,
           onPress: () => {
             audio.unlock()
+            cancelWorldDeployFlyIn()
             selectedWorldEventId = ev.id
             focusWorldMapOnPoint(ev.mapX, ev.mapY)
             state.sounds.push({ kind: ev.kind === 'wandering_merchant' ? 'coin' : 'card', pitch: 1.15 })
@@ -2441,7 +2483,8 @@ async function start() {
             st
           )
         }
-      }))
+      })
+      })
     }
 
     // Aggregate unique enemy roster for the selected stage (Crownless Deep reflects selected Abyss floor)
@@ -3476,6 +3519,20 @@ async function start() {
         accentHex: reg.accentHex,
         futureFrontier: reg.futureFrontier
       })
+    }
+
+    // Omit map pins occluded behind the floating Stage/Event Inspector so non-button inspector clicks never pass through
+    const activeInspH = selectedEvent
+      ? (mobile ? Math.min(h - topH - 28, Math.round(h * 0.58)) : Math.min(h - topH - outerPad * 3 - 8, 520))
+      : inspH
+    const safePad = 8
+    const inspRectX = mobile ? (w - inspW) * 0.5 : (w - safePad - outerPad - inspW)
+    const inspRectY = mobile ? (h - safePad - 8 - activeInspH) : (safePad + topH + outerPad + 10)
+    const mapNodes: LayoutNode[] = []
+    for (const entry of mapNodeEntries) {
+      const occludedByInspector = entry.cx >= inspRectX && entry.cx <= inspRectX + inspW
+        && entry.cy >= inspRectY && entry.cy <= inspRectY + activeInspH
+      if (!occludedByInspector) mapNodes.push(entry.node)
     }
 
     return overlay({ id: 'root', style: { anchor: 'fill' } }, [

@@ -260,6 +260,20 @@ test('WorldMap3DCamera supports pan, zoom clamping, orbit, focus convergence, re
   assert.equal(cam.flyIn?.active, true)
   completeDioramaFlyIn(cam)
   assert.equal(cam.flyIn?.active, false)
+
+  // Portrait/tablet fly-in preserves the live viewport aspect starting eye position with zero frame-1 jump
+  resetDioramaCamera(cam, true)
+  const portraitAspect = 390 / 844
+  const portraitBase = computeDioramaCameraVectors(cam, portraitAspect)
+  startDioramaFlyIn(cam, deployStage.id, deployStage.mapX, deployStage.mapY, DIORAMA_FLY_IN_DURATION, portraitAspect)
+  const flyStart = computeDioramaCameraVectors(cam, portraitAspect)
+  assert.ok(
+    Math.abs(flyStart.eye[0] - portraitBase.eye[0]) < 1e-5
+      && Math.abs(flyStart.eye[1] - portraitBase.eye[1]) < 1e-5
+      && Math.abs(flyStart.eye[2] - portraitBase.eye[2]) < 1e-5,
+    'Portrait fly-in must start from the exact portrait overview eye position without snapping'
+  )
+  completeDioramaFlyIn(cam)
 })
 
 // =========================================================================
