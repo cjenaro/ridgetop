@@ -461,7 +461,7 @@ export const HERO_CODEX_META: Record<HeroClassId, HeroCodexMeta> = {
   }
 }
 
-const STARTER_EQUIP_IDS: readonly string[] = ['iron_sword', 'hunter_bow', 'leather_jerkin']
+const STARTER_EQUIP_IDS: readonly string[] = ['iron_sword', 'hunter_bow', 'leather_jerkin', 'apprentice_staff']
 
 const ENEMY_ID_SET: Record<string, EnemyArchetypeId> = {
   goblin: 'goblin',

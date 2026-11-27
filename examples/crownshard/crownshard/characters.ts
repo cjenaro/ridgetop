@@ -933,26 +933,50 @@ export function resolveHeroCharacterSpec(heroId: HeroClassId, loadout?: HeroVisu
     parts.back = 'halo_radiant'
   }
 
-  // 2. Equipped Armor visual swaps (all 6 armor items have bespoke 3D parts)
+  // 2. Equipped Armor visual swaps (all 14 armor items have bespoke 3D parts)
   if (armorId === 'leather_jerkin') {
     parts.chest = 'chest_scout_brigandine'
     parts.pauldrons = 'pauldrons_brigandine'
   } else if (armorId === 'iron_plate') {
     parts.chest = 'chest_watchman_plate'
     parts.pauldrons = 'pauldrons_watchman'
+  } else if (armorId === 'acolyte_robe') {
+    parts.chest = 'chest_acolyte_robe'
+    parts.pauldrons = 'pauldrons_acolyte_robe'
   } else if (armorId === 'ranger_cloak') {
     parts.back = 'cape_windrunner'
     parts.collar = 'collar_windrunner'
     parts.pauldrons = 'pauldrons_windrunner'
+  } else if (armorId === 'sunweave_robe') {
+    parts.chest = 'chest_sunweave_robe'
+    parts.pauldrons = 'pauldrons_sunweave_robe'
+    palette.accent = '#f2c864'
   } else if (armorId === 'runed_mail') {
     parts.chest = 'chest_runed_mail'
     parts.pauldrons = 'pauldrons_runed_mail'
     palette.glow = '#6eb8ff'
+  } else if (armorId === 'astral_vestments') {
+    parts.chest = 'chest_astral_vestments'
+    parts.pauldrons = 'pauldrons_astral_vestments'
+    palette.glow = '#7ad4ff'
+  } else if (armorId === 'stalker_leathers') {
+    parts.chest = 'chest_stalker_leathers'
+    parts.pauldrons = 'pauldrons_stalker_leathers'
   } else if (armorId === 'frostguard_plate') {
     parts.chest = 'chest_frostguard'
     parts.pauldrons = 'pauldrons_frostguard'
     parts.collar = 'collar_frostguard'
     palette.metal = '#bce4fa'
+  } else if (armorId === 'glacier_raiment') {
+    parts.chest = 'chest_glacier_raiment'
+    parts.pauldrons = 'pauldrons_glacier_raiment'
+    parts.collar = 'collar_glacier_raiment'
+    palette.glow = '#85e0ff'
+  } else if (armorId === 'shadowsilk_vest') {
+    parts.chest = 'chest_shadowsilk_vest'
+    parts.pauldrons = 'pauldrons_shadowsilk_vest'
+    parts.collar = 'collar_shadowsilk_vest'
+    palette.glow = '#b87cff'
   } else if (armorId === 'aegis_of_dawn') {
     parts.chest = 'chest_aegis_dawn'
     parts.pauldrons = 'pauldrons_aegis_dawn'
@@ -965,6 +989,16 @@ export function resolveHeroCharacterSpec(heroId: HeroClassId, loadout?: HeroVisu
       parts.offHand = 'shield_aegis_dawn'
     }
     palette.accent = '#ffe078'
+  } else if (armorId === 'starweaver_mantle') {
+    parts.chest = 'chest_starweaver_mantle'
+    parts.pauldrons = 'pauldrons_starweaver_mantle'
+    parts.back = 'cape_starweaver'
+    palette.glow = '#d499ff'
+  } else if (armorId === 'nightwind_garb') {
+    parts.chest = 'chest_nightwind_garb'
+    parts.pauldrons = 'pauldrons_nightwind_garb'
+    parts.back = 'cape_nightwind'
+    palette.glow = '#5ce8b8'
   }
 
   // 3. Equipped Relic visual swaps (all 5 relic items have bespoke 3D parts)
@@ -985,9 +1019,9 @@ export function resolveHeroCharacterSpec(heroId: HeroClassId, loadout?: HeroVisu
     palette.glow = '#ffdb6e'
   }
 
-  // 4. Equipped Weapon visual swaps + off-hand conflict resolution (all 7 weapon items have bespoke 3D parts)
+  // 4. Equipped Weapon visual swaps + off-hand conflict resolution (all 14 weapon items have bespoke 3D parts)
   const clearBowOffhand = () => {
-    if (parts.offHand === 'offhand_bow_recurve' || parts.offHand === 'offhand_bow_yew') {
+    if (parts.offHand && parts.offHand.startsWith('offhand_bow_')) {
       delete parts.offHand
     }
   }
@@ -1001,13 +1035,20 @@ export function resolveHeroCharacterSpec(heroId: HeroClassId, loadout?: HeroVisu
   if (weaponId === 'iron_sword') {
     parts.mainHand = 'weapon_iron_broadsword'
     clearBowOffhand()
+  } else if (weaponId === 'apprentice_staff') {
+    parts.mainHand = 'weapon_apprentice_staff'
+    clearTwoHandConflicts()
+    palette.glow = '#76b4e8'
   } else if (weaponId === 'hunter_bow' || weaponId === 'yew_bow') {
     parts.mainHand = 'weapon_yew_arrow'
     parts.offHand = 'offhand_bow_yew'
-  } else if (weaponId === 'ember_wand' || weaponId === 'apprentice_staff') {
+  } else if (weaponId === 'ember_wand') {
     parts.mainHand = 'weapon_ember_scepter'
     clearTwoHandConflicts()
     palette.glow = '#ff8a3d'
+  } else if (weaponId === 'recurved_bow') {
+    parts.mainHand = 'weapon_falcon_arrow'
+    parts.offHand = 'offhand_bow_falcon'
   } else if (weaponId === 'sunsteel_blade') {
     parts.mainHand = 'weapon_sunsteel_blade'
     clearBowOffhand()
@@ -1015,14 +1056,34 @@ export function resolveHeroCharacterSpec(heroId: HeroClassId, loadout?: HeroVisu
     parts.mainHand = 'weapon_frostbite_staff'
     clearTwoHandConflicts()
     palette.glow = '#88f4ff'
+  } else if (weaponId === 'gale_longbow') {
+    parts.mainHand = 'weapon_gale_arrow'
+    parts.offHand = 'offhand_bow_gale'
+    palette.glow = '#59d4ff'
   } else if (weaponId === 'dragonfang_spear') {
     parts.mainHand = 'weapon_dragonfang_halberd'
     clearTwoHandConflicts()
     palette.glow = '#d66bff'
+  } else if (weaponId === 'solis_archstaff') {
+    parts.mainHand = 'weapon_solis_archstaff'
+    clearTwoHandConflicts()
+    palette.glow = '#b882ff'
+  } else if (weaponId === 'shadowfang_bow') {
+    parts.mainHand = 'weapon_shadowfang_arrow'
+    parts.offHand = 'offhand_bow_shadowfang'
+    palette.glow = '#c76eff'
   } else if (weaponId === 'solis_crownblade') {
     parts.mainHand = 'weapon_solis_crownblade'
     clearTwoHandConflicts()
     palette.glow = '#ffe478'
+  } else if (weaponId === 'celestial_staff') {
+    parts.mainHand = 'weapon_celestial_staff'
+    clearTwoHandConflicts()
+    palette.glow = '#8ef4ff'
+  } else if (weaponId === 'windrunner_bow') {
+    parts.mainHand = 'weapon_windrunner_arrow'
+    parts.offHand = 'offhand_bow_windrunner'
+    palette.glow = '#74f2b8'
   }
 
   return {

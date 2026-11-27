@@ -1,6 +1,12 @@
 import { EQUIPMENT_BY_ID, HERO_SPECS } from './data.ts'
+import {
+  canHeroEquipItem,
+  getEquipCompatibilityReason,
+  getEquipFamily,
+  getHeroEquipFamily
+} from './equip-families.ts'
 import { computeHeroStats, findEquipOwner, getEquipmentByUid, getHeroByUid } from './simulation.ts'
-import type { CampaignState, EquipSlot, OwnedHeroCard, Rarity } from './types.ts'
+import type { CampaignState, EquipFamily, EquipSlot, OwnedHeroCard, Rarity } from './types.ts'
 
 export type ArmoryStatKey = 'atk' | 'def' | 'maxHp' | 'speed' | 'move' | 'range' | 'crit'
 
@@ -30,10 +36,14 @@ export interface StatDiffEntry {
 export interface EquipmentStatDiff {
   readonly heroUid: string
   readonly heroName: string
+  readonly heroFamily: EquipFamily
   readonly slot: EquipSlot
   readonly candidateEquipUid: string
   readonly candidateName: string
   readonly candidateRarity: Rarity
+  readonly candidateFamily: EquipFamily
+  readonly compatible: boolean
+  readonly incompatibilityReason: string | null
   readonly currentItemName: string | null
   readonly currentItemRarity: Rarity | null
   readonly isAlreadyEquipped: boolean
@@ -105,9 +115,14 @@ export function computeEquipmentStatDiff(
   const currentOwnerUid = otherOwner ? otherOwner.uid : null
   const currentOwnerName = otherOwner ? HERO_SPECS[otherOwner.heroId].name : null
 
+  const heroFamily = getHeroEquipFamily(hero.heroId)
+  const candidateFamily = getEquipFamily(candidate.equipId)
+  const compatible = canHeroEquipItem(hero.heroId, candidate.equipId)
+  const incompatibilityReason = getEquipCompatibilityReason(hero.heroId, candidate.equipId)
+
   const beforeStats = computeHeroStats(campaign, hero)
   let afterStats = beforeStats
-  if (!isAlreadyEquipped) {
+  if (!isAlreadyEquipped && compatible) {
     const hypotheticalHero: OwnedHeroCard = {
       ...hero,
       weaponUid: slot === 'weapon' ? candidate.uid : hero.weaponUid,
@@ -143,10 +158,14 @@ export function computeEquipmentStatDiff(
   return {
     heroUid: hero.uid,
     heroName: heroSpec.name,
+    heroFamily,
     slot,
     candidateEquipUid: candidate.uid,
     candidateName: candidateSpec.name,
     candidateRarity: candidateSpec.rarity,
+    candidateFamily,
+    compatible,
+    incompatibilityReason,
     currentItemName: currentSpec ? currentSpec.name : null,
     currentItemRarity: currentSpec ? currentSpec.rarity : null,
     isAlreadyEquipped,

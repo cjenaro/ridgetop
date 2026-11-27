@@ -105,9 +105,9 @@ function fakeRenderer() {
   }
 }
 
-test('all 18 equipment items produce distinct 3D rig visuals vs baseline and vs every sibling in the same slot', () => {
-  assert.equal(EQUIPMENT_LIST.length, 18, 'Expected all 18 Crownshard equipment items')
-  assert.equal(Object.keys(EQUIPMENT_BY_ID).length, 18)
+test('all 33 equipment items produce distinct 3D rig visuals vs baseline and vs every sibling in the same slot', () => {
+  assert.equal(EQUIPMENT_LIST.length, 33, 'Expected all 33 Crownshard equipment items')
+  assert.equal(Object.keys(EQUIPMENT_BY_ID).length, 33)
 
   for (const heroId of ALL_HERO_IDS) {
     const baseSpec = resolveHeroCharacterSpec(heroId)

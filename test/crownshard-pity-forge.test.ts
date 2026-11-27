@@ -178,20 +178,20 @@ test('Duplicate protection prioritizes unowned heroes/equipment and converts 3â˜
   // 1. Equipment duplicate protection prioritizes unowned high-rarity items before duplicates
   const eqState = createInitialState(303)
   const epicEquip = EQUIPMENT_LIST.filter(e => e.rarity === 'epic')
-  assert.equal(epicEquip.length, 3)
+  assert.ok(epicEquip.length >= 3)
 
-  // Own the first two epic items; duplicate protection must deterministically choose the 3rd unowned one
-  eqState.campaign.equipment.push(
-    { uid: 'eq_e0', equipId: epicEquip[0].id, slot: epicEquip[0].slot },
-    { uid: 'eq_e1', equipId: epicEquip[1].id, slot: epicEquip[1].slot }
-  )
+  // Own all but the last epic item; duplicate protection must deterministically choose the sole unowned one
+  for (let i = 0; i < epicEquip.length - 1; i++) {
+    eqState.campaign.equipment.push({ uid: `eq_e${i}`, equipId: epicEquip[i].id, slot: epicEquip[i].slot })
+  }
+  const lastEpic = epicEquip[epicEquip.length - 1]
   for (const roll of [0, 0.25, 0.5, 0.99]) {
     const picked = selectProtectedEquipment(epicEquip, eqState.campaign, roll)
-    assert.equal(picked.id, epicEquip[2].id, 'Must pick the sole unowned Epic equipment item before duplicating')
+    assert.equal(picked.id, lastEpic.id, 'Must pick the sole unowned Epic equipment item before duplicating')
   }
 
-  // Once all 3 are owned, falls back to normal rolling across the pool
-  eqState.campaign.equipment.push({ uid: 'eq_e2', equipId: epicEquip[2].id, slot: epicEquip[2].slot })
+  // Once all are owned, falls back to normal rolling across the pool
+  eqState.campaign.equipment.push({ uid: 'eq_e_last', equipId: lastEpic.id, slot: lastEpic.slot })
   const fallbackEq = selectProtectedEquipment(epicEquip, eqState.campaign, 0.1)
   assert.ok(epicEquip.some(e => e.id === fallbackEq.id))
 

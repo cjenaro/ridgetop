@@ -223,6 +223,98 @@ export const EQUIP_EFFECTS: Record<string, EquipEffectSpec> = {
     desc: 'Regenerates +10 HP at the start of each turn.',
     accentHex: '#ffdb6e',
     turnStartHpRegen: 10
+  },
+  solis_archstaff: {
+    equipId: 'solis_archstaff',
+    name: 'Arcane Surge',
+    shortLabel: '+15% vs Burn/Stun',
+    desc: 'Deals +15% DMG against Burning or Stunned foes.',
+    accentHex: '#b882ff',
+    vsBurnOrStunDamageMul: 1.15
+  },
+  celestial_staff: {
+    equipId: 'celestial_staff',
+    name: 'Starfire Conduit',
+    shortLabel: '+12% vs Boss · Burn on Crit',
+    desc: 'Deals +12% DMG vs Bosses and ignites foes with Burn on Crit.',
+    accentHex: '#8ef4ff',
+    bossDamageMul: 1.12,
+    burnOnCrit: true
+  },
+  astral_vestments: {
+    equipId: 'astral_vestments',
+    name: 'Astral Ward',
+    shortLabel: '-15% Skill DMG Taken',
+    desc: 'Reduces incoming skill and spell damage by 15%.',
+    accentHex: '#6ea8ff',
+    skillDamageTakenMul: 0.85
+  },
+  glacier_raiment: {
+    equipId: 'glacier_raiment',
+    name: 'Rime Shroud',
+    shortLabel: 'Chills Melee Attackers',
+    desc: 'Adjacent melee attackers are chilled with Slow (1 turn).',
+    accentHex: '#85e0ff',
+    chillMeleeAttacker: true
+  },
+  starweaver_mantle: {
+    equipId: 'starweaver_mantle',
+    name: 'Starlight Aegis',
+    shortLabel: '<60% HP: +8 SHD · -18% Skill DMG',
+    desc: 'Grants +8 Shield at turn start below 60% HP & -18% incoming skill DMG.',
+    accentHex: '#d499ff',
+    lowHpTurnStartShield: { hpRatioBelow: 0.6, shield: 8 },
+    skillDamageTakenMul: 0.82
+  },
+  gale_longbow: {
+    equipId: 'gale_longbow',
+    name: 'Windpiercer',
+    shortLabel: 'Ignores 2 Cover DEF',
+    desc: 'Ignores 2 points of enemy Cover DEF on ranged attacks.',
+    accentHex: '#59d4ff',
+    ignoreCoverDef: 2
+  },
+  shadowfang_bow: {
+    equipId: 'shadowfang_bow',
+    name: 'Fang Pierce',
+    shortLabel: '+12% Pierce vs DEF 5+',
+    desc: 'Ignores an extra 12% armor against targets with 5+ DEF.',
+    accentHex: '#c76eff',
+    highDefArmorPierce: { minDef: 5, bonusIgnoreArmor: 0.12 }
+  },
+  windrunner_bow: {
+    equipId: 'windrunner_bow',
+    name: 'Apex Hunter',
+    shortLabel: '+12% vs Boss · Ignore 2 Cover',
+    desc: 'Deals +12% DMG vs Bosses and ignores 2 Cover DEF.',
+    accentHex: '#74f2b8',
+    bossDamageMul: 1.12,
+    ignoreCoverDef: 2
+  },
+  stalker_leathers: {
+    equipId: 'stalker_leathers',
+    name: 'Ridge Stride',
+    shortLabel: '+1 Jump',
+    desc: 'Grants +1 Jump height to scale ridges and walls effortlessly.',
+    accentHex: '#5d87b8',
+    jumpBonus: 1
+  },
+  shadowsilk_vest: {
+    equipId: 'shadowsilk_vest',
+    name: 'Shadow Siphon',
+    shortLabel: '+10 HP on KO',
+    desc: 'Restores +10 HP whenever the wearer secures a KO.',
+    accentHex: '#a86bff',
+    healOnKo: 10
+  },
+  nightwind_garb: {
+    equipId: 'nightwind_garb',
+    name: 'Nightwind Grace',
+    shortLabel: '+8 HP Regen/Turn · +1 Jump',
+    desc: 'Regenerates +8 HP each turn start and grants +1 Jump.',
+    accentHex: '#5ce8b8',
+    turnStartHpRegen: 8,
+    jumpBonus: 1
   }
 }
 

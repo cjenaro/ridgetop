@@ -391,98 +391,173 @@ export const HERO_SPECS: Record<HeroClassId, HeroSpec> = {
 export const HERO_LIST: readonly HeroSpec[] = Object.values(HERO_SPECS)
 
 export const EQUIPMENT_LIST: readonly EquipmentSpec[] = [
-  // Weapons
+  // Weapons — Vanguard (Swords & Plate), Arcane (Staves & Robes), Skirmisher (Bows & Light)
   {
-    id: 'iron_sword', name: 'Iron Broadsword', slot: 'weapon', rarity: 'common',
+    id: 'iron_sword', name: 'Iron Broadsword', slot: 'weapon', family: 'vanguard', rarity: 'common',
     desc: '+5 ATK. Reliable Vanguard steel.',
     atk: 5, def: 0, hp: 0, speed: 0, move: 0, range: 0, crit: 0.04, lifesteal: 0, shieldStart: 0, accentHex: '#c2cfd8'
   },
   {
-    id: 'hunter_bow', name: 'Yew Longbow', slot: 'weapon', rarity: 'common',
+    id: 'apprentice_staff', name: 'Apprentice Staff', slot: 'weapon', family: 'arcane', rarity: 'common',
+    desc: '+5 ATK, +4 HP, +5% Crit.',
+    atk: 5, def: 0, hp: 4, speed: 0, move: 0, range: 0, crit: 0.05, lifesteal: 0, shieldStart: 0, accentHex: '#76b4e8'
+  },
+  {
+    id: 'hunter_bow', name: 'Yew Longbow', slot: 'weapon', family: 'skirmisher', rarity: 'common',
     desc: '+4 ATK, +1 SPD, +10% Crit.',
     atk: 4, def: 0, hp: 0, speed: 1, move: 0, range: 0, crit: 0.10, lifesteal: 0, shieldStart: 0, accentHex: '#b8834d'
   },
   {
-    id: 'ember_wand', name: 'Ember Scepter', slot: 'weapon', rarity: 'uncommon',
+    id: 'ember_wand', name: 'Ember Scepter', slot: 'weapon', family: 'arcane', rarity: 'uncommon',
     desc: '+8 ATK, +6 HP, +1 SPD.',
     atk: 8, def: 0, hp: 6, speed: 1, move: 0, range: 0, crit: 0.06, lifesteal: 0, shieldStart: 0, accentHex: '#f08742'
   },
   {
-    id: 'sunsteel_blade', name: 'Sunsteel Blade', slot: 'weapon', rarity: 'rare',
+    id: 'recurved_bow', name: 'Falcon Recurve', slot: 'weapon', family: 'skirmisher', rarity: 'uncommon',
+    desc: '+8 ATK, +2 SPD, +14% Crit.',
+    atk: 8, def: 0, hp: 4, speed: 2, move: 0, range: 0, crit: 0.14, lifesteal: 0, shieldStart: 0, accentHex: '#66c98e'
+  },
+  {
+    id: 'sunsteel_blade', name: 'Sunsteel Blade', slot: 'weapon', family: 'vanguard', rarity: 'rare',
     desc: '+11 ATK, +1 SPD, +14% Crit.',
     atk: 11, def: 1, hp: 0, speed: 1, move: 0, range: 0, crit: 0.14, lifesteal: 0, shieldStart: 0, accentHex: '#f0c44d'
   },
   {
-    id: 'frostbite_staff', name: 'Frostbite Staff', slot: 'weapon', rarity: 'rare',
+    id: 'frostbite_staff', name: 'Frostbite Staff', slot: 'weapon', family: 'arcane', rarity: 'rare',
     desc: '+10 ATK, +1 Range, +1 SPD.',
     atk: 10, def: 0, hp: 8, speed: 1, move: 0, range: 1, crit: 0.08, lifesteal: 0, shieldStart: 0, accentHex: '#6dd9ff'
   },
   {
-    id: 'dragonfang_spear', name: 'Dragonfang Halberd', slot: 'weapon', rarity: 'epic',
+    id: 'gale_longbow', name: 'Gale Longbow', slot: 'weapon', family: 'skirmisher', rarity: 'rare',
+    desc: '+11 ATK, +1 Range, +2 SPD, +18% Crit.',
+    atk: 11, def: 0, hp: 6, speed: 2, move: 0, range: 1, crit: 0.18, lifesteal: 0, shieldStart: 0, accentHex: '#59d4ff'
+  },
+  {
+    id: 'dragonfang_spear', name: 'Dragonfang Halberd', slot: 'weapon', family: 'vanguard', rarity: 'epic',
     desc: '+15 ATK, +1 Range, +15% Lifesteal, Venom.',
     atk: 15, def: 2, hp: 10, speed: 1, move: 0, range: 1, crit: 0.12, lifesteal: 0.15, shieldStart: 0, onHitStatus: 'poison', accentHex: '#d66bff'
   },
   {
-    id: 'solis_crownblade', name: 'Solis Crownblade', slot: 'weapon', rarity: 'legendary',
+    id: 'solis_archstaff', name: 'Solis Archstaff', slot: 'weapon', family: 'arcane', rarity: 'epic',
+    desc: '+15 ATK, +1 Range, +2 SPD, +12% Crit.',
+    atk: 15, def: 1, hp: 12, speed: 2, move: 0, range: 1, crit: 0.12, lifesteal: 0, shieldStart: 0, accentHex: '#b882ff'
+  },
+  {
+    id: 'shadowfang_bow', name: 'Shadowfang Bow', slot: 'weapon', family: 'skirmisher', rarity: 'epic',
+    desc: '+15 ATK, +1 Range, +22% Crit, Venom.',
+    atk: 15, def: 0, hp: 8, speed: 2, move: 0, range: 1, crit: 0.22, lifesteal: 0.12, shieldStart: 0, onHitStatus: 'poison', accentHex: '#c76eff'
+  },
+  {
+    id: 'solis_crownblade', name: 'Solis Crownblade', slot: 'weapon', family: 'vanguard', rarity: 'legendary',
     desc: '+22 ATK, +2 SPD, +25% Crit, Lifesteal.',
     atk: 22, def: 3, hp: 16, speed: 2, move: 0, range: 0, crit: 0.25, lifesteal: 0.25, shieldStart: 0, accentHex: '#ffe066'
   },
-
-  // Armor
   {
-    id: 'leather_jerkin', name: 'Scout Brigandine', slot: 'armor', rarity: 'common',
+    id: 'celestial_staff', name: 'Celestial Staff', slot: 'weapon', family: 'arcane', rarity: 'legendary',
+    desc: '+21 ATK, +1 Range, +2 SPD, +20% Crit.',
+    atk: 21, def: 2, hp: 18, speed: 2, move: 0, range: 1, crit: 0.20, lifesteal: 0.15, shieldStart: 0, accentHex: '#8ef4ff'
+  },
+  {
+    id: 'windrunner_bow', name: 'Windrunner Greatbow', slot: 'weapon', family: 'skirmisher', rarity: 'legendary',
+    desc: '+21 ATK, +1 Range, +3 SPD, +28% Crit.',
+    atk: 21, def: 1, hp: 12, speed: 3, move: 0, range: 1, crit: 0.28, lifesteal: 0.15, shieldStart: 0, accentHex: '#74f2b8'
+  },
+
+  // Armor — Plate (Vanguard), Robes (Arcane), Light (Skirmisher)
+  {
+    id: 'leather_jerkin', name: 'Scout Brigandine', slot: 'armor', family: 'skirmisher', rarity: 'common',
     desc: '+14 HP, +2 DEF.',
     atk: 0, def: 2, hp: 14, speed: 0, move: 0, range: 0, crit: 0, lifesteal: 0, shieldStart: 0, accentHex: '#8c6543'
   },
   {
-    id: 'iron_plate', name: 'Watchman Plate', slot: 'armor', rarity: 'common',
+    id: 'iron_plate', name: 'Watchman Plate', slot: 'armor', family: 'vanguard', rarity: 'common',
     desc: '+22 HP, +4 DEF, +6 Start Shield.',
     atk: 0, def: 4, hp: 22, speed: 0, move: 0, range: 0, crit: 0, lifesteal: 0, shieldStart: 6, accentHex: '#8d9ca6'
   },
   {
-    id: 'ranger_cloak', name: 'Windrunner Cloak', slot: 'armor', rarity: 'uncommon',
+    id: 'acolyte_robe', name: 'Acolyte Robe', slot: 'armor', family: 'arcane', rarity: 'common',
+    desc: '+12 HP, +2 DEF, +1 SPD, +6 Start Shield.',
+    atk: 0, def: 2, hp: 12, speed: 1, move: 0, range: 0, crit: 0, lifesteal: 0, shieldStart: 6, accentHex: '#6a7fd4'
+  },
+  {
+    id: 'ranger_cloak', name: 'Windrunner Cloak', slot: 'armor', family: 'skirmisher', rarity: 'uncommon',
     desc: '+16 HP, +2 SPD, +1 Move.',
     atk: 0, def: 2, hp: 16, speed: 2, move: 1, range: 0, crit: 0.06, lifesteal: 0, shieldStart: 0, accentHex: '#43a87b'
   },
   {
-    id: 'runed_mail', name: 'Runed Chainmail', slot: 'armor', rarity: 'rare',
+    id: 'sunweave_robe', name: 'Sunweave Vestment', slot: 'armor', family: 'arcane', rarity: 'uncommon',
+    desc: '+18 HP, +3 DEF, +1 ATK, +10 Start Shield.',
+    atk: 1, def: 3, hp: 18, speed: 1, move: 0, range: 0, crit: 0.04, lifesteal: 0, shieldStart: 10, accentHex: '#e6b655'
+  },
+  {
+    id: 'runed_mail', name: 'Runed Chainmail', slot: 'armor', family: 'vanguard', rarity: 'rare',
     desc: '+32 HP, +6 DEF, +12 Start Shield.',
     atk: 0, def: 6, hp: 32, speed: 1, move: 0, range: 0, crit: 0, lifesteal: 0, shieldStart: 12, accentHex: '#5a9cf2'
   },
   {
-    id: 'frostguard_plate', name: 'Frostguard Plate', slot: 'armor', rarity: 'epic',
+    id: 'astral_vestments', name: 'Astral Vestments', slot: 'armor', family: 'arcane', rarity: 'rare',
+    desc: '+26 HP, +4 DEF, +3 ATK, +2 SPD, +14 Shield.',
+    atk: 3, def: 4, hp: 26, speed: 2, move: 0, range: 0, crit: 0.06, lifesteal: 0, shieldStart: 14, accentHex: '#6ea8ff'
+  },
+  {
+    id: 'stalker_leathers', name: 'Stalker Leathers', slot: 'armor', family: 'skirmisher', rarity: 'rare',
+    desc: '+24 HP, +4 DEF, +3 ATK, +2 SPD, +10% Crit.',
+    atk: 3, def: 4, hp: 24, speed: 2, move: 0, range: 0, crit: 0.10, lifesteal: 0, shieldStart: 0, accentHex: '#5d87b8'
+  },
+  {
+    id: 'frostguard_plate', name: 'Frostguard Plate', slot: 'armor', family: 'vanguard', rarity: 'epic',
     desc: '+44 HP, +8 DEF, +20 Start Shield.',
     atk: 2, def: 8, hp: 44, speed: 1, move: 0, range: 0, crit: 0, lifesteal: 0, shieldStart: 20, accentHex: '#9d7bff'
   },
   {
-    id: 'aegis_of_dawn', name: 'Aegis of Dawn', slot: 'armor', rarity: 'legendary',
+    id: 'glacier_raiment', name: 'Glacier Raiment', slot: 'armor', family: 'arcane', rarity: 'epic',
+    desc: '+36 HP, +5 DEF, +4 ATK, +2 SPD, +18 Shield.',
+    atk: 4, def: 5, hp: 36, speed: 2, move: 0, range: 0, crit: 0.08, lifesteal: 0, shieldStart: 18, accentHex: '#85e0ff'
+  },
+  {
+    id: 'shadowsilk_vest', name: 'Shadowsilk Vest', slot: 'armor', family: 'skirmisher', rarity: 'epic',
+    desc: '+34 HP, +5 DEF, +5 ATK, +3 SPD, +1 Move.',
+    atk: 5, def: 5, hp: 34, speed: 3, move: 1, range: 0, crit: 0.14, lifesteal: 0, shieldStart: 0, accentHex: '#a86bff'
+  },
+  {
+    id: 'aegis_of_dawn', name: 'Aegis of Dawn', slot: 'armor', family: 'vanguard', rarity: 'legendary',
     desc: '+62 HP, +11 DEF, +2 SPD, +32 Shield, Start Taunt.',
     atk: 4, def: 11, hp: 62, speed: 2, move: 0, range: 0, crit: 0, lifesteal: 0, shieldStart: 32, startStatus: 'taunt', accentHex: '#ffd15c'
   },
-
-  // Relics
   {
-    id: 'copper_signet', name: 'Copper Signet', slot: 'relic', rarity: 'common',
+    id: 'starweaver_mantle', name: 'Starweaver Mantle', slot: 'armor', family: 'arcane', rarity: 'legendary',
+    desc: '+48 HP, +7 DEF, +6 ATK, +3 SPD, +26 Shield.',
+    atk: 6, def: 7, hp: 48, speed: 3, move: 0, range: 0, crit: 0.10, lifesteal: 0, shieldStart: 26, accentHex: '#d499ff'
+  },
+  {
+    id: 'nightwind_garb', name: 'Nightwind Shroud', slot: 'armor', family: 'skirmisher', rarity: 'legendary',
+    desc: '+46 HP, +7 DEF, +7 ATK, +3 SPD, +1 Move, +18% Crit.',
+    atk: 7, def: 7, hp: 46, speed: 3, move: 1, range: 0, crit: 0.18, lifesteal: 0, shieldStart: 16, accentHex: '#5ce8b8'
+  },
+
+  // Relics — Universal (equippable by all hero classes)
+  {
+    id: 'copper_signet', name: 'Copper Signet', slot: 'relic', family: 'universal', rarity: 'common',
     desc: '+3 ATK, +8 HP, +1 SPD.',
     atk: 3, def: 1, hp: 8, speed: 1, move: 0, range: 0, crit: 0.05, lifesteal: 0, shieldStart: 0, accentHex: '#c9885b'
   },
   {
-    id: 'swift_boots', name: 'Gale Striders', slot: 'relic', rarity: 'uncommon',
+    id: 'swift_boots', name: 'Gale Striders', slot: 'relic', family: 'universal', rarity: 'uncommon',
     desc: '+3 SPD, +1 Move, +10 HP, Start Haste.',
     atk: 2, def: 1, hp: 10, speed: 3, move: 1, range: 0, crit: 0.08, lifesteal: 0, shieldStart: 0, startStatus: 'haste', accentHex: '#5cd99e'
   },
   {
-    id: 'blood_amulet', name: 'Crimson Pendant', slot: 'relic', rarity: 'rare',
+    id: 'blood_amulet', name: 'Crimson Pendant', slot: 'relic', family: 'universal', rarity: 'rare',
     desc: '+6 ATK, +28% Lifesteal, +1 SPD.',
     atk: 6, def: 0, hp: 12, speed: 1, move: 0, range: 0, crit: 0.08, lifesteal: 0.28, shieldStart: 0, accentHex: '#e85a6f'
   },
   {
-    id: 'eagle_charm', name: 'Skyhawk Crest', slot: 'relic', rarity: 'epic',
+    id: 'eagle_charm', name: 'Skyhawk Crest', slot: 'relic', family: 'universal', rarity: 'epic',
     desc: '+1 Range, +2 SPD, +8 ATK, +20% Crit.',
     atk: 8, def: 1, hp: 14, speed: 2, move: 0, range: 1, crit: 0.20, lifesteal: 0, shieldStart: 0, accentHex: '#be7dff'
   },
   {
-    id: 'heart_of_solis', name: 'Heart of Solis', slot: 'relic', rarity: 'legendary',
+    id: 'heart_of_solis', name: 'Heart of Solis', slot: 'relic', family: 'universal', rarity: 'legendary',
     desc: '+34 HP, +12 ATK, +3 SPD, +1 Move.',
     atk: 12, def: 4, hp: 34, speed: 3, move: 1, range: 0, crit: 0.18, lifesteal: 0.15, shieldStart: 15, accentHex: '#ffdb6e'
   }
@@ -1520,7 +1595,7 @@ export const CHAPTERS: readonly ChapterSpec[] = [
     outroText: 'The Guild Plaza is secure! Oakhaven\'s merchant masters now grant us a 20% Guild Patron discount on Dust, Shards, and Relic Caravan crates.',
     rewardGold: 130,
     replayGold: 60,
-    rewardEquipId: 'leather_jerkin',
+    rewardEquipId: 'acolyte_robe',
     rewardHeroId: null,
     grid: [
       [V, H, T, S, S, T, H, V],
@@ -1577,7 +1652,7 @@ export const CHAPTERS: readonly ChapterSpec[] = [
     outroText: 'The highland windmills turn under Solis banners once more — and we recovered swift Gale Striders from the ridge keep!',
     rewardGold: 135,
     replayGold: 70,
-    rewardEquipId: 'swift_boots',
+    rewardEquipId: 'recurved_bow',
     rewardHeroId: null,
     grid: [
       [V, V, G, T, H, H, T, H, V],
@@ -1632,7 +1707,7 @@ export const CHAPTERS: readonly ChapterSpec[] = [
     outroText: 'The marsh tide recedes and the delta islets are free — Runed Chainmail recovered from the sunken sluice!',
     rewardGold: 160,
     replayGold: 85,
-    rewardEquipId: 'runed_mail',
+    rewardEquipId: 'sunweave_robe',
     rewardHeroId: null,
     grid: [
       [V, G, W, W, G, H, W, G, V],
@@ -1687,7 +1762,7 @@ export const CHAPTERS: readonly ChapterSpec[] = [
     outroText: 'The abbey bells ring unbroken across the Silverfen! The monks entrust us with the legendary Aegis of Dawn.',
     rewardGold: 190,
     replayGold: 95,
-    rewardEquipId: 'aegis_of_dawn',
+    rewardEquipId: 'astral_vestments',
     rewardHeroId: null,
     grid: [
       [V, G, S, H, T, H, S, G, V],
@@ -1750,7 +1825,7 @@ export const CHAPTERS: readonly ChapterSpec[] = [
     outroText: 'The stalker captain falls and the mists part! We recovered a gleaming Skyhawk Crest from the cursed grove.',
     rewardGold: 175,
     replayGold: 92,
-    rewardEquipId: 'eagle_charm',
+    rewardEquipId: 'stalker_leathers',
     rewardHeroId: null,
     innateMutators: ['fog_of_war'],
     grid: [
@@ -1808,7 +1883,7 @@ export const CHAPTERS: readonly ChapterSpec[] = [
     outroText: 'Lich Vaelen\'s phylactery shatters in emerald ash! The cathedral vaults yield a Frostbite Staff and silence at last.',
     rewardGold: 260,
     replayGold: 130,
-    rewardEquipId: 'frostbite_staff',
+    rewardEquipId: 'glacier_raiment',
     rewardHeroId: null,
     grid: [
       [V, V, D, S, A, S, D, V, V],
@@ -1867,7 +1942,7 @@ export const CHAPTERS: readonly ChapterSpec[] = [
     outroText: 'The Runeforge Anvil blazes with sapphire frost! Freya the Cryomancer pledges her glacial arts to our vanguard!',
     rewardGold: 245,
     replayGold: 125,
-    rewardEquipId: 'frostguard_plate',
+    rewardEquipId: 'solis_archstaff',
     rewardHeroId: 'cryomancer',
     grid: [
       [V, N, T, H, S, T, H, V, V],
@@ -2102,7 +2177,7 @@ export const CHAPTERS: readonly ChapterSpec[] = [
     outroText: 'The oasis bridges are secure! Our desert caravan can now push inland toward the Sunken Obelisk.',
     rewardGold: 440,
     replayGold: 205,
-    rewardEquipId: 'swift_boots',
+    rewardEquipId: 'gale_longbow',
     rewardHeroId: null,
     grid: [
       [V, G, H, W, W, G, H, H, V],
@@ -2156,7 +2231,7 @@ export const CHAPTERS: readonly ChapterSpec[] = [
     outroText: 'The sun-prism awakens and blazes across the sand! Ahead rises the terraced Sunscar Pyramid of the Dune Sovereign.',
     rewardGold: 520,
     replayGold: 230,
-    rewardEquipId: 'heart_of_solis',
+    rewardEquipId: 'shadowfang_bow',
     rewardHeroId: null,
     grid: [
       [V, S, H, P, H, H, S, V],
@@ -2215,7 +2290,7 @@ export const CHAPTERS: readonly ChapterSpec[] = [
     outroText: 'The gilded pharaoh-construct shatters! Its astral compass points skyward — the way to Tempest Spire in the Aether Isles is open!',
     rewardGold: 620,
     replayGold: 260,
-    rewardEquipId: 'solis_crownblade',
+    rewardEquipId: 'windrunner_bow',
     rewardHeroId: null,
     grid: [
       [V, V, S, H, H, H, S, V, V],
@@ -2337,7 +2412,7 @@ export const CHAPTERS: readonly ChapterSpec[] = [
     outroText: 'The storm spire falls quiet! Ahead across the cloud chasm looms Skybreak Bastion and the Astral Warden.',
     rewardGold: 680,
     replayGold: 290,
-    rewardEquipId: 'aegis_of_dawn',
+    rewardEquipId: 'starweaver_mantle',
     rewardHeroId: null,
     grid: [
       [V, V, S, T, V, V, S, T, H, V],
@@ -2391,7 +2466,7 @@ export const CHAPTERS: readonly ChapterSpec[] = [
     outroText: 'The Astral Warden salutes and lowers its wings — the outer chart to Obsidian Rift in the Shattered Expanse is ours!',
     rewardGold: 780,
     replayGold: 320,
-    rewardEquipId: 'solis_crownblade',
+    rewardEquipId: 'shadowsilk_vest',
     rewardHeroId: 'champion',
     grid: [
       [V, V, V, S, H, H, S, V, V, V],
@@ -2452,7 +2527,7 @@ export const CHAPTERS: readonly ChapterSpec[] = [
     outroText: 'Torchlight claims another vault of the Crownless Deep.',
     rewardGold: 640,
     replayGold: 270,
-    rewardEquipId: 'solis_crownblade',
+    rewardEquipId: 'nightwind_garb',
     rewardHeroId: 'champion',
     grid: [
       [V, D, D, P, D, P, D, D, V],
@@ -2508,7 +2583,7 @@ export const CHAPTERS: readonly ChapterSpec[] = [
     outroText: 'The outer rift stabilizes! Beyond the last shattered monolith stands the First Sun Sanctum — the throne of The Unbroken Crown.',
     rewardGold: 820,
     replayGold: 340,
-    rewardEquipId: 'heart_of_solis',
+    rewardEquipId: 'celestial_staff',
     rewardHeroId: null,
     grid: [
       [V, D, S, V, V, D, H, V, V, V],
