@@ -107,6 +107,21 @@ import {
   previewElementalCombo, triggerElementalCombo
 } from './elemental-combos.ts'
 import {
+  BATTLE_WEATHER_IDS, TIME_OF_DAY_IDS, TIME_OF_DAY_LABELS, WEATHER_SPECS,
+  computeWeatherCombatModifiers, computeWeatherLighting, defaultAtmosphereForBiome,
+  formatWeatherHudLabel, isBattleWeatherId, isTimeOfDayId, resolveBattleAtmosphere,
+  weatherSlowDurationBonus
+} from './weather.ts'
+export {
+  BATTLE_WEATHER_IDS, TIME_OF_DAY_IDS, TIME_OF_DAY_LABELS, WEATHER_SPECS,
+  computeWeatherCombatModifiers, computeWeatherLighting, defaultAtmosphereForBiome,
+  formatWeatherHudLabel, isBattleWeatherId, isTimeOfDayId, resolveBattleAtmosphere,
+  weatherSlowDurationBonus
+}
+export type {
+  BaseLightingStyle, ResolveAtmosphereInput, ShiftedBattleLighting, WeatherCombatModifiers, WeatherSpec
+} from './weather.ts'
+import {
   MAX_HERO_LEVEL, XP_ACTION_BOSS_KO, XP_ACTION_DAMAGE, XP_ACTION_KO, XP_ACTION_REVIVE, XP_ACTION_SUPPORT,
   XP_MERGE_TRANSFER_RATIO, XP_VICTORY_BASE, XP_VICTORY_PER_DIFFICULTY, XP_VICTORY_SURVIVAL_BONUS,
   grantHeroXp, heroLevelProgress, levelStatBonuses, normalizeHeroLevel, normalizeHeroXp,
@@ -407,17 +422,17 @@ export type {
   WorldEventVictoryRewardPlan
 } from './world-events.ts'
 import type {
-  AttackArc, BattleCellSnapshot, BattleHeroXpGain, BattleObjectiveEvaluation, BattleObjectiveKind,
+  AttackArc, BattleAtmosphere, BattleCellSnapshot, BattleHeroXpGain, BattleObjectiveEvaluation, BattleObjectiveKind,
   EndlessBlessingId,
   BattleObjectiveSnapshot, BattleObjectiveState, BattleReward, BattleSaveSnapshot, BattleSpeedMultiplier,
-  BattleState, BattleUnit, BattleUnitSnapshot, BiomeId, CampaignState, ChapterSpec, CombatForecast,
+  BattleState, BattleUnit, BattleUnitSnapshot, BattleWeatherId, BiomeId, CampaignState, ChapterSpec, CombatForecast,
   CombatForecastAlt, CounterAvoidReason, DangerZoneMap, DangerZoneTile, DifficultyLevel, DisplacementPreview,
-  ElementalComboPreview, EnemyArchetypeId, EnemyThreatMap, EquipSlot,
+  ElementKind, ElementalComboPreview, EnemyArchetypeId, EnemyThreatMap, EquipSlot,
   EquipmentSpec, FacingDir, FacingExposureLevel, FacingExposureReport, FacingThreatEntry,
   FlankThreatTile, GameState, GridCell, GridCoord, HeroClassId, MoveAttackTile, OwnedEquipCard,
   OwnedHeroCard, OwnedTacticCard, PackId, PackRevealItem, Rarity, SaveData, SavedCampaignState, SkillSpec,
   StageDifficultyTier, StageMutatorId, StatusKind,
-  TacticCardSpec, TileTerrain, TurnActionKind, TurnOrderActionPreview, TurnPreviewEntry,
+  TacticCardSpec, TileTerrain, TimeOfDayId, TurnActionKind, TurnOrderActionPreview, TurnPreviewEntry,
   WorldEventKind, WorldMapEvent
 } from './types.ts'
 
@@ -1526,6 +1541,8 @@ export function serializeBattleState(
     cols: battle.cols,
     rows: battle.rows,
     biome: battle.biome,
+    weather: battle.weather,
+    timeOfDay: battle.timeOfDay,
     cells,
     units,
     turn: battle.turn,
@@ -1631,6 +1648,17 @@ export function validateBattleSnapshot(raw: unknown): BattleSaveSnapshot | null 
 
   const biome = typeof raw.biome === 'string' ? BIOME_LOOKUP.get(raw.biome) : undefined
   if (!biome) return null
+
+  let weather: BattleWeatherId | undefined
+  if (raw.weather !== undefined) {
+    if (!isBattleWeatherId(raw.weather)) return null
+    weather = raw.weather
+  }
+  let timeOfDay: TimeOfDayId | undefined
+  if (raw.timeOfDay !== undefined) {
+    if (!isTimeOfDayId(raw.timeOfDay)) return null
+    timeOfDay = raw.timeOfDay
+  }
 
   if (!isFiniteNum(raw.cols) || !isFiniteNum(raw.rows)) return null
   const cols = Math.floor(raw.cols)
@@ -1921,6 +1949,8 @@ export function validateBattleSnapshot(raw: unknown): BattleSaveSnapshot | null 
     cols,
     rows,
     biome,
+    ...(weather !== undefined ? { weather } : {}),
+    ...(timeOfDay !== undefined ? { timeOfDay } : {}),
     cells,
     units,
     turn,
@@ -2078,6 +2108,16 @@ export function restoreBattleState(state: GameState, snapshot: unknown): boolean
       }
     : buildBattleObjective(chapter, units, valid.endlessWave)
   const deployTiles = computeDeployTiles(chapter, cells, restoredObjective)
+  const fallbackAtmosphere: BattleAtmosphere = resolveBattleAtmosphere({
+    stageId: valid.stageId,
+    biome: valid.biome,
+    endlessWave: valid.endlessWave,
+    seed: state.campaign.seed,
+    chapterWeather: chapter.weather,
+    chapterTimeOfDay: chapter.timeOfDay
+  })
+  const restoredWeather: BattleWeatherId = valid.weather ?? fallbackAtmosphere.weather
+  const restoredTimeOfDay: TimeOfDayId = valid.timeOfDay ?? fallbackAtmosphere.timeOfDay
 
   const battle: BattleState = {
     stageId: valid.stageId,
@@ -2099,6 +2139,8 @@ export function restoreBattleState(state: GameState, snapshot: unknown): boolean
     cols: valid.cols,
     rows: valid.rows,
     biome: valid.biome,
+    weather: restoredWeather,
+    timeOfDay: restoredTimeOfDay,
     cells,
     units,
     deployTiles,
@@ -2554,6 +2596,8 @@ export interface StartBattleOptions {
   readonly tier?: StageDifficultyTier
   readonly mutators?: readonly StageMutatorId[]
   readonly abyssFloor?: number
+  readonly weather?: BattleWeatherId
+  readonly timeOfDay?: TimeOfDayId
 }
 
 export function isChestClaimed(
@@ -3109,6 +3153,16 @@ function launchBattleInternal(
         ? mergeInnateStageMutators(chapter.id, challenge.mutators)
         : challenge.mutators.slice()
   const biome: BiomeId = chapter.biome
+  const atmosphere = resolveBattleAtmosphere({
+    stageId: worldEvent ? undefined : chapter.id,
+    biome,
+    endlessWave,
+    seed: endlessWave > 0 ? (campaign.endlessRun?.seed ?? campaign.seed) : campaign.seed,
+    chapterWeather: chapter.weather,
+    chapterTimeOfDay: chapter.timeOfDay,
+    overrideWeather: resolvedOpts?.weather,
+    overrideTimeOfDay: resolvedOpts?.timeOfDay
+  })
   const cells = buildCells(chapter.grid, chapter.heights)
   const rows = cells.length
   const cols = cells[0]?.length ?? GRID_COLS
@@ -3311,6 +3365,8 @@ function launchBattleInternal(
     cols,
     rows,
     biome,
+    weather: atmosphere.weather,
+    timeOfDay: atmosphere.timeOfDay,
     cells,
     units,
     deployTiles,
@@ -4767,6 +4823,15 @@ export function refreshHighlights(battle: BattleState, campaign: CampaignState):
   battle.moveAttackTiles = computeMoveAttackTiles(battle, active, -1, moveTiles, battle.targetTiles)
 }
 
+function inferBasicAttackElement(attacker: BattleUnit | null): ElementKind | null {
+  if (!attacker) return null
+  if (attacker.team === 'enemy') return getEnemyAttackElement(attacker.enemyId)
+  if (attacker.heroId === 'cryomancer') return 'frost'
+  if (attacker.heroId === 'cleric') return 'holy'
+  if (attacker.heroId === 'mage') return 'arcane'
+  return null
+}
+
 function previewDamageMath(
   battle: BattleState,
   attacker: BattleUnit | null,
@@ -4776,7 +4841,8 @@ function previewDamageMath(
   rawDamage: number,
   ignoreArmor: number,
   canCrit: boolean,
-  isSkillDamage = false
+  isSkillDamage = false,
+  element: ElementKind | null = null
 ): {
   normalDmg: number
   critDmg: number
@@ -4787,6 +4853,9 @@ function previewDamageMath(
   terrainDef: number
   empowered: boolean
   attackArc: AttackArc
+  weatherNote: string | null
+  weatherDamageMul: number
+  weatherCritBonus: number
   hpAfterNormal: number
   hpAfterCrit: number
 } {
@@ -4818,6 +4887,8 @@ function previewDamageMath(
     dmg *= mutatorDamageMultiplier(battle)
     dmg *= computeEndlessAttackerDamageMultiplier(battle.endlessBlessings, attacker, defender)
   }
+  const weatherMod = computeWeatherCombatModifiers(battle.weather, element, attackArc)
+  dmg *= weatherMod.damageMul
   dmg *= computeDefenderIncomingDamageMultiplier(defender, isSkillDamage)
   const totalIgnoreArmor = clamp(ignoreArmor + computeBonusIgnoreArmor(attacker, defender.def), 0, 1)
   const shieldWallDef = computeShieldWallDefBonus(battle, defender)
@@ -4827,7 +4898,10 @@ function previewDamageMath(
     manhattan(fromCol, fromRow, hitCell.col, hitCell.row) >= 2 &&
     battle.cells[hitCell.row][hitCell.col].terrain === 'tall_grass'
   const grassCritPenalty = rangedTallGrass ? TALL_GRASS_RANGED_CRIT_REDUCTION : 0
-  const critChance = canCrit && attacker ? clamp(attacker.crit + arcCritBonus - grassCritPenalty, 0, 0.95) : 0
+  const effectiveWeatherCrit = canCrit && attacker ? weatherMod.critBonus : 0
+  const critChance = canCrit && attacker
+    ? clamp(attacker.crit + arcCritBonus + effectiveWeatherCrit - grassCritPenalty, 0, 0.95)
+    : 0
   const critRaw = critChance > 0 ? Math.round(baseDmg * 1.55) : baseDmg
   const normalAfterShield = Math.max(0, baseDmg - defender.shield)
   const critAfterShield = Math.max(0, critRaw - defender.shield)
@@ -4841,6 +4915,9 @@ function previewDamageMath(
     terrainDef,
     empowered,
     attackArc,
+    weatherNote: (weatherMod.damageMul !== 1 || effectiveWeatherCrit > 0) ? weatherMod.note : null,
+    weatherDamageMul: weatherMod.damageMul,
+    weatherCritBonus: effectiveWeatherCrit,
     hpAfterNormal: Math.max(0, defender.hp - normalAfterShield),
     hpAfterCrit: Math.max(0, defender.hp - critAfterShield)
   }
@@ -4951,15 +5028,19 @@ export function computeCombatForecast(state: GameState, col: number, row: number
     let healAmount = primary.team === 'ally' ? spec.heal : 0
     let hpAfterNormal = primary.hp
     let elementalCombo: ElementalComboPreview | undefined
+    let tacticWeatherNote: string | undefined
+    let tacticWeatherDamageMul: number | undefined
     const isRevive = Boolean(spec.canRevive && primary.team === 'ally' && isUnitDowned(primary))
     if (isRevive) {
       healAmount = computeReviveHp(primary, spec.reviveHpRatio)
       hpAfterNormal = healAmount
     } else if (spec.damage > 0 && primary.team === 'enemy') {
-      const m = previewDamageMath(battle, null, primary, col, row, spec.damage, 0.6, false, true)
+      const tacticElement = classifyElement(spec)
+      const m = previewDamageMath(battle, null, primary, col, row, spec.damage, 0.6, false, true, tacticElement)
       normalDmg = m.normalDmg
       hpAfterNormal = m.hpAfterNormal
-      const tacticElement = classifyElement(spec)
+      if (m.weatherNote) tacticWeatherNote = m.weatherNote
+      if (m.weatherDamageMul !== 1) tacticWeatherDamageMul = m.weatherDamageMul
       if (tacticElement) {
         const combo = previewElementalCombo(battle, tacticElement, primary, col, row)
         if (combo) {
@@ -5032,6 +5113,8 @@ export function computeCombatForecast(state: GameState, col: number, row: number
       lethalCrit: tacticTotalDmg > 0 && hpAfterNormal <= 0,
       ...(displacementPreview ? { displacementPreview } : {}),
       ...(elementalCombo ? { elementalCombo } : {}),
+      ...(tacticWeatherNote ? { weatherNote: tacticWeatherNote } : {}),
+      ...(tacticWeatherDamageMul !== undefined ? { weatherDamageMul: tacticWeatherDamageMul } : {}),
       alternatives: []
     }
   }
@@ -5216,6 +5299,9 @@ export function computeCombatForecast(state: GameState, col: number, row: number
   let hpAfterNormal = primary.hp
   let hpAfterCrit = primary.hp
   let elementalCombo: ElementalComboPreview | undefined
+  let weatherNote: string | undefined
+  let weatherDamageMul: number | undefined
+  let weatherCritBonus: number | undefined
   const primaryDowned = isUnitDowned(primary)
   const isRevive = Boolean(armedSkill?.canRevive && primaryDowned && primary.team === active.team)
   const effectiveIsOffensive = isRevive ? false : isOffensive
@@ -5245,7 +5331,8 @@ export function computeCombatForecast(state: GameState, col: number, row: number
       } else if (armedSkill.powerMul > 0) {
         ignoreArmor = clamp(armedSkill.ignoreArmor + computeBonusIgnoreArmor(active, primary.def), 0, 1)
         const raw = active.atk * armedSkill.powerMul + armedSkill.flatBonus
-        const m = previewDamageMath(battle, active, primary, approachCol, approachRow, raw, armedSkill.ignoreArmor, true, true)
+        const skillElement = classifyElement(armedSkill)
+        const m = previewDamageMath(battle, active, primary, approachCol, approachRow, raw, armedSkill.ignoreArmor, true, true, skillElement)
         normalDmg = m.normalDmg
         critDmg = m.critDmg
         critChance = m.critChance
@@ -5255,9 +5342,11 @@ export function computeCombatForecast(state: GameState, col: number, row: number
         terrainDef = m.terrainDef
         empowered = m.empowered
         attackArc = m.attackArc
+        if (m.weatherNote) weatherNote = m.weatherNote
+        if (m.weatherDamageMul !== 1) weatherDamageMul = m.weatherDamageMul
+        if (m.weatherCritBonus > 0) weatherCritBonus = m.weatherCritBonus
         hpAfterNormal = m.hpAfterNormal
         hpAfterCrit = m.hpAfterCrit
-        const skillElement = classifyElement(armedSkill)
         if (skillElement) {
           const combo = previewElementalCombo(battle, skillElement, primary, col, row)
           if (combo) {
@@ -5270,7 +5359,8 @@ export function computeCombatForecast(state: GameState, col: number, row: number
     }
   } else if (primary.team !== active.team) {
     ignoreArmor = clamp(computeBonusIgnoreArmor(active, primary.def), 0, 1)
-    const m = previewDamageMath(battle, active, primary, approachCol, approachRow, active.atk, 0, true)
+    const strikeElement = inferBasicAttackElement(active)
+    const m = previewDamageMath(battle, active, primary, approachCol, approachRow, active.atk, 0, true, false, strikeElement)
     normalDmg = m.normalDmg
     critDmg = m.critDmg
     critChance = m.critChance
@@ -5280,6 +5370,9 @@ export function computeCombatForecast(state: GameState, col: number, row: number
     terrainDef = m.terrainDef
     empowered = m.empowered
     attackArc = m.attackArc
+    if (m.weatherNote) weatherNote = m.weatherNote
+    if (m.weatherDamageMul !== 1) weatherDamageMul = m.weatherDamageMul
+    if (m.weatherCritBonus > 0) weatherCritBonus = m.weatherCritBonus
     hpAfterNormal = m.hpAfterNormal
     hpAfterCrit = m.hpAfterCrit
   }
@@ -5348,7 +5441,7 @@ export function computeCombatForecast(state: GameState, col: number, row: number
       ? { col: active.col, row: active.row }
       : (!active.moved ? pickBestApproachTile(battle, active, battle.moveTiles, primary.col, primary.row, active.range, false) : null)
     if (strikeApproach) {
-      const m = previewDamageMath(battle, active, primary, strikeApproach.col, strikeApproach.row, active.atk, 0, true, false)
+      const m = previewDamageMath(battle, active, primary, strikeApproach.col, strikeApproach.row, active.atk, 0, true, false, inferBasicAttackElement(active))
       const strikeAssisters = findPincerAssisters(battle, active, strikeApproach.col, strikeApproach.row, primary)
       const strikePincerDmg = strikeAssisters.length > 0
         ? computePincerAssistDamage(battle, strikeAssisters[0], primary)
@@ -5456,14 +5549,14 @@ export function computeCombatForecast(state: GameState, col: number, row: number
       })
     } else {
       const raw = active.atk * sk.powerMul + sk.flatBonus
-      const m = previewDamageMath(battle, active, primary, skApproach.col, skApproach.row, raw, sk.ignoreArmor, true, true)
+      const skElement = classifyElement(sk)
+      const m = previewDamageMath(battle, active, primary, skApproach.col, skApproach.row, raw, sk.ignoreArmor, true, true, skElement)
       const skAssisters = isPincerMeleeSkill(sk)
         ? findPincerAssisters(battle, active, skApproach.col, skApproach.row, primary)
         : []
       const skPincerDmg = skAssisters.length > 0
         ? computePincerAssistDamage(battle, skAssisters[0], primary)
         : 0
-      const skElement = classifyElement(sk)
       const skCombo = skElement ? previewElementalCombo(battle, skElement, primary, primary.col, primary.row) : null
       const skDispPreview = sk.displacement
         ? resolveDisplacementPreview(battle, active, primary, sk.displacement, { col: skApproach.col, row: skApproach.row })
@@ -5634,6 +5727,9 @@ export function computeCombatForecast(state: GameState, col: number, row: number
     ...(pathOaPreview ? { opportunityAttacks: pathOaPreview } : {}),
     ...(displacementPreview ? { displacementPreview } : {}),
     ...(elementalCombo ? { elementalCombo } : {}),
+    ...(weatherNote ? { weatherNote } : {}),
+    ...(weatherDamageMul !== undefined ? { weatherDamageMul } : {}),
+    ...(weatherCritBonus !== undefined ? { weatherCritBonus } : {}),
     alternatives
   }
 }
@@ -5799,7 +5895,8 @@ function applyDamageDetailed(
   canCrit: boolean,
   isSkillDamage = false,
   logOpts?: ApplyDamageLogOpts,
-  isMeleeAttack?: boolean
+  isMeleeAttack?: boolean,
+  element: ElementKind | null = null
 ): DamageResult {
   const battle = state.battle
   if (!battle || !defender.alive) {
@@ -5826,6 +5923,8 @@ function applyDamageDetailed(
     dmg *= mutatorDamageMultiplier(battle)
     dmg *= computeEndlessAttackerDamageMultiplier(battle.endlessBlessings, attacker, defender)
   }
+  const weatherMod = computeWeatherCombatModifiers(battle.weather, element, attackArc)
+  dmg *= weatherMod.damageMul
   dmg *= computeDefenderIncomingDamageMultiplier(defender, isSkillDamage)
 
   const totalIgnoreArmor = clamp(ignoreArmor + computeBonusIgnoreArmor(attacker, defender.def), 0, 1)
@@ -5838,7 +5937,7 @@ function applyDamageDetailed(
     manhattan(attacker.col, attacker.row, hitCell.col, hitCell.row) >= 2 &&
     battle.cells[hitCell.row][hitCell.col].terrain === 'tall_grass'
   const grassCritPenalty = rangedTallGrass ? TALL_GRASS_RANGED_CRIT_REDUCTION : 0
-  if (canCrit && attacker && randFloat(state.campaign) < clamp(attacker.crit + arcCritBonus - grassCritPenalty, 0, 0.95)) {
+  if (canCrit && attacker && randFloat(state.campaign) < clamp(attacker.crit + arcCritBonus + weatherMod.critBonus - grassCritPenalty, 0, 0.95)) {
     isCrit = true
     finalDmg = Math.round(finalDmg * 1.55)
   }
@@ -5968,9 +6067,10 @@ function applyDamage(
   canCrit: boolean,
   isSkillDamage = false,
   logOpts?: ApplyDamageLogOpts,
-  isMeleeAttack?: boolean
+  isMeleeAttack?: boolean,
+  element: ElementKind | null = null
 ): number {
-  return applyDamageDetailed(state, attacker, defender, rawDamage, ignoreArmor, canCrit, isSkillDamage, logOpts, isMeleeAttack).hpDamage
+  return applyDamageDetailed(state, attacker, defender, rawDamage, ignoreArmor, canCrit, isSkillDamage, logOpts, isMeleeAttack, element).hpDamage
 }
 
 function handleUnitDefeat(state: GameState, unit: BattleUnit): void {
@@ -6187,7 +6287,8 @@ export function applyStatus(
     target.burnTurns = Math.max(target.burnTurns, 2)
     addFloat(battle, target.x, target.y + 0.55, target.z, 'BURN', '#ff9b42')
   } else if (status === 'slow') {
-    target.slowTurns = Math.max(target.slowTurns, 2)
+    const slowDuration = 2 + weatherSlowDurationBonus(battle.weather)
+    target.slowTurns = Math.max(target.slowTurns, slowDuration)
     addFloat(battle, target.x, target.y + 0.55, target.z, 'SLOW', '#7fdfff')
   } else if (status === 'stun') {
     target.stunTurns = Math.max(target.stunTurns, 1)
@@ -7049,7 +7150,8 @@ function executeBasicAttack(state: GameState, attacker: BattleUnit, target: Batt
   if (archMul > 1) {
     addFloat(battle, target.x, target.y + 0.62, target.z, 'FROSTBITE!', '#80e8ff')
   }
-  const dmgRes = applyDamageDetailed(state, attacker, target, attacker.atk * archMul, 0, true, false, undefined, !isRanged)
+  const basicElement = inferBasicAttackElement(attacker)
+  const dmgRes = applyDamageDetailed(state, attacker, target, attacker.atk * archMul, 0, true, false, undefined, !isRanged, basicElement)
   // Frostguard Plate (`frostguard_plate`): chills adjacent melee attackers with slowTurns = 1
   if (!isRanged && attacker.alive && attacker.team !== target.team && shouldChillMeleeAttacker(target)) {
     attacker.slowTurns = Math.max(attacker.slowTurns, 1)
@@ -7241,7 +7343,7 @@ function executeHeroSkill(
         const hitArc = computeAttackArc(caster.col, caster.row, c.col, c.row, target.facing)
         const raw = caster.atk * skill.powerMul + skill.flatBonus
         const skillIsMelee = skill.range <= 1 && distanceBetweenUnits(caster, target) === 1
-        const dmgRes = applyDamageDetailed(state, caster, target, raw, skill.ignoreArmor, true, true, { skillName: skill.name }, skillIsMelee)
+        const dmgRes = applyDamageDetailed(state, caster, target, raw, skill.ignoreArmor, true, true, { skillName: skill.name }, skillIsMelee, skillElement)
         // Frostguard Plate chills adjacent melee skill attackers
         if (
           skillIsMelee &&
@@ -7407,7 +7509,7 @@ function executeTacticCard(state: GameState, tacticUid: string, col: number, row
       hitTargetUids.add(target.uid)
       if (target.team === 'enemy') {
         if (spec.damage > 0) {
-          applyDamage(state, null, target, spec.damage, 0.6, false, true, { skillName: spec.name })
+          applyDamage(state, null, target, spec.damage, 0.6, false, true, { skillName: spec.name }, undefined, tacticElement)
         }
         if (tacticElement) {
           triggerElementalCombo(state, tacticActor, tacticElement, target.alive ? target : null, c.col, c.row, handleUnitDefeat)
@@ -8518,7 +8620,8 @@ function performEnemyAttack(state: GameState, enemy: BattleUnit, target: BattleU
           false,
           true,
           { skillName: wyrmPlan.label },
-          false
+          false,
+          wyrmPlan.element ?? null
         )
         if (wyrmPlan.element) {
           triggerElementalCombo(state, enemy, wyrmPlan.element, victim.alive ? victim : null, c.col, c.row, handleUnitDefeat)
@@ -8587,7 +8690,8 @@ function performEnemyAttack(state: GameState, enemy: BattleUnit, target: BattleU
           false,
           true,
           { skillName: lichNova.label },
-          false
+          false,
+          lichNova.element ?? null
         )
         triggerElementalCombo(state, enemy, lichNova.element, victim.alive ? victim : null, c.col, c.row, handleUnitDefeat)
         if (victim.alive) {
@@ -8669,7 +8773,7 @@ function performEnemyAttack(state: GameState, enemy: BattleUnit, target: BattleU
       }
       if (victim.team === 'ally') {
         const archMul = computeEnemyArchetypeDamageMul(enemy, victim)
-        applyDamage(state, enemy, victim, enemy.atk * special.powerMul * archMul, special.ignoreArmor, false, true, { skillName: special.label }, false)
+        applyDamage(state, enemy, victim, enemy.atk * special.powerMul * archMul, special.ignoreArmor, false, true, { skillName: special.label }, false, special.element ?? null)
         if (special.element) {
           triggerElementalCombo(state, enemy, special.element, victim.alive ? victim : null, c.col, c.row, handleUnitDefeat)
         }

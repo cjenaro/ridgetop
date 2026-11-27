@@ -29,6 +29,8 @@ import {
   cancelActionCamera, createActionCameraState, isActionCameraActive,
   isActionCameraEnabled, stepActionCamera, triggerActionCameraCue
 } from './action-camera.ts'
+import { computeWeatherLighting } from './weather.ts'
+import type { ShiftedBattleLighting } from './weather.ts'
 import {
   computeDangerZone, computeEnemyThreat, computeZocPerimeterTiles, evaluateAllFacingExposures, findGridPath,
   getEquipmentByUid, getHeroByUid, getHeroSkill, getPatternCells, getTacticByUid, getUnitByUid,
@@ -169,6 +171,13 @@ const C_CURSOR_ALLY: Color = [0.24, 0.96, 0.78, 0.98]
 const C_CURSOR_ALLY_GLOW: Color = [0.58, 1.0, 0.88, 0.92]
 const C_CURSOR_DEPLOY: Color = [0.30, 0.86, 1.0, 0.98]
 const C_CURSOR_DEPLOY_GLOW: Color = [0.68, 0.96, 1.0, 0.94]
+const C_RAIN_STREAK: Color = [0.74, 0.90, 1.0, 0.56]
+const C_RAIN_SPLASH: Color = [0.76, 0.92, 1.0, 0.44]
+const C_BLIZZARD_SNOW: Color = [0.90, 0.97, 1.0, 0.84]
+const C_BLIZZARD_MIST: Color = [0.76, 0.92, 1.0, 0.18]
+const C_DUSK_FIREFLY: Color = [1.0, 0.80, 0.38, 0.88]
+const C_DUSK_EMBER: Color = [1.0, 0.54, 0.36, 0.78]
+const C_DUSK_GLOW: Color = [0.92, 0.50, 0.78, 0.34]
 
 /** Death timing: topple clip, then sink + shrink into a soul-mote burst. */
 const DEATH_SINK_START = 1.0
@@ -934,7 +943,8 @@ export function createCrownshardScene(renderer: LowPolyRenderer) {
   let boardBraziers: Vec3[] = []
 
   const pool = createMeshPool(128)
-  const particles = createParticles(320)
+  const particles = createParticles(460)
+  let cachedBattleLighting: ShiftedBattleLighting | null = null
   const unitFx = new Map<string, UnitFx>()
   const shots: Shot[] = []
   const shadows = createShadowBatch({
@@ -981,6 +991,8 @@ export function createCrownshardScene(renderer: LowPolyRenderer) {
   let hitStop = 0
   let moteTimer = 0
   let hazardParticleTimer = 0
+  let weatherParticleTimer = 0
+  let weatherSeed = 1
   /** Presentation-only camera shake (gait stomps, VFX slams) layered on the sim's battle.shake. */
   let localShake = 0
   const vfx = createBattleVfx(pool, particles, amount => { localShake = Math.max(localShake, amount) })
@@ -1095,51 +1107,201 @@ export function createCrownshardScene(renderer: LowPolyRenderer) {
     appliedLightingKey = ''
   }
 
-  function applyBattleLightingOnce(battle: BattleState) {
-    const key = `battle:${battle.biome}:${cachedBoardKey}`
-    if (key === appliedLightingKey) return
+  function applyBattleLightingOnce(battle: BattleState): ShiftedBattleLighting {
+    const key = `battle:${battle.biome}:${battle.weather}:${battle.timeOfDay}:${cachedBoardKey}`
+    if (key === appliedLightingKey && cachedBattleLighting) return cachedBattleLighting
     appliedLightingKey = key
 
     const style = BIOME_STYLES[battle.biome]
+    const shifted = computeWeatherLighting(style, battle.weather, battle.timeOfDay)
+    cachedBattleLighting = shifted
     const points: PointLight[] = []
     for (let i = 0; i < Math.min(4, boardBraziers.length); i++) {
+      const baseIntensity =
+        battle.biome === 'crypt' || battle.biome === 'volcano' || battle.biome === 'throne' || battle.biome === 'expanse'
+          ? 1.18
+          : battle.biome === 'aether'
+            ? 0.96
+            : battle.biome === 'dunes'
+              ? 0.84
+              : 0.72
       points.push({
         position: boardBraziers[i],
         color: [style.propGlow[0], style.propGlow[1], style.propGlow[2]],
         radius: 7.2,
-        intensity:
-          battle.biome === 'crypt' || battle.biome === 'volcano' || battle.biome === 'throne' || battle.biome === 'expanse'
-            ? 1.18
-            : battle.biome === 'aether'
-              ? 0.96
-              : battle.biome === 'dunes'
-                ? 0.84
-                : 0.72
+        intensity: baseIntensity * shifted.pointIntensityMul
       })
     }
 
     const shadowScale = Math.max(1, battle.cols / 8, battle.rows / 6)
     renderer.setLighting({
-      direction: style.lightDir,
-      ambient: style.ambient,
-      color: style.lightColor,
-      skyColor: style.skyBounce,
-      groundColor: style.groundBounce,
+      direction: shifted.lightDir,
+      ambient: shifted.ambient,
+      color: shifted.lightColor,
+      skyColor: shifted.skyBounce,
+      groundColor: shifted.groundBounce,
       rimColor: [style.propGlow[0], style.propGlow[1], style.propGlow[2]],
-      rimStrength: 0.28,
-      fogColor: style.fog,
-      fogNear: 28,
-      fogFar: 88,
+      rimStrength: shifted.rimStrength,
+      fogColor: shifted.fog,
+      fogNear: shifted.fogNear,
+      fogFar: shifted.fogFar,
       points,
       shadows: {
         enabled: true,
         center: [0, 0, 0],
         extent: 12.5 * shadowScale,
-        strength: 0.38,
-        color: style.shadowTint
+        strength: shifted.shadowStrength,
+        color: shifted.shadowTint
       }
     })
-    shadows.setLighting(style.lightDir)
+    shadows.setLighting(shifted.lightDir)
+    return shifted
+  }
+
+  function nextWeatherRand(): number {
+    weatherSeed = (Math.imul(weatherSeed, 1664525) + 1013904223) >>> 0
+    return (weatherSeed & 0xffffff) / 0x1000000
+  }
+
+  function stepWeatherParticles(battle: BattleState, dt: number, time: number): void {
+    if (battle.weather === 'clear') return
+    const clampedDt = Math.min(dt, 0.05)
+    weatherParticleTimer += clampedDt
+    const spanX = battle.cols * TILE_SIZE * 0.62 + 1.4
+    const spanZ = battle.rows * TILE_SIZE * 0.62 + 1.4
+
+    if (battle.weather === 'rain') {
+      const interval = 0.028
+      let spawned = 0
+      while (weatherParticleTimer >= interval && spawned < 6) {
+        weatherParticleTimer -= interval
+        spawned++
+        const rx = (nextWeatherRand() * 2 - 1) * spanX
+        const rz = (nextWeatherRand() * 2 - 1) * spanZ
+        const ry = 6.2 + nextWeatherRand() * 2.6
+        particles.spawn({
+          mesh: smoothCyl,
+          blend: 'alpha',
+          alphaFade: true,
+          position: [rx, ry, rz],
+          velocity: [-2.1, -12.8, 0.75],
+          gravity: 2.2,
+          scale: [0.026, 0.56, 0.026],
+          endScale: 0.9,
+          color: C_RAIN_STREAK,
+          unlit: 0.85,
+          life: 0.52
+        })
+        // Occasional ground puddle splash ring
+        if (spawned % 2 === 1) {
+          const sx = (nextWeatherRand() * 2 - 1) * (spanX - 0.8)
+          const sz = (nextWeatherRand() * 2 - 1) * (spanZ - 0.8)
+          particles.spawn({
+            mesh: flatRing,
+            blend: 'alpha',
+            alphaFade: true,
+            position: [sx, 0.04, sz],
+            velocity: [0, 0.02, 0],
+            scale: [0.09, 1, 0.09],
+            endScale: 3.4,
+            color: C_RAIN_SPLASH,
+            unlit: 0.78,
+            life: 0.30
+          })
+        }
+      }
+      return
+    }
+
+    if (battle.weather === 'blizzard') {
+      const interval = 0.036
+      let spawned = 0
+      while (weatherParticleTimer >= interval && spawned < 5) {
+        weatherParticleTimer -= interval
+        spawned++
+        const rx = (nextWeatherRand() * 2 - 1) * spanX + 2.2
+        const rz = (nextWeatherRand() * 2 - 1) * spanZ - 0.8
+        const ry = 4.6 + nextWeatherRand() * 3.4
+        const swirl = Math.sin(time * 2.4 + rx * 0.5) * 0.8
+        const flakeSize = 0.065 + nextWeatherRand() * 0.055
+        particles.spawn({
+          mesh: roundPebble,
+          blend: 'alpha',
+          alphaFade: true,
+          position: [rx, ry, rz],
+          velocity: [-4.2 - nextWeatherRand() * 1.4, -2.1 - nextWeatherRand() * 0.8, 1.2 + swirl],
+          spin: 4.5,
+          scale: [flakeSize, flakeSize, flakeSize],
+          endScale: 0.55,
+          color: C_BLIZZARD_SNOW,
+          unlit: 0.9,
+          life: 1.45
+        })
+        // Subtle low-hanging frost drift mist
+        if (spawned === 1 && nextWeatherRand() < 0.42) {
+          const mx = (nextWeatherRand() * 2 - 1) * spanX + 1.5
+          const mz = (nextWeatherRand() * 2 - 1) * spanZ
+          particles.spawn({
+            mesh: roundPebble,
+            blend: 'alpha',
+            alphaFade: true,
+            position: [mx, 0.55 + nextWeatherRand() * 0.7, mz],
+            velocity: [-2.6, 0.08, 0.7],
+            scale: [0.55, 0.24, 0.55],
+            endScale: 1.85,
+            color: C_BLIZZARD_MIST,
+            unlit: 0.85,
+            life: 1.55
+          })
+        }
+      }
+      return
+    }
+
+    if (battle.weather === 'dusk') {
+      const interval = 0.095
+      let spawned = 0
+      while (weatherParticleTimer >= interval && spawned < 3) {
+        weatherParticleTimer -= interval
+        spawned++
+        const rx = (nextWeatherRand() * 2 - 1) * spanX
+        const rz = (nextWeatherRand() * 2 - 1) * spanZ
+        const ry = 0.35 + nextWeatherRand() * 1.65
+        const isEmber = nextWeatherRand() < 0.38
+        const driftAngle = time * 1.3 + nextWeatherRand() * Math.PI * 2
+        particles.spawn({
+          mesh: crystalMesh,
+          blend: 'additive',
+          alphaFade: true,
+          position: [rx, ry, rz],
+          velocity: [Math.cos(driftAngle) * 0.42, 0.32 + nextWeatherRand() * 0.28, Math.sin(driftAngle) * 0.36],
+          spin: 2.8,
+          scale: isEmber ? [0.048, 0.062, 0.048] : [0.058, 0.058, 0.058],
+          endScale: 0.25,
+          color: isEmber ? C_DUSK_EMBER : C_DUSK_FIREFLY,
+          unlit: 1,
+          life: 1.9 + nextWeatherRand() * 0.8
+        })
+        // Soft golden-violet horizon shimmer mote near perimeter
+        if (spawned === 1 && nextWeatherRand() < 0.35) {
+          const edgeAngle = nextWeatherRand() * Math.PI * 2
+          const ex = Math.cos(edgeAngle) * (spanX + 0.6)
+          const ez = Math.sin(edgeAngle) * (spanZ + 0.6)
+          particles.spawn({
+            mesh: roundPebble,
+            blend: 'additive',
+            alphaFade: true,
+            position: [ex, 1.1 + nextWeatherRand() * 1.4, ez],
+            velocity: [-Math.cos(edgeAngle) * 0.18, 0.16, -Math.sin(edgeAngle) * 0.18],
+            scale: [0.34, 0.24, 0.34],
+            endScale: 1.6,
+            color: C_DUSK_GLOW,
+            unlit: 1,
+            life: 2.1
+          })
+        }
+      }
+    }
   }
 
   function applyCampLightingOnce() {
@@ -3157,6 +3319,7 @@ export function createCrownshardScene(renderer: LowPolyRenderer) {
       )
     }
 
+    stepWeatherParticles(battle, dt, state.time)
     vfx.update(fxDt)
     updateShots(fxDt, state.time)
     particles.emit(pool)
@@ -3166,7 +3329,8 @@ export function createCrownshardScene(renderer: LowPolyRenderer) {
     for (const b of pool.batches) {
       if (b.count > 0) batches.push(b)
     }
-    return renderer.render(lastMatrix, batches, style.sky)
+    const clearSky = cachedBattleLighting ? cachedBattleLighting.sky : style.sky
+    return renderer.render(lastMatrix, batches, clearSky)
   }
 
   function renderCamp(state: GameState, dt: number, w: number, h: number): Readonly<RenderStats> {

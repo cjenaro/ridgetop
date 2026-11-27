@@ -151,6 +151,15 @@ export type TileTerrain =
 
 export type BiomeId = 'meadow' | 'river' | 'crypt' | 'frost' | 'volcano' | 'throne' | 'dunes' | 'aether' | 'expanse'
 
+export type BattleWeatherId = 'clear' | 'rain' | 'blizzard' | 'dusk'
+
+export type TimeOfDayId = 'day' | 'dusk' | 'night'
+
+export interface BattleAtmosphere {
+  readonly weather: BattleWeatherId
+  readonly timeOfDay: TimeOfDayId
+}
+
 export type SkillTarget = 'enemy' | 'ally' | 'self' | 'tile' | 'empty_near_enemy'
 
 export type SkillPattern = 'single' | 'cross' | 'area3' | 'line' | 'aura' | 'self'
@@ -495,6 +504,8 @@ export interface ChapterSpec {
   readonly title: string
   readonly subtitle: string
   readonly biome: BiomeId
+  readonly weather?: BattleWeatherId
+  readonly timeOfDay?: TimeOfDayId
   readonly introSpeaker: string
   readonly introText: string
   readonly outroSpeaker: string
@@ -1015,6 +1026,9 @@ export interface CombatForecast {
   readonly opportunityAttacks?: PathOpportunityPreview
   readonly displacementPreview?: DisplacementPreview
   readonly elementalCombo?: ElementalComboPreview
+  readonly weatherNote?: string
+  readonly weatherDamageMul?: number
+  readonly weatherCritBonus?: number
   readonly alternatives: readonly CombatForecastAlt[]
 }
 
@@ -1098,6 +1112,8 @@ export interface BattleState {
   readonly cols: number
   readonly rows: number
   readonly biome: BiomeId
+  readonly weather: BattleWeatherId
+  readonly timeOfDay: TimeOfDayId
   readonly cells: GridCell[][]
   readonly units: BattleUnit[]
   readonly deployTiles: readonly GridCoord[]
@@ -1220,6 +1236,8 @@ export interface BattleSaveSnapshot {
   readonly cols: number
   readonly rows: number
   readonly biome: BiomeId
+  readonly weather?: BattleWeatherId
+  readonly timeOfDay?: TimeOfDayId
   readonly cells: readonly (readonly BattleCellSnapshot[])[]
   readonly units: readonly BattleUnitSnapshot[]
   readonly turn: number
