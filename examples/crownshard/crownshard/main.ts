@@ -30,7 +30,7 @@ import type { WorldMap3DCamera } from './world-map-3d.ts'
 import {
   CROWNLESS_DEEP_MAX_FLOOR, ENDLESS_BLESSING_BY_ID, MAX_TACTIC_DECK, MIN_TACTIC_DECK, OAKHAVEN_STAGE_ID,
   STARFALL_ATOLL_FIRST_CLEAR_DUST, STARFALL_ATOLL_FIRST_CLEAR_SHARDS,
-  STAGE_DIFFICULTY_TIERS, STAGE_MUTATOR_IDS, STAGE_MUTATOR_SPECS, STAGE_TIER_SPECS,
+  STAGE_DIFFICULTY_TIERS, STAGE_MUTATOR_IDS, STAGE_MUTATOR_SPECS, STAGE_TIER_SPECS, WEATHER_SPECS,
   abandonBattle, abandonEndlessRun, areDiscoveryTipsEnabled, armSkill, armTacticCard, autoBuildTacticDeck, autoEquipBestFit, beginWaitFacingPicker,
   bulkSalvageCommonDupes, buyOakhavenDeal, buyPack, buyWorldEventOffer, canBuyPack, canClaimStageMasteryChest, canCraftEquipment, canCraftHero, canHeroEquipItem, canMergeHero, canUndoMove,
   cancelAutoBattle, cancelWaitFacingPicker, checkDiscoveryTipForBattle, claimMasteryMilestone, claimStageMasteryChest, clearSave, computeChallengeRewards,
@@ -38,7 +38,7 @@ import {
   computeEnemyThreat, computeHeroStats, computeSquadPower, computeTacticDeckCurve, computeZocPerimeterTiles,
   confirmDeployment, confirmWaitFacingPicker, craftEquipment, craftHero, createInitialState,
   createTurnBoundaryTracker, dismissDiscoveryTip, draftEndlessBlessing, effectiveSpeed, equipItem, evaluateAllFacingExposures, evaluateFacingExposure,
-  findBestFitUpgrades, findEquipOwner, findGridPath, formatAbyssFloorLabel, formatBattleSpeedLabel, formatEndlessBiomeLabel, formatOpportunityWarning,
+  findBestFitUpgrades, findEquipOwner, findGridPath, formatAbyssFloorLabel, formatBattleSpeedLabel, formatEndlessBiomeLabel, formatOpportunityWarning, formatWeatherHudLabel,
   getAct1StageMechanicStatus, getActiveDiscoveryTip, getActiveTacticDeckUids,
   getBestiaryEntries, getChapterObjectiveSummary, getClaimableMasteryMilestones, getCodexProgress, getCraftableEquipment, getCraftableHeroes, getCrownlessDeepFloorSpec, getEquipCodexEntries, getEquipCompatibilityReason, getEquipCraftCost, getEquipEffect, getEquipFamily,
   getEquipSalvageDust, getEquipShortLockLabel, getEquipmentByUid, getHeroByUid, getHeroCodexEntries, getHeroCraftCost, getHeroEquipFamily, getHeroEquipFamilyMeta, getHeroPassive, getHeroSalvageShards,
@@ -46,7 +46,7 @@ import {
   getSelectedCrownlessDeepFloor, getStageMasteryChestReward, getStageMasteryObjectives, getStageMasteryRecord, getStageUnlockHint, getTacticByUid, getTotalMasteryStars, getUnitByUid, getWorldMapEventById, hasClaimedStageMasteryChest, hasMaxedHero, hasOakhavenPatronDiscount, heroLevelProgress, isChestClaimed,
   isCrownlessDeepStage, isDeployTile, isEndlessBossWave, isEndlessUnlocked, isEnemyShrouded, isOakhavenExchangeUnlocked, isStageCleared, isStageUnlocked, loadSave, maxSquadSize, mergeHero,
   moveDeployUnit, persistSave, previewBulkSalvageCommonDupes, previewPathOpportunityAttacks,
-  previewTurnOrderAfterAction, previewWaitFacing, resetDiscoveryTips, resolveStageChallenge, restoreBattleState, rotateDeployUnit, salvageEquipCard,
+  previewTurnOrderAfterAction, previewWaitFacing, resetDiscoveryTips, resolveBattleAtmosphere, resolveStageChallenge, restoreBattleState, rotateDeployUnit, salvageEquipCard,
   salvageHeroCard, selectEndlessWaveStage, selectHeroByUid, selectTile, serializeBattleState, setActionCameraEnabled, setAutoBattle, setBattleSpeed,
   setDiscoveryTipsEnabled, setSelectedCrownlessDeepFloor, shouldAutoSaveOnTurnBoundary, skipAllDiscoveryTips, startChapterBattle, startEndlessRun, startWorldEventBattle, stepGame,
   swapDeployUnit, syncTurnBoundaryTracker, toggleAutoBattle, toggleBattleSpeed, toggleEquipLock, toggleHeroLock,
@@ -71,7 +71,7 @@ import {
   drawStoryHeading, drawTab, drawTacticCard, drawTacticDeckCard, drawTacticDeckHeader, drawText, drawTimelineBg, drawTitleCard,
   drawTitleLogo, drawToast, drawToolbarBg, drawTopFade, drawTurnOrderCallout,
   drawTurnOrderPreviewBanner, drawTurnTimelinePreviewOverlay, drawTurnToken, drawUnitCard,
-  drawVictoryBackdrop, drawVictoryMasteryAnimated, drawWell, drawWorldMap3DOverlay, drawWorldMapEventNode, drawWorldMapNode,
+  drawVictoryBackdrop, drawVictoryMasteryAnimated, drawWeatherDetailCard, drawWeatherHudPill, drawWeatherPreviewChip, drawWell, drawWorldMap3DOverlay, drawWorldMapEventNode, drawWorldMapNode,
   FANFARE_DURATION, drawFanfare
 } from './ui-art.ts'
 import type { CodexListEntry, FanfareDrawOpts, IconName, ProjectedRegionBanner, StatStripItem } from './ui-art.ts'
@@ -293,6 +293,7 @@ async function start() {
   let lockedForecastCell: { col: number; row: number } | null = null
   let dangerZoneOn = false
   let combatLogOpen = false
+  let weatherInspectorOpen = false
   let combatLogScroll = 0
   let combatLogSeenId = 0
   let lastCombatLogId = 0
@@ -678,6 +679,7 @@ async function start() {
     mobileHandOpen = false
     if (next !== 'battle') {
       combatLogOpen = false
+      weatherInspectorOpen = false
       combatLogScroll = 0
       scene.setGridCursor(null)
     } else if (state.battle) {
@@ -945,6 +947,7 @@ async function start() {
   function resetCombatLogUi() {
     const latest = latestBattleLogId()
     combatLogOpen = false
+    weatherInspectorOpen = false
     combatLogScroll = 0
     combatLogSeenId = latest
     lastCombatLogId = latest
@@ -953,6 +956,7 @@ async function start() {
   function toggleCombatLog() {
     audio.unlock()
     combatLogOpen = !combatLogOpen
+    if (combatLogOpen) weatherInspectorOpen = false
     combatLogScroll = 0
     combatLogSeenId = latestBattleLogId()
     state.sounds.push({ kind: 'card', pitch: combatLogOpen ? 1.15 : 0.95 })
@@ -1296,10 +1300,11 @@ async function start() {
       }
       return true
     }
-    if (lockedForecastCell || mobileHandOpen || combatLogOpen) {
+    if (lockedForecastCell || mobileHandOpen || combatLogOpen || weatherInspectorOpen) {
       lockedForecastCell = null
       mobileHandOpen = false
       combatLogOpen = false
+      weatherInspectorOpen = false
       uiDirty = true
       hudRev++
       return true
@@ -2721,9 +2726,25 @@ async function start() {
           draw: (ctx: CanvasRenderingContext2D, rect: LayoutRect) => {
             drawWell(ctx, rect, RADIUS.md)
             const bw = drawDifficultyBadge(ctx, rect.x + 8, rect.y + 6, inspectDifficulty, { h: 20, showLabel: true })
-            drawChip(ctx, rect.x + 14 + bw, rect.y + 6, selectedSoon ? biomeName : `${gridCols}x${gridRows} ${biomeName}`, {
+            const biomeChipW = drawChip(ctx, rect.x + 14 + bw, rect.y + 6, selectedSoon ? biomeName : `${gridCols}x${gridRows} ${biomeName}`, {
               h: 20, size: 9.5, color: '#dce8ff', bg: '#1e2b4a'
             })
+            if (!selectedSoon) {
+              const stageAtm = resolveBattleAtmosphere({
+                stageId: selected.id,
+                biome: selectedIsAbyss && abyssFloorSpec ? abyssFloorSpec.biome : selected.biome,
+                chapterWeather: selected.weather,
+                chapterTimeOfDay: selected.timeOfDay
+              })
+              const wx = rect.x + 14 + bw + biomeChipW + 6
+              const availW = rect.x + rect.width - 8 - wx
+              if (availW >= 54) {
+                drawWeatherPreviewChip(ctx, wx, rect.y + 6, stageAtm.weather, stageAtm.timeOfDay, {
+                  h: 20,
+                  maxW: availW
+                })
+              }
+            }
             drawText(
               ctx,
               selectedSoon
@@ -5121,7 +5142,20 @@ async function start() {
     const logToggleH = isPhone ? 26 : 28
     const logToggleW = isPhone ? 90 : 112
     const logToggleY = leftStackY
+    const weatherPillX = logEdgeX + logToggleW + 6
+    const weatherPillW = isPhone
+      ? Math.min(108, Math.max(78, w - weatherPillX - 58))
+      : Math.min(238, Math.max(122, w - weatherPillX - 352))
+    const showWeatherDetail = weatherInspectorOpen && !combatLogOpen && !mobileHandOpen
     leftStackY += logToggleH + 6
+    const weatherDetailY = leftStackY
+    const weatherDetailH = isPhone ? 90 : 94
+    const weatherDetailW = isPhone
+      ? Math.min(w - 60, 260)
+      : Math.min(w - 24, 304)
+    if (showWeatherDetail) {
+      leftStackY += weatherDetailH + 6
+    }
 
     const combatLogPanelNodes: LayoutNode[] = []
     if (combatLogOpen && !mobileHandOpen) {
@@ -5691,7 +5725,10 @@ async function start() {
           type: 'button',
           label: combatLogOpen ? 'Hide Combat Log (L)' : `Combat Log (${combatLogEntries.length}) (L)`,
           selected: combatLogOpen,
-          onPress: toggleCombatLog,
+          onPress: () => {
+            weatherInspectorOpen = false
+            toggleCombatLog()
+          },
           draw: (ctx: CanvasRenderingContext2D, rect: LayoutRect, st: CanvasWidgetDrawState) => drawCombatLogToggleButton(ctx, rect, st, {
             open: combatLogOpen,
             unreadCount: combatLogUnread,
@@ -5700,6 +5737,70 @@ async function start() {
           })
         }
       }),
+
+      // Sleek tappable Weather & Time-of-Day HUD pill beside Combat Log (never overlaps Turn Order, Pause, Objective, or Forecast)
+      boxNode({
+        id: 'cs-weather-pill',
+        style: {
+          anchor: 'top-left',
+          width: weatherPillW,
+          height: logToggleH,
+          inset: [weatherPillX, logToggleY],
+          respectSafeArea: true
+        },
+        widget: {
+          type: 'button',
+          label: `${formatWeatherHudLabel(battle.weather, battle.timeOfDay, false)} — ${WEATHER_SPECS[battle.weather].ruleSummary}`,
+          selected: showWeatherDetail,
+          onPress: () => {
+            audio.unlock()
+            weatherInspectorOpen = !weatherInspectorOpen
+            if (weatherInspectorOpen) {
+              combatLogOpen = false
+            }
+            state.sounds.push({ kind: 'card', pitch: weatherInspectorOpen ? 1.16 : 0.94 })
+            uiDirty = true
+            hudRev++
+          },
+          draw: (ctx: CanvasRenderingContext2D, rect: LayoutRect, st: CanvasWidgetDrawState) => drawWeatherHudPill(
+            ctx,
+            rect,
+            battle.weather,
+            battle.timeOfDay,
+            { compact: isPhone || weatherPillW < 170, expanded: showWeatherDetail },
+            st
+          )
+        }
+      }),
+
+      // Compact tap-to-inspect Weather rules popover (auto-clamped inside viewport bounds)
+      ...(showWeatherDetail ? [boxNode({
+        id: 'cs-weather-detail',
+        style: {
+          anchor: 'top-left',
+          width: weatherDetailW,
+          height: weatherDetailH,
+          inset: [logEdgeX, weatherDetailY],
+          respectSafeArea: true
+        },
+        widget: {
+          type: 'button',
+          label: `Close ${WEATHER_SPECS[battle.weather].name} Weather Rules`,
+          onPress: () => {
+            weatherInspectorOpen = false
+            state.sounds.push({ kind: 'card', pitch: 0.92 })
+            uiDirty = true
+            hudRev++
+          },
+          draw: (ctx: CanvasRenderingContext2D, rect: LayoutRect) => drawWeatherDetailCard(
+            ctx,
+            rect,
+            battle.weather,
+            battle.timeOfDay,
+            isPhone
+          )
+        }
+      })] : []),
 
       ...combatLogPanelNodes,
       ...forecastNodes,
@@ -8800,6 +8901,9 @@ async function start() {
       activeWorldEventId: state.battle?.activeWorldEventId ?? null,
       battleDifficultyTier: state.battle?.difficultyTier ?? null,
       battleMutators: state.battle ? state.battle.mutators.slice() : [],
+      battleWeather: state.battle?.weather ?? null,
+      battleTimeOfDay: state.battle?.timeOfDay ?? null,
+      weatherInspectorOpen,
       packAnimPhase: packAnim?.phase ?? null,
       resultAnimTime: Math.round(resultAnimTime * 100) / 100,
       heroesCount: state.campaign.heroes.length,

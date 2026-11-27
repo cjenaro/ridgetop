@@ -1,10 +1,10 @@
 import type { CanvasWidgetDrawState, LayoutRect } from 'ridgetop/ui'
 import type {
-  BattleHeroXpGain, BattleMasteryEvaluation, BattleUnit, ChapterSpec, CombatForecast, CombatForecastAlt, CombatLogEntry, DifficultyLevel,
+  BattleHeroXpGain, BattleMasteryEvaluation, BattleUnit, BattleWeatherId, ChapterSpec, CombatForecast, CombatForecastAlt, CombatLogEntry, DifficultyLevel,
   ElementalComboPreview, EndlessBlessingId, EquipFamily, EquipSlot, EquipmentSpec, FacingDir, FacingExposureLevel, HeroSpec,
   LandmarkKind, OwnedHeroCard, PackPityStatus, PackRevealItem, PackSpec, Rarity, SkillSpec,
   StageDifficultyTier, StageMasteryChestReward, StageMasteryObjectiveSpec, StageMasteryRecord, StageMasteryStars, StageMutatorId, StatusKind,
-  TacticCardSpec, TurnOrderActionPreview, TurnPreviewEntry, WorldMapEvent
+  TacticCardSpec, TimeOfDayId, TurnOrderActionPreview, TurnPreviewEntry, WorldMapEvent
 } from './types.ts'
 import { ARMORY_STAT_ORDER, formatStatDelta, formatStatValue } from './armory-diff.ts'
 import type { EquipmentStatDiff } from './armory-diff.ts'
@@ -20,6 +20,7 @@ import { heroLevelProgress } from './leveling.ts'
 import { STAGE_MUTATOR_SPECS, STAGE_TIER_SPECS, stageTierRank } from './mutators.ts'
 import { RECOMMENDED_MIN_TACTIC_DECK, getEquipEffect, getHeroPassive } from './passives.ts'
 import type { EquipEffectSpec, HeroPassiveSpec, TacticDeckCurve } from './passives.ts'
+import { TIME_OF_DAY_LABELS, WEATHER_SPECS, formatWeatherHudLabel } from './weather.ts'
 
 // ===========================================================================
 // Stylized Game UI Tokens
@@ -3357,6 +3358,16 @@ export function drawCombatForecast(
     })
   }
   if (fc.empowered) tags.push({ text: 'BUFF +35%', bg: '#6e5208', color: COLOR.accentHi })
+  if (fc.weatherNote && fc.isOffensive) {
+    const isNerf = (fc.weatherDamageMul ?? 1) < 1
+    const isDusk = fc.weatherNote.startsWith('DUSK')
+    tags.push({
+      text: fc.weatherNote,
+      bg: isDusk ? '#522559' : isNerf ? '#422c4a' : '#164666',
+      color: isDusk ? '#ffb580' : isNerf ? '#ffb8c6' : '#9ef0ff',
+      border: isDusk ? '#ff9c63' : isNerf ? '#ff8ca6' : '#69c9ff'
+    })
+  }
   if (fc.targetTaunting) tags.push({ text: 'TAUNT', bg: '#8a241b', color: '#ffd4c2' })
   if (fc.aoeTargets > 1) tags.push({ text: `AOE x${fc.aoeTargets}`, bg: '#6e2336', color: '#ffd0d6' })
   if (fc.status) tags.push(statusChipStyle(fc.status))
@@ -11008,4 +11019,243 @@ export function drawEndlessBlessingsHudPill(
       border: '#ffcb57'
     })
   }
+}
+
+/** Crisp vector icon for Crownshard Dynamic Weather & Time-of-Day badges. */
+export function drawWeatherIcon(
+  ctx: CanvasRenderingContext2D,
+  cx: number,
+  cy: number,
+  size: number,
+  weather: BattleWeatherId,
+  timeOfDay: TimeOfDayId = 'day'
+): void {
+  const r = size * 0.44
+  ctx.save()
+  ctx.lineCap = 'round'
+  ctx.lineJoin = 'round'
+
+  if (weather === 'clear') {
+    if (timeOfDay === 'night') {
+      ctx.fillStyle = '#d4e2ff'
+      ctx.beginPath()
+      ctx.arc(cx, cy, r * 0.78, 0.35, Math.PI * 1.85)
+      ctx.arc(cx + r * 0.35, cy - r * 0.16, r * 0.56, Math.PI * 1.65, 0.55, true)
+      ctx.closePath()
+      ctx.fill()
+    } else {
+      ctx.strokeStyle = timeOfDay === 'dusk' ? '#ff9d5c' : '#ffe17d'
+      ctx.fillStyle = timeOfDay === 'dusk' ? '#ffb06b' : '#ffe885'
+      ctx.lineWidth = Math.max(1.3, size * 0.1)
+      ctx.beginPath()
+      ctx.arc(cx, cy, r * 0.46, 0, Math.PI * 2)
+      ctx.fill()
+      for (let i = 0; i < 8; i++) {
+        const a = (i / 8) * Math.PI * 2
+        ctx.beginPath()
+        ctx.moveTo(cx + Math.cos(a) * r * 0.66, cy + Math.sin(a) * r * 0.66)
+        ctx.lineTo(cx + Math.cos(a) * r * 0.98, cy + Math.sin(a) * r * 0.98)
+        ctx.stroke()
+      }
+    }
+    ctx.restore()
+    return
+  }
+
+  if (weather === 'rain') {
+    // Cloud puff
+    ctx.fillStyle = '#9ec6e6'
+    ctx.beginPath()
+    ctx.arc(cx - r * 0.28, cy - r * 0.12, r * 0.42, 0, Math.PI * 2)
+    ctx.arc(cx + r * 0.12, cy - r * 0.28, r * 0.48, 0, Math.PI * 2)
+    ctx.arc(cx + r * 0.44, cy - r * 0.08, r * 0.34, 0, Math.PI * 2)
+    ctx.fill()
+    // Slanted raindrops
+    ctx.strokeStyle = '#69c9ff'
+    ctx.lineWidth = Math.max(1.4, size * 0.1)
+    for (const dx of [-0.42, 0.02, 0.44]) {
+      ctx.beginPath()
+      ctx.moveTo(cx + dx * r, cy + r * 0.32)
+      ctx.lineTo(cx + (dx - 0.18) * r, cy + r * 0.84)
+      ctx.stroke()
+    }
+    ctx.restore()
+    return
+  }
+
+  if (weather === 'blizzard') {
+    // 6-point frost crystal snowflake
+    ctx.strokeStyle = '#a8f0ff'
+    ctx.lineWidth = Math.max(1.4, size * 0.1)
+    for (let i = 0; i < 3; i++) {
+      const a = (i / 3) * Math.PI
+      const dx = Math.cos(a) * r * 0.92
+      const dy = Math.sin(a) * r * 0.92
+      ctx.beginPath()
+      ctx.moveTo(cx - dx, cy - dy)
+      ctx.lineTo(cx + dx, cy + dy)
+      ctx.stroke()
+    }
+    ctx.fillStyle = '#e6fbff'
+    ctx.beginPath()
+    ctx.arc(cx, cy, r * 0.24, 0, Math.PI * 2)
+    ctx.fill()
+    ctx.restore()
+    return
+  }
+
+  // Dusk: setting sun half-disc + horizon bar + twilight star
+  ctx.fillStyle = '#ff9c63'
+  ctx.beginPath()
+  ctx.arc(cx, cy + r * 0.2, r * 0.62, Math.PI, Math.PI * 2)
+  ctx.closePath()
+  ctx.fill()
+  ctx.strokeStyle = '#ffd18c'
+  ctx.lineWidth = Math.max(1.4, size * 0.1)
+  ctx.beginPath()
+  ctx.moveTo(cx - r * 0.92, cy + r * 0.28)
+  ctx.lineTo(cx + r * 0.92, cy + r * 0.28)
+  ctx.stroke()
+  ctx.fillStyle = '#e2b8ff'
+  ctx.beginPath()
+  ctx.arc(cx + r * 0.56, cy - r * 0.52, r * 0.18, 0, Math.PI * 2)
+  ctx.fill()
+  ctx.restore()
+}
+
+/**
+ * Sleek tappable Battle HUD Weather / Time-of-Day pill.
+ * Shows "Rain · -15% Fire / +15% Frost" on desktop/tablet and a compact "Rain" badge on phones.
+ */
+export function drawWeatherHudPill(
+  ctx: CanvasRenderingContext2D,
+  rect: LayoutRect,
+  weather: BattleWeatherId,
+  timeOfDay: TimeOfDayId,
+  opts: {
+    readonly compact?: boolean
+    readonly expanded?: boolean
+  },
+  st: CanvasWidgetDrawState
+): void {
+  const spec = WEATHER_SPECS[weather]
+  const compact = Boolean(opts.compact)
+  const expanded = Boolean(opts.expanded || st.selected)
+  drawSurface(ctx, rect, {
+    r: RADIUS.md,
+    lipH: st.pressed ? 1 : 2.5,
+    fill: st.hovered || expanded ? spec.bgTopHex : spec.bgTopHex,
+    fillBot: spec.bgBotHex,
+    border: expanded || st.hovered ? spec.accentHex : spec.borderHex + '99'
+  })
+
+  const { x, y, width: w, height: h } = rect
+  const cy = y + (h - 2) * 0.5
+  const iconSize = compact ? 13 : 15
+  drawWeatherIcon(ctx, x + (compact ? 12 : 14), cy, iconSize, weather, timeOfDay)
+
+  const label = formatWeatherHudLabel(weather, timeOfDay, compact)
+  const textX = x + (compact ? 23 : 27)
+  const rightReserve = compact ? 16 : 18
+  drawText(ctx, label, textX, cy + 3.5, {
+    size: compact ? 9.5 : 10,
+    weight: 800,
+    color: weather === 'clear' ? '#eef4ff' : spec.accentHex,
+    maxW: Math.max(24, w - (textX - x) - rightReserve),
+    display: true
+  })
+
+  // Tiny inspect chevron indicator on right edge
+  drawText(ctx, expanded ? '▴' : '▾', x + w - 8, cy + 3.2, {
+    size: 9,
+    weight: 900,
+    color: spec.accentHex,
+    align: 'right'
+  })
+}
+
+/**
+ * Compact tap-to-inspect Weather rules popover card rendered cleanly inside viewport bounds.
+ */
+export function drawWeatherDetailCard(
+  ctx: CanvasRenderingContext2D,
+  rect: LayoutRect,
+  weather: BattleWeatherId,
+  timeOfDay: TimeOfDayId,
+  compact = false
+): void {
+  const spec = WEATHER_SPECS[weather]
+  drawSurface(ctx, rect, {
+    r: RADIUS.md,
+    lipH: 3,
+    fill: spec.bgTopHex + 'f5',
+    fillBot: spec.bgBotHex + 'fa',
+    border: spec.accentHex
+  })
+
+  const { x, y, width: w, height: h } = rect
+  const pad = compact ? 8 : 10
+  drawWeatherIcon(ctx, x + pad + 8, y + pad + 8, 16, weather, timeOfDay)
+  drawText(ctx, `${spec.name.toUpperCase()} · ${TIME_OF_DAY_LABELS[timeOfDay].toUpperCase()}`, x + pad + 22, y + pad + 12, {
+    size: compact ? 10 : 11,
+    weight: 900,
+    color: spec.accentHex,
+    maxW: w - pad * 2 - 24,
+    display: true
+  })
+
+  drawText(ctx, spec.ruleSummary, x + pad, y + pad + 28, {
+    size: compact ? 9.5 : 10,
+    weight: 800,
+    color: '#ffffff',
+    maxW: w - pad * 2
+  })
+
+  drawLabel(
+    ctx,
+    { x: x + pad, y: y + pad + 35, width: w - pad * 2, height: Math.max(24, h - pad * 2 - 35) },
+    spec.detailDesc,
+    {
+      size: compact ? 9.5 : 10,
+      weight: 600,
+      color: '#dce8ff',
+      wrap: true,
+      lineHeight: compact ? 12.5 : 13.5
+    }
+  )
+}
+
+/**
+ * Compact Stage Weather Preview chip for the World Map Stage Inspector / Briefing.
+ * Returns rendered chip width.
+ */
+export function drawWeatherPreviewChip(
+  ctx: CanvasRenderingContext2D,
+  x: number,
+  y: number,
+  weather: BattleWeatherId,
+  timeOfDay: TimeOfDayId,
+  opts: { readonly h?: number; readonly maxW?: number } = {}
+): number {
+  const spec = WEATHER_SPECS[weather]
+  const h = opts.h ?? 20
+  const label = weather === 'clear' ? `${spec.name}` : `${spec.name}`
+  const textW = Math.round(measureText(ctx, label, 9.2, 800, true))
+  const w = Math.min(opts.maxW ?? 140, Math.max(48, textW + 28))
+  rr(ctx, x, y, w, h, h * 0.5)
+  ctx.fillStyle = spec.bgTopHex
+  ctx.fill()
+  ctx.strokeStyle = spec.borderHex + 'cc'
+  ctx.lineWidth = 1.4
+  ctx.stroke()
+
+  drawWeatherIcon(ctx, x + 11, y + h * 0.5, 11.5, weather, timeOfDay)
+  drawText(ctx, label, x + 21, y + h * 0.5 + 3.2, {
+    size: 9.2,
+    weight: 800,
+    color: spec.accentHex,
+    maxW: Math.max(18, w - 26),
+    display: true
+  })
+  return w
 }
