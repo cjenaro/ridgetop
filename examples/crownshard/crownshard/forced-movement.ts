@@ -639,7 +639,8 @@ export function applyDisplacement(
   state: GameState,
   actor: BattleUnit | null,
   target: BattleUnit,
-  displacement: DisplacementSpec
+  displacement: DisplacementSpec,
+  origin?: GridCoord
 ): DisplacementResult {
   const battle = state.battle
   if (!battle || !target.alive) {
@@ -677,7 +678,7 @@ export function applyDisplacement(
     }
   }
 
-  const preview = resolveDisplacementPreview(battle, actor, target, displacement)
+  const preview = resolveDisplacementPreview(battle, actor, target, displacement, origin)
   let targetDmgDealt = 0
   let secondaryDmgDealt = 0
   let barricadeDmgDealt = 0

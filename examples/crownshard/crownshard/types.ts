@@ -918,6 +918,24 @@ export interface CombatForecast {
   readonly alternatives: readonly CombatForecastAlt[]
 }
 
+export interface StageMechanicState {
+  /** Emerald Delta: whether marked low-tide ford tiles are currently flooded ('water'). */
+  tideHigh?: boolean
+  /** Galewind Ridge: last roundsElapsed when a galewind gust fired (prevents duplicate fire). */
+  lastGustRound?: number
+  /** Solis Monastery: round numbers (e.g. [2, 4, 5]) whose reinforcement waves have already spawned. */
+  spawnedWaves?: number[]
+  /** Monotonic counter for uniquely naming spawned reinforcement units across save/resume. */
+  nextReinforcementUid?: number
+}
+
+export type OakhavenExchangeDealId = 'dust_satchel' | 'hero_shard_crate' | 'relic_caravan_bundle'
+
+export interface OakhavenExchangeState {
+  cycle: number
+  boughtIds: string[]
+}
+
 export interface BattleState {
   readonly stageId: string
   readonly chapterIndex: number
@@ -932,6 +950,7 @@ export interface BattleState {
   readonly units: BattleUnit[]
   readonly deployTiles: readonly GridCoord[]
   readonly objective: BattleObjectiveState
+  stageMechanic?: StageMechanicState
   turn: number
   phase: BattlePhase
   activeUnitUid: string | null
@@ -1054,6 +1073,7 @@ export interface BattleSaveSnapshot {
   readonly battleSpeed?: BattleSpeedMultiplier
   readonly rngSeed?: number
   readonly objective?: BattleObjectiveSnapshot
+  readonly stageMechanic?: StageMechanicState
   readonly xpEarnedByHero?: Record<string, number>
   readonly heroStartLevelByUid?: Record<string, number>
   readonly combatLog?: readonly CombatLogEntry[]
@@ -1085,6 +1105,7 @@ export interface CampaignState {
   seenTips: string[]
   tipsDisabled?: boolean
   battleSpeed: BattleSpeedMultiplier
+  oakhavenExchange?: OakhavenExchangeState
 }
 
 export interface GameState {
@@ -1106,6 +1127,7 @@ export type SavedCampaignState = Omit<
   seenTips?: string[]
   tipsDisabled?: boolean
   battleSpeed?: BattleSpeedMultiplier
+  oakhavenExchange?: OakhavenExchangeState
 }
 
 export interface SaveData {

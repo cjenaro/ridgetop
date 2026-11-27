@@ -189,6 +189,39 @@ export type {
   ChallengeRewardSummary, ResolvedStageChallenge, ScaledEnemyStats,
   StageMutatorSpec, StageTierSpec
 } from './mutators.ts'
+import {
+  EMERALD_DELTA_STAGE_ID, EMERALD_TIDE_FORD_TILES, EMERALD_TIDE_PERIOD, EMERALD_TIDE_SPLASH_DAMAGE,
+  GALEWIND_GUST_PERIOD, GALEWIND_MIN_HEIGHT, GALEWIND_PUSH_DIR, GALEWIND_STAGE_ID,
+  MONASTERY_MAX_ALIVE_ENEMIES, MONASTERY_REINFORCEMENT_ROUNDS, MONASTERY_WAVE_SPECS,
+  OAKHAVEN_EXCHANGE_DEALS, OAKHAVEN_PATRON_DISCOUNT_PCT, OAKHAVEN_STAGE_ID, SOLIS_MONASTERY_STAGE_ID,
+  applyAct1StageRoundBoundary, applyEmeraldDeltaTide, applyGalewindGust, buyOakhavenDeal,
+  canBuyOakhavenDeal, cloneStageMechanicState, createInitialStageMechanicState,
+  findNearestDryShoreTile, getAct1StageMechanicStatus, getMonasteryPendingWaveRound,
+  getOakhavenDealCost, getOakhavenExchangeCycle, getOakhavenExchangeDeal,
+  getOakhavenExchangeOffer, getOakhavenExchangeOffers, hasOakhavenPatronDiscount,
+  isEmeraldDeltaFordTile, isEmeraldTideHighOnRound, isGalewindGustImminent,
+  isOakhavenExchangeUnlocked, normalizeOakhavenExchange, shouldTriggerGalewindGust,
+  spawnMonasteryReinforcements, validateStageMechanicSnapshot
+} from './expansion-act1.ts'
+export {
+  EMERALD_DELTA_STAGE_ID, EMERALD_TIDE_FORD_TILES, EMERALD_TIDE_PERIOD, EMERALD_TIDE_SPLASH_DAMAGE,
+  GALEWIND_GUST_PERIOD, GALEWIND_MIN_HEIGHT, GALEWIND_PUSH_DIR, GALEWIND_STAGE_ID,
+  MONASTERY_MAX_ALIVE_ENEMIES, MONASTERY_REINFORCEMENT_ROUNDS, MONASTERY_WAVE_SPECS,
+  OAKHAVEN_EXCHANGE_DEALS, OAKHAVEN_PATRON_DISCOUNT_PCT, OAKHAVEN_STAGE_ID, SOLIS_MONASTERY_STAGE_ID,
+  applyAct1StageRoundBoundary, applyEmeraldDeltaTide, applyGalewindGust, buyOakhavenDeal,
+  canBuyOakhavenDeal, cloneStageMechanicState, createInitialStageMechanicState,
+  findNearestDryShoreTile, getAct1StageMechanicStatus, getMonasteryPendingWaveRound,
+  getOakhavenDealCost, getOakhavenExchangeCycle, getOakhavenExchangeDeal,
+  getOakhavenExchangeOffer, getOakhavenExchangeOffers, hasOakhavenPatronDiscount,
+  isEmeraldDeltaFordTile, isEmeraldTideHighOnRound, isGalewindGustImminent,
+  isOakhavenExchangeUnlocked, normalizeOakhavenExchange, shouldTriggerGalewindGust,
+  spawnMonasteryReinforcements, validateStageMechanicSnapshot
+}
+export type {
+  Act1RoundBoundarySummary, Act1StageMechanicHudStatus, EmeraldTideResult, GalewindGustResult,
+  MonasteryReinforcementSpawnSpec, MonasteryWaveResult, MonasteryWaveSpec,
+  OakhavenExchangeDealSpec, OakhavenExchangeOffer, OakhavenPurchaseResult
+} from './expansion-act1.ts'
 import type {
   AttackArc, BattleCellSnapshot, BattleHeroXpGain, BattleObjectiveEvaluation, BattleObjectiveKind,
   BattleObjectiveSnapshot, BattleObjectiveState, BattleReward, BattleSaveSnapshot, BattleSpeedMultiplier,
@@ -877,7 +910,8 @@ export function createInitialCampaign(seed = 1337): CampaignState {
     lastPackReveal: [],
     seenTips: [],
     tipsDisabled: false,
-    battleSpeed: DEFAULT_BATTLE_SPEED
+    battleSpeed: DEFAULT_BATTLE_SPEED,
+    oakhavenExchange: { cycle: 0, boughtIds: [] }
   }
 
   const starterKnight: OwnedHeroCard = {
@@ -1040,7 +1074,11 @@ function cloneCampaignFromSave(c: SavedCampaignState, fallbackSeed: number): Cam
     lastPackReveal: [],
     seenTips: normalizeSeenTips(c.seenTips),
     tipsDisabled: c.tipsDisabled === true,
-    battleSpeed: normalizeBattleSpeed(c.battleSpeed)
+    battleSpeed: normalizeBattleSpeed(c.battleSpeed),
+    oakhavenExchange: normalizeOakhavenExchange(
+      c.oakhavenExchange,
+      Number.isFinite(c.battlesWon) ? Math.max(0, Math.floor(c.battlesWon)) : 0
+    )
   }
   if (!isStageUnlocked(cloned, cloned.selectedStageId)) {
     cloned.selectedStageId = getNextRecommendedStage(cloned).id
@@ -1263,6 +1301,7 @@ export function serializeBattleState(
     battleSpeed: normalizeBattleSpeed(battle.battleSpeed),
     ...(rngSeed !== undefined && Number.isFinite(rngSeed) ? { rngSeed: (rngSeed >>> 0) || 1337 } : {}),
     objective: serializeObjective(battle.objective),
+    ...(battle.stageMechanic ? { stageMechanic: cloneStageMechanicState(battle.stageMechanic) } : {}),
     xpEarnedByHero: { ...battle.xpEarnedByHero },
     heroStartLevelByUid: { ...battle.heroStartLevelByUid },
     combatLog: battle.combatLog.slice(-MAX_COMBAT_LOG_ENTRIES).map(e => ({ ...e })),
@@ -1535,6 +1574,7 @@ export function validateBattleSnapshot(raw: unknown): BattleSaveSnapshot | null 
   const battleSpeed = raw.battleSpeed !== undefined ? normalizeBattleSpeed(raw.battleSpeed) : undefined
   const rngSeed = isFiniteNum(raw.rngSeed) ? ((raw.rngSeed >>> 0) || 1337) : undefined
   const objective = raw.objective !== undefined ? validateObjectiveSnapshot(raw.objective, cols, rows) ?? undefined : undefined
+  const stageMechanic = validateStageMechanicSnapshot(raw.stageMechanic)
   let xpEarnedByHero: Record<string, number> | undefined
   if (isRecord(raw.xpEarnedByHero)) {
     xpEarnedByHero = {}
@@ -1583,6 +1623,7 @@ export function validateBattleSnapshot(raw: unknown): BattleSaveSnapshot | null 
     ...(battleSpeed !== undefined ? { battleSpeed } : {}),
     ...(rngSeed !== undefined ? { rngSeed } : {}),
     ...(objective !== undefined ? { objective } : {}),
+    ...(stageMechanic !== undefined ? { stageMechanic } : {}),
     ...(xpEarnedByHero !== undefined ? { xpEarnedByHero } : {}),
     ...(heroStartLevelByUid !== undefined ? { heroStartLevelByUid } : {}),
     ...(combatLog !== undefined ? { combatLog } : {}),
@@ -1728,6 +1769,11 @@ export function restoreBattleState(state: GameState, snapshot: unknown): boolean
     units,
     deployTiles,
     objective: restoredObjective,
+    ...(valid.stageMechanic !== undefined
+      ? { stageMechanic: cloneStageMechanicState(valid.stageMechanic) }
+      : createInitialStageMechanicState(valid.stageId) !== undefined
+        ? { stageMechanic: createInitialStageMechanicState(valid.stageId) }
+        : {}),
     turn: valid.turn,
     phase: valid.phase,
     activeUnitUid: valid.activeUnitUid,
@@ -1904,7 +1950,8 @@ export function serializeSave(state: GameState): SaveData {
       lastPackReveal: [],
       seenTips: normalizeSeenTips(state.campaign.seenTips),
       tipsDisabled: state.campaign.tipsDisabled === true,
-      battleSpeed: normalizeBattleSpeed(state.campaign.battleSpeed)
+      battleSpeed: normalizeBattleSpeed(state.campaign.battleSpeed),
+      oakhavenExchange: normalizeOakhavenExchange(state.campaign.oakhavenExchange, state.campaign.battlesWon)
     },
     activeBattle
   }
@@ -1976,7 +2023,11 @@ export function loadSave(storage: StorageLike | null | undefined): SaveData | nu
         lastPackReveal: [],
         seenTips: 'seenTips' in camp ? normalizeSeenTips(camp.seenTips) : [],
         tipsDisabled: 'tipsDisabled' in camp ? camp.tipsDisabled === true : false,
-        battleSpeed: 'battleSpeed' in camp ? normalizeBattleSpeed(camp.battleSpeed) : DEFAULT_BATTLE_SPEED
+        battleSpeed: 'battleSpeed' in camp ? normalizeBattleSpeed(camp.battleSpeed) : DEFAULT_BATTLE_SPEED,
+        oakhavenExchange: normalizeOakhavenExchange(
+          'oakhavenExchange' in camp ? camp.oakhavenExchange : undefined,
+          'battlesWon' in camp && typeof camp.battlesWon === 'number' ? camp.battlesWon : 0
+        )
       },
       activeBattle
     }
@@ -2755,6 +2806,9 @@ export function startChapterBattle(
     units,
     deployTiles,
     objective,
+    ...(endlessWave === 0 && createInitialStageMechanicState(chapter.id) !== undefined
+      ? { stageMechanic: createInitialStageMechanicState(chapter.id) }
+      : {}),
     turn: 0,
     phase: useDeploy ? 'deploy' : 'player',
     activeUnitUid: null,
@@ -7057,10 +7111,14 @@ function triggerStepOnHazard(state: GameState, unit: BattleUnit, cell: GridCell)
   }
 }
 
-/** Apply round-boundary tactical mutator effects (`venom_mist` poison & `arcane_surge` enemy cooldown surge). */
+/** Apply round-boundary stage mechanics & tactical mutator effects (`venom_mist` poison & `arcane_surge` enemy cooldown surge). */
 function applyRoundBoundaryMutators(state: GameState): void {
   const battle = state.battle
-  if (!battle || isBattleEnded(battle) || battle.mutators.length === 0) return
+  if (!battle || isBattleEnded(battle)) return
+
+  applyAct1StageRoundBoundary(state)
+  checkBattleOutcome(state)
+  if (isBattleEnded(battle) || battle.mutators.length === 0) return
 
   if (hasMutator(battle, 'arcane_surge')) {
     for (const u of battle.units) {

@@ -381,7 +381,8 @@ test('World Map enforces prerequisite locks, bifurcations, coming-soon gating, a
   assert.equal(isStageCleared(state.campaign, 'border_watch'), true)
   assert.equal(isStageUnlocked(state.campaign, 'sunken_bridge'), true)
   assert.equal(isStageUnlocked(state.campaign, 'miller_ford'), true)
-  assert.equal(isStageUnlocked(state.campaign, 'oakhaven_market'), false, 'Coming-soon town hub must stay unlaunchable')
+  assert.equal(isStageUnlocked(state.campaign, 'oakhaven_market'), true, 'Oakhaven City unlocks after clearing Border Watch')
+  assert.equal(isStageUnlocked(state.campaign, 'gloomwood_heart'), false, 'Coming-soon expansion nodes must stay unlaunchable')
 
   // Replaying Border Watch awards replayGold and does NOT re-award both one-time specials!
   const replayReward = winStage('border_watch')
