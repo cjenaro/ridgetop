@@ -1,6 +1,6 @@
 import {
   color, createAnimator, createMeshPool, createParticles, createShadowBatch,
-  mesh, multiply, perspective, quaternionFromEuler, renderRig, screenToRay,
+  instances, mesh, multiply, perspective, quaternionFromEuler, renderRig, screenToRay,
   view, worldToScreen
 } from 'ridgetop'
 import type { Color, InstanceBatch, JointPose, LowPolyRenderer, Matrix, PointLight, RenderStats, Vec3 } from 'ridgetop'
@@ -8,9 +8,15 @@ export { BIOME_STYLES as BIOME_SCENE_PALETTES } from './art.ts'
 
 import {
   BIOME_STYLES, ENEMY_RIGS,
-  buildCampDioramaBatches, buildStaticBoardBatches, crispBevel, crownMesh, crystalMesh, flatRing,
-  resolveHeroRig, roundPebble, smoothCone, softBevel, taperTrunk, tileQuad
+  archProp, buildCampDioramaBatches, buildStaticBoardBatches, collarRing, crispBevel, crownMesh, crystalMesh,
+  flatRing, foliageTier, gableRoof, resolveHeroRig, roundPebble, smoothCone, smoothCyl,
+  softBevel, taperTrunk, tileBaseMesh, tileCapMesh, tileQuad
 } from './art.ts'
+import {
+  DIORAMA_D, DIORAMA_W, buildDioramaLandmarks, buildDioramaRoadSegments, computeDioramaCameraVectors,
+  worldMapNormToDiorama
+} from './world-map-3d.ts'
+import type { DioramaStageLandmark, WorldMap3DCamera } from './world-map-3d.ts'
 import {
   CAMP_FIDGETS, CLIP_IMPACT, LEAP_TUCK, UNIT_CLIPS,
   aimClipFor, attackClipFor, castClipFor, celebrateClipFor, deathClipFor, gaitFor, hitClipFor, idleClipFor, idleRateFor,
@@ -30,12 +36,12 @@ import {
   hasMutator, isChestClaimed, isEnemyShrouded, isIntactBarricade, isTileRevealedInFog,
   previewPathOpportunityAttacks, unitAt, unitOrDownedAt
 } from './simulation.ts'
-import { TACTIC_BY_ID } from './data.ts'
+import { CHAPTERS, TACTIC_BY_ID } from './data.ts'
 import type { GridCursorRenderSpec } from './grid-cursor.ts'
 import { BARRICADE_DEFAULT_HP, FACING_DIRS, TILE_SIZE, facingToYaw, facingVector, gridToWorld, isUnitDowned, vectorToFacing } from './types.ts'
 import type {
   AttackArc, BattleState, BattleUnit, CombatForecast, DangerZoneMap, DisplacementKind, EnemyThreatMap,
-  EquipSlot, FacingDir, FacingExposureLevel, FlankThreatTile, GameState, OwnedHeroCard
+  EquipSlot, FacingDir, FacingExposureLevel, FlankThreatTile, GameState, OwnedHeroCard, WorldMapEvent
 } from './types.ts'
 
 const C_MOVE_TILE: Color = [0.22, 0.80, 1.0, 0.34]
@@ -680,8 +686,248 @@ export function pickCellFromRay(
   return bestCell
 }
 
+export interface WorldMap3DRenderOpts {
+  readonly dt: number
+  readonly width: number
+  readonly height: number
+  readonly time: number
+  readonly selectedStageId: string
+  readonly recommendedStageId?: string
+  readonly clearedIds: ReadonlySet<string>
+  readonly unlockedIds: ReadonlySet<string>
+  readonly mastered3StarIds?: ReadonlySet<string>
+  readonly selectedEventId?: string | null
+  readonly events?: readonly WorldMapEvent[]
+}
+
+const C_WM_OCEAN_SKY = color('132438')
+const C_WM_OCEAN_BASIN = color('1e4d70')
+const C_WM_WOOD_DARK = color('3b2316')
+const C_WM_WOOD_RIM = color('6e4226')
+const C_WM_BRASS = color('d9ab48')
+const C_WM_ROAD_LAND = color('d1bc96')
+const C_WM_ROAD_SEA = color('85d4f5')
+const C_WM_PIN_SELECTED = color('ffe870')
+const C_WM_PIN_FRONTIER = color('ffbe3b')
+const C_WM_PIN_BOSS = color('ff4769')
+const C_WM_PIN_CLEARED = color('48d68d')
+const C_WM_PIN_LOCKED = color('6b758c')
+const C_WM_PIN_SOON = color('a373db')
+const C_WM_STAFF = color('e8d8b0')
+const C_WM_WATER_GLINT: Color = [0.64, 0.92, 1.0, 0.72]
+const C_WM_MAGMA_GLOW = color('ff7426')
+const C_WM_AETHER_CRYSTAL = color('7cf0ff')
+const C_WM_EVENT_MERCHANT = color('ffd44f')
+const C_WM_EVENT_AMBUSH = color('ff4558')
+const C_WM_EVENT_GAUNTLET = color('c470ff')
+
+/** Compute the exact perspective * view matrix used by the 3D World Map diorama. */
+export function computeWorldMapProjectionMatrix(
+  dioramaCam: WorldMap3DCamera,
+  viewportW: number,
+  viewportH: number
+): Matrix {
+  const aspect = Math.max(0.32, viewportW / Math.max(1, viewportH))
+  const { eye, target, fov } = computeDioramaCameraVectors(dioramaCam, aspect)
+  return multiply(perspective(fov, aspect, 0.5, 240), view(eye, target))
+}
+
+/**
+ * Project normalized World Map coordinates (`normX`, `normY` in [0..1]) through the live
+ * 3D diorama camera onto viewport screen coordinates using `worldToScreen`.
+ */
+export function projectWorldMapPoint(
+  normX: number,
+  normY: number,
+  dioramaCam: WorldMap3DCamera,
+  viewportW: number,
+  viewportH: number,
+  yOffset = 0.52
+): { x: number; y: number; depth: number } | null {
+  const [wx, wy, wz] = worldMapNormToDiorama(normX, normY)
+  const mat = computeWorldMapProjectionMatrix(dioramaCam, viewportW, viewportH)
+  return worldToScreen(mat, wx, Math.max(0.22, wy) + yOffset, wz, viewportW, viewportH, 0.12)
+}
+
+/** Build the cached static batches for the Solis 3D tabletop diorama (built ONCE and reused every frame!). */
+function buildWorldMapDioramaBatches(): InstanceBatch[] {
+  const landmarks = buildDioramaLandmarks()
+  const roads = buildDioramaRoadSegments()
+
+  const caps = instances(tileCapMesh, 260)
+  const bases = instances(tileBaseMesh, 16)
+  const bevels = instances(softBevel, 80)
+  const crisps = instances(crispBevel, 180)
+  const cones = instances(smoothCone, 76)
+  const cyls = instances(smoothCyl, 48)
+  const arches = instances(archProp, 20)
+  const gables = instances(gableRoof, 18)
+  const foliages = instances(foliageTier, 36)
+  const pebbles = instances(roundPebble, 32)
+  const crystals = instances(crystalMesh, 24)
+  const rings = instances(collarRing, 24)
+  const crowns = instances(crownMesh, 8)
+
+  // 1. Carved wooden tabletop rim & recessed ocean basin
+  bases.add([0, -0.58, 0], [DIORAMA_W + 2.4, 0.72, DIORAMA_D + 2.4], 0, C_WM_WOOD_DARK)
+  caps.add([0, -0.08, 0], [DIORAMA_W + 0.4, 0.24, DIORAMA_D + 0.4], 0, C_WM_OCEAN_BASIN, 0.16)
+  const halfW = DIORAMA_W * 0.5 + 0.55
+  const halfD = DIORAMA_D * 0.5 + 0.55
+  bevels.add([0, 0.08, -halfD], [DIORAMA_W + 2.0, 0.56, 0.72], 0, C_WM_WOOD_RIM)
+  bevels.add([0, 0.08, halfD], [DIORAMA_W + 2.0, 0.56, 0.72], 0, C_WM_WOOD_RIM)
+  bevels.add([-halfW, 0.08, 0], [0.72, 0.56, DIORAMA_D + 0.8], 0, C_WM_WOOD_RIM)
+  bevels.add([halfW, 0.08, 0], [0.72, 0.56, DIORAMA_D + 0.8], 0, C_WM_WOOD_RIM)
+  for (const sx of [-1, 1]) {
+    for (const sz of [-1, 1]) {
+      crisps.add([sx * halfW, 0.32, sz * halfD], [0.88, 0.24, 0.88], 0, C_WM_BRASS, 0.35)
+    }
+  }
+
+  // 2. Sculpted biome-colored continent landmass blocks + floating Aether Isle undersides
+  for (let i = 0; i < landmarks.terrainTiles.length; i++) {
+    const t = landmarks.terrainTiles[i]
+    const topCol = color(t.topHex)
+    const centerY = t.y - t.height * 0.5
+    caps.add([t.x, centerY, t.z], [t.width, t.height, t.depth], 0, topCol)
+    if (t.isFloating && (t.col + t.row) % 2 === 0) {
+      cones.add(
+        [t.x, t.y - t.height - 0.32, t.z],
+        [t.width * 0.88, 0.86, t.depth * 0.88],
+        quaternionFromEuler(Math.PI, (t.col + t.row) * 0.4, 0),
+        color(t.sideHex)
+      )
+    }
+  }
+
+  // 3. Rivers, lava channels, bridges, mountain peaks, forests, sea clouds, dunes & rift shards
+  for (let i = 0; i < landmarks.props.length; i++) {
+    const p = landmarks.props[i]
+    const col = color(p.colorHex)
+    const acc = p.accentHex ? color(p.accentHex) : col
+    const [px, py, pz] = p.position
+    const [sx, sy, sz] = p.scale
+    if (p.kind === 'river_segment') {
+      caps.add([px, py, pz], [sx, sy, sz], p.yaw, col, 0.26)
+    } else if (p.kind === 'lava_segment') {
+      caps.add([px, py, pz], [sx, sy, sz], p.yaw, col, 0.86)
+    } else if (p.kind === 'bridge_stone') {
+      arches.add([px, py + 0.04, pz], [sx, sy, sz], p.yaw, col)
+      crisps.add([px, py + sy * 0.52, pz], [sx * 1.12, 0.08, sz * 1.06], p.yaw, acc)
+    } else if (p.kind === 'mountain_snow') {
+      cones.add([px, py + sy * 0.45, pz], [sx, sy, sz], p.yaw, acc)
+      cones.add([px, py + sy * 0.78, pz], [sx * 0.56, sy * 0.46, sz * 0.56], p.yaw, col, 0.14)
+    } else if (p.kind === 'mountain_volcano') {
+      cones.add([px, py + sy * 0.42, pz], [sx, sy * 0.88, sz], p.yaw, col)
+      rings.add([px, py + sy * 0.76, pz], [sx * 0.34, 0.14, sz * 0.34], 0, acc, 0.82)
+    } else if (p.kind === 'mountain_hill') {
+      pebbles.add([px, py + sy * 0.20, pz], [sx, sy * 0.52, sz], p.yaw, col)
+    } else if (p.kind === 'tree_oak' || p.kind === 'tree_pine' || p.kind === 'tree_dead' || p.kind === 'tree_palm') {
+      foliages.add([px, py + sy * 0.55, pz], [sx, sy, sz], p.yaw, col)
+    } else if (p.kind === 'cloud_puff') {
+      pebbles.add([px, py, pz], [sx, sy, sz], p.yaw, col, 0.38)
+    } else if (p.kind === 'desert_dune') {
+      pebbles.add([px, py + sy * 0.32, pz], [sx, sy, sz], p.yaw, col)
+    } else if (p.kind === 'obsidian_shard') {
+      crystals.add([px, py + sy * 0.45, pz], [sx, sy, sz], quaternionFromEuler(0.18, p.yaw, -0.14), col)
+    }
+  }
+
+  // 4. Sculpted miniature castles, towers, windmills, shrines, ruins, pyramids & spires at ALL 33 stages!
+  const addStageArchitecture = (st: DioramaStageLandmark) => {
+    const [x, y, z] = st.position
+    const s = st.scale
+    const pri = color(st.primaryHex)
+    const acc = color(st.accentHex)
+    const yaw = st.yaw
+    const arch = st.arch
+
+    if (arch === 'castle' || arch === 'citadel' || arch === 'floating_bastion') {
+      bevels.add([x, y + 0.24 * s, z], [0.68 * s, 0.48 * s, 0.62 * s], yaw, pri)
+      cyls.add([x - 0.28 * s, y + 0.38 * s, z - 0.22 * s], [0.16 * s, 0.76 * s, 0.16 * s], 0, pri)
+      cones.add([x - 0.28 * s, y + 0.86 * s, z - 0.22 * s], [0.22 * s, 0.34 * s, 0.22 * s], 0, acc, 0.24)
+      if (arch === 'floating_bastion') {
+        crystals.add([x + 0.22 * s, y + 0.76 * s, z], [0.16 * s, 0.38 * s, 0.16 * s], yaw, acc, 0.92)
+      }
+    } else if (arch === 'watchtower') {
+      cyls.add([x, y + 0.36 * s, z], [0.22 * s, 0.72 * s, 0.22 * s], 0, pri)
+      cones.add([x, y + 0.84 * s, z], [0.30 * s, 0.36 * s, 0.30 * s], 0, acc)
+    } else if (arch === 'windmill') {
+      cyls.add([x, y + 0.36 * s, z], [0.24 * s, 0.72 * s, 0.24 * s], 0, pri)
+      cones.add([x, y + 0.82 * s, z], [0.28 * s, 0.30 * s, 0.28 * s], 0, acc)
+    } else if (arch === 'bridge') {
+      bevels.add([x - 0.30 * s, y + 0.22 * s, z], [0.18 * s, 0.44 * s, 0.22 * s], yaw, pri)
+      bevels.add([x + 0.30 * s, y + 0.22 * s, z], [0.18 * s, 0.44 * s, 0.22 * s], yaw, pri)
+    } else if (arch === 'shrine' || arch === 'monastery') {
+      arches.add([x, y + 0.34 * s, z], [0.64 * s, 0.62 * s, 0.26 * s], yaw, pri)
+      gables.add([x, y + 0.70 * s, z], [0.76 * s, 0.24 * s, 0.42 * s], yaw, acc, 0.22)
+    } else if (arch === 'crypt' || arch === 'cathedral' || arch === 'vault') {
+      bevels.add([x, y + 0.22 * s, z], [0.58 * s, 0.44 * s, 0.48 * s], yaw, pri)
+      gables.add([x, y + 0.54 * s, z], [0.64 * s, 0.30 * s, 0.54 * s], yaw, acc)
+      if (arch === 'cathedral') {
+        cones.add([x, y + 0.90 * s, z], [0.20 * s, 0.52 * s, 0.20 * s], 0, acc, 0.35)
+      }
+    } else if (arch === 'ruins') {
+      arches.add([x, y + 0.28 * s, z], [0.56 * s, 0.50 * s, 0.24 * s], yaw, pri)
+      crisps.add([x + 0.24 * s, y + 0.14 * s, z + 0.18 * s], [0.24 * s, 0.28 * s, 0.22 * s], yaw + 0.4, acc)
+    } else if (arch === 'obelisk') {
+      crisps.add([x, y + 0.12 * s, z], [0.46 * s, 0.22 * s, 0.46 * s], yaw, pri)
+      cones.add([x, y + 0.68 * s, z], [0.20 * s, 1.05 * s, 0.20 * s], 0, acc, 0.45)
+    } else if (arch === 'pyramid') {
+      crisps.add([x, y + 0.16 * s, z], [0.84 * s, 0.32 * s, 0.84 * s], yaw, pri)
+      cones.add([x, y + 0.60 * s, z], [0.72 * s, 0.68 * s, 0.72 * s], Math.PI * 0.25, acc, 0.32)
+    } else if (arch === 'pass' || arch === 'peak' || arch === 'floating_spire') {
+      cones.add([x, y + 0.48 * s, z], [0.42 * s, 0.92 * s, 0.42 * s], yaw, pri)
+      crystals.add([x, y + 0.98 * s, z], [0.16 * s, 0.38 * s, 0.16 * s], yaw, acc, 0.88)
+    } else if (arch === 'gate' || arch === 'rift_gate') {
+      arches.add([x, y + 0.36 * s, z], [0.68 * s, 0.68 * s, 0.28 * s], yaw, pri)
+      crystals.add([x, y + 0.40 * s, z], [0.18 * s, 0.38 * s, 0.18 * s], 0, acc, 0.92)
+    } else if (arch === 'foundry' || arch === 'colosseum') {
+      rings.add([x, y + 0.24 * s, z], [0.66 * s, 0.36 * s, 0.66 * s], 0, pri)
+      crystals.add([x, y + 0.34 * s, z], [0.20 * s, 0.30 * s, 0.20 * s], 0, acc, 0.90)
+    } else if (arch === 'throne' || arch === 'sanctum') {
+      bevels.add([x, y + 0.22 * s, z], [0.78 * s, 0.44 * s, 0.64 * s], yaw, pri)
+      arches.add([x, y + 0.66 * s, z], [0.62 * s, 0.66 * s, 0.26 * s], yaw, pri)
+      crowns.add([x, y + 1.08 * s, z], [0.36 * s, 0.30 * s, 0.36 * s], 0, C_WM_PIN_SELECTED, 0.92)
+    } else if (arch === 'town' || arch === 'oasis') {
+      bevels.add([x, y + 0.18 * s, z], [0.54 * s, 0.34 * s, 0.42 * s], yaw, pri)
+      gables.add([x, y + 0.44 * s, z], [0.60 * s, 0.26 * s, 0.48 * s], yaw, acc)
+    } else if (arch === 'forest') {
+      foliages.add([x - 0.16 * s, y + 0.36 * s, z], [0.38 * s, 0.64 * s, 0.38 * s], 0, acc)
+      foliages.add([x + 0.18 * s, y + 0.30 * s, z + 0.12 * s], [0.32 * s, 0.52 * s, 0.32 * s], 1.1, acc)
+    } else {
+      // lake / atoll / abyss
+      rings.add([x, y + 0.12 * s, z], [0.62 * s, 0.18 * s, 0.62 * s], 0, pri)
+      crystals.add([x, y + 0.36 * s, z], [0.22 * s, 0.44 * s, 0.22 * s], yaw, acc, 0.88)
+    }
+  }
+
+  for (let i = 0; i < landmarks.stages.length; i++) {
+    addStageArchitecture(landmarks.stages[i])
+  }
+
+  // 5. Road cobblestone stepping stones along the stage dependency graph
+  for (let i = 0; i < roads.length; i++) {
+    const seg = roads[i]
+    for (let j = 0; j < seg.stones.length; j++) {
+      const stone = seg.stones[j]
+      crisps.add(
+        stone.position,
+        stone.scale,
+        stone.yaw,
+        stone.isSea ? C_WM_ROAD_SEA : C_WM_ROAD_LAND,
+        stone.isSea ? 0.48 : 0.08
+      )
+    }
+  }
+
+  return [
+    caps, bases, bevels, crisps, cones, cyls, arches, gables, foliages, pebbles, crystals, rings, crowns
+  ].filter(b => b.count > 0)
+}
+
 export function createCrownshardScene(renderer: LowPolyRenderer) {
   const campBatches = buildCampDioramaBatches()
+  let worldMapStaticBatches: InstanceBatch[] | null = null
   let cachedBoardKey = ''
   let appliedLightingKey = ''
   let boardBatches: InstanceBatch[] = []
@@ -3127,6 +3373,230 @@ export function createCrownshardScene(renderer: LowPolyRenderer) {
     return renderer.render(lastMatrix, batches, C_CAMP_SKY)
   }
 
+  function ensureWorldMapDiorama(): InstanceBatch[] {
+    if (!worldMapStaticBatches) {
+      worldMapStaticBatches = buildWorldMapDioramaBatches()
+    }
+    return worldMapStaticBatches
+  }
+
+  function applyWorldMapLightingOnce() {
+    if (appliedLightingKey === 'world') return
+    appliedLightingKey = 'world'
+    renderer.setLighting({
+      direction: [-0.46, 0.82, 0.34],
+      ambient: 0.50,
+      color: [1.0, 0.95, 0.84],
+      skyColor: [0.58, 0.76, 0.96],
+      groundColor: [0.36, 0.32, 0.28],
+      rimColor: [1.0, 0.86, 0.58],
+      rimStrength: 0.26,
+      fogColor: [0.08, 0.14, 0.22],
+      fogNear: 52,
+      fogFar: 185,
+      points: [
+        // Emberwaste volcanic caldera glow
+        { position: [3.8, 2.1, 1.8], color: [1.0, 0.45, 0.16], radius: 7.5, intensity: 1.1 },
+        // Aether Isles celestial shimmer
+        { position: [10.6, 3.6, -4.4], color: [0.46, 0.90, 1.0], radius: 8.0, intensity: 1.05 },
+        // Eclipse Throne violet beacon
+        { position: [5.6, 2.4, -1.8], color: [0.85, 0.38, 1.0], radius: 6.5, intensity: 0.95 }
+      ],
+      shadows: {
+        enabled: true,
+        center: [0, 0.4, 0],
+        extent: 17.5,
+        strength: 0.34,
+        color: [0.12, 0.18, 0.32]
+      }
+    })
+    shadows.setLighting([-0.46, 0.82, 0.34])
+  }
+
+  function renderWorldMap3D(
+    _state: GameState,
+    dioramaCam: WorldMap3DCamera,
+    opts: WorldMap3DRenderOpts
+  ): Readonly<RenderStats> {
+    const staticBatches = ensureWorldMapDiorama()
+    applyWorldMapLightingOnce()
+    pool.clear()
+    shadows.clear()
+
+    const t = opts.time
+    const landmarks = buildDioramaLandmarks()
+    lastMatrix = computeWorldMapProjectionMatrix(dioramaCam, opts.width, opts.height)
+
+    // 1. Animated 3D banner pins at ALL 33 chapters (flagpole + wind-waving pennant + 3* crown + pulsing beacons)
+    for (let i = 0; i < CHAPTERS.length; i++) {
+      const ch = CHAPTERS[i]
+      const lm = landmarks.stages[i]
+      if (!lm) continue
+      const [sx, sy, sz] = lm.position
+      const unlocked = opts.unlockedIds.has(ch.id)
+      const cleared = opts.clearedIds.has(ch.id)
+      const isSelected = opts.selectedStageId === ch.id && !opts.selectedEventId
+      const isRecommended = opts.recommendedStageId === ch.id
+      const is3Star = Boolean(opts.mastered3StarIds?.has(ch.id))
+
+      const pinCol = isSelected
+        ? C_WM_PIN_SELECTED
+        : ch.comingSoon
+          ? C_WM_PIN_SOON
+          : !unlocked
+            ? C_WM_PIN_LOCKED
+            : ch.kind === 'boss'
+              ? C_WM_PIN_BOSS
+              : cleared
+                ? C_WM_PIN_CLEARED
+                : C_WM_PIN_FRONTIER
+      const unlit = isSelected ? 0.94 : unlocked ? 0.78 : 0.32
+
+      // Planted banner pole offset slightly right of the miniature landmark
+      const px = sx + 0.34
+      const pz = sz + 0.16
+      const poleH = isSelected ? 1.18 : lm.isBoss ? 1.06 : 0.88
+      const wave = Math.sin(t * 3.8 + i * 0.85) * 0.30
+      pool.add(smoothCyl, [px, sy + poleH * 0.5, pz], [0.045, poleH, 0.045], 0, C_WM_STAFF, 0.25)
+      pool.add(
+        crispBevel,
+        [px + 0.19, sy + poleH - 0.14, pz + Math.sin(wave) * 0.05],
+        [0.36, 0.21, 0.045],
+        wave,
+        pinCol,
+        unlit
+      )
+
+      // Gold star crown halo floating above 3-star mastered stages
+      if (is3Star) {
+        pool.add(
+          crownMesh,
+          [sx, sy + 1.24 + Math.sin(t * 2.8 + i) * 0.08, sz],
+          [0.34, 0.26, 0.34],
+          t * 1.4 + i,
+          C_WM_PIN_SELECTED,
+          0.95
+        )
+      }
+
+      // Pulsing additive beacon ring on selected & next-recommended frontier stage
+      if (isSelected || isRecommended) {
+        const pulse = 1 + Math.sin(t * 4.6 + i) * 0.14
+        const ringR = (isSelected ? 0.96 : 0.78) * pulse
+        pool.add(
+          flatRing,
+          [sx, sy + 0.07, sz],
+          [ringR, 1, ringR],
+          t * (isSelected ? 1.2 : -0.9),
+          isSelected ? C_ACTIVE_RING : C_STAR3_HALO,
+          0.96,
+          'additive'
+        )
+      }
+
+      // Spinning windmill blades on Galewind Windmill!
+      if (ch.id === 'galewind_windmill') {
+        const spin = t * 2.4
+        pool.add(
+          crispBevel,
+          [sx, sy + 0.56, sz + 0.20],
+          [0.64, 0.07, 0.04],
+          quaternionFromEuler(0, 0, spin),
+          C_WM_STAFF,
+          0.35
+        )
+        pool.add(
+          crispBevel,
+          [sx, sy + 0.56, sz + 0.20],
+          [0.07, 0.64, 0.04],
+          quaternionFromEuler(0, 0, spin),
+          C_WM_STAFF,
+          0.35
+        )
+      }
+    }
+
+    // 2. Animated floating Aether Isle crystals gently bobbing above the eastern archipelago
+    const aetherCrystals: readonly (readonly [number, number])[] = [
+      [0.81, 0.28], [0.86, 0.18], [0.91, 0.24], [0.94, 0.32], [0.84, 0.33]
+    ]
+    for (let i = 0; i < aetherCrystals.length; i++) {
+      const [ax, ay, az] = worldMapNormToDiorama(aetherCrystals[i][0], aetherCrystals[i][1])
+      const bob = Math.sin(t * 2.2 + i * 1.3) * 0.18
+      pool.add(
+        crystalMesh,
+        [ax, ay + 1.05 + bob, az],
+        [0.20, 0.44, 0.20],
+        t * 1.1 + i,
+        C_WM_AETHER_CRYSTAL,
+        0.96
+      )
+    }
+
+    // 3. Pulsing volcanic magma glow highlights in Emberwaste & Shattered Expanse
+    const magmaSpots: readonly (readonly [number, number])[] = [
+      [0.60, 0.63], [0.71, 0.57], [0.65, 0.62], [0.85, 0.78]
+    ]
+    for (let i = 0; i < magmaSpots.length; i++) {
+      const [mx, my, mz] = worldMapNormToDiorama(magmaSpots[i][0], magmaSpots[i][1])
+      const pulse = 0.24 + Math.sin(t * 4.2 + i * 1.7) * 0.07
+      pool.add(crystalMesh, [mx, my + 0.22, mz], [pulse, pulse * 1.25, pulse], t * 0.8 + i, C_WM_MAGMA_GLOW, 0.98)
+    }
+
+    // 4. Shimmering river & ocean water glint highlights
+    const glintSpots: readonly (readonly [number, number, boolean])[] = [
+      [0.27, 0.37, true], [0.25, 0.50, true], [0.23, 0.68, true],
+      [0.08, 0.72, false], [0.78, 0.52, false], [0.52, 0.88, false]
+    ]
+    for (let i = 0; i < glintSpots.length; i++) {
+      const [gx, gy, isRiver] = glintSpots[i]
+      const [wx, wy, wz] = worldMapNormToDiorama(gx, gy)
+      const drift = Math.sin(t * 1.8 + i * 2.1) * 0.26
+      const sz = 0.30 + Math.sin(t * 3.1 + i) * 0.08
+      pool.add(
+        tileQuad,
+        [wx + drift, (isRiver ? Math.max(0.18, wy + 0.11) : 0.12), wz],
+        [sz * 1.3, 1, sz * 0.42],
+        0.2,
+        C_WM_WATER_GLINT,
+        0.95,
+        'additive'
+      )
+    }
+
+    // 5. Animated 3D dynamic World Map Event markers along cleared roads
+    const events = opts.events ?? []
+    for (let i = 0; i < events.length; i++) {
+      const ev = events[i]
+      const [ex, ey, ez] = worldMapNormToDiorama(ev.mapX, ev.mapY)
+      const baseY = Math.max(0.24, ey)
+      const isEvSel = opts.selectedEventId === ev.id
+      const bob = Math.sin(t * 3.6 + i * 1.4) * 0.10
+      const pulse = (isEvSel ? 0.86 : 0.66) + Math.sin(t * 4.8 + i) * 0.10
+
+      if (ev.kind === 'wandering_merchant') {
+        // Golden caravan wagon & canopy
+        pool.add(softBevel, [ex, baseY + 0.22 + bob * 0.3, ez], [0.52, 0.24, 0.34], t * 0.4, C_WOOD_TIMBER, 0.30)
+        pool.add(gableRoof, [ex, baseY + 0.44 + bob * 0.3, ez], [0.56, 0.22, 0.38], t * 0.4, C_WM_EVENT_MERCHANT, 0.88)
+        pool.add(flatRing, [ex, baseY + 0.08, ez], [pulse, 1, pulse], t * 1.2, C_ACTIVE_RING, 0.94, 'additive')
+      } else if (ev.kind === 'goblin_ambush') {
+        // Crimson ambush crossed blades beacon
+        pool.add(tileCrossedSwordsMesh, [ex, baseY + 0.12, ez], [0.95, 1, 0.95], t * 0.6, C_WM_EVENT_AMBUSH, 0.96, 'alpha')
+        pool.add(crystalMesh, [ex, baseY + 0.56 + bob, ez], [0.22, 0.48, 0.22], -t * 2.2, C_WM_EVENT_AMBUSH, 0.96)
+        pool.add(flatRing, [ex, baseY + 0.09, ez], [pulse, 1, pulse], -t * 1.6, C_OBJ_ASSASSINATE, 0.96, 'additive')
+      } else {
+        // Violet timed gauntlet hourglass crystal pillar
+        pool.add(crystalMesh, [ex, baseY + 0.42 + bob, ez], [0.24, 0.44, 0.24], t * 2.4, C_WM_EVENT_GAUNTLET, 0.96)
+        pool.add(crystalMesh, [ex, baseY + 0.80 + bob, ez], [0.20, 0.36, 0.20], -t * 2.4, C_WM_PIN_SELECTED, 0.96)
+        pool.add(flatRing, [ex, baseY + 0.09, ez], [pulse, 1, pulse], t * 1.8, C_ALTAR_RING, 0.96, 'additive')
+      }
+    }
+
+    const batches: InstanceBatch[] = [...staticBatches]
+    for (const b of pool.batches) if (b.count > 0) batches.push(b)
+    return renderer.render(lastMatrix, batches, C_WM_OCEAN_SKY)
+  }
+
   function pickCellAt(
     battle: BattleState | null,
     cssX: number,
@@ -3205,6 +3675,17 @@ export function createCrownshardScene(renderer: LowPolyRenderer) {
     render(state: GameState, dt: number, width: number, height: number, options?: CrownshardRenderOptions): Readonly<RenderStats> {
       if (state.battle) return renderBattle(state, dt, width, height, options)
       return renderCamp(state, dt, width, height)
+    },
+    renderWorldMap3D,
+    projectWorldMapPoint(
+      normX: number,
+      normY: number,
+      dioramaCam: WorldMap3DCamera,
+      viewportW: number,
+      viewportH: number,
+      yOffset = 0.52
+    ) {
+      return projectWorldMapPoint(normX, normY, dioramaCam, viewportW, viewportH, yOffset)
     },
     setCampFraming(mode: 'title' | 'camp' | 'armory' | 'story' | 'world') {
       campFraming = mode
@@ -3382,6 +3863,9 @@ export function createCrownshardScene(renderer: LowPolyRenderer) {
     project,
     dispose() {
       for (const b of campBatches) renderer.release(b)
+      if (worldMapStaticBatches) {
+        for (const b of worldMapStaticBatches) renderer.release(b)
+      }
       for (const b of boardBatches) renderer.release(b)
       renderer.release(shadows.batch)
       for (const b of pool.batches) renderer.release(b)
