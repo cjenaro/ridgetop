@@ -90,7 +90,8 @@ test('Equipment cards equip, swap owners, boost stats, and salvage for rarity-sc
   assert.equal(equipItem(state, mage.uid, 'eq_leg'), true)
   assert.equal(equipItem(state, mage.uid, 'eq_rare'), true)
   const afterMage = computeHeroStats(state.campaign, mage)
-  assert.equal(afterMage.atk, beforeMage.atk + EQUIPMENT_BY_ID.celestial_staff.atk + EQUIPMENT_BY_ID.astral_vestments.atk)
+  // Equipping celestial_staff + astral_vestments also activates the 2pc Astral Conclave set (+4 ATK, +2 SPD)
+  assert.equal(afterMage.atk, beforeMage.atk + EQUIPMENT_BY_ID.celestial_staff.atk + EQUIPMENT_BY_ID.astral_vestments.atk + 4)
   assert.equal(afterMage.maxHp, beforeMage.maxHp + EQUIPMENT_BY_ID.celestial_staff.hp + EQUIPMENT_BY_ID.astral_vestments.hp)
   assert.equal(afterMage.shieldStart, EQUIPMENT_BY_ID.astral_vestments.shieldStart)
 

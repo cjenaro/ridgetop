@@ -162,6 +162,8 @@ export type EquipSlot = 'weapon' | 'armor' | 'relic'
 
 export type EquipFamily = 'vanguard' | 'arcane' | 'skirmisher' | 'universal'
 
+export type GearSetId = 'solis' | 'frostguard' | 'windrunner' | 'shadowfang' | 'astral'
+
 export type CardKind = 'hero' | 'weapon' | 'armor' | 'relic' | 'tactic'
 
 export type PackId = 'recruit' | 'vanguard' | 'sovereign'
@@ -250,6 +252,7 @@ export interface EquipmentSpec {
   readonly name: string
   readonly slot: EquipSlot
   readonly family: EquipFamily
+  readonly setId?: GearSetId
   readonly rarity: Rarity
   readonly desc: string
   readonly atk: number

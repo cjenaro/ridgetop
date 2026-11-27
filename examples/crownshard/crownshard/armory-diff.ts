@@ -5,8 +5,9 @@ import {
   getEquipFamily,
   getHeroEquipFamily
 } from './equip-families.ts'
+import { getEquipSetId, getHeroActiveGearSetIds } from './gear-sets.ts'
 import { computeHeroStats, findEquipOwner, getEquipmentByUid, getHeroByUid } from './simulation.ts'
-import type { CampaignState, EquipFamily, EquipSlot, OwnedHeroCard, Rarity } from './types.ts'
+import type { CampaignState, EquipFamily, EquipSlot, GearSetId, OwnedHeroCard, Rarity } from './types.ts'
 
 export type ArmoryStatKey = 'atk' | 'def' | 'maxHp' | 'speed' | 'move' | 'range' | 'crit'
 
@@ -42,6 +43,7 @@ export interface EquipmentStatDiff {
   readonly candidateName: string
   readonly candidateRarity: Rarity
   readonly candidateFamily: EquipFamily
+  readonly candidateSetId: GearSetId | null
   readonly compatible: boolean
   readonly incompatibilityReason: string | null
   readonly currentItemName: string | null
@@ -53,6 +55,8 @@ export interface EquipmentStatDiff {
   readonly powerBefore: number
   readonly powerAfter: number
   readonly netPowerDelta: number
+  readonly activatedSets: readonly GearSetId[]
+  readonly deactivatedSets: readonly GearSetId[]
   readonly hasAnyChange: boolean
 }
 
@@ -117,11 +121,14 @@ export function computeEquipmentStatDiff(
 
   const heroFamily = getHeroEquipFamily(hero.heroId)
   const candidateFamily = getEquipFamily(candidate.equipId)
+  const candidateSetId = getEquipSetId(candidate.equipId)
   const compatible = canHeroEquipItem(hero.heroId, candidate.equipId)
   const incompatibilityReason = getEquipCompatibilityReason(hero.heroId, candidate.equipId)
 
   const beforeStats = computeHeroStats(campaign, hero)
+  const beforeActiveSets = getHeroActiveGearSetIds(campaign, hero)
   let afterStats = beforeStats
+  let afterActiveSets = beforeActiveSets
   if (!isAlreadyEquipped && compatible) {
     const hypotheticalHero: OwnedHeroCard = {
       ...hero,
@@ -130,7 +137,11 @@ export function computeEquipmentStatDiff(
       relicUid: slot === 'relic' ? candidate.uid : hero.relicUid
     }
     afterStats = computeHeroStats(campaign, hypotheticalHero)
+    afterActiveSets = getHeroActiveGearSetIds(campaign, hypotheticalHero)
   }
+
+  const activatedSets = afterActiveSets.filter(id => !beforeActiveSets.includes(id))
+  const deactivatedSets = beforeActiveSets.filter(id => !afterActiveSets.includes(id))
 
   const critBefore = Math.round(beforeStats.crit * 100)
   const critAfter = Math.round(afterStats.crit * 100)
@@ -153,7 +164,9 @@ export function computeEquipmentStatDiff(
     stats.speed.delta !== 0 ||
     stats.move.delta !== 0 ||
     stats.range.delta !== 0 ||
-    stats.crit.delta !== 0
+    stats.crit.delta !== 0 ||
+    activatedSets.length > 0 ||
+    deactivatedSets.length > 0
 
   return {
     heroUid: hero.uid,
@@ -164,6 +177,7 @@ export function computeEquipmentStatDiff(
     candidateName: candidateSpec.name,
     candidateRarity: candidateSpec.rarity,
     candidateFamily,
+    candidateSetId,
     compatible,
     incompatibilityReason,
     currentItemName: currentSpec ? currentSpec.name : null,
@@ -175,6 +189,8 @@ export function computeEquipmentStatDiff(
     powerBefore: beforeStats.powerScore,
     powerAfter: afterStats.powerScore,
     netPowerDelta,
+    activatedSets,
+    deactivatedSets,
     hasAnyChange
   }
 }
