@@ -2589,7 +2589,10 @@ export function drawUnitCard(
 
   const tx = px + ps + 10
   const tw = x + w - pad - tx
-  drawText(ctx, unit.name, tx, py + 9, { size: 14, weight: 900, maxW: tw, display: true, stroke: true, strokeWidth: 2.4 })
+  const compactHpText = compact ? `${unit.hp}/${unit.maxHp}` : ''
+  const compactHpW = compact ? Math.ceil(measureText(ctx, compactHpText, 11, 900, true)) + 10 : 0
+  const nameMaxW = compact ? Math.max(44, tw - compactHpW) : tw
+  drawText(ctx, unit.name, tx, py + 9, { size: compact ? 13 : 14, weight: 900, maxW: nameMaxW, display: true, stroke: true, strokeWidth: 2.4 })
   const roleW = drawChip(ctx, tx, py + 20, roleLabel.toUpperCase(), {
     h: 16,
     size: 8.5,
@@ -4729,9 +4732,9 @@ export function drawArmoryStatDiffPanel(
   ctx.stroke()
 
   const padX = w < 420 ? 8 : 10
-  const padY = h < 60 ? 5 : 6
+  const padY = h < 66 ? 4 : 6
   const innerW = w - padX * 2
-  const headerH = h < 60 ? 18 : 20
+  const headerH = h < 66 ? 17 : 20
   const headerCy = y + padY + headerH / 2
 
   // Right-aligned Power delta badge (+ optional cross-hero swap pill)
@@ -4777,7 +4780,7 @@ export function drawArmoryStatDiffPanel(
   const hasActivatedSet = !isLockedClass && diff.activatedSets.length > 0
   const hasDeactivatedSet = !isLockedClass && diff.deactivatedSets.length > 0
   const hasSetDelta = hasActivatedSet || hasDeactivatedSet
-  const showDedicatedSetStrip = hasSetDelta && h >= 72
+  const showDedicatedSetStrip = hasSetDelta && h >= 64
 
   if (hasSetDelta && !showDedicatedSetStrip) {
     const setChipLabel = hasActivatedSet
@@ -4840,9 +4843,9 @@ export function drawArmoryStatDiffPanel(
   })
 
   // Optional Set Bonus activation / deactivation callout strip
-  let statsY = y + padY + headerH + (h < 60 ? 3 : 4)
+  let statsY = y + padY + headerH + (h < 66 ? 2 : 4)
   if (showDedicatedSetStrip) {
-    const stripH = 16
+    const stripH = h < 70 ? 14 : 16
     const actSpec = hasActivatedSet ? GEAR_SET_SPECS[diff.activatedSets[0]] : null
     const deactSpec = hasDeactivatedSet ? GEAR_SET_SPECS[diff.deactivatedSets[0]] : null
     const stripBg = actSpec ? '#133626' : '#3d1623'
@@ -4867,13 +4870,13 @@ export function drawArmoryStatDiffPanel(
     ctx.lineWidth = 1.2
     ctx.stroke()
     drawText(ctx, stripText, x + padX + 7, statsY + stripH / 2 + 0.5, {
-      size: w < 420 ? 8.5 : 9.5,
+      size: w < 420 || h < 70 ? 8.5 : 9.5,
       weight: 900,
       color: stripColor,
       maxW: innerW - 14,
       display: true
     })
-    statsY += stripH + 4
+    statsY += stripH + (h < 70 ? 2 : 4)
   }
 
   // Stat-diff grid across all 7 stats (or Lock Banner when class-incompatible)

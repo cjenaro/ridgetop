@@ -5202,12 +5202,12 @@ async function start() {
             : 344
       const logPanelY = leftStackY
       const bottomClearance = dockH + (isPhone ? 46 : 52)
-      const maxPanelH = Math.max(114, h - bottomClearance - logPanelY)
+      const maxPanelH = Math.max(mobileLandscape ? 76 : 114, h - bottomClearance - logPanelY)
       const logPanelH = Math.min(mobileLandscape ? 168 : isPhone ? 206 : 232, maxPanelH)
       leftStackY = logPanelY + logPanelH + 6
       const logHeaderH = isPhone ? 26 : 28
       const logRowH = isPhone ? 20 : 22
-      const logVisibleRows = Math.max(3, Math.floor((logPanelH - logHeaderH - 14) / logRowH))
+      const logVisibleRows = Math.max(mobileLandscape && logPanelH < 100 ? 2 : 3, Math.floor((logPanelH - logHeaderH - 14) / logRowH))
       const logMaxScroll = getMaxCombatLogScroll(combatLogEntries.length, logVisibleRows)
       if (combatLogScroll > logMaxScroll) combatLogScroll = logMaxScroll
       const logBtnS = 22
@@ -5856,7 +5856,7 @@ async function start() {
       // Non-blocking Battle Banter speech pill for bonded heroes (clamped & mobile-safe!)
       ...(() => {
         const banter = battle.activeBanter
-        if (!banter || mobileHandOpen) return []
+        if (!banter || mobileHandOpen || (isPhone && Boolean(activeForecast))) return []
         const hasTurnSub = Boolean(hoveredTurnUnitUid || ctPreview)
         const subY = timelineInset[1] + tokenH + (isPhone ? 14 : 16)
         const banterH = mobileLandscape ? 42 : isPhone ? 44 : 46
@@ -5967,7 +5967,7 @@ async function start() {
         if (b.stars !== a.stars) return b.stars - a.stars
         return a.heroId.localeCompare(b.heroId)
       })
-      const perPage = mobile ? 5 : 4
+      const perPage = shortH ? 3 : mobile ? 5 : 4
       const maxPage = Math.max(0, Math.ceil(sortedHeroes.length / perPage) - 1)
       rosterPage = Math.min(rosterPage, maxPage)
       const visibleHeroes = sortedHeroes.slice(rosterPage * perPage, rosterPage * perPage + perPage)
@@ -6359,7 +6359,7 @@ async function start() {
         if (mobile) {
           const mobileSkills = is3Star ? skillNodes.slice(0, h >= 760 ? 3 : 2) : skillNodes
           bodyNode = column({ id: 'camp-squad-body', style: { grow: 1, gap: is3Star ? 4 : 5 } }, [
-            row({ id: 'camp-roster-row', style: { height: is3Star ? 56 : 60, gap: 6 } }, rosterButtons),
+            row({ id: 'camp-roster-row', style: { height: has3StarSquadHero ? 56 : 64, gap: 6 } }, rosterButtons),
             pagerNode,
             squadBondsNode,
             column({
@@ -7530,7 +7530,7 @@ async function start() {
         const upPreview = activeArmoryUpgradePreview
         if (campTab !== 'armory' || !diff || collapsed || packAnim) return []
         const hasSetDelta = diff.compatible && (diff.activatedSets.length > 0 || diff.deactivatedSets.length > 0)
-        const diffH = (shortH ? 48 : mobile ? 72 : 60) + (hasSetDelta ? (shortH ? 14 : 18) : 0)
+        const diffH = (shortH ? 48 : mobile ? 72 : 60) + (hasSetDelta ? (shortH ? 16 : 18) : 0)
         const temperGap = shortH ? 3 : 4
         const temperBtnH = shortH ? 26 : mobile ? 32 : 34
         const temperBlockH = upPreview ? (mobile ? 22 + 4 + temperBtnH : temperBtnH) : 0
@@ -7739,26 +7739,30 @@ async function start() {
         ]
       })(),
 
-      // Floating Toast above the bottom sheet (and above Armory diff dock if visible)
-      ...(campToast ? [boxNode({
-        id: 'camp-toast',
-        style: {
-          anchor: 'bottom',
-          width: Math.min(sheetW - 24, 520),
-          height: 32,
-          inset: [
-            8,
-            sheetH + 18 + (campTab === 'armory' && activeArmoryDiff && !collapsed && !packAnim
-              ? (shortH ? 92 : mobile ? 140 : 106) + (activeArmoryDiff.compatible && (activeArmoryDiff.activatedSets.length > 0 || activeArmoryDiff.deactivatedSets.length > 0) ? 18 : 0)
-              : 0)
-          ],
-          respectSafeArea: true
-        },
-        widget: {
-          type: 'panel',
-          draw: (ctx: CanvasRenderingContext2D, rect: LayoutRect) => drawToast(ctx, rect, campToast)
-        }
-      })] : []),
+      // Floating Toast above the bottom sheet (and above Armory diff dock if visible),
+      // clamped cleanly below the top Gold / Map / Fight bar on compact & phone viewports.
+      ...(campToast ? (() => {
+        const rawToastInsetBottom = sheetH + 18 + (campTab === 'armory' && activeArmoryDiff && !collapsed && !packAnim
+          ? (shortH ? 92 : mobile ? 140 : 106) + (activeArmoryDiff.compatible && (activeArmoryDiff.activatedSets.length > 0 || activeArmoryDiff.deactivatedSets.length > 0) ? 18 : 0)
+          : 0)
+        const topBarBottom = (shortH ? 38 + 6 : 48 + 10) + (isPhone ? 16 : 0)
+        const maxToastInsetBottom = Math.max(12, h - 32 - (topBarBottom + 6))
+        const toastInsetBottom = Math.min(rawToastInsetBottom, maxToastInsetBottom)
+        return [boxNode({
+          id: 'camp-toast',
+          style: {
+            anchor: 'bottom',
+            width: Math.min(sheetW - 24, 520),
+            height: 32,
+            inset: [8, toastInsetBottom],
+            respectSafeArea: true
+          },
+          widget: {
+            type: 'panel',
+            draw: (ctx: CanvasRenderingContext2D, rect: LayoutRect) => drawToast(ctx, rect, campToast)
+          }
+        })]
+      })() : []),
 
       // Bottom Glass Sheet Drawer
       column({
@@ -9361,7 +9365,7 @@ async function start() {
       const bh = isNarrowPhone ? 32 : isCompactH ? 32 : 38
       const bw = Math.min(g.width - 24, Math.max(isNarrowPhone ? 196 : 240, Math.round(battle.bannerText.length * (bannerFont * 0.66) + 36)))
       const bx = Math.max(12, Math.round((g.width - bw) / 2))
-      const by = isPhoneW ? 100 : isCompactH ? 52 : 92
+      const by = isPhoneW ? 100 : isCompactH ? 72 : 92
       const textY = by + Math.round((bh - bannerFont) * 0.5)
       g.panel(bx, by, bw, bh, {
         fill: isBossBanner ? '#4f142e' : '#283863',

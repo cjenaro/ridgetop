@@ -116,6 +116,7 @@ export type { CounterDamageOptions, CounterDamageResult, CounterEligibilityOptio
 import {
   applyDisplacement, orderDisplacementTargets, resolveDisplacementPreview
 } from './forced-movement.ts'
+import type { DisplacementResult } from './forced-movement.ts'
 import {
   CRACKED_PILLAR_DEFAULT_HP, applyCoverCellDamage,
   isCrackedPillarCell, isDestructibleCover, previewCoverDamageOnCells
@@ -186,6 +187,7 @@ import {
   classifyElement, classifyHazardElement, collectWildfirePatch,
   previewElementalCombo, triggerElementalCombo
 } from './elemental-combos.ts'
+import type { ElementalComboResult } from './elemental-combos.ts'
 import {
   BATTLE_WEATHER_IDS, TIME_OF_DAY_IDS, TIME_OF_DAY_LABELS, WEATHER_SPECS,
   computeWeatherCombatModifiers, computeWeatherLighting, defaultAtmosphereForBiome,
@@ -932,9 +934,86 @@ export function scoreEquipmentForHero(
   )
 }
 
+function scoreLoadoutForHero(
+  campaign: CampaignState,
+  hero: OwnedHeroCard,
+  weapon: OwnedEquipCard | null,
+  armor: OwnedEquipCard | null,
+  relic: OwnedEquipCard | null
+): number {
+  const virtualHero: OwnedHeroCard = {
+    ...hero,
+    weaponUid: weapon ? weapon.uid : null,
+    armorUid: armor ? armor.uid : null,
+    relicUid: relic ? relic.uid : null
+  }
+  const stats = computeHeroStats(campaign, virtualHero)
+  let score = stats.powerScore
+  if (hero.heroId === 'knight' || hero.heroId === 'paladin' || hero.heroId === 'champion') {
+    score +=
+      stats.maxHp * 0.55 +
+      stats.def * 2.0 +
+      stats.shieldStart * 1.6 +
+      stats.lifesteal * 160 +
+      stats.crit * 30 +
+      stats.move * 12 +
+      stats.range * 17
+  } else if (hero.heroId === 'archer' || hero.heroId === 'rogue') {
+    score +=
+      stats.atk * 1.0 +
+      stats.crit * 100 +
+      stats.shieldStart * 0.9 +
+      stats.lifesteal * 110 +
+      stats.move * 12 +
+      stats.range * 19
+  } else {
+    score +=
+      stats.atk * 0.8 +
+      stats.maxHp * 0.35 +
+      stats.shieldStart * 1.5 +
+      stats.crit * 60 +
+      stats.lifesteal * 90 +
+      stats.move * 9 +
+      stats.range * 19
+  }
+
+  for (const item of [weapon, armor, relic]) {
+    if (!item) continue
+    const spec = EQUIPMENT_BY_ID[item.equipId]
+    if (spec) score += rarityRank(spec.rarity) * 0.5
+  }
+  score += stats.jump * 4
+
+  const activeSets = getUnitActiveGearSets({
+    weaponId: weapon?.equipId,
+    armorId: armor?.equipId,
+    relicId: relic?.equipId
+  })
+  for (const s of activeSets) {
+    const rule = s.spec.combatRule
+    if (rule.skillDamageMul && rule.skillDamageMul > 1) {
+      score += (rule.skillDamageMul - 1) * 180
+    }
+    if (rule.skillIgnoreArmorBonus && rule.skillIgnoreArmorBonus > 0) {
+      score += rule.skillIgnoreArmorBonus * 120
+    }
+    if (rule.vsSlowOrStunDamageMul && rule.vsSlowOrStunDamageMul > 1) {
+      score += (rule.vsSlowOrStunDamageMul - 1) * 140
+    }
+    if (rule.flankOrBackDamageMul && rule.flankOrBackDamageMul > 1) {
+      score += (rule.flankOrBackDamageMul - 1) * 160
+    }
+    if (rule.vsPoisonOrBurnDamageMul && rule.vsPoisonOrBurnDamageMul > 1) {
+      score += (rule.vsPoisonOrBurnDamageMul - 1) * 140
+    }
+  }
+  return score
+}
+
 /**
  * Find the best unequipped equipment upgrades for `heroUid` across weapon, armor, and relic slots.
- * Strictly ignores items equipped by any other hero and never downgrades an already-equipped slot.
+ * Strictly ignores items equipped by any other hero, evaluates 2-piece gear set synergies across
+ * slot combinations, and never breaks an active 2-piece set for a net loadout downgrade.
  */
 export function findBestFitUpgrades(campaign: CampaignState, heroUid: string): OwnedEquipCard[] {
   const hero = getHeroByUid(campaign, heroUid)
@@ -949,36 +1028,91 @@ export function findBestFitUpgrades(campaign: CampaignState, heroUid: string): O
   }
 
   const slots: readonly EquipSlot[] = ['weapon', 'armor', 'relic']
-  const upgrades: OwnedEquipCard[] = []
+  const currentBySlot: [OwnedEquipCard | null, OwnedEquipCard | null, OwnedEquipCard | null] = [null, null, null]
+  const candidatesBySlot: [Array<OwnedEquipCard | null>, Array<OwnedEquipCard | null>, Array<OwnedEquipCard | null>] = [[], [], []]
 
-  for (const slot of slots) {
+  for (let i = 0; i < slots.length; i++) {
+    const slot = slots[i]
     const currentUid = slot === 'weapon' ? hero.weaponUid : slot === 'armor' ? hero.armorUid : hero.relicUid
-    const currentItem = getEquipmentByUid(campaign, currentUid)
-    const currentSpec =
-      currentItem && canHeroEquipItem(hero.heroId, currentItem.equipId)
-        ? EQUIPMENT_BY_ID[currentItem.equipId]
-        : undefined
-    const currentScore = currentSpec
-      ? scoreEquipmentForHero(hero.heroId, currentSpec, currentItem?.upgradeLevel ?? 0)
-      : -1
+    const currentRaw = getEquipmentByUid(campaign, currentUid)
+    const currentValid =
+      currentRaw && canHeroEquipItem(hero.heroId, currentRaw.equipId) && EQUIPMENT_BY_ID[currentRaw.equipId]
+        ? currentRaw
+        : null
+    currentBySlot[i] = currentValid
 
-    let bestItem: OwnedEquipCard | null = null
-    let bestScore = currentScore
+    const scoredUnequipped: Array<{ item: OwnedEquipCard; spec: EquipmentSpec; score: number }> = []
     for (const item of campaign.equipment) {
       if (item.slot !== slot) continue
-      if (item.uid === currentUid || ownedByOther.has(item.uid)) continue
+      if (item.uid === currentValid?.uid || ownedByOther.has(item.uid)) continue
       if (!canHeroEquipItem(hero.heroId, item.equipId)) continue
       const spec = EQUIPMENT_BY_ID[item.equipId]
       if (!spec) continue
-      const score = scoreEquipmentForHero(hero.heroId, spec, item.upgradeLevel ?? 0)
-      if (score > bestScore) {
-        bestScore = score
-        bestItem = item
+      scoredUnequipped.push({
+        item,
+        spec,
+        score: scoreEquipmentForHero(hero.heroId, spec, item.upgradeLevel ?? 0)
+      })
+    }
+    scoredUnequipped.sort((a, b) => b.score - a.score)
+
+    const cands: Array<OwnedEquipCard | null> = [currentValid]
+    const seenUids = new Set<string>()
+    if (currentValid) seenUids.add(currentValid.uid)
+    // Include top 3 individual items per slot
+    for (const entry of scoredUnequipped.slice(0, 3)) {
+      if (!seenUids.has(entry.item.uid)) {
+        seenUids.add(entry.item.uid)
+        cands.push(entry.item)
       }
     }
-    if (bestItem) upgrades.push(bestItem)
+    // Also include the highest-scoring unequipped item per gear set to preserve/complete 2pc sets
+    const seenSets = new Set<string>()
+    for (const entry of scoredUnequipped) {
+      const setId = entry.spec.setId
+      if (!setId || seenSets.has(setId)) continue
+      seenSets.add(setId)
+      if (!seenUids.has(entry.item.uid)) {
+        seenUids.add(entry.item.uid)
+        cands.push(entry.item)
+      }
+    }
+    candidatesBySlot[i] = cands
   }
 
+  const [curW, curA, curR] = currentBySlot
+  const baselineScore = scoreLoadoutForHero(campaign, hero, curW, curA, curR)
+  let bestScore = baselineScore
+  let bestCombo: [OwnedEquipCard | null, OwnedEquipCard | null, OwnedEquipCard | null] = [curW, curA, curR]
+  let bestSwaps = 0
+
+  for (const w of candidatesBySlot[0]) {
+    for (const a of candidatesBySlot[1]) {
+      for (const r of candidatesBySlot[2]) {
+        const swaps = (w !== curW ? 1 : 0) + (a !== curA ? 1 : 0) + (r !== curR ? 1 : 0)
+        if (swaps === 0) continue
+        const score = scoreLoadoutForHero(campaign, hero, w, a, r)
+        if (
+          score > bestScore + 1e-6 ||
+          (bestSwaps > 0 && Math.abs(score - bestScore) <= 1e-6 && swaps < bestSwaps)
+        ) {
+          bestScore = score
+          bestCombo = [w, a, r]
+          bestSwaps = swaps
+        }
+      }
+    }
+  }
+
+  if (bestScore <= baselineScore + 1e-6) return []
+
+  const upgrades: OwnedEquipCard[] = []
+  for (let i = 0; i < 3; i++) {
+    const chosen = bestCombo[i]
+    if (chosen && chosen.uid !== currentBySlot[i]?.uid) {
+      upgrades.push(chosen)
+    }
+  }
   return upgrades
 }
 
@@ -2641,7 +2775,16 @@ export function loadSave(storage: StorageLike | null | undefined): SaveData | nu
     const loadedEquipment: OwnedEquipCard[] = 'equipment' in camp && Array.isArray(camp.equipment)
       ? camp.equipment
         .filter((e): e is OwnedEquipCard => typeof e === 'object' && e !== null && 'uid' in e && 'equipId' in e)
-        .map(e => ({ ...e, locked: e.locked === true }))
+        .map(e => {
+          const upgradeLevel = normalizeEquipUpgradeLevel(e.upgradeLevel)
+          return {
+            uid: e.uid,
+            equipId: e.equipId,
+            slot: e.slot,
+            locked: e.locked === true,
+            ...(upgradeLevel > 0 ? { upgradeLevel } : {})
+          }
+        })
       : []
     sanitizeHeroEquipmentFamilies({ heroes: loadedHeroes, equipment: loadedEquipment })
     return {
@@ -5739,7 +5882,10 @@ export function computeCombatForecast(state: GameState, col: number, row: number
     const assisters = findPincerAssisters(battle, active, approachCol, approachRow, primary)
     if (assisters.length > 0) {
       pincerAssister = assisters[0]
-      pincerDmg = computePincerAssistDamage(battle, pincerAssister, primary, active)
+      pincerDmg = computePincerAssistDamage(battle, pincerAssister, primary, active, {
+        attackerCol: approachCol,
+        attackerRow: approachRow
+      })
       bondPincerBonus = computePincerPairBondMultiplier(battle, active, pincerAssister) > 1
       const normalTotalAfterShield = Math.max(0, normalDmg + pincerDmg - primary.shield) + (elementalCombo?.bonusDamage ?? 0)
       const critTotalAfterShield = Math.max(0, critDmg + pincerDmg - primary.shield) + (elementalCombo?.bonusDamage ?? 0)
@@ -5796,7 +5942,10 @@ export function computeCombatForecast(state: GameState, col: number, row: number
       const m = previewDamageMath(battle, active, primary, strikeApproach.col, strikeApproach.row, active.atk, 0, true, false, inferBasicAttackElement(active))
       const strikeAssisters = findPincerAssisters(battle, active, strikeApproach.col, strikeApproach.row, primary)
       const strikePincerDmg = strikeAssisters.length > 0
-        ? computePincerAssistDamage(battle, strikeAssisters[0], primary, active)
+        ? computePincerAssistDamage(battle, strikeAssisters[0], primary, active, {
+            attackerCol: strikeApproach.col,
+            attackerRow: strikeApproach.row
+          })
         : 0
       const strikeHpAfter = Math.max(0, primary.hp - Math.max(0, m.normalDmg + strikePincerDmg - primary.shield))
       const strikeDist = manhattan(strikeApproach.col, strikeApproach.row, primary.col, primary.row)
@@ -5907,7 +6056,10 @@ export function computeCombatForecast(state: GameState, col: number, row: number
         ? findPincerAssisters(battle, active, skApproach.col, skApproach.row, primary)
         : []
       const skPincerDmg = skAssisters.length > 0
-        ? computePincerAssistDamage(battle, skAssisters[0], primary, active)
+        ? computePincerAssistDamage(battle, skAssisters[0], primary, active, {
+            attackerCol: skApproach.col,
+            attackerRow: skApproach.row
+          })
         : 0
       const skCombo = skElement ? previewElementalCombo(battle, skElement, primary, primary.col, primary.row) : null
       const skDispPreview = sk.displacement
@@ -7613,7 +7765,8 @@ function executeBasicAttack(state: GameState, attacker: BattleUnit, target: Batt
   if (attacker.team === 'enemy') {
     const atkElement = getEnemyAttackElement(attacker.enemyId)
     if (atkElement) {
-      triggerElementalCombo(state, attacker, atkElement, target.alive ? target : null, target.col, target.row, handleUnitDefeat)
+      const comboRes = triggerElementalCombo(state, attacker, atkElement, target.alive ? target : null, target.col, target.row, handleUnitDefeat)
+      triggerBossPhasesAfterCombo(state, comboRes, target)
     }
   }
   if (target.alive) {
@@ -7786,7 +7939,10 @@ function executeHeroSkill(
           hitAny = true
         } else if (skillElement) {
           const terrainCombo = triggerElementalCombo(state, caster, skillElement, null, c.col, c.row, handleUnitDefeat)
-          if (terrainCombo) hitAny = true
+          if (terrainCombo) {
+            hitAny = true
+            triggerBossPhasesAfterCombo(state, terrainCombo)
+          }
         }
         continue
       }
@@ -7824,7 +7980,8 @@ function executeHeroSkill(
         }
         const aliveAfterDirect = target.alive
         if (skillElement) {
-          triggerElementalCombo(state, caster, skillElement, target.alive ? target : null, c.col, c.row, handleUnitDefeat)
+          const comboRes = triggerElementalCombo(state, caster, skillElement, target.alive ? target : null, c.col, c.row, handleUnitDefeat)
+          triggerBossPhasesAfterCombo(state, comboRes, target)
           if (aliveAfterDirect && !target.alive) {
             triggerOnKoEffects(state, caster, target, { isSkillKill: true, rawHitDamage: dmgRes.rolledDamage })
           }
@@ -7855,7 +8012,8 @@ function executeHeroSkill(
       const ordered = orderDisplacementTargets(displaceTargets, caster.col, caster.row, skill.displacement.kind)
       for (const dt of ordered) {
         if (!dt.alive) continue
-        applyDisplacement(state, caster, dt, skill.displacement)
+        const dispRes = applyDisplacement(state, caster, dt, skill.displacement)
+        triggerBossPhasesAfterDisplacement(state, dispRes, dt)
         if (dt.alive) checkTileObjectiveInteractions(state, dt)
         if (skill.displacement.kind === 'swap') {
           if (caster.alive) checkTileObjectiveInteractions(state, caster)
@@ -7963,7 +8121,8 @@ function executeTacticCard(state: GameState, tacticUid: string, col: number, row
         if (spec.damage > 0 && isDestructibleCover(battle.cells[c.row][c.col])) {
           damageBarricade(state, tacticActor, c.col, c.row, spec.damage)
         } else if (tacticElement) {
-          triggerElementalCombo(state, tacticActor, tacticElement, null, c.col, c.row, handleUnitDefeat)
+          const terrainCombo = triggerElementalCombo(state, tacticActor, tacticElement, null, c.col, c.row, handleUnitDefeat)
+          triggerBossPhasesAfterCombo(state, terrainCombo)
         }
         continue
       }
@@ -7974,7 +8133,8 @@ function executeTacticCard(state: GameState, tacticUid: string, col: number, row
           applyDamage(state, null, target, spec.damage, 0.6, false, true, { skillName: spec.name }, undefined, tacticElement)
         }
         if (tacticElement) {
-          triggerElementalCombo(state, tacticActor, tacticElement, target.alive ? target : null, c.col, c.row, handleUnitDefeat)
+          const comboRes = triggerElementalCombo(state, tacticActor, tacticElement, target.alive ? target : null, c.col, c.row, handleUnitDefeat)
+          triggerBossPhasesAfterCombo(state, comboRes, target)
         }
         if (spec.status && !isBeneficialStatus(spec.status) && target.alive) {
           applyStatus(battle, target, spec.status, spec.statusStacks)
@@ -7998,7 +8158,8 @@ function executeTacticCard(state: GameState, tacticUid: string, col: number, row
       const ordered = orderDisplacementTargets(displaceTargets, originC, originR, spec.displacement.kind)
       for (const dt of ordered) {
         if (!dt.alive) continue
-        applyDisplacement(state, tacticActor, dt, spec.displacement)
+        const dispRes = applyDisplacement(state, tacticActor, dt, spec.displacement)
+        triggerBossPhasesAfterDisplacement(state, dispRes, dt)
         if (dt.alive) checkTileObjectiveInteractions(state, dt)
         if (spec.displacement.kind === 'swap') {
           if (tacticActor && tacticActor.alive) checkTileObjectiveInteractions(state, tacticActor)
@@ -8425,7 +8586,8 @@ function applyLavaGeyserHazard(state: GameState, unit: BattleUnit, cell: GridCel
     formatHazardLog({ kind: 'lava_geyser', targetName: unit.name, damage: geyserRes.hpDamage, absorbed: geyserRes.absorbed })
   )
   if (unit.alive) {
-    triggerElementalCombo(state, null, classifyHazardElement(cell.terrain), unit, cell.col, cell.row, handleUnitDefeat)
+    const comboRes = triggerElementalCombo(state, null, classifyHazardElement(cell.terrain), unit, cell.col, cell.row, handleUnitDefeat)
+    triggerBossPhasesAfterCombo(state, comboRes, unit)
   }
   if (unit.alive) {
     applyStatus(battle, unit, 'burn')
@@ -8490,6 +8652,47 @@ function triggerStepOnHazard(state: GameState, unit: BattleUnit, cell: GridCell)
   }
 }
 
+function triggerBossPhasesAfterCombo(
+  state: GameState,
+  comboRes: ElementalComboResult | null | undefined,
+  primaryTarget?: BattleUnit | null
+): void {
+  const battle = state.battle
+  if (!battle || !comboRes) return
+  const checked = new Set<string>()
+  if (primaryTarget && primaryTarget.alive) {
+    checked.add(primaryTarget.uid)
+    triggerFrontierBossPhaseIfReady(state, primaryTarget)
+  }
+  if (comboRes.id === 'wildfire') {
+    for (const coord of comboRes.affectedTiles) {
+      const standing = unitAt(battle, coord.col, coord.row)
+      if (standing && standing.alive && !checked.has(standing.uid)) {
+        checked.add(standing.uid)
+        triggerFrontierBossPhaseIfReady(state, standing)
+      }
+    }
+  }
+}
+
+function triggerBossPhasesAfterDisplacement(
+  state: GameState,
+  dispRes: DisplacementResult,
+  target: BattleUnit
+): void {
+  const battle = state.battle
+  if (!battle) return
+  if (target.alive) {
+    triggerFrontierBossPhaseIfReady(state, target)
+  }
+  if (dispRes.preview.collidedUnitUid) {
+    const collided = getUnitByUid(battle, dispRes.preview.collidedUnitUid)
+    if (collided && collided.alive) {
+      triggerFrontierBossPhaseIfReady(state, collided)
+    }
+  }
+}
+
 /** Trigger multi-phase boss awakening at <= 50% HP (Unbroken Crown bespoke + all other bosses Phase II). */
 function triggerFrontierBossPhaseIfReady(state: GameState, boss: BattleUnit): void {
   const battle = state.battle
@@ -8533,7 +8736,7 @@ function triggerFrontierBossPhaseIfReady(state: GameState, boss: BattleUnit): vo
       state.vfx.push({ kind: 'burst', style: 'gold', at: [guard.x, guard.y + 0.55, guard.z], radius: 0.85, uid: boss.uid })
       addFloat(battle, guard.x, guard.y + 0.4, guard.z, 'SOLAR VANGUARD!', '#ffd166')
     }
-    triggerBattleBanter(battle, 'boss_phase', { seed: state.campaign.seed })
+    triggerBattleBanter(battle, 'boss_phase', { force: true, seed: state.campaign.seed })
     battle.turnOrder = computeTurnOrderPreview(battle, 8)
     return
   }
@@ -8566,7 +8769,7 @@ function triggerFrontierBossPhaseIfReady(state: GameState, boss: BattleUnit): vo
     `${shift.bannerText} (+${shift.shieldGain} Shield, +${shift.atkBonus} ATK, Empowered & Hasted)`,
     { accentHex: '#ff70a6' }
   )
-  triggerBattleBanter(battle, 'boss_phase', { seed: state.campaign.seed })
+  triggerBattleBanter(battle, 'boss_phase', { force: true, seed: state.campaign.seed })
   battle.turnOrder = computeTurnOrderPreview(battle, 8)
 }
 
@@ -8652,8 +8855,18 @@ function detonateDueBossTelegraphs(state: GameState, boss: BattleUnit): boolean 
     for (const cell of zone.cells) {
       const victim = unitAt(battle, cell.col, cell.row)
       if (!victim) {
-        if (comboElement) {
-          triggerElementalCombo(state, boss, comboElement, null, cell.col, cell.row, handleUnitDefeat)
+        if (isDestructibleCover(battle.cells[cell.row]?.[cell.col])) {
+          damageBarricade(
+            state,
+            boss,
+            cell.col,
+            cell.row,
+            boss.atk * zone.damageMul + zone.flatDamage,
+            { powerMul: zone.damageMul }
+          )
+        } else if (comboElement) {
+          const terrainCombo = triggerElementalCombo(state, boss, comboElement, null, cell.col, cell.row, handleUnitDefeat)
+          triggerBossPhasesAfterCombo(state, terrainCombo)
         }
         continue
       }
@@ -8671,10 +8884,12 @@ function detonateDueBossTelegraphs(state: GameState, boss: BattleUnit): boolean 
         false,
         true,
         { skillName: zone.label },
-        false
+        false,
+        comboElement
       )
       if (comboElement) {
-        triggerElementalCombo(state, boss, comboElement, victim.alive ? victim : null, cell.col, cell.row, handleUnitDefeat)
+        const comboRes = triggerElementalCombo(state, boss, comboElement, victim.alive ? victim : null, cell.col, cell.row, handleUnitDefeat)
+        triggerBossPhasesAfterCombo(state, comboRes, victim)
       }
       if (victim.alive && zone.status) {
         applyStatus(battle, victim, zone.status, zone.status === 'poison' ? 2 : 1)
@@ -9249,7 +9464,8 @@ function performEnemyAttack(state: GameState, enemy: BattleUnit, target: BattleU
           if (isDestructibleCover(battle.cells[c.row]?.[c.col])) {
             damageBarricade(state, enemy, c.col, c.row, enemy.atk * wyrmPlan.powerMul, { powerMul: wyrmPlan.powerMul })
           } else if (wyrmPlan.element) {
-            triggerElementalCombo(state, enemy, wyrmPlan.element, null, c.col, c.row, handleUnitDefeat)
+            const terrainCombo = triggerElementalCombo(state, enemy, wyrmPlan.element, null, c.col, c.row, handleUnitDefeat)
+            triggerBossPhasesAfterCombo(state, terrainCombo)
           }
           continue
         }
@@ -9269,7 +9485,8 @@ function performEnemyAttack(state: GameState, enemy: BattleUnit, target: BattleU
           wyrmPlan.element ?? null
         )
         if (wyrmPlan.element) {
-          triggerElementalCombo(state, enemy, wyrmPlan.element, victim.alive ? victim : null, c.col, c.row, handleUnitDefeat)
+          const comboRes = triggerElementalCombo(state, enemy, wyrmPlan.element, victim.alive ? victim : null, c.col, c.row, handleUnitDefeat)
+          triggerBossPhasesAfterCombo(state, comboRes, victim)
         }
         if (victim.alive && wyrmPlan.status) {
           applyStatus(battle, victim, wyrmPlan.status)
@@ -9282,7 +9499,8 @@ function performEnemyAttack(state: GameState, enemy: BattleUnit, target: BattleU
         const ordered = orderDisplacementTargets(kbTargets, enemy.col, enemy.row, 'knockback')
         for (const victim of ordered) {
           if (!victim.alive) continue
-          applyDisplacement(state, enemy, victim, { kind: 'knockback', distance: wyrmPlan.knockbackDistance })
+          const dispRes = applyDisplacement(state, enemy, victim, { kind: 'knockback', distance: wyrmPlan.knockbackDistance })
+          triggerBossPhasesAfterDisplacement(state, dispRes, victim)
           if (victim.alive) checkTileObjectiveInteractions(state, victim)
         }
       }
@@ -9325,7 +9543,8 @@ function performEnemyAttack(state: GameState, enemy: BattleUnit, target: BattleU
         if (isDestructibleCover(battle.cells[c.row]?.[c.col])) {
           damageBarricade(state, enemy, c.col, c.row, enemy.atk * lichNova.powerMul, { powerMul: lichNova.powerMul })
         } else {
-          triggerElementalCombo(state, enemy, lichNova.element, null, c.col, c.row, handleUnitDefeat)
+          const terrainCombo = triggerElementalCombo(state, enemy, lichNova.element, null, c.col, c.row, handleUnitDefeat)
+          triggerBossPhasesAfterCombo(state, terrainCombo)
         }
         continue
       }
@@ -9342,7 +9561,8 @@ function performEnemyAttack(state: GameState, enemy: BattleUnit, target: BattleU
           false,
           lichNova.element ?? null
         )
-        triggerElementalCombo(state, enemy, lichNova.element, victim.alive ? victim : null, c.col, c.row, handleUnitDefeat)
+        const comboRes = triggerElementalCombo(state, enemy, lichNova.element, victim.alive ? victim : null, c.col, c.row, handleUnitDefeat)
+        triggerBossPhasesAfterCombo(state, comboRes, victim)
         if (victim.alive) {
           applyStatus(battle, victim, lichNova.status, lichNova.statusStacks)
         }
@@ -9460,7 +9680,8 @@ function performEnemyAttack(state: GameState, enemy: BattleUnit, target: BattleU
         if (isDestructibleCover(battle.cells[c.row]?.[c.col])) {
           damageBarricade(state, enemy, c.col, c.row, enemy.atk * special.powerMul, { powerMul: special.powerMul })
         } else if (special.element) {
-          triggerElementalCombo(state, enemy, special.element, null, c.col, c.row, handleUnitDefeat)
+          const terrainCombo = triggerElementalCombo(state, enemy, special.element, null, c.col, c.row, handleUnitDefeat)
+          triggerBossPhasesAfterCombo(state, terrainCombo)
         }
         continue
       }
@@ -9468,7 +9689,8 @@ function performEnemyAttack(state: GameState, enemy: BattleUnit, target: BattleU
         const archMul = computeEnemyArchetypeDamageMul(enemy, victim)
         applyDamage(state, enemy, victim, enemy.atk * special.powerMul * archMul, special.ignoreArmor, false, true, { skillName: special.label }, false, special.element ?? null)
         if (special.element) {
-          triggerElementalCombo(state, enemy, special.element, victim.alive ? victim : null, c.col, c.row, handleUnitDefeat)
+          const comboRes = triggerElementalCombo(state, enemy, special.element, victim.alive ? victim : null, c.col, c.row, handleUnitDefeat)
+          triggerBossPhasesAfterCombo(state, comboRes, victim)
         }
         if (victim.alive && special.status) {
           applyStatus(battle, victim, special.status, special.statusStacks)
@@ -9501,12 +9723,13 @@ function performEnemyAttack(state: GameState, enemy: BattleUnit, target: BattleU
       const ordered = orderDisplacementTargets(targetsHit, enemy.col, enemy.row, 'knockback')
       for (const victim of ordered) {
         if (!victim.alive) continue
-        applyDisplacement(
+        const dispRes = applyDisplacement(
           state,
           enemy,
           victim,
           { kind: 'knockback', distance: special.knockbackDistance }
         )
+        triggerBossPhasesAfterDisplacement(state, dispRes, victim)
         if (victim.alive) checkTileObjectiveInteractions(state, victim)
       }
     }

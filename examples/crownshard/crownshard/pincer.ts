@@ -80,7 +80,8 @@ export function computePincerAssistDamage(
   battle: Pick<BattleState, 'cells' | 'cols' | 'rows'> & Partial<Pick<BattleState, 'units' | 'mutators' | 'endlessBlessings' | 'bondPairsActive'>>,
   assister: Pick<BattleUnit, 'col' | 'row' | 'atk' | 'empowerTurns'> & Partial<Pick<BattleUnit, 'uid' | 'team' | 'alive' | 'heroId' | 'downed'>>,
   target: Pick<BattleUnit, 'col' | 'row' | 'def'> & Partial<Pick<BattleUnit, 'uid' | 'team' | 'alive' | 'heroId' | 'downed' | 'slowTurns' | 'stunTurns'>>,
-  attacker?: (Pick<BattleUnit, 'team'> & Partial<Pick<BattleUnit, 'heroId'>>) | null
+  attacker?: (Pick<BattleUnit, 'team'> & Partial<Pick<BattleUnit, 'uid' | 'col' | 'row' | 'heroId'>>) | null,
+  opts?: { readonly attackerCol?: number; readonly attackerRow?: number }
 ): number {
   let dmg = assister.atk
   const aLvl = cellHeightAt(battle, assister.col, assister.row)
@@ -93,9 +94,20 @@ export function computePincerAssistDamage(
     { slowTurns: target.slowTurns ?? 0, stunTurns: target.stunTurns ?? 0 }
   )
   dmg *= mutatorDamageMultiplier(battle)
-  if (battle.units && assister.uid && assister.team) {
+  const overrideCol = opts?.attackerCol
+  const overrideRow = opts?.attackerRow
+  const unitsForBond = battle.units
+    ? (attacker?.uid && overrideCol !== undefined && overrideRow !== undefined
+        ? battle.units.map(u =>
+            u.uid === attacker.uid
+              ? { ...u, col: overrideCol, row: overrideRow }
+              : u
+          )
+        : battle.units)
+    : undefined
+  if (unitsForBond && assister.uid && assister.team) {
     const assisterBond = computeUnitBondAssist(
-      { units: battle.units, bondPairsActive: battle.bondPairsActive },
+      { units: unitsForBond, bondPairsActive: battle.bondPairsActive },
       {
         uid: assister.uid,
         team: assister.team,
@@ -112,9 +124,9 @@ export function computePincerAssistDamage(
   const cell = battle.cells[target.row]?.[target.col]
   const terrainDef = cell ? terrainDefBonus(cell.terrain) : 0
   let bondedTargetDef = target.def
-  if (battle.units && target.uid && target.team) {
+  if (unitsForBond && target.uid && target.team) {
     const targetBond = computeUnitBondAssist(
-      { units: battle.units, bondPairsActive: battle.bondPairsActive },
+      { units: unitsForBond, bondPairsActive: battle.bondPairsActive },
       {
         uid: target.uid,
         team: target.team,

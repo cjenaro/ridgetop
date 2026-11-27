@@ -2,6 +2,7 @@ import { ENEMY_SPECS, HERO_SPECS } from './data.ts'
 import { computeEndlessAttackerDamageMultiplier } from './endless-roguelite.ts'
 import { getUnitPerimeterCells, isCellAdjacentToUnit } from './expansion-act2.ts'
 import { computeGearSetCombatBonuses } from './gear-sets.ts'
+import { computeUnitBondAssist } from './hero-bonds.ts'
 import { mutatorDamageMultiplier } from './mutators.ts'
 import {
   computeAttackerDamageMultiplier, computeBonusIgnoreArmor, computeShieldWallDefBonus
@@ -157,9 +158,9 @@ export function computeZocPerimeterTiles(
  * `rawDamage = attacker.atk * OPPORTUNITY_ATTACK_DAMAGE_MUL`, `ignoreArmor = 0`, `canCrit = false`).
  */
 export function computeOpportunityAttackDamage(
-  battle: Pick<BattleState, 'cells' | 'cols' | 'rows'> & Partial<Pick<BattleState, 'units' | 'mutators' | 'endlessBlessings'>>,
-  attacker: Pick<BattleUnit, 'col' | 'row' | 'atk' | 'empowerTurns'> & Partial<Pick<BattleUnit, 'team' | 'heroId' | 'weaponId' | 'armorId' | 'relicId'>>,
-  defender: Pick<BattleUnit, 'def' | 'shield'> & Partial<Pick<BattleUnit, 'uid' | 'team' | 'alive' | 'slowTurns' | 'burnTurns' | 'stunTurns' | 'poisonStacks' | 'isBoss'>>,
+  battle: Pick<BattleState, 'cells' | 'cols' | 'rows'> & Partial<Pick<BattleState, 'units' | 'mutators' | 'endlessBlessings' | 'bondPairsActive'>>,
+  attacker: Pick<BattleUnit, 'col' | 'row' | 'atk' | 'empowerTurns'> & Partial<Pick<BattleUnit, 'uid' | 'team' | 'alive' | 'heroId' | 'downed' | 'weaponId' | 'armorId' | 'relicId'>>,
+  defender: Pick<BattleUnit, 'def' | 'shield'> & Partial<Pick<BattleUnit, 'uid' | 'team' | 'alive' | 'heroId' | 'downed' | 'slowTurns' | 'burnTurns' | 'stunTurns' | 'poisonStacks' | 'isBoss'>>,
   defenderCol: number,
   defenderRow: number,
   defenderFacing: FacingDir,
@@ -201,6 +202,21 @@ export function computeOpportunityAttackDamage(
     { slowTurns: defender.slowTurns ?? 0, stunTurns: defender.stunTurns ?? 0 }
   )
   dmg *= mutatorDamageMultiplier(battle)
+  if (battle.units && attacker.uid && attacker.team) {
+    const attackerBond = computeUnitBondAssist(
+      { units: battle.units, bondPairsActive: battle.bondPairsActive },
+      {
+        uid: attacker.uid,
+        team: attacker.team,
+        col: attacker.col,
+        row: attacker.row,
+        alive: attacker.alive ?? true,
+        heroId: attacker.heroId,
+        downed: attacker.downed
+      }
+    )
+    if (attackerBond.active) dmg *= attackerBond.atkMul
+  }
 
   const cell = battle.cells[defenderRow]?.[defenderCol]
   const terrainDef = cell ? terrainDefBonus(cell.terrain) : 0
@@ -210,8 +226,25 @@ export function computeOpportunityAttackDamage(
         { uid: defender.uid, team: defender.team, col: defenderCol, row: defenderRow, alive: defender.alive ?? true }
       )
     : 0
+  let bondedDefenderDef = defender.def
+  if (battle.units && defender.uid && defender.team) {
+    const defenderBond = computeUnitBondAssist(
+      { units: battle.units, bondPairsActive: battle.bondPairsActive },
+      {
+        uid: defender.uid,
+        team: defender.team,
+        col: defenderCol,
+        row: defenderRow,
+        alive: defender.alive ?? true,
+        heroId: defender.heroId,
+        downed: defender.downed
+      },
+      { col: defenderCol, row: defenderRow }
+    )
+    if (defenderBond.active) bondedDefenderDef *= defenderBond.defMul
+  }
   const bonusIgnoreArmor = clamp(computeBonusIgnoreArmor(attacker, defender.def), 0, 1)
-  const effDef = Math.max(0, (defender.def + shieldWallDef) * (1 - bonusIgnoreArmor) + terrainDef)
+  const effDef = Math.max(0, (bondedDefenderDef + shieldWallDef) * (1 - bonusIgnoreArmor) + terrainDef)
   const damage = Math.max(4, Math.round(dmg - effDef * 0.72))
   const shieldPool = Math.max(0, remainingShield)
   const shieldAbsorbed = Math.min(shieldPool, damage)
@@ -246,7 +279,7 @@ export function findStepOpportunityAttackers(
  * and returns every step index, sentinel attacker, and projected OA damage along the path.
  */
 export function previewPathOpportunityAttacks(
-  battle: Pick<BattleState, 'cells' | 'cols' | 'rows' | 'units'> & Partial<Pick<BattleState, 'mutators'>>,
+  battle: Pick<BattleState, 'cells' | 'cols' | 'rows' | 'units'> & Partial<Pick<BattleState, 'mutators' | 'endlessBlessings' | 'bondPairsActive'>>,
   unit: BattleUnit,
   path: readonly GridCoord[]
 ): PathOpportunityPreview {

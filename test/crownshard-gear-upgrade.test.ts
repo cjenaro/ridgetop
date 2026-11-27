@@ -171,7 +171,7 @@ test('base +0 stats match original EquipmentSpec identically and normalizeEquipU
   }
 })
 
-test('duplicate fusion upgrades +0 -> +5, respects locks/equipped fodder, prefers lowest level dupe, and boosts hero stats', () => {
+test('duplicate fusion upgrades +0 -> +5, respects locks/equipped/tempered fodder, and boosts hero stats', () => {
   const state = createInitialState(5101)
   const { campaign } = state
   campaign.gold = 2000
@@ -187,7 +187,8 @@ test('duplicate fusion upgrades +0 -> +5, respects locks/equipped fodder, prefer
   // - 1 locked duplicate (must NEVER be consumed)
   // - 1 equipped duplicate on a second Vanguard hero (must NEVER be consumed)
   // - 1 different weapon (must NEVER be consumed)
-  // - 5 eligible unlocked unequipped duplicates (including one already +2 to verify lowest-level preference!)
+  // - 1 already-tempered +2 duplicate (must NEVER be consumed as fodder!)
+  // - 5 eligible unlocked unequipped +0 duplicates
   const lockedDupe = addEquip(campaign, 'iron_sword', { locked: true })
   const paladin = {
     uid: `hero_test_${campaign.nextUid++}`,
@@ -209,10 +210,11 @@ test('duplicate fusion upgrades +0 -> +5, respects locks/equipped fodder, prefer
     addEquip(campaign, 'iron_sword'),
     addEquip(campaign, 'iron_sword'),
     addEquip(campaign, 'iron_sword'),
+    addEquip(campaign, 'iron_sword'),
     addEquip(campaign, 'iron_sword')
   ]
 
-  // Lowest-level (+0) duplicate must be chosen before the +2 duplicate
+  // Only +0 duplicates are eligible; the +2 tempered copy must be protected
   const firstCandidate = findEligibleFuseDuplicate(campaign, targetSword.uid)
   assert.ok(firstCandidate)
   assert.equal(normalizeEquipUpgradeLevel(firstCandidate.upgradeLevel), 0)
@@ -246,13 +248,9 @@ test('duplicate fusion upgrades +0 -> +5, respects locks/equipped fodder, prefer
     assert.equal(state.sounds[state.sounds.length - 1].kind, 'merge')
     assert.equal(getEquipmentByUid(campaign, res.consumedDuplicateUid), undefined)
 
-    // First 4 fusions must consume the +0 dupes, saving the +2 dupe until the 5th fusion
-    if (expectedLevel <= 4) {
-      assert.ok(baseDupes.some(d => d.uid === res.consumedDuplicateUid))
-      assert.ok(getEquipmentByUid(campaign, boostedDupe.uid), '+2 dupe must be spared while +0 dupes exist')
-    } else {
-      assert.equal(res.consumedDuplicateUid, boostedDupe.uid)
-    }
+    // All 5 fusions must consume only +0 dupes, never the +2 tempered copy
+    assert.ok(baseDupes.some(d => d.uid === res.consumedDuplicateUid))
+    assert.ok(getEquipmentByUid(campaign, boostedDupe.uid), '+2 tempered dupe must never be consumed as fodder')
 
     const nextHeroStats = computeHeroStats(campaign, knight)
     assert.ok(nextHeroStats.atk > prevHeroStats.atk, `Hero ATK must increase at +${expectedLevel}`)
@@ -261,11 +259,18 @@ test('duplicate fusion upgrades +0 -> +5, respects locks/equipped fodder, prefer
     prevHeroStats = nextHeroStats
   }
 
-  // Protected items must still be completely untouched
+  // Protected items (including the +2 tempered duplicate!) must still be completely untouched
+  assert.ok(getEquipmentByUid(campaign, boostedDupe.uid), 'Tempered +2 duplicate must never be consumed')
   assert.ok(getEquipmentByUid(campaign, lockedDupe.uid), 'Locked duplicate must never be consumed')
   assert.ok(getEquipmentByUid(campaign, equippedDupe.uid), 'Equipped duplicate must never be consumed')
   assert.equal(paladin.weaponUid, equippedDupe.uid)
   assert.ok(getEquipmentByUid(campaign, otherWeapon.uid), 'Unrelated weapon must never be consumed')
+
+  // Even for a fresh +0 target, the remaining +2 copy must NOT be eligible as fuse fodder
+  const freshBase = addEquip(campaign, 'iron_sword')
+  assert.equal(findEligibleFuseDuplicate(campaign, freshBase.uid), null)
+  assert.equal(upgradeEquipWithDuplicate(state, freshBase.uid), null)
+  assert.ok(getEquipmentByUid(campaign, boostedDupe.uid))
 
   // Attempting to fuse past +5 fails cleanly even if another dupe is added
   addEquip(campaign, 'iron_sword')

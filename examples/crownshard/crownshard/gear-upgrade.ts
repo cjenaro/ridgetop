@@ -236,7 +236,7 @@ function collectEquippedUids(campaign: CampaignState): Set<string> {
  *  - Not the target item itself
  *  - Unlocked (`!item.locked`)
  *  - Unequipped (not equipped on any hero)
- * Sorted by ascending `upgradeLevel` so the lowest-level duplicate is consumed first.
+ *  - Untempered (`+0` only — `+1..+5` upgraded copies are protected from accidental fodder loss)
  */
 export function findEligibleFuseDuplicates(
   campaign: CampaignState,
@@ -251,6 +251,7 @@ export function findEligibleFuseDuplicates(
     if (item.equipId !== target.equipId) continue
     if (item.locked) continue
     if (equippedUids.has(item.uid)) continue
+    if (normalizeEquipUpgradeLevel(item.upgradeLevel) > 0) continue
     candidates.push(item)
   }
   candidates.sort(
@@ -259,7 +260,7 @@ export function findEligibleFuseDuplicates(
   return candidates
 }
 
-/** Find the single best duplicate fodder copy (lowest `upgradeLevel`, unequipped & unlocked). */
+/** Find the single best duplicate fodder copy (`+0` untempered, unequipped & unlocked). */
 export function findEligibleFuseDuplicate(
   campaign: CampaignState,
   targetEquipUid: string
