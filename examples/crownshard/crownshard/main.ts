@@ -14,7 +14,13 @@ import {
   MERGE_COPIES_REQUIRED, PACK_BY_ID, PACK_LIST, PLAYABLE_CHAPTERS, RARITY_META, RARITY_ORDER,
   TACTIC_BY_ID, WORLD_REGIONS
 } from './data.ts'
-import { cameraAlignedFacing, cameraCardinalHeading, createCrownshardScene, facingPickerAnchor } from './scene.ts'
+import {
+  createGamepadNavTracker, createGridCursorState, cycleGridCursorTarget,
+  pollGamepadActions, resolveGridCursorVisualMode, screenDirToFacing,
+  stepGridCursorScreenDir, syncGridCursorToBattle
+} from './grid-cursor.ts'
+import type { GamepadSnapshot, GridCursorInputMode } from './grid-cursor.ts'
+import { cameraCardinalHeading, createCrownshardScene, facingPickerAnchor } from './scene.ts'
 import {
   CROWNLESS_DEEP_MAX_FLOOR, ENDLESS_BLESSING_BY_ID, MAX_TACTIC_DECK, MIN_TACTIC_DECK, OAKHAVEN_STAGE_ID,
   STARFALL_ATOLL_FIRST_CLEAR_DUST, STARFALL_ATOLL_FIRST_CLEAR_SHARDS,
@@ -158,10 +164,10 @@ const ACT_ID_ALIASES: Record<string, string> = {
 }
 
 const TITLE_HINTS: readonly (readonly [string, string])[] = [
-  ['Click', 'Move / Strike'],
-  ['1-4', 'Skills'],
+  ['Arrows / Click', 'Cursor / Move'],
+  ['Enter / 1-4', 'Act / Skills'],
   ['Q / E', 'Snap 90°'],
-  ['Space', 'Wait / Face']
+  ['Space / F', 'Wait / Face']
 ]
 
 function isEditableEventTarget(target: EventTarget | null): boolean {
@@ -288,6 +294,8 @@ async function start() {
   let hoveredArmoryEquipUid: string | null = null
   let inspectedArmoryEquipUid: string | null = null
   let lastPointerType = 'mouse'
+  const gridCursor = createGridCursorState()
+  const gamepadTracker = createGamepadNavTracker()
   const armoryEquipIdByWidget = new Map<string, string>()
   let mobileHandOpen = false
   let mobileCampCollapsed = false
@@ -536,6 +544,9 @@ async function start() {
     scene.setCameraYaw(0, true)
     scene.setDangerZoneVisible(dangerZoneOn)
     scene.setInspectedEnemyUid(null)
+    gridCursor.col = -1
+    gridCursor.row = -1
+    syncBattleGridCursor(true)
     setScreen('battle')
     renderer.canvas.focus()
     return true
@@ -645,6 +656,9 @@ async function start() {
     if (next !== 'battle') {
       combatLogOpen = false
       combatLogScroll = 0
+      scene.setGridCursor(null)
+    } else if (state.battle) {
+      syncBattleGridCursor(false)
     }
     clearBattleHoverFeedback()
     clearArmoryHover(true)
@@ -757,6 +771,9 @@ async function start() {
     scene.setCameraYaw(0, true)
     scene.setDangerZoneVisible(dangerZoneOn)
     scene.setInspectedEnemyUid(null)
+    gridCursor.col = -1
+    gridCursor.row = -1
+    syncBattleGridCursor(true)
     setScreen('battle')
     renderer.canvas.focus()
   }
@@ -789,6 +806,9 @@ async function start() {
     scene.setCameraYaw(0, true)
     scene.setDangerZoneVisible(dangerZoneOn)
     scene.setInspectedEnemyUid(null)
+    gridCursor.col = -1
+    gridCursor.row = -1
+    syncBattleGridCursor(true)
     setScreen('battle')
     renderer.canvas.focus()
   }
@@ -800,6 +820,7 @@ async function start() {
     lastBattlePhase = state.battle.phase
     lastActiveUid = state.battle.activeUnitUid
     lastBattleTurn = state.battle.turn
+    syncBattleGridCursor(true)
     if (shouldAutoSaveOnTurnBoundary(turnSaveTracker, state.battle)) {
       saveNow()
     }
@@ -1089,10 +1110,319 @@ async function start() {
         if (isPackCeremonyComplete()) { packAnim = null; uiDirty = true }
         else skipPackCeremony()
       } else if (screen === 'paused') setScreen('battle')
+      else if (screen === 'codex') closeCodex()
       else if (screen === 'story') openWorldMap()
       else if (screen === 'camp') openWorldMap()
     }
   })
+
+  function syncBattleGridCursor(snapToAnchor = false) {
+    const battle = state.battle
+    if (!battle) {
+      scene.setGridCursor(null)
+      return
+    }
+    syncGridCursorToBattle(gridCursor, battle, snapToAnchor)
+    if (gridCursor.active && !battle.facingPicker && (battle.phase === 'player' || battle.phase === 'deploy')) {
+      scene.setHoveredCell({ col: gridCursor.col, row: gridCursor.row })
+      scene.setGridCursor({
+        col: gridCursor.col,
+        row: gridCursor.row,
+        active: true,
+        mode: resolveGridCursorVisualMode(battle, gridCursor.col, gridCursor.row)
+      })
+    } else {
+      scene.setGridCursor(null)
+    }
+  }
+
+  function deactivateGridCursor() {
+    if (!gridCursor.active && gridCursor.inputMode === 'pointer') return
+    gridCursor.active = false
+    gridCursor.inputMode = 'pointer'
+    scene.setGridCursor(null)
+  }
+
+  function confirmBoardTile(col: number, row: number): boolean {
+    if (screen !== 'battle' || !state.battle) return false
+    const autoWasOn = state.battle.autoBattle
+    lockedForecastCell = null
+    mobileHandOpen = false
+    const tileChanged = selectTile(state, col, row)
+    if (tileChanged) refreshBattleDiscoveryTips(false)
+    if (tileChanged || autoWasOn !== state.battle.autoBattle) {
+      uiDirty = true
+      hudRev++
+    }
+    syncBattleGridCursor(false)
+    return tileChanged
+  }
+
+  function moveBattleGridCursor(dx: -1 | 0 | 1, dy: -1 | 0 | 1, mode: GridCursorInputMode) {
+    const battle = state.battle
+    if (screen !== 'battle' || !battle) return
+    if (battle.facingPicker && battle.phase === 'player') {
+      const dir = screenDirToFacing(dx, dy, scene.getCameraYawActual())
+      if (previewWaitFacing(state, dir)) {
+        uiDirty = true
+        hudRev++
+      }
+      return
+    }
+    gridCursor.inputMode = mode
+    if (!gridCursor.active) {
+      syncGridCursorToBattle(gridCursor, battle, gridCursor.col < 0 || gridCursor.row < 0)
+      gridCursor.active = true
+    }
+    stepGridCursorScreenDir(gridCursor, dx, dy, battle.cols, battle.rows, scene.getCameraYawActual())
+    scene.setHoveredCell({ col: gridCursor.col, row: gridCursor.row })
+    scene.setGridCursor({
+      col: gridCursor.col,
+      row: gridCursor.row,
+      active: true,
+      mode: resolveGridCursorVisualMode(battle, gridCursor.col, gridCursor.row)
+    })
+    refreshBattleDiscoveryTips(true)
+    uiDirty = true
+    hudRev++
+  }
+
+  function cycleBattleGridCursor(direction: 1 | -1, mode: GridCursorInputMode): boolean {
+    const battle = state.battle
+    if (screen !== 'battle' || !battle || battle.facingPicker) return false
+    gridCursor.inputMode = mode
+    const cycled = cycleGridCursorTarget(gridCursor, battle, direction)
+    if (cycled) {
+      scene.setHoveredCell({ col: gridCursor.col, row: gridCursor.row })
+      scene.setGridCursor({
+        col: gridCursor.col,
+        row: gridCursor.row,
+        active: true,
+        mode: resolveGridCursorVisualMode(battle, gridCursor.col, gridCursor.row)
+      })
+      refreshBattleDiscoveryTips(true)
+      uiDirty = true
+      hudRev++
+      return true
+    }
+    if (battle.activeUnitUid) {
+      selectHeroByUid(state, battle.activeUnitUid)
+      uiDirty = true
+      hudRev++
+    }
+    return false
+  }
+
+  function snapCursorBackToAnchor(): boolean {
+    const battle = state.battle
+    if (!battle || !gridCursor.active) return false
+    const prevCol = gridCursor.col
+    const prevRow = gridCursor.row
+    syncGridCursorToBattle(gridCursor, battle, true)
+    if (gridCursor.col !== prevCol || gridCursor.row !== prevRow) {
+      scene.setHoveredCell({ col: gridCursor.col, row: gridCursor.row })
+      scene.setGridCursor({
+        col: gridCursor.col,
+        row: gridCursor.row,
+        active: true,
+        mode: resolveGridCursorVisualMode(battle, gridCursor.col, gridCursor.row)
+      })
+      refreshBattleDiscoveryTips(true)
+      uiDirty = true
+      hudRev++
+      return true
+    }
+    return false
+  }
+
+  function handleBattleCancelAction(allowPause = true): boolean {
+    const battle = state.battle
+    if (screen !== 'battle' || !battle) return false
+    if (cancelAutoBattle(state)) {
+      state.sounds.push({ kind: 'card', pitch: 0.88 })
+      uiDirty = true
+      hudRev++
+      return true
+    }
+    if (battle.facingPicker) {
+      if (cancelWaitFacingPicker(state)) {
+        syncBattleGridCursor(false)
+        uiDirty = true
+        hudRev++
+      }
+      return true
+    }
+    if (lockedForecastCell || mobileHandOpen || combatLogOpen) {
+      lockedForecastCell = null
+      mobileHandOpen = false
+      combatLogOpen = false
+      uiDirty = true
+      hudRev++
+      return true
+    }
+    if (battle.armedSkillIndex !== null || battle.armedTacticUid) {
+      armSkill(state, null)
+      armTacticCard(state, null)
+      syncBattleGridCursor(false)
+      uiDirty = true
+      hudRev++
+      return true
+    }
+    if (battle.phase === 'deploy' && battle.selectedUnitUid) {
+      battle.selectedUnitUid = null
+      state.sounds.push({ kind: 'card', pitch: 0.92 })
+      uiDirty = true
+      hudRev++
+      return true
+    }
+    if (snapCursorBackToAnchor()) {
+      return true
+    }
+    if (allowPause) {
+      setScreen('paused')
+      return true
+    }
+    return false
+  }
+
+  function cycleActiveHeroSkill(): boolean {
+    const battle = state.battle
+    if (!battle || battle.phase !== 'player') return false
+    const active = getUnitByUid(battle, battle.activeUnitUid)
+    if (!active || active.team !== 'ally' || active.acted || active.stunTurns > 0) return false
+    const readySkills: number[] = []
+    for (let i = 0; i < 3; i++) {
+      const sk = getHeroSkill(active, i)
+      if (sk && active.cooldowns[i] <= 0 && sk.target !== 'self') {
+        readySkills.push(i)
+      }
+    }
+    if (readySkills.length === 0) {
+      if (battle.armedSkillIndex !== null) {
+        armSkill(state, null)
+        syncBattleGridCursor(false)
+        uiDirty = true
+        hudRev++
+        return true
+      }
+      return false
+    }
+    const curIdx = battle.armedSkillIndex !== null ? readySkills.indexOf(battle.armedSkillIndex) : -1
+    const nextSkill = curIdx === -1
+      ? readySkills[0]
+      : curIdx + 1 < readySkills.length
+        ? readySkills[curIdx + 1]
+        : null
+    const ok = armSkill(state, nextSkill)
+    if (ok) {
+      syncBattleGridCursor(false)
+      uiDirty = true
+      hudRev++
+    }
+    return ok
+  }
+
+  function readPrimaryGamepadSnapshot(): GamepadSnapshot | null {
+    if (typeof navigator === 'undefined' || typeof navigator.getGamepads !== 'function') return null
+    let pads: (Gamepad | null)[] | null = null
+    try {
+      pads = navigator.getGamepads()
+    } catch {
+      return null
+    }
+    if (!pads) return null
+    for (let i = 0; i < pads.length; i++) {
+      const p = pads[i]
+      if (!p || !p.connected) continue
+      const axes: number[] = []
+      for (let a = 0; a < p.axes.length; a++) axes.push(p.axes[a] ?? 0)
+      const buttons: boolean[] = []
+      for (let b = 0; b < p.buttons.length; b++) {
+        const btn = p.buttons[b]
+        buttons.push(Boolean(btn && (btn.pressed || btn.value > 0.5)))
+      }
+      return { axes, buttons }
+    }
+    return null
+  }
+
+  function dispatchGamepadActions(dt: number) {
+    if (isTestingPaused()) return
+    const actions = pollGamepadActions(gamepadTracker, readPrimaryGamepadSnapshot(), dt)
+    if (actions.length === 0) return
+
+    for (let i = 0; i < actions.length; i++) {
+      const act = actions[i]
+      if (screen === 'battle' && state.battle) {
+        if (act.kind === 'move') {
+          moveBattleGridCursor(act.dx, act.dy, 'gamepad')
+        } else if (act.kind === 'confirm') {
+          audio.unlock()
+          if (state.battle.facingPicker && state.battle.phase === 'player') {
+            commitWaitFacing()
+          } else if (getActiveDiscoveryTip(state)) {
+            dismissCurrentDiscoveryTip()
+          } else {
+            gridCursor.inputMode = 'gamepad'
+            if (!gridCursor.active) {
+              syncGridCursorToBattle(gridCursor, state.battle, gridCursor.col < 0 || gridCursor.row < 0)
+              gridCursor.active = true
+            }
+            confirmBoardTile(gridCursor.col, gridCursor.row)
+          }
+        } else if (act.kind === 'cancel') {
+          handleBattleCancelAction(true)
+        } else if (act.kind === 'actionX') {
+          audio.unlock()
+          if (state.battle.phase === 'deploy') {
+            rotateSelectedDeployUnit()
+          } else if (state.battle.phase === 'player') {
+            cycleActiveHeroSkill()
+          }
+        } else if (act.kind === 'actionY') {
+          audio.unlock()
+          if (state.battle.phase === 'deploy') {
+            confirmDeployAndStart()
+          } else if (state.battle.phase === 'player') {
+            endBattleTurn()
+          }
+        } else if (act.kind === 'prev') {
+          cycleBattleGridCursor(-1, 'gamepad')
+        } else if (act.kind === 'next') {
+          cycleBattleGridCursor(1, 'gamepad')
+        } else if (act.kind === 'camLeft') {
+          scene.snapCameraYaw(-1)
+          uiDirty = true
+          hudRev++
+        } else if (act.kind === 'camRight') {
+          scene.snapCameraYaw(1)
+          uiDirty = true
+          hudRev++
+        } else if (act.kind === 'pause') {
+          togglePauseScreen()
+        }
+      } else if (act.kind === 'pause') {
+        audio.unlock()
+        if (screen === 'paused') {
+          setScreen('battle')
+        } else if (screen === 'title') {
+          ui.act('cs-play', 'press')
+        } else if (screen === 'story') {
+          launchBattle()
+        } else if (screen === 'victory') {
+          const run = state.campaign.endlessRun
+          if (!run || run.pendingDraft.length === 0) advanceAfterVictory()
+        } else if (screen === 'defeat') {
+          retryAfterDefeat()
+        } else if (screen === 'world') {
+          const sel = getSelectedStage()
+          if (isStageUnlocked(state.campaign, sel.id)) {
+            openStory(sel.index, 0)
+          }
+        }
+      }
+    }
+  }
 
   // Direct 3D Battlefield Pointer Picking + Touch Drag-Orbit + Pinch-to-Zoom + Tap-to-Preview
   const inputAbort = new AbortController()
@@ -1274,9 +1604,11 @@ async function start() {
       }
       return
     }
+    const wasCursorActive = gridCursor.active
+    if (wasCursorActive) deactivateGridCursor()
     const cell = scene.pickCellAt(state.battle, x, y, w, h)
     const prev = scene.getHoveredCell()
-    if (prev?.col !== cell?.col || prev?.row !== cell?.row) {
+    if (wasCursorActive || prev?.col !== cell?.col || prev?.row !== cell?.row) {
       scene.setHoveredCell(cell)
       refreshBattleDiscoveryTips(true)
       uiDirty = true
@@ -1366,6 +1698,7 @@ async function start() {
     }
 
     // Desktop mouse: instant Move+Attack / Strike / Move (forecast shown live on hover!)
+    deactivateGridCursor()
     const cell = scene.pickCellAt(state.battle, x, y, w, h)
     if (!cell) {
       if (lockedForecastCell) {
@@ -1375,15 +1708,7 @@ async function start() {
       }
       return
     }
-    const autoWasOn = state.battle.autoBattle
-    lockedForecastCell = null
-    mobileHandOpen = false
-    const tileChanged = selectTile(state, cell.col, cell.row)
-    if (tileChanged) refreshBattleDiscoveryTips(false)
-    if (tileChanged || autoWasOn !== state.battle.autoBattle) {
-      uiDirty = true
-      hudRev++
-    }
+    confirmBoardTile(cell.col, cell.row)
   }, sig)
 
   uiCanvas.addEventListener('pointerup', event => {
@@ -1528,28 +1853,7 @@ async function start() {
     if (screen === 'battle' && state.battle) {
       if (event.code === 'Escape' && !event.repeat) {
         event.preventDefault()
-        if (cancelAutoBattle(state)) {
-          state.sounds.push({ kind: 'card', pitch: 0.88 })
-          uiDirty = true
-          hudRev++
-          return
-        }
-        if (state.battle.facingPicker) {
-          if (cancelWaitFacingPicker(state)) {
-            uiDirty = true
-            hudRev++
-          }
-          return
-        }
-        if (lockedForecastCell || mobileHandOpen || combatLogOpen) {
-          lockedForecastCell = null
-          mobileHandOpen = false
-          combatLogOpen = false
-          uiDirty = true
-          hudRev++
-          return
-        }
-        setScreen('paused')
+        handleBattleCancelAction(true)
         return
       }
       if (event.code === 'KeyX' && !event.repeat) {
@@ -1580,6 +1884,12 @@ async function start() {
           dismissCurrentDiscoveryTip()
           return
         }
+        if (gridCursor.active) {
+          event.preventDefault()
+          audio.unlock()
+          confirmBoardTile(gridCursor.col, gridCursor.row)
+          return
+        }
         if (state.battle.phase === 'deploy') {
           event.preventDefault()
           confirmDeployAndStart()
@@ -1605,6 +1915,7 @@ async function start() {
           mobileHandOpen = false
           clearBattleHoverFeedback()
           scene.setHoveredCell(null)
+          scene.setGridCursor(null)
           scene.setForecast(null)
           refreshBattleDiscoveryTips(false)
           uiDirty = true
@@ -1612,7 +1923,38 @@ async function start() {
         }
         return
       }
-      if ((event.code === 'Backspace' || event.code === 'KeyZ') && !event.repeat && state.battle.phase === 'player') {
+      if (event.code === 'Backspace' && !event.repeat) {
+        event.preventDefault()
+        if (state.battle.facingPicker) {
+          if (cancelWaitFacingPicker(state)) {
+            syncBattleGridCursor(false)
+            uiDirty = true
+            hudRev++
+          }
+          return
+        }
+        if (state.battle.armedSkillIndex !== null || state.battle.armedTacticUid) {
+          armSkill(state, null)
+          armTacticCard(state, null)
+          syncBattleGridCursor(false)
+          uiDirty = true
+          hudRev++
+          return
+        }
+        if (state.battle.phase === 'player' && performUndoMove()) {
+          return
+        }
+        if (state.battle.phase === 'deploy' && state.battle.selectedUnitUid) {
+          state.battle.selectedUnitUid = null
+          state.sounds.push({ kind: 'card', pitch: 0.92 })
+          uiDirty = true
+          hudRev++
+          return
+        }
+        snapCursorBackToAnchor()
+        return
+      }
+      if (event.code === 'KeyZ' && !event.repeat && state.battle.phase === 'player') {
         event.preventDefault()
         performUndoMove()
         return
@@ -1634,6 +1976,15 @@ async function start() {
       }
       if (event.code === 'Space' && !event.repeat && state.battle.phase === 'player') {
         event.preventDefault()
+        audio.unlock()
+        if (state.battle.facingPicker) {
+          commitWaitFacing()
+          return
+        }
+        if (gridCursor.active) {
+          confirmBoardTile(gridCursor.col, gridCursor.row)
+          return
+        }
         endBattleTurn()
         return
       }
@@ -1651,59 +2002,67 @@ async function start() {
         hudRev++
         return
       }
+      if (event.code === 'ArrowUp') {
+        event.preventDefault()
+        moveBattleGridCursor(0, -1, 'keyboard')
+        return
+      }
+      if (event.code === 'ArrowDown') {
+        event.preventDefault()
+        moveBattleGridCursor(0, 1, 'keyboard')
+        return
+      }
+      if (event.code === 'ArrowLeft') {
+        event.preventDefault()
+        moveBattleGridCursor(-1, 0, 'keyboard')
+        return
+      }
+      if (event.code === 'ArrowRight') {
+        event.preventDefault()
+        moveBattleGridCursor(1, 0, 'keyboard')
+        return
+      }
       if (state.battle.facingPicker && state.battle.phase === 'player') {
-        if (event.code === 'KeyW' || event.code === 'ArrowUp') {
+        if (event.code === 'KeyW') {
           event.preventDefault()
-          if (previewWaitFacing(state, cameraAlignedFacing(0, -1, scene.getCameraYawActual()))) {
-            uiDirty = true
-            hudRev++
-          }
+          moveBattleGridCursor(0, -1, 'keyboard')
           return
         }
-        if (event.code === 'KeyS' || event.code === 'ArrowDown') {
+        if (event.code === 'KeyS') {
           event.preventDefault()
-          if (previewWaitFacing(state, cameraAlignedFacing(0, 1, scene.getCameraYawActual()))) {
-            uiDirty = true
-            hudRev++
-          }
+          moveBattleGridCursor(0, 1, 'keyboard')
           return
         }
-        if (event.code === 'KeyA' || event.code === 'ArrowLeft') {
+        if (event.code === 'KeyA') {
           event.preventDefault()
-          if (previewWaitFacing(state, cameraAlignedFacing(-1, 0, scene.getCameraYawActual()))) {
-            uiDirty = true
-            hudRev++
-          }
+          moveBattleGridCursor(-1, 0, 'keyboard')
           return
         }
-        if (event.code === 'KeyD' || event.code === 'ArrowRight') {
+        if (event.code === 'KeyD') {
           event.preventDefault()
-          if (previewWaitFacing(state, cameraAlignedFacing(1, 0, scene.getCameraYawActual()))) {
-            uiDirty = true
-            hudRev++
-          }
+          moveBattleGridCursor(1, 0, 'keyboard')
           return
         }
       }
-      if (event.code === 'KeyA' || event.code === 'ArrowLeft') {
+      if (event.code === 'KeyA') {
         scene.rotateCamera(-0.12)
         uiDirty = true
         hudRev++
         return
       }
-      if (event.code === 'KeyD' || event.code === 'ArrowRight') {
+      if (event.code === 'KeyD') {
         scene.rotateCamera(0.12)
         uiDirty = true
         hudRev++
         return
       }
-      if (event.code === 'ArrowUp' || event.code === 'PageUp') {
+      if (event.code === 'KeyW' || event.code === 'PageUp') {
         event.preventDefault()
         scene.tiltCamera(0.14)
         hudRev++
         return
       }
-      if (event.code === 'ArrowDown' || event.code === 'PageDown') {
+      if (event.code === 'KeyS' || event.code === 'PageDown') {
         event.preventDefault()
         scene.tiltCamera(-0.14)
         hudRev++
@@ -1727,15 +2086,25 @@ async function start() {
         hudRev++
         return
       }
-      if (event.code === 'Digit1' && !event.repeat) { armSkill(state, null); uiDirty = true; hudRev++; return }
-      if (event.code === 'Digit2' && !event.repeat) { armSkill(state, 0); uiDirty = true; hudRev++; return }
-      if (event.code === 'Digit3' && !event.repeat) { armSkill(state, 1); uiDirty = true; hudRev++; return }
-      if (event.code === 'Digit4' && !event.repeat) { armSkill(state, 2); uiDirty = true; hudRev++; return }
-      if (event.code === 'Tab' && !event.repeat && state.battle.activeUnitUid) {
+      if (event.code === 'Digit1' && !event.repeat) { armSkill(state, null); syncBattleGridCursor(false); uiDirty = true; hudRev++; return }
+      if (event.code === 'Digit2' && !event.repeat) { armSkill(state, 0); syncBattleGridCursor(false); uiDirty = true; hudRev++; return }
+      if (event.code === 'Digit3' && !event.repeat) { armSkill(state, 1); syncBattleGridCursor(false); uiDirty = true; hudRev++; return }
+      if (event.code === 'Digit4' && !event.repeat) { armSkill(state, 2); syncBattleGridCursor(false); uiDirty = true; hudRev++; return }
+      if ((event.code === 'Digit5' || event.code === 'Digit6' || event.code === 'Digit7' || event.code === 'Digit8') && !event.repeat) {
+        const handIdx = Number(event.code.slice(5)) - 5
+        const tacticUid = state.battle.hand[handIdx]
+        if (tacticUid) {
+          armTacticCard(state, tacticUid)
+          syncBattleGridCursor(false)
+          uiDirty = true
+          hudRev++
+        }
+        return
+      }
+      if (event.code === 'Tab' && !event.repeat) {
         event.preventDefault()
-        selectHeroByUid(state, state.battle.activeUnitUid)
-        uiDirty = true
-        hudRev++
+        audio.unlock()
+        cycleBattleGridCursor(event.shiftKey ? -1 : 1, 'keyboard')
       }
     } else if (screen === 'paused' && event.code === 'Escape' && !event.repeat) {
       event.preventDefault()
@@ -3771,15 +4140,17 @@ async function start() {
     const undoAvailable = canUndoMove(battle)
     const hoveredMoveOa = resolveHoveredMoveOa(activeForecast)
     let statusLine = undoAvailable
-      ? 'Moved — strike/cast, press Z / Backspace to Undo Move, T for Danger Zone, or Space Wait-to-Face.'
-      : 'Click [.] frame to move, [X] crosshair to strike, T for Danger Zone, or arm a skill (1-4). Space Wait-to-Face.'
+      ? 'Moved — strike/cast, Z Undo Move, T Danger Zone, or F Wait-to-Face.'
+      : gridCursor.active
+        ? 'Arrows/D-Pad: Cursor · Enter: Act · Tab: Cycle · 1-4: Skills · F: Wait/Face'
+        : 'Click or Arrows/D-Pad: Cursor · Enter: Act · 1-4: Skills · Space: Wait/Face'
     let statusAccent: string = COLOR.accent
     let statusImportant = undoAvailable
     if (isDeployPhase) {
       const selHero = inspected && inspected.team === 'ally' ? inspected : null
       statusLine = selHero
-        ? `DEPLOY ${selHero.name}: click any blue tile to move/swap · F Rotate (${selHero.facing.toUpperCase()}) · Space Start Battle`
-        : 'DEPLOY SQUAD: click a hero & any blue spawn tile to reposition/swap · F Rotate · Space / Enter Start Battle'
+        ? `DEPLOY ${selHero.name}: click or Arrows+Enter blue tile · Tab cycle · F Rotate (${selHero.facing.toUpperCase()}) · Space Start`
+        : 'DEPLOY SQUAD: click or Arrows+Enter hero/tile · Tab cycle · F Rotate · Space Start Battle'
       statusAccent = '#5eeeff'
       statusImportant = true
     } else if (battle.autoBattle) {
@@ -8189,7 +8560,13 @@ async function start() {
       mobileHandOpen,
       campCollapsed: mobileCampCollapsed,
       cameraZoom: Math.round(scene.getCameraZoom() * 1000) / 1000,
-      cameraYaw: Math.round(scene.getCameraYaw() * 1000) / 1000
+      cameraYaw: Math.round(scene.getCameraYaw() * 1000) / 1000,
+      gridCursor: {
+        active: gridCursor.active,
+        col: gridCursor.col,
+        row: gridCursor.row,
+        inputMode: gridCursor.inputMode
+      }
     }),
     extra: {
       perf: () => perf.snapshot(),
@@ -8418,6 +8795,7 @@ async function start() {
         hudRev++
       }
       if (bPhase !== lastBattlePhase || activeUid !== lastActiveUid || bTurn !== lastBattleTurn || downedCount !== lastDownedCount) {
+        const turnOrUnitChanged = bPhase !== lastBattlePhase || activeUid !== lastActiveUid || bTurn !== lastBattleTurn
         lastBattlePhase = bPhase
         lastActiveUid = activeUid
         lastBattleTurn = bTurn
@@ -8425,6 +8803,9 @@ async function start() {
         lockedForecastCell = null
         mobileHandOpen = false
         clearBattleHoverFeedback()
+        if (turnOrUnitChanged && state.battle && (bPhase === 'player' || bPhase === 'deploy')) {
+          syncBattleGridCursor(true)
+        }
         refreshBattleDiscoveryTips(false)
         uiDirty = true
         hudRev++
@@ -8450,6 +8831,12 @@ async function start() {
       const rawDt = Math.min(0.05, frameDeltaMs / 1000)
       lastRenderAt = now
       const renderDt = screen === 'paused' ? 0 : rawDt
+
+      // Poll W3C gamepad (safe in headless / browsers without Gamepad API)
+      dispatchGamepadActions(rawDt)
+      if (screen === 'battle' && state.battle) {
+        syncBattleGridCursor(false)
+      }
 
       // Advance animated UI scenes (World Map pan/zoom/trails, Victory/Defeat FX, Pack Lottery Ceremony)
       if (screen === 'world') {
