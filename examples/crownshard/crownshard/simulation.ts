@@ -482,7 +482,18 @@ import type {
   WorldEventKind, WorldMapEvent
 } from './types.ts'
 
-export type { BattleSpeedMultiplier, PackPityStatus } from './types.ts'
+import {
+  ALL_HERO_SUB_SPEC_IDS, HERO_SUB_SPECS, getEffectiveHeroSkill, getEffectiveHeroTitle,
+  getHeroSubSpecById, getHeroSubSpecOptions, isValidSubSpecForHero, needsSubSpecChoice,
+  sanitizeHeroSubSpec, selectHeroSubSpec
+} from './sub-specializations.ts'
+export {
+  ALL_HERO_SUB_SPEC_IDS, HERO_SUB_SPECS, getEffectiveHeroSkill, getEffectiveHeroTitle,
+  getHeroSubSpecById, getHeroSubSpecOptions, isValidSubSpecForHero, needsSubSpecChoice,
+  sanitizeHeroSubSpec, selectHeroSubSpec
+}
+export type { HeroSubSpec, HeroSubSpecStatBonus } from './sub-specializations.ts'
+export type { BattleSpeedMultiplier, HeroSubSpecId, PackPityStatus } from './types.ts'
 export { applyDisplacement, resolveDisplacementPreview } from './forced-movement.ts'
 export {
   classifyElement, classifyHazardElement, collectWildfirePatch,
@@ -623,6 +634,20 @@ export function computeHeroStats(campaign: CampaignState, hero: OwnedHeroCard): 
   let lifesteal = 0
   let shieldStart = 0
 
+  const subSpec = hero.stars >= 3 && isValidSubSpecForHero(hero.heroId, hero.subSpecId)
+    ? getHeroSubSpecById(hero.subSpecId)
+    : null
+  if (subSpec) {
+    maxHp += subSpec.bonuses.hp ?? 0
+    atk += subSpec.bonuses.atk ?? 0
+    def += subSpec.bonuses.def ?? 0
+    speed += subSpec.bonuses.speed ?? 0
+    move += subSpec.bonuses.move ?? 0
+    range += subSpec.bonuses.range ?? 0
+    crit += subSpec.bonuses.crit ?? 0
+    lifesteal += subSpec.bonuses.lifesteal ?? 0
+  }
+
   const slots = [hero.weaponUid, hero.armorUid, hero.relicUid]
   for (const uid of slots) {
     const owned = getEquipmentByUid(campaign, uid)
@@ -741,8 +766,11 @@ export function mergeHero(state: GameState, heroUid: string): boolean {
   campaign.heroes = campaign.heroes.filter(h => !sacrificeSet.has(h.uid))
   campaign.squadUids = campaign.squadUids.filter(uid => !sacrificeSet.has(uid))
 
-  // Upgrade star tier (unlocking the next skill!)
+  // Upgrade star tier (unlocking the next skill! Ascending to 3★ keeps subSpecId unset until chosen at Camp.)
   target.stars = target.stars === 1 ? 2 : 3
+  if (target.stars === 3) {
+    delete target.subSpecId
+  }
   if (!campaign.squadUids.includes(target.uid) && campaign.squadUids.length < maxSquadSize(campaign)) {
     campaign.squadUids.push(target.uid)
   }
@@ -1350,7 +1378,19 @@ function cloneCampaignFromSave(c: SavedCampaignState, fallbackSeed: number): Cam
     heroes: c.heroes.map(h => {
       const level = normalizeHeroLevel(h.level)
       const xp = normalizeHeroXp(level, h.xp)
-      return { ...h, level, xp, locked: h.locked === true }
+      const subSpecId = sanitizeHeroSubSpec(h.heroId, h.stars, h.subSpecId)
+      return {
+        uid: h.uid,
+        heroId: h.heroId,
+        stars: h.stars,
+        ...(subSpecId !== undefined ? { subSpecId } : {}),
+        level,
+        xp,
+        weaponUid: h.weaponUid,
+        armorUid: h.armorUid,
+        relicUid: h.relicUid,
+        locked: h.locked === true
+      }
     }),
     equipment: Array.isArray(c.equipment) ? c.equipment.map(e => ({ ...e, locked: e.locked === true })) : [],
     tactics: Array.isArray(c.tactics) ? c.tactics.map(t => ({ ...t })) : [],
@@ -1520,6 +1560,7 @@ export function serializeBattleState(
       team: u.team,
       name: u.name,
       ...(u.heroId !== undefined ? { heroId: u.heroId } : {}),
+      ...(u.subSpecId !== undefined ? { subSpecId: u.subSpecId } : {}),
       ...(u.enemyId !== undefined ? { enemyId: u.enemyId } : {}),
       stars: u.stars,
       level: normalizeHeroLevel(u.level),
@@ -1902,12 +1943,16 @@ export function validateBattleSnapshot(raw: unknown): BattleSaveSnapshot | null 
     const armorId = typeof item.armorId === 'string' && EQUIPMENT_BY_ID[item.armorId] ? item.armorId : undefined
     const relicId = typeof item.relicId === 'string' && EQUIPMENT_BY_ID[item.relicId] ? item.relicId : undefined
     const summonerUid = typeof item.summonerUid === 'string' && item.summonerUid.length > 0 ? item.summonerUid : undefined
+    const subSpecId = team === 'ally' && heroId !== undefined
+      ? sanitizeHeroSubSpec(heroId, stars, item.subSpecId)
+      : undefined
 
     units.push({
       uid: item.uid,
       team,
       name: item.name,
       ...(heroId !== undefined ? { heroId } : {}),
+      ...(subSpecId !== undefined ? { subSpecId } : {}),
       ...(enemyId !== undefined ? { enemyId } : {}),
       stars,
       level: unitLevel,
@@ -2092,6 +2137,7 @@ export function restoreBattleState(state: GameState, snapshot: unknown): boolean
       team: u.team,
       name: u.name,
       ...(u.heroId !== undefined ? { heroId: u.heroId } : {}),
+      ...(u.subSpecId !== undefined ? { subSpecId: u.subSpecId } : {}),
       ...(u.enemyId !== undefined ? { enemyId: u.enemyId } : {}),
       stars: u.stars,
       level: normalizeHeroLevel(u.level),
@@ -2386,28 +2432,19 @@ export function serializeSave(state: GameState): SaveData {
       heroes: state.campaign.heroes.map(h => {
         const level = normalizeHeroLevel(h.level)
         const xp = normalizeHeroXp(level, h.xp)
-        return h.locked
-          ? {
-              uid: h.uid,
-              heroId: h.heroId,
-              stars: h.stars,
-              level,
-              xp,
-              weaponUid: h.weaponUid,
-              armorUid: h.armorUid,
-              relicUid: h.relicUid,
-              locked: true
-            }
-          : {
-              uid: h.uid,
-              heroId: h.heroId,
-              stars: h.stars,
-              level,
-              xp,
-              weaponUid: h.weaponUid,
-              armorUid: h.armorUid,
-              relicUid: h.relicUid
-            }
+        const subSpecId = sanitizeHeroSubSpec(h.heroId, h.stars, h.subSpecId)
+        return {
+          uid: h.uid,
+          heroId: h.heroId,
+          stars: h.stars,
+          ...(subSpecId !== undefined ? { subSpecId } : {}),
+          level,
+          xp,
+          weaponUid: h.weaponUid,
+          armorUid: h.armorUid,
+          relicUid: h.relicUid,
+          ...(h.locked ? { locked: true } : {})
+        }
       }),
       equipment: state.campaign.equipment.map(e => (e.locked ? { ...e, locked: true } : {
         uid: e.uid,
@@ -2456,7 +2493,19 @@ export function loadSave(storage: StorageLike | null | undefined): SaveData | nu
       .map(h => {
         const level = normalizeHeroLevel(h.level)
         const xp = normalizeHeroXp(level, h.xp)
-        return { ...h, level, xp, locked: h.locked === true }
+        const subSpecId = sanitizeHeroSubSpec(h.heroId, h.stars, h.subSpecId)
+        return {
+          uid: h.uid,
+          heroId: h.heroId,
+          stars: h.stars,
+          ...(subSpecId !== undefined ? { subSpecId } : {}),
+          level,
+          xp,
+          weaponUid: h.weaponUid,
+          armorUid: h.armorUid,
+          relicUid: h.relicUid,
+          locked: h.locked === true
+        }
       })
     const loadedEquipment: OwnedEquipCard[] = 'equipment' in camp && Array.isArray(camp.equipment)
       ? camp.equipment
@@ -3280,11 +3329,13 @@ function launchBattleInternal(
       else if (st === 'taunt') startTaunt = Math.max(startTaunt, 2)
       else if (st === 'haste') startHaste = Math.max(startHaste, 2)
     }
+    const validSubSpecId = sanitizeHeroSubSpec(hero.heroId, hero.stars, hero.subSpecId)
     const allyUnit: BattleUnit = {
       uid: hero.uid,
       team: 'ally',
       name: spec.name,
       heroId: hero.heroId,
+      ...(validSubSpecId !== undefined ? { subSpecId: validSubSpecId } : {}),
       stars: hero.stars,
       level: normalizeHeroLevel(hero.level),
       isBoss: false,
@@ -4330,8 +4381,11 @@ export function findGridPath(
 
 export function getHeroSkill(unit: BattleUnit, skillIndex: number): SkillSpec | null {
   if (!unit.heroId || skillIndex < 0 || skillIndex > 2) return null
-  const spec = HERO_SPECS[unit.heroId]
-  const skill = spec.skills[skillIndex]
+  const skill = getEffectiveHeroSkill(
+    unit.heroId,
+    skillIndex,
+    unit.stars >= 3 ? unit.subSpecId : undefined
+  )
   if (!skill || skill.tier > unit.stars) return null
   return skill
 }
@@ -7481,6 +7535,21 @@ function executeHeroSkill(
     }
     if (skill.healAmount > 0 && skill.pattern === 'single') {
       applyHealAndShield(state, caster, skill.healAmount, 0, caster, { sourceLabel: skill.name })
+    }
+    if (skill.allyAuraHeal || skill.allyAuraShield) {
+      for (const ally of battle.units) {
+        if (!ally.alive || ally.team !== caster.team) continue
+        if (manhattan(caster.col, caster.row, ally.col, ally.row) > 1) continue
+        const hAmt = skill.allyAuraHeal ?? 0
+        const sAmt = ally.uid === caster.uid
+          ? (skill.shieldAmount > 0 ? 0 : (skill.allyAuraShield ?? 0))
+          : (skill.allyAuraShield ?? 0)
+        if (hAmt > 0 || sAmt > 0) {
+          applyHealAndShield(state, ally, hAmt, sAmt, caster, { sourceLabel: skill.name })
+          supportXp += XP_ACTION_SUPPORT
+          hitAny = true
+        }
+      }
     }
     const displaceTargets: BattleUnit[] = []
     const hitTargetUids = new Set<string>()

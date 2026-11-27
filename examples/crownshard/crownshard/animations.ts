@@ -1729,7 +1729,10 @@ const SKILL_CLIPS: Readonly<Record<string, UnitClipName>> = {
   shadowstep: 'sk_shadowstep', fan_blades: 'sk_fan_blades', phantom_exec: 'sk_phantom_exec',
   radiant_cleave: 'sk_radiant_cleave', aegis_vow: 'sk_aegis_vow', solar_verdict: 'sk_solar_verdict',
   frost_lance: 'sk_frost_lance', glacial_ring: 'sk_glacial_ring', absolute_zero: 'sk_absolute_zero',
-  solar_slash: 'sk_solar_slash', phoenix_charge: 'sk_phoenix_charge', crownbreaker: 'sk_crownbreaker'
+  solar_slash: 'sk_solar_slash', phoenix_charge: 'sk_phoenix_charge', crownbreaker: 'sk_crownbreaker',
+  aegis_judgment: 'sk_solar_cleave', tempest_barrage: 'sk_volley_rain', astral_singularity: 'sk_starfall',
+  solar_lance: 'sk_dawns_judgment', venom_waltz: 'sk_phantom_exec', immortal_bastion: 'sk_aegis_vow',
+  glacial_fortress: 'sk_absolute_zero', radiant_tempest: 'sk_crownbreaker'
 }
 
 /** Signature clip for a hero skill ('sk_<skillId>'); unknown skills fall back to the class cast clip. */

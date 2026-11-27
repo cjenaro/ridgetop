@@ -1,6 +1,7 @@
 import { BOSS_TELEGRAPH_AUTO_AVOID_PENALTY, getTelegraphsAtCell } from './boss-telegraphs.ts'
 import { canCounterAttack, computeCounterDamage, isMeleeSkillEligibleForCounter } from './counter-attack.ts'
-import { HERO_SPECS, TACTIC_BY_ID } from './data.ts'
+import { TACTIC_BY_ID } from './data.ts'
+import { getEffectiveHeroSkill } from './sub-specializations.ts'
 import { classifyElement, previewElementalCombo } from './elemental-combos.ts'
 import { computeEndlessAttackerDamageMultiplier } from './endless-roguelite.ts'
 import { closestFootprintCell, getUnitFootprintCells, unitOccupiesCell } from './expansion-act2.ts'
@@ -324,8 +325,11 @@ function patternCoords(
 
 function getUnlockedSkill(unit: BattleUnit, skillIndex: number): SkillSpec | null {
   if (!unit.heroId || skillIndex < 0 || skillIndex > 2) return null
-  const spec = HERO_SPECS[unit.heroId]
-  const skill = spec.skills[skillIndex]
+  const skill = getEffectiveHeroSkill(
+    unit.heroId,
+    skillIndex,
+    unit.stars >= 3 ? unit.subSpecId : undefined
+  )
   if (!skill || skill.tier > unit.stars) return null
   return skill
 }
