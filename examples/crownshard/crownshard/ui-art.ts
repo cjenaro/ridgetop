@@ -1445,6 +1445,95 @@ export function drawToast(ctx: CanvasRenderingContext2D, rect: LayoutRect, text:
   })
 }
 
+/** Compact beveled pill for showing the dev/local build version on the Title screen. */
+export function drawDevVersionPill(
+  ctx: CanvasRenderingContext2D,
+  rect: LayoutRect,
+  label: string,
+  st: CanvasWidgetDrawState,
+  opts: { highlight?: boolean } = {}
+) {
+  const hot = st.hovered || st.focused
+  const y = rect.y + (st.pressed ? 1 : 0)
+  const drawH = rect.height - (st.pressed ? 1 : 0)
+  ctx.font = font(10.5, 800, true)
+  const pillW = Math.min(rect.width, Math.max(110, ctx.measureText(label).width + 22))
+  const px = rect.x + (rect.width - pillW) / 2
+  rr(ctx, px, y, pillW, drawH, drawH / 2)
+  ctx.fillStyle = opts.highlight
+    ? (hot ? '#3b4f7d' : '#2b3b62')
+    : (hot ? '#243152' : '#151e36d8')
+  ctx.fill()
+  ctx.strokeStyle = opts.highlight ? COLOR.accent : (hot ? '#6e87bd' : '#354873')
+  ctx.lineWidth = opts.highlight ? 1.8 : 1.4
+  ctx.stroke()
+  drawText(ctx, label, rect.x + rect.width / 2, y + drawH / 2 + 0.5, {
+    size: 10.5,
+    weight: 800,
+    color: opts.highlight ? COLOR.accentHi : COLOR.muted,
+    align: 'center',
+    maxW: pillW - 14,
+    display: true
+  })
+}
+
+/** Dismissable top banner container for OTA "Update available" notification. */
+export function drawOtaUpdateBanner(
+  ctx: CanvasRenderingContext2D,
+  rect: LayoutRect,
+  opts: { title: string; subtitle?: string }
+) {
+  drawSurface(ctx, rect, {
+    r: RADIUS.lg,
+    lipH: 3,
+    fill: '#2e416e',
+    fillBot: '#1c2847',
+    border: COLOR.accent,
+    shadow: true
+  })
+  const faceH = rect.height - 3
+  const iconCx = rect.x + 20
+  const iconCy = rect.y + faceH / 2
+  ctx.save()
+  ctx.beginPath()
+  ctx.arc(iconCx, iconCy, 11, 0, Math.PI * 2)
+  ctx.fillStyle = COLOR.accent
+  ctx.fill()
+  ctx.strokeStyle = COLOR.outline
+  ctx.lineWidth = 1.8
+  ctx.stroke()
+  drawIcon(ctx, 'sparkle', iconCx, iconCy, 12, COLOR.accentText)
+  ctx.restore()
+
+  const textX = rect.x + 38
+  const maxTextW = Math.max(60, rect.width - 178)
+  if (opts.subtitle) {
+    drawText(ctx, opts.title, textX, rect.y + faceH / 2 - 6.5, {
+      size: 12,
+      weight: 900,
+      color: COLOR.accentHi,
+      maxW: maxTextW,
+      display: true,
+      shadow: true
+    })
+    drawText(ctx, opts.subtitle, textX, rect.y + faceH / 2 + 7.5, {
+      size: 10,
+      weight: 700,
+      color: '#cddaf5',
+      maxW: maxTextW
+    })
+  } else {
+    drawText(ctx, opts.title, textX, rect.y + faceH / 2 + 0.5, {
+      size: 12.5,
+      weight: 900,
+      color: COLOR.accentHi,
+      maxW: maxTextW,
+      display: true,
+      shadow: true
+    })
+  }
+}
+
 // ===========================================================================
 // Title Screen Logo & Plaque
 // ===========================================================================
@@ -6024,9 +6113,21 @@ export function drawForgeRecipeCard(
 export function drawResultHeadline(ctx: CanvasRenderingContext2D, rect: LayoutRect, title: string, sub: string, won: boolean) {
   const cx = rect.x + rect.width / 2
   const color = won ? COLOR.accent : COLOR.enemy
-  drawChip(ctx, cx, rect.y + 2, sub.toUpperCase(), { h: 19, size: 9.5, color: won ? COLOR.accentText : '#ffffff', bg: color, border: COLOR.outline, align: 'center' })
-  const size = Math.min(34, rect.width / Math.max(6, title.length * 0.62))
-  const ty = rect.y + 28 + size * 0.55
+  const compact = rect.height <= 48
+  const chipH = compact ? 16 : 19
+  const chipY = rect.y + (compact ? 1 : 2)
+  drawChip(ctx, cx, chipY, sub.toUpperCase(), {
+    h: chipH,
+    size: compact ? 8.5 : 9.5,
+    color: won ? COLOR.accentText : '#ffffff',
+    bg: color,
+    border: COLOR.outline,
+    align: 'center'
+  })
+  const titleTop = chipY + chipH + (compact ? 3 : 5)
+  const availH = Math.max(14, rect.y + rect.height - titleTop - 1)
+  const size = Math.min(32, availH * 0.86, rect.width / Math.max(6, title.length * 0.62))
+  const ty = titleTop + availH * 0.5
   drawText(ctx, title, cx, ty, {
     size,
     weight: 900,
@@ -6035,7 +6136,7 @@ export function drawResultHeadline(ctx: CanvasRenderingContext2D, rect: LayoutRe
     display: true,
     maxW: rect.width,
     stroke: true,
-    strokeWidth: 4.5
+    strokeWidth: compact ? 3.5 : 4.5
   })
 }
 
@@ -6047,23 +6148,51 @@ export function drawRewardRow(
   const { x, y, width: w, height: h } = rect
   drawSurface(ctx, rect, { r: RADIUS.md, lipH: 3, fill: '#2c3b63', fillBot: '#1d2745', shadow: false })
   const faceH = h - 3
-  const is = faceH - 10
+  const compact = faceH <= 35
+  const is = Math.max(18, faceH - (compact ? 8 : 10))
+  const iconY = y + Math.round((faceH - is) / 2)
   if (o.portrait) {
-    drawPortraitTile(ctx, x + 6, y + 5, is, o.portrait, { ring: o.color, ringW: 2 })
+    drawPortraitTile(ctx, x + 6, iconY, is, o.portrait, { ring: o.color, ringW: 2 })
   } else {
-    rr(ctx, x + 6, y + 5, is, is, RADIUS.sm)
+    rr(ctx, x + 6, iconY, is, is, RADIUS.sm)
     ctx.fillStyle = COLOR.wellDeep
     ctx.fill()
     ctx.strokeStyle = o.color
     ctx.lineWidth = 2
     ctx.stroke()
-    if (o.icon) drawIcon(ctx, o.icon, x + 6 + is / 2, y + faceH / 2, is * 0.52, o.color)
+    if (o.icon) drawIcon(ctx, o.icon, x + 6 + is / 2, iconY + is / 2, is * 0.52, o.color)
   }
-  const tx = x + is + 16
-  const badgeW = o.badge ? measureText(ctx, o.badge, 9.5, 800, true) + 20 : 0
-  drawText(ctx, o.title, tx, y + faceH / 2 - 8, { size: 13, weight: 900, color: o.color, maxW: w - is - 24 - badgeW, display: true, shadow: true })
-  drawText(ctx, o.detail, tx, y + faceH / 2 + 8.5, { size: 11, weight: 600, color: '#d0dcf5', maxW: w - is - 24 })
-  if (o.badge) drawChip(ctx, x + w - 9, y + faceH / 2 - 17, o.badge, { h: 17, size: 9, color: COLOR.accentText, bg: COLOR.accent, border: COLOR.outline, align: 'right' })
+  const tx = x + is + (compact ? 12 : 16)
+  const badgeFontSize = compact ? 8 : 9
+  const badgeH = compact ? 15 : 17
+  const badgeW = o.badge ? measureText(ctx, o.badge, badgeFontSize, 800, true) + (compact ? 16 : 20) : 0
+  const titleOffset = compact ? 6.5 : 8
+  const detailOffset = compact ? 7.5 : 8.5
+  drawText(ctx, o.title, tx, y + faceH / 2 - titleOffset, {
+    size: compact ? 11.5 : 13,
+    weight: 900,
+    color: o.color,
+    maxW: Math.max(40, w - (tx - x) - 10 - badgeW),
+    display: true,
+    shadow: true
+  })
+  drawText(ctx, o.detail, tx, y + faceH / 2 + detailOffset, {
+    size: compact ? 10 : 11,
+    weight: 600,
+    color: '#d0dcf5',
+    maxW: Math.max(40, w - (tx - x) - 10)
+  })
+  if (o.badge) {
+    const badgeY = Math.max(y + 3, y + faceH / 2 - (compact ? badgeH / 2 + 5 : 17))
+    drawChip(ctx, x + w - 8, badgeY, o.badge, {
+      h: badgeH,
+      size: badgeFontSize,
+      color: COLOR.accentText,
+      bg: COLOR.accent,
+      border: COLOR.outline,
+      align: 'right'
+    })
+  }
 }
 
 /** Tactile 3D game ON/OFF toggle plate (replaces web iOS toggle switch!). */
@@ -9807,22 +9936,24 @@ export function drawResultHeadlineAnimated(
 
   if (won) {
     // Gleaming golden crown emblem above victory text
-    drawShardMark(ctx, cx, rect.y - 10, 15)
+    const emblemSize = rect.height <= 48 ? 12 : 15
+    drawShardMark(ctx, cx, rect.y - (rect.height <= 48 ? 8 : 10), emblemSize)
   } else {
     // Cracked somber crimson emblem above defeat text
     ctx.save()
-    const ey = rect.y - 8
+    const ey = rect.y - (rect.height <= 48 ? 7 : 8)
+    const er = rect.height <= 48 ? 11.5 : 14
     ctx.beginPath()
-    ctx.arc(cx, ey, 14, 0, Math.PI * 2)
+    ctx.arc(cx, ey, er, 0, Math.PI * 2)
     ctx.fillStyle = '#38121d'
     ctx.fill()
     ctx.strokeStyle = COLOR.enemy
     ctx.lineWidth = 2.2
     ctx.stroke()
-    drawIcon(ctx, 'skull', cx, ey, 14, '#ff8d99')
+    drawIcon(ctx, 'skull', cx, ey, er, '#ff8d99')
     // Fracture lightning crack across emblem
     ctx.beginPath()
-    ctx.moveTo(cx - 10, ey - 12); ctx.lineTo(cx - 2, ey - 2); ctx.lineTo(cx + 3, ey + 2); ctx.lineTo(cx + 9, ey + 13)
+    ctx.moveTo(cx - er * 0.7, ey - er * 0.85); ctx.lineTo(cx - 2, ey - 2); ctx.lineTo(cx + 3, ey + 2); ctx.lineTo(cx + er * 0.65, ey + er * 0.9)
     ctx.strokeStyle = '#ff4d63'
     ctx.lineWidth = 1.8
     ctx.stroke()

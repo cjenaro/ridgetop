@@ -63,9 +63,9 @@ import type {
 import {
   drawAnimatedRevealCard, drawApMeter, drawArmoryStatDiffPanel, drawArmoryTemperBar, drawAutoBattlePill, drawBattleBanterToast, drawBattleInfo, drawBoosterPack, drawBossTelegraphBanner, drawButton, drawCameraCompassButton, drawCampHeader,
   drawChallengeHudBadges, drawChapterPicker, drawChip, drawCodexEnemyDetail, drawCodexEntryCard, drawCodexEquipDetail, drawCodexHeader, drawCodexHeroDetail, drawCodexSilhouetteTile, drawCombatForecast, drawCombatLogPanel, drawCombatLogToggleButton, drawControlHints, drawDefeatBackdrop, drawDeployHeroChip,
-  drawDifficultyBadge, drawDiscoveryTipCard, drawEmptyNote, drawEndTurnButton, drawEndlessBlessingCard, drawEndlessBlessingsHudPill, drawEquipCard, drawEquipFamilyPill, drawForecastAltChip,
+  drawDifficultyBadge, drawDevVersionPill, drawDiscoveryTipCard, drawEmptyNote, drawEndTurnButton, drawEndlessBlessingCard, drawEndlessBlessingsHudPill, drawEquipCard, drawEquipFamilyPill, drawForecastAltChip,
   drawForgeBalanceBanner, drawForgeRecipeCard, drawGearSetBanner, drawHeroHeader, drawHeroRosterCard, drawHeroXpSummaryAnimated, drawHintPill, drawIconButton, drawLabel, drawLetterbox,
-  drawLootRow, drawModal, drawMutatorChipButton, drawObjectiveBadge, drawOverline, drawPackCeremonyBackdrop, drawPanel, drawPassiveBanner, drawPityBanner, drawPortraitTile,
+  drawLootRow, drawModal, drawMutatorChipButton, drawObjectiveBadge, drawOtaUpdateBanner, drawOverline, drawPackCeremonyBackdrop, drawPanel, drawPassiveBanner, drawPityBanner, drawPortraitTile,
   drawResultHeadlineAnimated, drawRevealCard, drawRewardRowAnimated, drawSegmentTrack,
   drawSettingRow, drawSheet, drawSkillRow, drawSkillTile, drawSpeakerPortrait, drawSquadBondsStrip, drawStageMasteryChecklist, drawStageTierSegment, drawStatStrip,
   drawStoryHeading, drawSubSpecCard, drawSubSpecHeader, drawTab, drawTacticCard, drawTacticDeckCard, drawTacticDeckHeader, drawText, drawTimelineBg, drawTitleCard,
@@ -92,6 +92,11 @@ import {
   dismissScreenDiscoveryTip, getActiveScreenDiscoveryTip, getDiscoveryTipBody, getDiscoveryTipHotkey
 } from './discovery-tips.ts'
 import type { DiscoveryTipScreen, DiscoveryTipSpec } from './discovery-tips.ts'
+import {
+  applyOtaStatus, applyOtaUpdateReady, createOtaBannerState, dismissOtaBanner,
+  formatDevVersionLabel, formatShortOtaVersion, getVisibleOtaUpdate, reopenOtaBanner
+} from './ota-ui.ts'
+import type { OtaBannerState } from './ota-ui.ts'
 
 type Screen = 'title' | 'world' | 'camp' | 'codex' | 'story' | 'battle' | 'victory' | 'defeat' | 'paused'
 type CampTab = 'squad' | 'armory' | 'deck' | 'forge' | 'decks'
@@ -376,6 +381,61 @@ async function start() {
     uiDirty = true
     hudRev++
   })
+  const isLocalWebHost = !page.platform.isNative && (
+    page.url.hostname === 'localhost' ||
+    page.url.hostname === '127.0.0.1' ||
+    page.url.hostname === '[::1]'
+  )
+  let otaState: OtaBannerState = createOtaBannerState()
+  if (page.platform.ota.available) {
+    void page.platform.ota.getStatus().then(status => {
+      otaState = applyOtaStatus(otaState, status)
+      uiDirty = true
+    }).catch(() => {})
+    const unsubOtaReady = page.platform.ota.onUpdateReady(info => {
+      otaState = applyOtaUpdateReady(otaState, info)
+      uiDirty = true
+    })
+    page.onDispose(unsubOtaReady)
+  }
+
+  function triggerOtaRestart() {
+    if (otaState.applying || !page.platform.ota.available) return
+    saveNow()
+    otaState = { ...otaState, applying: true }
+    uiDirty = true
+    void page.platform.ota.applyUpdate({ reload: true }).then(applied => {
+      if (!applied) {
+        otaState = { ...otaState, applying: false }
+        uiDirty = true
+      }
+    }).catch(() => {
+      otaState = { ...otaState, applying: false }
+      uiDirty = true
+    })
+  }
+
+  function onPressDevVersionPill() {
+    if (otaState.pending) {
+      otaState = reopenOtaBanner(otaState)
+      uiDirty = true
+      return
+    }
+    if (!page.platform.ota.available || otaState.checking) return
+    otaState = { ...otaState, checking: true }
+    uiDirty = true
+    void page.platform.ota.checkForUpdate()
+      .then(() => page.platform.ota.getStatus())
+      .then(status => {
+        otaState = applyOtaStatus(otaState, status)
+        uiDirty = true
+      })
+      .catch(() => {
+        otaState = { ...otaState, checking: false }
+        uiDirty = true
+      })
+  }
+
   const liveSafeArea = { top: 8, right: 8, bottom: 8, left: 8 }
   function getViewportProfile(w: number, h: number): ViewportProfile {
     const vp = computeViewportProfile(w, h, {
@@ -2651,9 +2711,13 @@ async function start() {
       ? formatResumableBattleLabel(resumableBattle, mobile || shortH)
       : ''
 
-    const logoH = shortH ? Math.min(108, Math.round(h * 0.30)) : Math.min(138, Math.round(h * 0.22))
+    const logoH = shortH ? Math.min(104, Math.round(h * 0.28)) : Math.min(138, Math.round(h * 0.22))
     const cardW = Math.min(w - 28, shortH ? 460 : 520)
     const btnH = shortH ? 40 : 48
+    const devVersionLabel = formatDevVersionLabel(otaState.status, {
+      isLocalWeb: isLocalWebHost,
+      checking: otaState.checking
+    })
 
     return overlay({ id: 'root', style: { anchor: 'fill' } }, [
       boxNode({
@@ -2666,7 +2730,7 @@ async function start() {
       }),
       column({
         id: 'title-card',
-        style: { anchor: 'bottom', width: cardW, inset: shortH ? 10 : mobile ? 14 : 20, padding: shortH ? [10, 14] : [16, 18], gap: shortH ? 8 : 12, respectSafeArea: true },
+        style: { anchor: 'bottom', width: cardW, inset: shortH ? 10 : mobile ? 14 : 20, padding: shortH ? [10, 14] : [16, 18], gap: shortH ? 7 : 12, respectSafeArea: true },
         widget: {
           type: 'panel',
           blocksPointer: true,
@@ -2736,6 +2800,18 @@ async function start() {
             }
           })
         ]),
+        ...(devVersionLabel ? [boxNode({
+          id: 'cs-dev-version',
+          style: { height: shortH ? 22 : 24 },
+          widget: {
+            type: 'button',
+            label: devVersionLabel,
+            onPress: onPressDevVersionPill,
+            draw: (ctx: CanvasRenderingContext2D, rect: LayoutRect, st: CanvasWidgetDrawState) => drawDevVersionPill(
+              ctx, rect, devVersionLabel, st, { highlight: Boolean(otaState.pending) }
+            )
+          }
+        })] : []),
         ...(mobile || shortH ? [] : [boxNode({
           id: 't-help',
           style: { height: 18 },
@@ -9119,7 +9195,9 @@ async function start() {
   // =========================================================================
 
   function buildResultTree(w: number, h: number, won: boolean): LayoutNode {
-    const shortH = h < 660
+    const vp = getViewportProfile(w, h)
+    const landscapePhone = vp.isLandscapePhone || (h < 500 && w >= 620)
+    const shortH = landscapePhone || h < 660
     const battle = state.battle
     const reward = battle?.reward
     const ch = CHAPTERS[battle?.chapterIndex ?? 0]
@@ -9181,8 +9259,13 @@ async function start() {
           : `${ch.outroSpeaker}: "${ch.outroText}"`
         : 'Return to Vanguard Camp to equip stronger gear, open booster decks, or merge 3 identical heroes to unlock Tier 2 skills.'
 
-    const rowH = hasBlessingDraft ? (shortH ? 30 : 36) : (shortH ? 35 : 44)
-    const rewardRows: LayoutNode[] = []
+    const useTwoColLoot = landscapePhone && !hasBlessingDraft
+    const rowH = hasBlessingDraft
+      ? (landscapePhone ? 32 : shortH ? 34 : 36)
+      : (landscapePhone ? 36 : shortH ? 38 : 44)
+    let masteryNode: LayoutNode | null = null
+    let xpNode: LayoutNode | null = null
+    const lootNodes: LayoutNode[] = []
     if (won && reward) {
       const goldRollU = Math.max(0, Math.min(1, (resultAnimTime - 0.22) / 0.6))
       const shownGold = Math.round(reward.gold * (1 - Math.pow(1 - goldRollU, 3)))
@@ -9192,23 +9275,21 @@ async function start() {
       if (reward.masteryEarned) {
         const mastery = reward.masteryEarned
         const mIdx = rIdx++
-        rewardRows.push(
-          boxNode({
-            id: 'res-mastery',
-            style: { height: shortH ? 46 : 58 },
-            widget: {
-              type: 'panel',
-              draw: (ctx: CanvasRenderingContext2D, rect: LayoutRect) => drawVictoryMasteryAnimated(
-                ctx, rect, mastery, rowReveal(mIdx)
-              )
-            }
-          })
-        )
+        masteryNode = boxNode({
+          id: 'res-mastery',
+          style: { height: landscapePhone ? 44 : shortH ? 48 : 58 },
+          widget: {
+            type: 'panel',
+            draw: (ctx: CanvasRenderingContext2D, rect: LayoutRect) => drawVictoryMasteryAnimated(
+              ctx, rect, mastery, rowReveal(mIdx)
+            )
+          }
+        })
       }
       const goldIdx = rIdx++
-      rewardRows.push(
+      lootNodes.push(
         boxNode({
-          id: 'res-gold', style: { height: rowH },
+          id: 'res-gold', style: { grow: useTwoColLoot ? 1 : 0, height: rowH },
           widget: {
             type: 'panel',
             draw: (ctx: CanvasRenderingContext2D, rect: LayoutRect) => drawRewardRowAnimated(ctx, rect, {
@@ -9233,9 +9314,9 @@ async function start() {
         const bonusIdx = rIdx++
         const bDust = reward.bonusDust ?? 0
         const bShards = reward.bonusShards ?? 0
-        rewardRows.push(
+        lootNodes.push(
           boxNode({
-            id: 'res-challenge-materials', style: { height: rowH },
+            id: 'res-challenge-materials', style: { grow: useTwoColLoot ? 1 : 0, height: rowH },
             widget: {
               type: 'panel',
               draw: (ctx: CanvasRenderingContext2D, rect: LayoutRect) => drawRewardRowAnimated(ctx, rect, {
@@ -9253,9 +9334,9 @@ async function start() {
       }
       if (reward.equipCard && eqSpec) {
         const eqIdx = rIdx++
-        rewardRows.push(
+        lootNodes.push(
           boxNode({
-            id: 'res-eq', style: { height: rowH },
+            id: 'res-eq', style: { grow: useTwoColLoot ? 1 : 0, height: rowH },
             widget: {
               type: 'panel',
               draw: (ctx: CanvasRenderingContext2D, rect: LayoutRect) => drawRewardRowAnimated(ctx, rect, {
@@ -9272,9 +9353,9 @@ async function start() {
       if (reward.heroCard && heroSpec) {
         const hIdx = rIdx++
         const heroId = reward.heroCard.heroId
-        rewardRows.push(
+        lootNodes.push(
           boxNode({
-            id: 'res-hero', style: { height: rowH },
+            id: 'res-hero', style: { grow: useTwoColLoot ? 1 : 0, height: rowH },
             widget: {
               type: 'panel',
               draw: (ctx: CanvasRenderingContext2D, rect: LayoutRect) => drawRewardRowAnimated(ctx, rect, {
@@ -9290,9 +9371,9 @@ async function start() {
       }
       if (reward.tacticCard && tacSpec) {
         const tIdx = rIdx++
-        rewardRows.push(
+        lootNodes.push(
           boxNode({
-            id: 'res-tac', style: { height: rowH },
+            id: 'res-tac', style: { grow: useTwoColLoot ? 1 : 0, height: rowH },
             widget: {
               type: 'panel',
               draw: (ctx: CanvasRenderingContext2D, rect: LayoutRect) => drawRewardRowAnimated(ctx, rect, {
@@ -9313,15 +9394,15 @@ async function start() {
           const ownedHero = getHeroByUid(state.campaign, g.uid)
           xpPortraits[g.uid] = ownedHero ? heroCardPortrait(ownedHero) : portraits[g.heroId]
         }
-        rewardRows.push(boxNode({
-          id: 'res-xp', style: { height: shortH ? 58 : 70 },
+        xpNode = boxNode({
+          id: 'res-xp', style: { height: landscapePhone ? 54 : shortH ? 58 : 70 },
           widget: {
             type: 'panel',
             draw: (ctx: CanvasRenderingContext2D, rect: LayoutRect) => drawHeroXpSummaryAnimated(
               ctx, rect, reward.heroXpGains, xpPortraits, rowReveal(xpIdx)
             )
           }
-        }))
+        })
       }
       if (reward.bondRankUps && reward.bondRankUps.length > 0) {
         const bIdx = rIdx++
@@ -9332,8 +9413,8 @@ async function start() {
         const bondDetail = reward.bondRankUps.length === 1
           ? `${firstBond.rankTitle} · +5% Assist${firstBond.newRank >= 3 ? ', +10% Pincer' : firstBond.newRank >= 2 ? ', +5% Crit' : ''} & Banter`
           : reward.bondRankUps.slice(0, 3).map(b => `${b.nameA} ♥ ${b.nameB} R${b.newRank}`).join(' · ')
-        rewardRows.push(boxNode({
-          id: 'res-bonds', style: { height: shortH ? 36 : 44 },
+        lootNodes.push(boxNode({
+          id: 'res-bonds', style: { grow: useTwoColLoot ? 1 : 0, height: rowH },
           widget: {
             type: 'panel',
             draw: (ctx: CanvasRenderingContext2D, rect: LayoutRect) => drawRewardRowAnimated(ctx, rect, {
@@ -9348,8 +9429,8 @@ async function start() {
       }
       if (reward.unlockedSlot4) {
         const sIdx = rIdx++
-        rewardRows.push(boxNode({
-          id: 'res-slot4', style: { height: shortH ? 36 : 44 },
+        lootNodes.push(boxNode({
+          id: 'res-slot4', style: { grow: useTwoColLoot ? 1 : 0, height: rowH },
           widget: {
             type: 'panel',
             draw: (ctx: CanvasRenderingContext2D, rect: LayoutRect) => drawRewardRowAnimated(ctx, rect, {
@@ -9364,8 +9445,24 @@ async function start() {
       }
     }
 
-    const btnH = shortH ? 38 : 44
-    const blessingCardH = shortH ? 132 : 164
+    const rewardRows: LayoutNode[] = []
+    if (masteryNode) rewardRows.push(masteryNode)
+    if (useTwoColLoot && lootNodes.length >= 2) {
+      for (let i = 0; i < lootNodes.length; i += 2) {
+        const pair = lootNodes.slice(i, i + 2)
+        if (pair.length === 2) {
+          rewardRows.push(row({ id: `res-loot-row-${i}`, style: { height: rowH, gap: 6 } }, pair))
+        } else {
+          rewardRows.push(pair[0])
+        }
+      }
+    } else {
+      rewardRows.push(...lootNodes)
+    }
+    if (xpNode) rewardRows.push(xpNode)
+
+    const btnH = landscapePhone ? 40 : shortH ? 42 : 44
+    const blessingCardH = landscapePhone ? 116 : shortH ? 132 : 164
     const blessingDraftNodes: LayoutNode[] = hasBlessingDraft
       ? [
           boxNode({
@@ -9402,6 +9499,11 @@ async function start() {
       : []
 
     const displayRewardRows = hasBlessingDraft ? rewardRows.slice(0, shortH ? 1 : h >= 680 ? 3 : 2) : rewardRows
+    const safeHoriz = vp.safeArea.left + vp.safeArea.right
+    const modalW = Math.min(
+      w - Math.max(20, safeHoriz + 16),
+      landscapePhone ? (hasBlessingDraft ? 680 : 720) : (hasBlessingDraft ? 592 : 512)
+    )
     return overlay({ id: 'root', style: { anchor: 'fill' } }, [
       boxNode({
         id: 'res-scrim',
@@ -9417,9 +9519,9 @@ async function start() {
         id: 'res-modal',
         style: {
           anchor: 'center',
-          width: Math.min(w - 24, hasBlessingDraft ? 592 : 512),
-          padding: shortH ? 12 : hasBlessingDraft ? 18 : 24,
-          gap: shortH ? 6 : hasBlessingDraft ? 9 : 12
+          width: modalW,
+          padding: landscapePhone ? [10, 14] : shortH ? 14 : hasBlessingDraft ? 18 : 24,
+          gap: landscapePhone ? 5 : shortH ? 7 : hasBlessingDraft ? 9 : 12
         },
         widget: {
           type: 'panel',
@@ -9428,7 +9530,7 @@ async function start() {
         }
       }, [
         boxNode({
-          id: 'res-title', style: { height: shortH ? 44 : 58 },
+          id: 'res-title', style: { height: landscapePhone ? 46 : shortH ? 50 : 60 },
           widget: {
             type: 'panel',
             draw: (ctx: CanvasRenderingContext2D, rect: LayoutRect) => drawResultHeadlineAnimated(ctx, rect, title, sub, won, resultAnimTime)
@@ -10119,6 +10221,70 @@ async function start() {
     ])
   }
 
+  function buildOtaUpdateBannerNode(w: number, h: number): LayoutNode | null {
+    const update = getVisibleOtaUpdate(otaState)
+    if (!update) return null
+    const vp = getViewportProfile(w, h)
+    const bannerW = Math.min(w - Math.max(20, vp.safeArea.left + vp.safeArea.right + 16), 416)
+    const bannerH = vp.isTouchPrimary ? 46 : 42
+    const btnH = vp.isTouchPrimary ? 32 : 30
+    const subtitle = update.channel === 'prod'
+      ? 'Restart now to update'
+      : `Restart to apply · ${formatShortOtaVersion(update.version)}`
+
+    return row({
+      id: 'cs-ota-banner',
+      style: {
+        anchor: 'top',
+        width: bannerW,
+        height: bannerH,
+        inset: 6,
+        padding: [Math.round((bannerH - btnH - 3) / 2), 8, Math.round((bannerH - btnH + 3) / 2), 8],
+        gap: 6,
+        respectSafeArea: true
+      },
+      widget: {
+        type: 'panel',
+        blocksPointer: true,
+        draw: (ctx: CanvasRenderingContext2D, rect: LayoutRect) => drawOtaUpdateBanner(ctx, rect, {
+          title: 'Update Available',
+          subtitle
+        })
+      }
+    }, [
+      spacerNode(1),
+      boxNode({
+        id: 'cs-ota-restart',
+        style: { width: otaState.applying ? 96 : 84, height: btnH },
+        widget: {
+          type: 'button',
+          label: otaState.applying ? 'Restarting' : 'Restart',
+          primary: true,
+          disabled: otaState.applying,
+          onPress: triggerOtaRestart,
+          draw: (ctx: CanvasRenderingContext2D, rect: LayoutRect, st: CanvasWidgetDrawState) => drawButton(
+            ctx, rect, otaState.applying ? 'Restarting...' : 'Restart', st, { variant: 'primary', size: 11.5 }
+          )
+        }
+      }),
+      boxNode({
+        id: 'cs-ota-dismiss',
+        style: { width: btnH, height: btnH },
+        widget: {
+          type: 'button',
+          label: 'Dismiss update notification',
+          onPress: () => {
+            otaState = dismissOtaBanner(otaState)
+            uiDirty = true
+          },
+          draw: (ctx: CanvasRenderingContext2D, rect: LayoutRect, st: CanvasWidgetDrawState) => drawIconButton(
+            ctx, rect, 'close', st, { active: false }
+          )
+        }
+      })
+    ])
+  }
+
   function buildUiTree(w: number, h: number): LayoutNode {
     getViewportProfile(w, h)
     const base = screen === 'title' ? buildTitleTree(w, h)
@@ -10130,8 +10296,12 @@ async function start() {
       : screen === 'victory' ? buildResultTree(w, h, true)
       : screen === 'defeat' ? buildResultTree(w, h, false)
       : buildPausedTree(w, h)
-    if (!showPerfPanel) return base
-    return overlay({ id: 'root-perf', style: { anchor: 'fill' } }, [base, buildPerfDebugNode()])
+    const otaBanner = buildOtaUpdateBannerNode(w, h)
+    if (!showPerfPanel && !otaBanner) return base
+    const layers: LayoutNode[] = [base]
+    if (otaBanner) layers.push(otaBanner)
+    if (showPerfPanel) layers.push(buildPerfDebugNode())
+    return overlay({ id: 'root-overlay', style: { anchor: 'fill' } }, layers)
   }
 
   // =========================================================================
