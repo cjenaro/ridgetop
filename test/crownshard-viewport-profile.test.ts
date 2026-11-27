@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import {
+  computeNotchBezelSpec,
   computeViewportProfile,
   createInputModalityTracker,
   detectInitialInputModality,
@@ -363,4 +364,23 @@ test('ui-art draw helpers hide keycaps and swap mouse copy when touch/hideKeycap
   const autoTouch = createTextRecorderCtx()
   drawAutoBattlePill(autoTouch.ctx, { x: 0, y: 0, width: 260, height: 32 }, 2, IDLE_STATE, false, true)
   assert.ok(autoTouch.texts.includes('AUTO-BATTLE 2x · TAP TO STOP'))
+})
+
+test('computeNotchBezelSpec activates landscape wings and portrait top bezel only for real hardware insets', () => {
+  // Desktop / standard screen with no notch
+  const none = computeNotchBezelSpec(1280, 720, { top: 0, right: 0, bottom: 0, left: 0 })
+  assert.equal(none.mode, 'none')
+
+  // iPhone landscape with Dynamic Island (symmetric 59px left/right, 21px home bar)
+  const landscape = computeNotchBezelSpec(844, 390, { top: 0, right: 59, bottom: 21, left: 59 })
+  assert.equal(landscape.mode, 'landscape-wings')
+  assert.equal(landscape.leftInset, 59)
+  assert.equal(landscape.rightInset, 59)
+  assert.equal(landscape.bottomInset, 21)
+
+  // iPhone portrait with top notch/Dynamic Island
+  const portrait = computeNotchBezelSpec(390, 844, { top: 59, right: 0, bottom: 34, left: 0 })
+  assert.equal(portrait.mode, 'portrait-top')
+  assert.equal(portrait.topInset, 59)
+  assert.equal(portrait.bottomInset, 34)
 })

@@ -288,3 +288,54 @@ export function createInputModalityTracker(initial?: InputModality): InputModali
 export function uiCopy(isTouch: boolean, desktopText: string, touchText: string): string {
   return isTouch ? touchText : desktopText
 }
+
+export interface NotchBezelSpec {
+  readonly mode: 'none' | 'landscape-wings' | 'portrait-top'
+  readonly leftInset: number
+  readonly rightInset: number
+  readonly topInset: number
+  readonly bottomInset: number
+}
+
+/**
+ * Pure computation of whether the current device exposes a hardware notch /
+ * Dynamic Island cutout (`>= 24px` raw safe-area inset) or home-indicator bar
+ * (`>= 14px` bottom inset), so Crownshard can frame it seamlessly into the UI.
+ */
+export function computeNotchBezelSpec(
+  width: number,
+  height: number,
+  rawSafeArea: SafeAreaInsets
+): NotchBezelSpec {
+  const left = Math.max(0, Number.isFinite(rawSafeArea.left) ? rawSafeArea.left : 0)
+  const right = Math.max(0, Number.isFinite(rawSafeArea.right) ? rawSafeArea.right : 0)
+  const top = Math.max(0, Number.isFinite(rawSafeArea.top) ? rawSafeArea.top : 0)
+  const bottom = Math.max(0, Number.isFinite(rawSafeArea.bottom) ? rawSafeArea.bottom : 0)
+  const isLandscape = width > height
+
+  if (isLandscape && (left >= 24 || right >= 24)) {
+    return {
+      mode: 'landscape-wings',
+      leftInset: left,
+      rightInset: right,
+      topInset: top,
+      bottomInset: bottom
+    }
+  }
+  if (!isLandscape && top >= 24) {
+    return {
+      mode: 'portrait-top',
+      leftInset: left,
+      rightInset: right,
+      topInset: top,
+      bottomInset: bottom
+    }
+  }
+  return {
+    mode: 'none',
+    leftInset: left,
+    rightInset: right,
+    topInset: top,
+    bottomInset: bottom
+  }
+}

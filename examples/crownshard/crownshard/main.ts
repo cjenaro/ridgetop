@@ -65,7 +65,7 @@ import {
   drawChallengeHudBadges, drawChapterPicker, drawChip, drawCodexEnemyDetail, drawCodexEntryCard, drawCodexEquipDetail, drawCodexHeader, drawCodexHeroDetail, drawCodexSilhouetteTile, drawCombatForecast, drawCombatLogPanel, drawCombatLogToggleButton, drawControlHints, drawDefeatBackdrop, drawDeployHeroChip,
   drawDifficultyBadge, drawDevVersionPill, drawDiscoveryTipCard, drawEmptyNote, drawEndTurnButton, drawEndlessBlessingCard, drawEndlessBlessingsHudPill, drawEquipCard, drawEquipFamilyPill, drawForecastAltChip,
   drawForgeBalanceBanner, drawForgeRecipeCard, drawGearSetBanner, drawHeroHeader, drawHeroRosterCard, drawHeroXpSummaryAnimated, drawHintPill, drawIconButton, drawLabel, drawLetterbox,
-  drawLootRow, drawModal, drawMutatorChipButton, drawObjectiveBadge, drawOtaUpdateBanner, drawOverline, drawPackCeremonyBackdrop, drawPanel, drawPassiveBanner, drawPityBanner, drawPortraitTile,
+  drawLootRow, drawModal, drawMutatorChipButton, drawNotchBezel, drawObjectiveBadge, drawOtaUpdateBanner, drawOverline, drawPackCeremonyBackdrop, drawPanel, drawPassiveBanner, drawPityBanner, drawPortraitTile,
   drawResultHeadlineAnimated, drawRevealCard, drawRewardRowAnimated, drawSegmentTrack,
   drawSettingRow, drawSheet, drawSkillRow, drawSkillTile, drawSpeakerPortrait, drawSquadBondsStrip, drawStageMasteryChecklist, drawStageTierSegment, drawStatStrip,
   drawStoryHeading, drawSubSpecCard, drawSubSpecHeader, drawTab, drawTacticCard, drawTacticDeckCard, drawTacticDeckHeader, drawText, drawTimelineBg, drawTitleCard,
@@ -77,9 +77,9 @@ import {
 } from './ui-art.ts'
 import type { CodexListEntry, FanfareDrawOpts, IconName, ProjectedRegionBanner, StatStripItem } from './ui-art.ts'
 import {
-  computeViewportProfile, createInputModalityTracker, detectInitialInputModality, readDomSafeAreaInsets, uiCopy
+  computeNotchBezelSpec, computeViewportProfile, createInputModalityTracker, detectInitialInputModality, readDomSafeAreaInsets, uiCopy
 } from './viewport-profile.ts'
-import type { ViewportProfile } from './viewport-profile.ts'
+import type { SafeAreaInsets, ViewportProfile } from './viewport-profile.ts'
 import {
   areAdvancedBattleToolsUnlocked, areMutatorsUnlockedForStage, areSecondaryCurrenciesVisible,
   getAllowedChallengeTiers, getUnlockedCampTabs, isBossRematchSkirmish, isBulkSalvageUnlocked,
@@ -436,11 +436,19 @@ async function start() {
       })
   }
 
+  const previewNotch = page.url.searchParams.has('notch')
+  function readEffectiveRawSafeArea(w: number, h: number): SafeAreaInsets {
+    const dom = readDomSafeAreaInsets()
+    if (!previewNotch) return dom
+    return w > h
+      ? { top: Math.max(dom.top, 0), right: Math.max(dom.right, 59), bottom: Math.max(dom.bottom, 21), left: Math.max(dom.left, 59) }
+      : { top: Math.max(dom.top, 59), right: Math.max(dom.right, 0), bottom: Math.max(dom.bottom, 34), left: Math.max(dom.left, 0) }
+  }
   const liveSafeArea = { top: 8, right: 8, bottom: 8, left: 8 }
   function getViewportProfile(w: number, h: number): ViewportProfile {
     const vp = computeViewportProfile(w, h, {
       modality: modalityTracker.getModality(),
-      safeArea: readDomSafeAreaInsets()
+      safeArea: readEffectiveRawSafeArea(w, h)
     })
     liveSafeArea.top = vp.safeArea.top
     liveSafeArea.right = vp.safeArea.right
@@ -5680,7 +5688,8 @@ async function start() {
         ])
       } else {
         dockH = chipH + 18
-        const dockW = Math.min(w - 20, 960)
+        const safeHoriz = vp.safeArea.left + vp.safeArea.right
+        const dockW = Math.min(w - Math.max(20, safeHoriz + 12), 960)
         dockNode = row({
           id: 'battle-dock',
           style: { anchor: 'bottom', width: dockW, height: dockH, inset: isPhone ? 6 : 10, padding: 8, gap: 8, align: 'center', respectSafeArea: true },
@@ -5786,9 +5795,10 @@ async function start() {
             }
           })]
 
+      const safeHoriz = vp.safeArea.left + vp.safeArea.right
       dockNode = row({
         id: 'battle-dock',
-        style: { anchor: 'bottom', width: Math.min(w - 14, 820), height: dockH, inset: 6, padding: 7, gap: 6, align: 'center', respectSafeArea: true },
+        style: { anchor: 'bottom', width: Math.min(w - Math.max(14, safeHoriz + 12), 820), height: dockH, inset: 6, padding: 7, gap: 6, align: 'center', respectSafeArea: true },
         widget: {
           type: 'panel',
           blocksPointer: true,
@@ -7057,7 +7067,8 @@ async function start() {
     const showSecondaryCurrencies = areSecondaryCurrenciesVisible(camp)
     const codexUnlocked = isCodexUnlocked(camp)
 
-    const sheetW = Math.min(w - (isPhone ? 12 : 24), 1120)
+    const safeHoriz = vp.safeArea.left + vp.safeArea.right
+    const sheetW = Math.min(w - Math.max(isPhone ? 12 : 24, safeHoriz + 8), 1120)
     // Keep upper ~48% of viewport open on desktop so the live 3D campfire + squad shine!
     // On phone, allow collapsing the sheet down to the tab bar to inspect the 3D squad!
     const squadSelHero: OwnedHeroCard | undefined =
@@ -10297,8 +10308,20 @@ async function start() {
       : screen === 'defeat' ? buildResultTree(w, h, false)
       : buildPausedTree(w, h)
     const otaBanner = buildOtaUpdateBannerNode(w, h)
-    if (!showPerfPanel && !otaBanner) return base
+    const notchSpec = computeNotchBezelSpec(w, h, readEffectiveRawSafeArea(w, h))
+    const notchNode = notchSpec.mode !== 'none'
+      ? boxNode({
+          id: 'cs-notch-bezel',
+          style: { anchor: 'fill' },
+          widget: {
+            type: 'panel',
+            draw: (ctx: CanvasRenderingContext2D, rect: LayoutRect) => drawNotchBezel(ctx, rect, notchSpec)
+          }
+        })
+      : null
+    if (!showPerfPanel && !otaBanner && !notchNode) return base
     const layers: LayoutNode[] = [base]
+    if (notchNode) layers.push(notchNode)
     if (otaBanner) layers.push(otaBanner)
     if (showPerfPanel) layers.push(buildPerfDebugNode())
     return overlay({ id: 'root-overlay', style: { anchor: 'fill' } }, layers)
