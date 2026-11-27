@@ -799,6 +799,9 @@ export interface BattleReward {
   readonly abyssFloor?: number
   readonly abyssCompleted?: boolean
   readonly gauntletRoundsCleared?: number
+  readonly worldEventId?: string
+  readonly worldEventKind?: WorldEventKind
+  readonly worldEventTitle?: string
   readonly heroXpGains: readonly BattleHeroXpGain[]
   readonly masteryEarned?: BattleMasteryEvaluation
 }
@@ -1027,12 +1030,59 @@ export interface OakhavenExchangeState {
   boughtIds: string[]
 }
 
+export type WorldEventKind = 'wandering_merchant' | 'goblin_ambush' | 'timed_gauntlet'
+
+export type WorldEventMerchantDealKind = 'equipment' | 'dust' | 'shards' | 'tactic'
+
+export interface WorldEventMerchantOffer {
+  readonly id: string
+  readonly kind: WorldEventMerchantDealKind
+  readonly label: string
+  readonly shortLabel: string
+  readonly detail: string
+  readonly cost: number
+  readonly originalCost: number
+  readonly equipId?: string
+  readonly tacticId?: string
+  readonly dustAmount?: number
+  readonly shardsAmount?: number
+  readonly rarity: Rarity
+  purchased: boolean
+}
+
+export interface WorldMapEvent {
+  readonly id: string
+  readonly kind: WorldEventKind
+  readonly title: string
+  readonly subtitle: string
+  readonly fromStageId: string
+  readonly toStageId: string
+  readonly region: WorldRegionId
+  readonly biome: BiomeId
+  readonly difficulty: DifficultyLevel
+  readonly recommendedPower: number
+  readonly mapX: number
+  readonly mapY: number
+  expiresAfterBattles: number
+  readonly maxBattles: number
+  readonly rewardGold: number
+  readonly rewardDust: number
+  readonly rewardShards: number
+  readonly rewardEquipRarity?: Rarity
+  readonly offers?: WorldEventMerchantOffer[]
+  readonly enemies?: readonly ChapterEnemySpawn[]
+  readonly spawnedAtBattlesWon: number
+}
+
 export interface BattleState {
   readonly stageId: string
   readonly chapterIndex: number
   readonly endlessWave: number
   readonly endlessBlessings?: readonly EndlessBlessingId[]
   phoenixGraceUsed?: boolean
+  readonly activeWorldEventId?: string
+  readonly activeWorldEventKind?: WorldEventKind
+  readonly activeWorldEventTitle?: string
   gauntletRound?: number
   gauntletMaxRounds?: number
   abyssFloor?: number
@@ -1152,6 +1202,9 @@ export interface BattleSaveSnapshot {
   readonly endlessWave: number
   readonly endlessBlessings?: readonly EndlessBlessingId[]
   readonly phoenixGraceUsed?: boolean
+  readonly activeWorldEventId?: string
+  readonly activeWorldEventKind?: WorldEventKind
+  readonly activeWorldEventTitle?: string
   readonly gauntletRound?: number
   readonly gauntletMaxRounds?: number
   readonly abyssFloor?: number
@@ -1221,6 +1274,7 @@ export interface CampaignState {
   discoveredEnemies: EnemyArchetypeId[]
   battleSpeed: BattleSpeedMultiplier
   oakhavenExchange?: OakhavenExchangeState
+  worldEvents: WorldMapEvent[]
 }
 
 export interface GameState {
@@ -1245,6 +1299,7 @@ export type SavedCampaignState = Omit<
   | 'claimedStageMasteryChests'
   | 'claimedMasteryMilestones'
   | 'endlessRun'
+  | 'worldEvents'
 > & {
   dust?: number
   shards?: number
@@ -1255,6 +1310,7 @@ export type SavedCampaignState = Omit<
   discoveredEnemies?: EnemyArchetypeId[]
   battleSpeed?: BattleSpeedMultiplier
   oakhavenExchange?: OakhavenExchangeState
+  worldEvents?: WorldMapEvent[]
   crownlessDeepFloor?: number
   crownlessDeepSelectedFloor?: number
   crownlessDeepRewardClaimed?: boolean

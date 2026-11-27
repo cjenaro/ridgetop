@@ -4,7 +4,7 @@ import type {
   ElementalComboPreview, EndlessBlessingId, EquipSlot, EquipmentSpec, FacingDir, FacingExposureLevel, HeroSpec,
   LandmarkKind, OwnedHeroCard, PackPityStatus, PackRevealItem, PackSpec, Rarity, SkillSpec,
   StageDifficultyTier, StageMasteryChestReward, StageMasteryObjectiveSpec, StageMasteryRecord, StageMasteryStars, StageMutatorId, StatusKind,
-  TacticCardSpec, TurnOrderActionPreview, TurnPreviewEntry
+  TacticCardSpec, TurnOrderActionPreview, TurnPreviewEntry, WorldMapEvent
 } from './types.ts'
 import { ARMORY_STAT_ORDER, formatStatDelta, formatStatValue } from './armory-diff.ts'
 import type { EquipmentStatDiff } from './armory-diff.ts'
@@ -8061,6 +8061,272 @@ export function drawStageMasteryChecklist(
     }
   }
 
+  ctx.restore()
+}
+
+function drawWorldEventEmblem(
+  ctx: CanvasRenderingContext2D,
+  kind: WorldMapEvent['kind'],
+  cx: number,
+  cy: number,
+  r: number
+) {
+  ctx.save()
+  ctx.lineCap = 'round'
+  ctx.lineJoin = 'round'
+
+  if (kind === 'wandering_merchant') {
+    // Golden spoked caravan wheel
+    const wheelR = r * 0.66
+    ctx.strokeStyle = '#3b2004'
+    ctx.lineWidth = 3.2
+    ctx.beginPath()
+    ctx.arc(cx, cy, wheelR, 0, Math.PI * 2)
+    ctx.stroke()
+
+    ctx.strokeStyle = '#fff0a6'
+    ctx.lineWidth = 2.0
+    ctx.beginPath()
+    ctx.arc(cx, cy, wheelR, 0, Math.PI * 2)
+    ctx.stroke()
+
+    for (let i = 0; i < 6; i++) {
+      const a = (i / 6) * Math.PI * 2
+      ctx.beginPath()
+      ctx.moveTo(cx, cy)
+      ctx.lineTo(cx + Math.cos(a) * wheelR, cy + Math.sin(a) * wheelR)
+      ctx.stroke()
+    }
+    ctx.beginPath()
+    ctx.arc(cx, cy, wheelR * 0.28, 0, Math.PI * 2)
+    ctx.fillStyle = '#ffcb57'
+    ctx.fill()
+    ctx.strokeStyle = '#3b2004'
+    ctx.lineWidth = 1.4
+    ctx.stroke()
+  } else if (kind === 'goblin_ambush') {
+    // Crossed bounty daggers
+    const len = r * 0.72
+    const drawBlade = (dir: number) => {
+      ctx.save()
+      ctx.translate(cx, cy)
+      ctx.rotate(dir * Math.PI * 0.25)
+      // Blade
+      ctx.beginPath()
+      ctx.moveTo(0, -len)
+      ctx.lineTo(len * 0.24, -len * 0.15)
+      ctx.lineTo(0, len * 0.18)
+      ctx.lineTo(-len * 0.24, -len * 0.15)
+      ctx.closePath()
+      ctx.fillStyle = '#fff1e6'
+      ctx.fill()
+      ctx.strokeStyle = '#2b0b0e'
+      ctx.lineWidth = 1.5
+      ctx.stroke()
+      // Crossguard + pommel
+      ctx.strokeStyle = '#ffcb57'
+      ctx.lineWidth = 2.4
+      ctx.beginPath()
+      ctx.moveTo(-len * 0.34, len * 0.18)
+      ctx.lineTo(len * 0.34, len * 0.18)
+      ctx.stroke()
+      ctx.strokeStyle = '#d98348'
+      ctx.lineWidth = 2.2
+      ctx.beginPath()
+      ctx.moveTo(0, len * 0.22)
+      ctx.lineTo(0, len * 0.66)
+      ctx.stroke()
+      ctx.restore()
+    }
+    drawBlade(-1)
+    drawBlade(1)
+  } else {
+    // Glowing hourglass gauntlet emblem
+    const hw = r * 0.48
+    const hh = r * 0.64
+    ctx.fillStyle = '#f2e4ff'
+    ctx.strokeStyle = '#1b0c30'
+    ctx.lineWidth = 1.6
+    ctx.beginPath()
+    ctx.moveTo(cx - hw, cy - hh)
+    ctx.lineTo(cx + hw, cy - hh)
+    ctx.lineTo(cx + hw * 0.22, cy)
+    ctx.lineTo(cx + hw, cy + hh)
+    ctx.lineTo(cx - hw, cy + hh)
+    ctx.lineTo(cx - hw * 0.22, cy)
+    ctx.closePath()
+    ctx.fill()
+    ctx.stroke()
+    // Golden sand inside bulbs
+    ctx.fillStyle = '#ffcb57'
+    ctx.beginPath()
+    ctx.moveTo(cx - hw * 0.62, cy - hh * 0.55)
+    ctx.lineTo(cx + hw * 0.62, cy - hh * 0.55)
+    ctx.lineTo(cx, cy - hh * 0.08)
+    ctx.closePath()
+    ctx.fill()
+    ctx.beginPath()
+    ctx.moveTo(cx - hw * 0.72, cy + hh * 0.88)
+    ctx.lineTo(cx + hw * 0.72, cy + hh * 0.88)
+    ctx.lineTo(cx, cy + hh * 0.32)
+    ctx.closePath()
+    ctx.fill()
+    // Caps
+    ctx.strokeStyle = '#ffcb57'
+    ctx.lineWidth = 2.4
+    ctx.beginPath()
+    ctx.moveTo(cx - hw * 1.15, cy - hh)
+    ctx.lineTo(cx + hw * 1.15, cy - hh)
+    ctx.moveTo(cx - hw * 1.15, cy + hh)
+    ctx.lineTo(cx + hw * 1.15, cy + hh)
+    ctx.stroke()
+  }
+
+  ctx.restore()
+}
+
+/** Animated glowing temporary World Map event medallion (Caravan / Ambush / Gauntlet + remaining turns badge). */
+export function drawWorldMapEventNode(
+  ctx: CanvasRenderingContext2D,
+  rect: LayoutRect,
+  event: WorldMapEvent,
+  opts: {
+    selected: boolean
+    time: number
+    compact?: boolean
+  },
+  st: CanvasWidgetDrawState
+) {
+  const { x, y, width: w } = rect
+  const cx = x + w / 2
+  const r = opts.compact ? 14 : 17
+  const cy = y + r + 5
+  const hot = st.hovered || st.focused || opts.selected
+  const pulse = 1 + Math.sin(opts.time * 5.2 + event.mapX * 19) * 0.14
+
+  const palette = event.kind === 'wandering_merchant'
+    ? {
+        top: hot ? '#ffe280' : '#f2b838',
+        bot: '#663c0d',
+        ring: '#fff2b0',
+        glow: 'rgba(255, 206, 84, 0.36)',
+        shortTitle: opts.compact ? 'Caravan' : 'Relic Caravan'
+      }
+    : event.kind === 'goblin_ambush'
+      ? {
+          top: hot ? '#ff8b66' : '#e0533c',
+          bot: '#4f151b',
+          ring: '#ffb899',
+          glow: 'rgba(255, 96, 68, 0.36)',
+          shortTitle: opts.compact ? 'Ambush' : 'Goblin Ambush'
+        }
+      : {
+          top: hot ? '#d49eff' : '#9c5ef0',
+          bot: '#2c1552',
+          ring: '#e6c8ff',
+          glow: 'rgba(176, 112, 255, 0.38)',
+          shortTitle: opts.compact ? 'Gauntlet' : 'Vanguard Trial'
+        }
+
+  ctx.save()
+
+  // Pulsing beacon aura (always live so temporary events pop on cleared roads)
+  ctx.beginPath()
+  ctx.arc(cx, cy, (r + 7.5) * pulse, 0, Math.PI * 2)
+  ctx.fillStyle = opts.selected ? 'rgba(255, 240, 148, 0.44)' : palette.glow
+  ctx.fill()
+  ctx.strokeStyle = opts.selected ? COLOR.accentHi : palette.ring
+  ctx.lineWidth = opts.selected ? 2.6 : 1.7
+  ctx.stroke()
+
+  // Orbiting glint dot
+  const orbitA = opts.time * 2.4 + event.mapY * 14
+  ctx.beginPath()
+  ctx.arc(cx + Math.cos(orbitA) * (r + 5), cy + Math.sin(orbitA) * (r + 5), 2.3, 0, Math.PI * 2)
+  ctx.fillStyle = '#fff9d6'
+  ctx.fill()
+
+  // Pedestal shadow
+  ctx.beginPath()
+  ctx.ellipse(cx, cy + r * 0.88, r * 0.86, r * 0.32, 0, 0, Math.PI * 2)
+  ctx.fillStyle = 'rgba(14, 10, 6, 0.48)'
+  ctx.fill()
+
+  // Ornate rotated-diamond / rounded medallion body
+  ctx.beginPath()
+  if (event.kind === 'wandering_merchant') {
+    ctx.arc(cx, cy, r, 0, Math.PI * 2)
+  } else {
+    const sides = event.kind === 'goblin_ambush' ? 8 : 6
+    for (let i = 0; i < sides; i++) {
+      const a = (i / sides) * Math.PI * 2 - Math.PI / 2
+      const px = cx + Math.cos(a) * (r + 1.2)
+      const py = cy + Math.sin(a) * (r + 1.2)
+      if (i === 0) ctx.moveTo(px, py)
+      else ctx.lineTo(px, py)
+    }
+    ctx.closePath()
+  }
+  const grad = ctx.createLinearGradient(cx, cy - r, cx, cy + r)
+  grad.addColorStop(0, palette.top)
+  grad.addColorStop(1, palette.bot)
+  ctx.fillStyle = grad
+  ctx.fill()
+  ctx.lineWidth = 2.4
+  ctx.strokeStyle = COLOR.outline
+  ctx.stroke()
+
+  ctx.beginPath()
+  ctx.arc(cx, cy, r - 3, 0, Math.PI * 2)
+  ctx.strokeStyle = opts.selected ? COLOR.accentHi : palette.ring
+  ctx.lineWidth = opts.selected ? 2.2 : 1.5
+  ctx.stroke()
+
+  // Event-specific icon (wheel / crossed daggers / hourglass)
+  drawWorldEventEmblem(ctx, event.kind, cx, cy, r * 0.82)
+
+  // Remaining duration badge (e.g. "3t") at top-right
+  const urgent = event.expiresAfterBattles <= 1
+  const turnsLabel = `${Math.max(1, event.expiresAfterBattles)}t`
+  const bx = cx + r * 0.78
+  const by = cy - r * 0.72
+  const bw = 20
+  const bh = 14
+  rr(ctx, bx - bw / 2, by - bh / 2, bw, bh, 7)
+  ctx.fillStyle = urgent ? '#c92a3e' : '#182442'
+  ctx.fill()
+  ctx.strokeStyle = urgent ? '#ffd6d6' : palette.ring
+  ctx.lineWidth = 1.5
+  ctx.stroke()
+  drawText(ctx, turnsLabel, bx, by + 0.5, {
+    size: 8.5,
+    weight: 900,
+    color: urgent ? '#ffffff' : COLOR.accentHi,
+    align: 'center',
+    display: true
+  })
+
+  // Name ribbon below medallion
+  const plaqueY = cy + r + 3
+  const plaqueH = opts.compact ? 15 : 17
+  const plaqueW = Math.min(w, Math.max(66, measureText(ctx, palette.shortTitle, opts.compact ? 8.5 : 9.5, 900, true) + 12))
+  const plaqueX = cx - plaqueW / 2
+  rr(ctx, plaqueX, plaqueY, plaqueW, plaqueH, 5)
+  ctx.fillStyle = opts.selected ? '#3d2c5e' : 'rgba(26, 20, 42, 0.94)'
+  ctx.fill()
+  ctx.strokeStyle = opts.selected ? COLOR.accentHi : palette.ring
+  ctx.lineWidth = opts.selected ? 2 : 1.5
+  ctx.stroke()
+  drawText(ctx, palette.shortTitle, cx, plaqueY + plaqueH / 2 + 0.5, {
+    size: opts.compact ? 8.5 : 9.5,
+    weight: 900,
+    color: opts.selected ? COLOR.accentHi : '#fff4d6',
+    align: 'center',
+    maxW: plaqueW - 8,
+    display: true
+  })
+
+  if (st.focused) drawFocusRing(ctx, cx - r - 2, cy - r - 2, r * 2 + 4, r * 2 + 4, r + 2)
   ctx.restore()
 }
 
