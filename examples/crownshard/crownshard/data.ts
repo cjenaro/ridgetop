@@ -1481,7 +1481,7 @@ export const CHAPTERS: readonly ChapterSpec[] = [
   },
 
   // =========================================================================
-  // UPCOMING EXPANSION LOCATIONS ("SOON...") — FUTURE ACTS, RAIDS & FRONTIERS
+  // ACT I / II EXPANSION LOCATIONS — SOLIS VALE & THE SILVERFEN
   // =========================================================================
   {
     id: 'oakhaven_market',
@@ -1490,27 +1490,54 @@ export const CHAPTERS: readonly ChapterSpec[] = [
     landmark: 'town',
     kind: 'town',
     difficulty: 1,
-    recommendedPower: 400,
+    recommendedPower: 480,
     mapX: 0.15,
     mapY: 0.24,
     requires: ['border_watch'],
-    comingSoon: true,
-    soonNote: 'Soon... Traveling Relic Caravan, Bounty Board & Forge Crafting',
-    specialTag: 'Soon...',
+    specialTag: 'Trade Hub',
+    modifierDesc: '8x6 Guild Plaza · Seize 2 Stolen Caravan Chests · Unlocks Oakhaven Exchange Discount',
     title: 'Oakhaven City',
     subtitle: 'Free Trade Hub & Guild Hall',
     biome: 'meadow',
     introSpeaker: 'Sir Aldric',
-    introText: 'Merchants and relic smiths gather behind Oakhaven\'s walls.',
-    outroSpeaker: 'Sir Aldric',
-    outroText: 'Trade routes restored.',
-    rewardGold: 100,
-    replayGold: 50,
-    rewardEquipId: null,
+    introText: 'Eclipse brigands have breached Oakhaven\'s Guild Plaza! Smash their market barricades, hold the sanctuary fountain, and reclaim both stolen caravan chests.',
+    outroSpeaker: 'Lyra',
+    outroText: 'The Guild Plaza is secure! Oakhaven\'s merchant masters now grant us a 20% Guild Patron discount on Dust, Shards, and Relic Caravan crates.',
+    rewardGold: 130,
+    replayGold: 60,
+    rewardEquipId: 'leather_jerkin',
     rewardHeroId: null,
-    grid: SOON_GRID,
+    grid: [
+      [V, H, T, S, S, T, H, V],
+      [S, S, S, K, S, S, S, H],
+      [G, S, R, S, S, P, S, S],
+      [G, S, S, S, K, S, T, H],
+      [S, F, S, P, S, S, S, H],
+      [V, G, T, H, H, T, S, V]
+    ],
+    heights: [
+      [0, 2, 1, 1, 1, 1, 2, 0],
+      [0, 0, 1, 1, 1, 1, 1, 2],
+      [0, 0, 0, 1, 1, 1, 1, 1],
+      [0, 0, 0, 0, 1, 1, 1, 2],
+      [0, 0, 0, 0, 0, 1, 1, 2],
+      [0, 0, 1, 2, 2, 1, 1, 0]
+    ],
     heroSpawns: [[0, 1], [0, 2], [0, 3], [1, 2]],
-    enemies: [{ id: 'goblin', col: 5, row: 2 }, { id: 'goblin', col: 5, row: 1 }, { id: 'goblin', col: 5, row: 3 }]
+    objective: {
+      kind: 'seize',
+      label: 'Reclaim Caravan Chests',
+      description: 'Seize both raided Guild Caravan chests within 10 turns (or rout all raiders).',
+      chestTiles: [{ col: 5, row: 1 }, { col: 6, row: 4 }],
+      requiredChests: 2,
+      turnLimit: 10
+    },
+    enemies: [
+      { id: 'goblin', col: 4, row: 2, name: 'Guild Raider' },
+      { id: 'goblin', col: 5, row: 3, name: 'Market Cutthroat' },
+      { id: 'bone_archer', col: 6, row: 0, name: 'Balcony Marksman' },
+      { id: 'orc_brute', col: 6, row: 2, name: 'Caravan Bruiser' }
+    ]
   },
   {
     id: 'galewind_windmill',
@@ -1524,23 +1551,48 @@ export const CHAPTERS: readonly ChapterSpec[] = [
     mapY: 0.17,
     requires: ['oakhaven_market', 'briar_hollow'],
     unlockMode: 'any',
-    comingSoon: true,
-    soonNote: 'Soon... Stepped Windmill Ridge with Gust-Push Tiles',
-    specialTag: 'Soon...',
+    specialTag: 'Galewind Ridge',
+    modifierDesc: '9x6 Terraced Windmill Cliff · Galewind Gust pushes Height 2+ units 1 tile west every 2 rounds',
     title: 'Galewind Ridge',
     subtitle: 'Vertical Windmill Siege',
     biome: 'meadow',
     introSpeaker: 'Lyra',
-    introText: 'Highland winds howl across the terraced windmills.',
+    introText: 'Fierce westerly gales howl across the windmill terraces every two rounds! Watch your footing on Height 2+ ledges — or shove Eclipse archers straight into the wind.',
     outroSpeaker: 'Lyra',
-    outroText: 'The highland ridges are ours.',
+    outroText: 'The highland windmills turn under Solis banners once more — and we recovered swift Gale Striders from the ridge keep!',
     rewardGold: 135,
     replayGold: 70,
     rewardEquipId: 'swift_boots',
     rewardHeroId: null,
-    grid: SOON_GRID,
+    grid: [
+      [V, V, G, T, H, H, T, H, V],
+      [G, G, T, H, P, H, H, H, H],
+      [G, S, T, H, H, T, H, P, H],
+      [G, R, S, T, H, H, T, H, H],
+      [G, F, S, K, H, P, H, T, H],
+      [V, V, G, T, H, H, V, V, V]
+    ],
+    heights: [
+      [0, 0, 0, 1, 2, 2, 2, 3, 0],
+      [0, 0, 1, 2, 2, 2, 3, 3, 3],
+      [0, 0, 1, 2, 2, 2, 3, 3, 3],
+      [0, 0, 1, 1, 2, 2, 2, 3, 3],
+      [0, 0, 1, 1, 2, 2, 2, 2, 3],
+      [0, 0, 0, 1, 2, 2, 0, 0, 0]
+    ],
     heroSpawns: [[0, 1], [0, 2], [0, 3], [1, 2]],
-    enemies: [{ id: 'goblin', col: 5, row: 2 }, { id: 'bone_archer', col: 5, row: 1 }, { id: 'bone_archer', col: 5, row: 3 }]
+    objective: {
+      kind: 'rout',
+      label: 'Clear Windmill Ramparts',
+      description: 'Rout all Eclipse raiders across the terraced windmill cliff while weathering Galewind Gusts.'
+    },
+    enemies: [
+      { id: 'goblin', col: 4, row: 2 },
+      { id: 'orc_brute', col: 5, row: 3 },
+      { id: 'goblin', col: 6, row: 1 },
+      { id: 'bone_archer', col: 7, row: 0 },
+      { id: 'bone_archer', col: 7, row: 3 }
+    ]
   },
   {
     id: 'emerald_delta',
@@ -1554,23 +1606,48 @@ export const CHAPTERS: readonly ChapterSpec[] = [
     mapY: 0.62,
     requires: ['miller_ford', 'sunken_bridge'],
     unlockMode: 'any',
-    comingSoon: true,
-    soonNote: 'Soon... Tidal Floodplains with Shifting Water Bridges & River Trolls',
-    specialTag: 'Soon...',
+    specialTag: 'Rising Tide',
+    modifierDesc: '9x6 Flooded Marsh Islands · Low-tide fords flood every 2 rounds · River Trolls & Shamans',
     title: 'Emerald Delta',
     subtitle: 'Flooded Marsh Raid',
     biome: 'river',
     introSpeaker: 'Vesper',
-    introText: 'Tides rise and fall every two turns across the sunken causeways.',
+    introText: 'The Silverfen tide surges every two rounds, swallowing the northern and southern timber fords! Cross cleanly before the waters rise and purge the River Trolls.',
     outroSpeaker: 'Vesper',
-    outroText: 'The marsh tide subsides.',
+    outroText: 'The marsh tide recedes and the delta islets are free — Runed Chainmail recovered from the sunken sluice!',
     rewardGold: 160,
     replayGold: 85,
     rewardEquipId: 'runed_mail',
     rewardHeroId: null,
-    grid: SOON_GRID,
-    heroSpawns: [[0, 1], [0, 2], [0, 3], [1, 2]],
-    enemies: [{ id: 'orc_brute', col: 5, row: 2 }, { id: 'bog_shaman', col: 5, row: 1 }, { id: 'goblin', col: 5, row: 3 }]
+    grid: [
+      [V, G, W, W, G, H, W, G, V],
+      [G, S, B, B, F, T, B, S, G],
+      [G, R, W, W, S, H, W, F, H],
+      [G, S, B, B, S, T, B, S, G],
+      [G, F, W, W, F, P, W, S, H],
+      [V, G, B, B, G, S, B, G, V]
+    ],
+    heights: [
+      [0, 0, 0, 0, 1, 2, 0, 1, 0],
+      [0, 0, 0, 0, 1, 1, 0, 1, 1],
+      [0, 0, 0, 0, 1, 2, 0, 1, 2],
+      [0, 0, 1, 1, 1, 1, 1, 1, 1],
+      [0, 0, 0, 0, 1, 1, 0, 1, 2],
+      [0, 0, 0, 0, 1, 1, 0, 1, 0]
+    ],
+    heroSpawns: [[0, 1], [0, 2], [0, 3], [1, 3]],
+    objective: {
+      kind: 'rout',
+      label: 'Purge Emerald Delta',
+      description: 'Defeat all River Trolls and Eclipse Shamans across the tidal marsh islands.'
+    },
+    enemies: [
+      { id: 'river_troll', col: 4, row: 2 },
+      { id: 'goblin', col: 4, row: 4 },
+      { id: 'bog_shaman', col: 5, row: 0 },
+      { id: 'river_troll', col: 7, row: 4 },
+      { id: 'bog_shaman', col: 8, row: 2 }
+    ]
   },
   {
     id: 'sunken_monastery',
@@ -1584,24 +1661,57 @@ export const CHAPTERS: readonly ChapterSpec[] = [
     mapY: 0.41,
     requires: ['sunwell_glade', 'lantern_crypt'],
     unlockMode: 'any',
-    comingSoon: true,
-    soonNote: 'Soon... Defend the Relic Altar for 6 Waves against Eclipse Zealots',
-    specialTag: 'Soon...',
+    specialTag: 'Relic Defense',
+    modifierDesc: '9x7 Abbey Courtyard · Defend Relic Altar 6 Turns · Reinforcements on Rounds 2, 4 & 5',
     title: 'Solis Monastery',
     subtitle: 'Wave-Defense Sanctum',
     biome: 'river',
     introSpeaker: 'Sir Aldric',
-    introText: 'Hold the abbey courtyard while the bells rally the realm!',
+    introText: 'Eclipse zealots storm the abbey cloisters! Guard the central Relic Altar for 6 turns as fresh reinforcement waves breach the outer gates on rounds 2, 4, and 5.',
     outroSpeaker: 'Sir Aldric',
-    outroText: 'The abbey stands unbroken.',
+    outroText: 'The abbey bells ring unbroken across the Silverfen! The monks entrust us with the legendary Aegis of Dawn.',
     rewardGold: 190,
     replayGold: 95,
     rewardEquipId: 'aegis_of_dawn',
     rewardHeroId: null,
-    grid: SOON_GRID,
-    heroSpawns: [[0, 1], [0, 2], [0, 3], [1, 2]],
-    enemies: [{ id: 'crypt_knight', col: 5, row: 2 }, { id: 'bog_shaman', col: 5, row: 1 }, { id: 'bone_archer', col: 5, row: 3 }]
+    grid: [
+      [V, G, S, H, T, H, S, G, V],
+      [G, S, P, S, S, S, P, S, G],
+      [G, S, S, T, S, T, S, S, G],
+      [S, T, S, S, R, S, S, T, S],
+      [G, S, S, T, S, T, S, S, G],
+      [G, S, P, S, K, S, P, S, G],
+      [V, G, S, W, S, W, S, G, V]
+    ],
+    heights: [
+      [0, 0, 1, 2, 1, 2, 1, 0, 0],
+      [0, 0, 1, 1, 1, 1, 1, 0, 0],
+      [0, 0, 1, 1, 2, 1, 1, 0, 0],
+      [0, 1, 1, 2, 2, 2, 1, 1, 0],
+      [0, 0, 1, 1, 2, 1, 1, 0, 0],
+      [0, 0, 1, 1, 1, 1, 1, 0, 0],
+      [0, 0, 1, 0, 1, 0, 1, 0, 0]
+    ],
+    heroSpawns: [[3, 3], [4, 2], [4, 4], [5, 3]],
+    objective: {
+      kind: 'defend',
+      label: 'Defend Relic Altar',
+      description: 'Keep Eclipse waves off the central Relic Altar for 6 turns (or rout all foes).',
+      targetTurns: 6,
+      protectTile: { col: 4, row: 3 },
+      protectLabel: 'Relic Altar'
+    },
+    enemies: [
+      { id: 'crypt_knight', col: 1, row: 3 },
+      { id: 'bog_shaman', col: 7, row: 3 },
+      { id: 'bone_archer', col: 1, row: 1 },
+      { id: 'bone_archer', col: 7, row: 5 }
+    ]
   },
+
+  // =========================================================================
+  // UPCOMING EXPANSION LOCATIONS ("SOON...") — FUTURE ACTS, RAIDS & FRONTIERS
+  // =========================================================================
   {
     id: 'gloomwood_heart',
     index: 18,

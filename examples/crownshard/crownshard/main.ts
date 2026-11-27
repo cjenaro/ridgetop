@@ -16,22 +16,22 @@ import {
 } from './data.ts'
 import { cameraAlignedFacing, cameraCardinalHeading, createCrownshardScene, facingPickerAnchor } from './scene.ts'
 import {
-  MAX_TACTIC_DECK, MIN_TACTIC_DECK,
+  MAX_TACTIC_DECK, MIN_TACTIC_DECK, OAKHAVEN_STAGE_ID,
   STAGE_DIFFICULTY_TIERS, STAGE_MUTATOR_IDS, STAGE_MUTATOR_SPECS, STAGE_TIER_SPECS,
   abandonBattle, areDiscoveryTipsEnabled, armSkill, armTacticCard, autoBuildTacticDeck, autoEquipBestFit, beginWaitFacingPicker,
-  bulkSalvageCommonDupes, buyPack, canBuyPack, canCraftEquipment, canCraftHero, canMergeHero, canUndoMove,
+  bulkSalvageCommonDupes, buyOakhavenDeal, buyPack, canBuyPack, canCraftEquipment, canCraftHero, canMergeHero, canUndoMove,
   cancelAutoBattle, cancelWaitFacingPicker, checkDiscoveryTipForBattle, clearSave, computeChallengeRewards,
   computeCombatForecast, computeDangerZone, computeDeckValue,
   computeEnemyThreat, computeHeroStats, computeSquadPower, computeTacticDeckCurve, computeZocPerimeterTiles,
   confirmDeployment, confirmWaitFacingPicker, craftEquipment, craftHero, createInitialState,
   createTurnBoundaryTracker, dismissDiscoveryTip, effectiveSpeed, equipItem, evaluateAllFacingExposures, evaluateFacingExposure,
   findBestFitUpgrades, findEquipOwner, findGridPath, formatBattleSpeedLabel, formatOpportunityWarning,
-  getActiveDiscoveryTip, getActiveTacticDeckUids,
+  getAct1StageMechanicStatus, getActiveDiscoveryTip, getActiveTacticDeckUids,
   getChapterObjectiveSummary, getCraftableEquipment, getCraftableHeroes, getEquipCraftCost, getEquipEffect,
   getEquipSalvageDust, getEquipmentByUid, getHeroByUid, getHeroCraftCost, getHeroPassive, getHeroSalvageShards,
-  getHeroSkill, getHighestClearedStageTier, getMaxCombatLogScroll, getMergeCandidates, getNextRecommendedStage, getObjectiveProgressText, getPackPityStatus,
-  getStageUnlockHint, getTacticByUid, getUnitByUid, hasMaxedHero, heroLevelProgress, isChestClaimed,
-  isDeployTile, isEndlessUnlocked, isEnemyShrouded, isStageCleared, isStageUnlocked, loadSave, maxSquadSize, mergeHero,
+  getHeroSkill, getHighestClearedStageTier, getMaxCombatLogScroll, getMergeCandidates, getNextRecommendedStage, getOakhavenExchangeOffers, getObjectiveProgressText, getPackPityStatus,
+  getStageUnlockHint, getTacticByUid, getUnitByUid, hasMaxedHero, hasOakhavenPatronDiscount, heroLevelProgress, isChestClaimed,
+  isDeployTile, isEndlessUnlocked, isEnemyShrouded, isOakhavenExchangeUnlocked, isStageCleared, isStageUnlocked, loadSave, maxSquadSize, mergeHero,
   moveDeployUnit, persistSave, previewBulkSalvageCommonDupes, previewPathOpportunityAttacks,
   previewTurnOrderAfterAction, previewWaitFacing, resetDiscoveryTips, resolveStageChallenge, restoreBattleState, rotateDeployUnit, salvageEquipCard,
   salvageHeroCard, selectHeroByUid, selectTile, serializeBattleState, setAutoBattle, setBattleSpeed,
@@ -1860,10 +1860,14 @@ async function start() {
           : 'Deploy to Battle'
 
     const showChallengeControls = selectedCleared && !selectedSoon
+    const showOakhavenExchange = selected.id === OAKHAVEN_STAGE_ID && !selectedSoon && isOakhavenExchangeUnlocked(camp)
+    const oakhavenOffers = showOakhavenExchange ? getOakhavenExchangeOffers(camp) : []
+    const oakhavenPatron = showOakhavenExchange && hasOakhavenPatronDiscount(camp)
     const inspW = mobile ? Math.min(w - 16, 460) : 344
+    const extraPanels = (showChallengeControls ? 1 : 0) + (showOakhavenExchange ? 1 : 0)
     const inspH = mobile
-      ? Math.min(Math.min(h - topH - 36, Math.round(h * (showChallengeControls ? 0.66 : 0.42))), showChallengeControls ? 408 : 258)
-      : Math.min(h - topH - outerPad * 3 - 8, showChallengeControls ? 624 : 512)
+      ? Math.min(Math.min(h - topH - 36, Math.round(h * (extraPanels > 0 ? 0.72 : 0.42))), extraPanels > 1 ? 464 : extraPanels > 0 ? 408 : 258)
+      : Math.min(h - topH - outerPad * 3 - 8, extraPanels > 1 ? 690 : extraPanels > 0 ? 624 : 512)
 
     const inspectorPanel = column({
       id: 'wm-inspector',
@@ -2062,6 +2066,67 @@ async function start() {
               mutId,
               { active: activeChallenge.mutators.includes(mutId), compact: isCompact },
               st
+            )
+          }
+        })))
+      ])] : []),
+
+      // Oakhaven Guild Exchange (Free Trade Hub Supply Deals)
+      ...(showOakhavenExchange ? [column({
+        id: 'wm-oakhaven-exchange',
+        style: { height: isCompact ? 62 : 70, padding: [6, 8], gap: 4 },
+        widget: {
+          type: 'panel',
+          blocksPointer: true,
+          draw: (ctx: CanvasRenderingContext2D, rect: LayoutRect) => {
+            drawWell(ctx, rect, RADIUS.md)
+            drawOverline(
+              ctx,
+              oakhavenPatron
+                ? 'Oakhaven Guild Exchange · Patron -20%'
+                : 'Oakhaven Guild Exchange (Clear for -20%)',
+              rect.x + 8,
+              rect.y + 10,
+              rect.width - 16,
+              oakhavenPatron ? '#ffcb57' : '#8fd4ff'
+            )
+          }
+        }
+      }, [
+        spacerNode(isCompact ? 9 : 11),
+        row({ id: 'wm-oakhaven-deals', style: { height: isCompact ? 34 : 38, gap: 4 } }, oakhavenOffers.map(offer => boxNode({
+          id: `wm-oakhaven-${offer.deal.id}`,
+          style: { grow: 1, height: isCompact ? 34 : 38 },
+          widget: {
+            type: 'button',
+            label: `${offer.deal.shortLabel} (${offer.purchasedThisCycle ? 'Sold' : `${offer.cost}g`})`,
+            disabled: !offer.canBuy,
+            onPress: () => {
+              audio.unlock()
+              const res = buyOakhavenDeal(state, offer.deal.id)
+              if (res.ok) {
+                const gain = res.equipCard
+                  ? EQUIPMENT_BY_ID[res.equipCard.equipId]?.name ?? 'Relic Card'
+                  : res.dustGained > 0
+                    ? `+${res.dustGained} Arcane Dust`
+                    : `+${res.shardsGained} Hero Shards`
+                showToast(`Oakhaven Trade: ${gain} (-${res.goldSpent}g)`)
+                saveNow()
+                uiDirty = true
+                hudRev++
+              } else if (res.reason) {
+                showToast(res.reason)
+              }
+            },
+            draw: (ctx: CanvasRenderingContext2D, rect: LayoutRect, st: CanvasWidgetDrawState) => drawButton(
+              ctx,
+              rect,
+              offer.purchasedThisCycle ? 'SOLD' : `${offer.deal.shortLabel} · ${offer.cost}g`,
+              st,
+              {
+                variant: offer.purchasedThisCycle ? 'secondary' : offer.canBuy ? 'primary' : 'secondary',
+                size: isCompact ? 9.5 : 10
+              }
             )
           }
         })))
@@ -3580,15 +3645,19 @@ async function start() {
     const objBadgeW = mobilePortrait ? Math.min(w - 64, 240) : mobileLandscape ? 208 : 264
     const hasChallengeBadge = battle.difficultyTier !== 'normal' || battle.mutators.length > 0
     const challengeBadgeH = isPhone ? 24 : 27
+    const stageMechanicHud = getAct1StageMechanicStatus(battle)
+    const stageMechanicH = isPhone ? 24 : 26
     const autoPillH = isPhone ? 24 : 26
 
-    // Single unified top-left vertical stack cursor so Objective, Challenge, Auto-Battle,
+    // Single unified top-left vertical stack cursor so Objective, Stage Mechanic, Challenge, Auto-Battle,
     // Combat Log, and Discovery Tips NEVER overlap each other or the turn timeline!
     let leftStackY = singleTopRow
       ? edgeX + topBarH + 6
       : timelineInset[1] + tokenH + (isPhone ? 16 : 20)
     const objBadgeY = leftStackY
     leftStackY += objBadgeH + 6
+    const stageMechanicY = leftStackY
+    if (stageMechanicHud) leftStackY += stageMechanicH + 6
     const challengeBadgeY = leftStackY
     if (hasChallengeBadge) leftStackY += challengeBadgeH + 6
     const autoPillY = leftStackY
@@ -3737,6 +3806,36 @@ async function start() {
           })
         }
       }),
+
+      // Active Solis Vale / Silverfen Stage Mechanic callout (Galewind Gust, Rising Tide, Monastery Waves)
+      ...(stageMechanicHud ? [boxNode({
+        id: 'battle-stage-mechanic-badge',
+        style: {
+          anchor: 'top-left',
+          width: objBadgeW,
+          height: stageMechanicH,
+          inset: [edgeX, stageMechanicY],
+          respectSafeArea: true
+        },
+        widget: {
+          type: 'panel',
+          blocksPointer: false,
+          draw: (ctx: CanvasRenderingContext2D, rect: LayoutRect) => {
+            drawPanel(ctx, rect, {
+              r: RADIUS.md,
+              lipH: 2,
+              fill: stageMechanicHud.urgent ? '#2d2342eb' : '#192642eb',
+              fillBot: stageMechanicHud.urgent ? '#1e1630f0' : '#111a30f0'
+            })
+            drawText(ctx, `${stageMechanicHud.label} · ${stageMechanicHud.detail}`, rect.x + 8, rect.y + rect.height * 0.5 + 3.5, {
+              size: isPhone ? 9.5 : 10,
+              weight: 800,
+              color: stageMechanicHud.accentHex,
+              maxW: rect.width - 16
+            })
+          }
+        }
+      })] : []),
 
       // Active Heroic/Mythic Tier & Mutator Badges right below objective badge
       ...(hasChallengeBadge ? [boxNode({
