@@ -2,11 +2,11 @@
   "schemaVersion": 1,
   "appId": "com.ridgetop.crownshard",
   "channel": "dev",
-  "version": "1.0.0+dev.20261127192919.7af288e",
+  "version": "1.0.0+dev.20261127194829.01a8480",
   "minNativeVersion": "1.0.0",
-  "bundleUrl": "https://cjenaro.github.io/ridgetop/ota/crownshard/dev/bundle-1.0.0+dev.20261127192919.7af288e.zip",
-  "sha256": "65073fffbed8aefe630da32b586c69126e5a6b579429d7d0b87a5ce520e57dc1",
-  "bytes": 806317,
-  "createdAt": "2026-11-27T19:29:37.730Z",
-  "signature": "kaI33VwbsjaDdetqLonIjVIc1l/qD3ehT/V6fZYJ9ha28QGEaH9VTzzWDvENMDRjaC1iDNz/EVLBlJuDuqPiBQ=="
+  "bundleUrl": "https://cjenaro.github.io/ridgetop/ota/crownshard/dev/bundle-1.0.0+dev.20261127194829.01a8480.zip",
+  "sha256": "36d2bccdff247091787a909bdb09e0f5d203d0d429df2c79405381e4c591780d",
+  "bytes": 808339,
+  "createdAt": "2026-11-27T19:48:42.761Z",
+  "signature": "IJ+yhYVrNaFw7/LCi/P5sc+DohmLyEC96qV5/Jb2pe2uww1Xs+WRTsVQCKqeXT87cja+xZPJPhDdklBxQJ4JBg=="
 }
