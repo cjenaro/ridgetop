@@ -1507,8 +1507,13 @@ export function drawTitleLogo(ctx: CanvasRenderingContext2D, rect: LayoutRect) {
 
   // Stylized angled game subtitle ribbon plaque
   const sub = 'TACTICS  •  CARDS  •  HEROES'
-  const subSize = Math.max(10, Math.round(size * 0.2))
-  const rw = Math.min(w - 20, measureText(ctx, sub, subSize, 900, true) + 46)
+  const subSpacing = w < 380 ? 1 : 2
+  const subSize = Math.max(9.5, Math.round(size * 0.2))
+  ctx.font = font(subSize, 900, true)
+  setSpacing(ctx, subSpacing)
+  const subMeasuredW = ctx.measureText(sub).width
+  setSpacing(ctx, 0)
+  const rw = Math.min(w - 16, Math.ceil(subMeasuredW) + 36)
   const rh = 22
   const ry = wy + size * 0.56
   drawSurface(ctx, { x: cx - rw / 2, y: ry, width: rw, height: rh }, {
@@ -1523,7 +1528,8 @@ export function drawTitleLogo(ctx: CanvasRenderingContext2D, rect: LayoutRect) {
     weight: 900,
     color: COLOR.accentHi,
     align: 'center',
-    spacing: 2,
+    spacing: subSpacing,
+    maxW: rw - 20,
     display: true,
     stroke: true,
     strokeWidth: 2.2
