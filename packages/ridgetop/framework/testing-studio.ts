@@ -324,10 +324,17 @@ export function mountTestingStudio(options: { store?: ReviewStorePort; session?:
     footerMsg.textContent = session.getStatus()
   }
 
+  function notifyTestingBarChange() {
+    if (typeof window !== 'undefined' && typeof CustomEvent === 'function') {
+      window.dispatchEvent(new CustomEvent('ridgetop:testing-bar-change'))
+    }
+  }
+
   function setBarCollapsed(collapsed: boolean) {
     bar.classList.toggle('rt-bar-collapsed', collapsed)
     collapseBtn.textContent = collapsed ? 'TESTING ▾' : '–'
     collapseBtn.title = collapsed ? 'Expand testing bar' : 'Minimize testing bar'
+    notifyTestingBarChange()
   }
 
   function openAgentPopout() {
@@ -1262,9 +1269,11 @@ export function mountTestingStudio(options: { store?: ReviewStorePort; session?:
       session.dispose()
       controller.abort()
       root.remove()
+      notifyTestingBarChange()
     }
   }
   activeStudioHandle = handle
+  notifyTestingBarChange()
   return handle
 }
 

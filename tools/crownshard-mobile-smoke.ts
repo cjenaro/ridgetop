@@ -206,6 +206,7 @@ function buildCampaignSeedSave(): SaveData {
   camp.tipsDisabled = true
   camp.clearedStageIds = [
     'border_watch',
+    'oakhaven_market',
     'miller_ford',
     'sunken_bridge',
     'briar_hollow',
@@ -214,6 +215,20 @@ function buildCampaignSeedSave(): SaveData {
   ]
   camp.chaptersCleared = camp.clearedStageIds.length
   camp.selectedStageId = 'frostspire_pass'
+  camp.stageMastery = {
+    oakhaven_market: {
+      stars: 3,
+      cleared: true,
+      noKo: true,
+      underPar: true,
+      bestTurns: 4
+    }
+  }
+  camp.claimedStageMasteryChests = []
+  camp.oakhavenExchange = {
+    cycle: camp.battlesWon,
+    boughtIds: []
+  }
 
   const knight: OwnedHeroCard = {
     uid: 'hero_knight_3s',
@@ -521,7 +536,7 @@ async function runMobileVerification(
   const { backend, viewport } = run
   const expectedRenderer = RENDERER_NAMES[backend]
   const tag = `${viewport.id} (${viewport.name}) [${backend}]`
-  const gameUrl = `${origin}/crownshard?renderer=${backend}`
+  const gameUrl = `${origin}/crownshard?renderer=${backend}&testing=0`
 
   const audit = async (
     screenLabel: string,
@@ -568,8 +583,90 @@ async function runMobileVerification(
     // SCREEN 2: WORLD MAP (3D Diorama + Stage Inspector + Weather Preview)
     // -----------------------------------------------------------------------
     assert.equal(await uiState(page, 'selectedStageId'), 'frostspire_pass', `${tag}: Frostspire Pass selected`)
-    await audit('Screen 2: World Map', { ignoreWorldProjectedPrefixes: ['map-node-', 'world-event-'] })
+    await audit('Screen 2: World Map', { ignoreWorldProjectedPrefixes: ['map-node-', 'map-event-', 'world-event-'] })
     await maybeCaptureScreenshot(page, screenshotDir, run, '02-world-map', capturedPaths)
+
+    // -----------------------------------------------------------------------
+    // SCREEN 2B: WORLD MAP — CLEARED 3★ OAKHAVEN CITY (Claimable 3★ Chest + Challenge + Guild Exchange)
+    // -----------------------------------------------------------------------
+    await page.evaluate(`window.__CROWNSHARD__?.openWorldMap?.('oakhaven_market')`)
+    await until(() => uiState(page, 'selectedStageId'), 'oakhaven_market', `${tag}: Oakhaven City selected`)
+
+    const oakhavenOverviewReport = await audit('Screen 2b: World Map — Oakhaven 3★ (Battle Tab)', {
+      ignoreWorldProjectedPrefixes: ['map-node-', 'map-event-', 'world-event-']
+    })
+    assert.ok(
+      oakhavenOverviewReport.widgets.some(w => w.id === 'cs-world-claim-mastery-chest'),
+      `${tag}: Oakhaven Claim 3★ Chest CTA visible and within viewport`
+    )
+    assert.ok(
+      oakhavenOverviewReport.widgets.some(w => w.id === 'cs-world-deploy'),
+      `${tag}: Oakhaven Deploy/Replay Battle CTA visible and within viewport`
+    )
+    assert.ok(
+      oakhavenOverviewReport.widgets.some(w => w.id === 'wm-insp-tab-challenge'),
+      `${tag}: Oakhaven Challenge sub-tab visible`
+    )
+    assert.ok(
+      oakhavenOverviewReport.widgets.some(w => w.id === 'wm-insp-tab-trade'),
+      `${tag}: Oakhaven Trade sub-tab visible`
+    )
+    await maybeCaptureScreenshot(page, screenshotDir, run, '02b-world-oakhaven-battle', capturedPaths)
+
+    // Switch to Challenge sub-tab -> audit Tier + Mutators + pinned Deploy CTA
+    await touchTapWidget(page, 'wm-insp-tab-challenge', `${tag}: tap Oakhaven Challenge sub-tab`)
+    await until(() => uiState(page, 'worldInspectorTab'), 'challenge', `${tag}: Oakhaven Challenge sub-tab active`)
+    const oakhavenChallengeReport = await audit('Screen 2c: World Map — Oakhaven 3★ (Challenge Tab)', {
+      ignoreWorldProjectedPrefixes: ['map-node-', 'map-event-', 'world-event-']
+    })
+    assert.ok(
+      oakhavenChallengeReport.widgets.some(w => w.id === 'wm-tier-veteran'),
+      `${tag}: Oakhaven Veteran difficulty tier visible`
+    )
+    assert.ok(
+      oakhavenChallengeReport.widgets.some(w => w.id === 'wm-tier-mythic'),
+      `${tag}: Oakhaven Mythic difficulty tier visible`
+    )
+    const firstMutator = oakhavenChallengeReport.widgets.find(w => w.id.startsWith('wm-mut-'))
+    assert.ok(firstMutator, `${tag}: Oakhaven mutator chips visible`)
+    assert.ok(
+      oakhavenChallengeReport.widgets.some(w => w.id === 'cs-world-deploy'),
+      `${tag}: Oakhaven Deploy CTA remains visible on Challenge tab`
+    )
+    await touchTapWidget(page, 'wm-tier-veteran', `${tag}: tap Veteran difficulty tier`)
+    await touchTapWidget(page, firstMutator.id, `${tag}: tap Oakhaven mutator chip`)
+    await audit('Screen 2c: World Map — Oakhaven 3★ (Challenge Active)', {
+      ignoreWorldProjectedPrefixes: ['map-node-', 'map-event-', 'world-event-']
+    })
+
+    // Switch to Trade sub-tab -> audit all 3 Oakhaven Guild Exchange deals + pinned Deploy CTA
+    await touchTapWidget(page, 'wm-insp-tab-trade', `${tag}: tap Oakhaven Trade sub-tab`)
+    await until(() => uiState(page, 'worldInspectorTab'), 'trade', `${tag}: Oakhaven Trade sub-tab active`)
+    const oakhavenTradeReport = await audit('Screen 2d: World Map — Oakhaven 3★ (Trade Tab)', {
+      ignoreWorldProjectedPrefixes: ['map-node-', 'map-event-', 'world-event-']
+    })
+    assert.ok(
+      oakhavenTradeReport.widgets.some(w => w.id === 'wm-oakhaven-dust_satchel'),
+      `${tag}: Oakhaven Dust Satchel deal visible`
+    )
+    assert.ok(
+      oakhavenTradeReport.widgets.some(w => w.id === 'wm-oakhaven-hero_shard_crate'),
+      `${tag}: Oakhaven Shard Crate deal visible`
+    )
+    assert.ok(
+      oakhavenTradeReport.widgets.some(w => w.id === 'wm-oakhaven-relic_caravan_bundle'),
+      `${tag}: Oakhaven Relic Pack deal visible`
+    )
+    assert.ok(
+      oakhavenTradeReport.widgets.some(w => w.id === 'cs-world-deploy'),
+      `${tag}: Oakhaven Deploy CTA remains visible on Trade tab`
+    )
+    await maybeCaptureScreenshot(page, screenshotDir, run, '02c-world-oakhaven-trade', capturedPaths)
+
+    // Restore Frostspire Pass selection before continuing to Camp -> Quick Fight
+    await page.evaluate(`window.__CROWNSHARD__?.openWorldMap?.('frostspire_pass')`)
+    await until(() => uiState(page, 'selectedStageId'), 'frostspire_pass', `${tag}: Frostspire Pass restored`)
+
     await touchTapWidget(page, 'cs-world-camp', `${tag}: tap Camp on World Map`)
     await until(() => uiState(page, 'screen'), 'camp', `${tag}: entered Camp`)
 
@@ -830,6 +927,99 @@ function buildRunMatrix(): RunSpec[] {
   return runs
 }
 
+async function runTestingModePillVerification(
+  page: ChromiumPage,
+  origin: string,
+  viewport: MobileViewportSpec,
+  storageSeed: string
+): Promise<void> {
+  const tag = `${viewport.id} (${viewport.name}) [testing-pill]`
+  const gameUrl = `${origin}/crownshard?renderer=canvas&testing=1`
+  const removeNamespace = await page.addPreloadScript(namespaceStorageScript(`${storageSeed}.testing.${viewport.id}.`))
+  try {
+    await page.setViewport(viewport.width, viewport.height, true)
+    await page.setTouchEnabled(true, 2)
+    page.clearErrors()
+
+    await page.navigate(gameUrl)
+    await until(() => uiState(page, 'backend'), RENDERER_NAMES.canvas, `${tag}: renderer initialized`)
+    await until(() => uiState(page, 'screen'), 'title', `${tag}: initial title`)
+
+    const campSeed = buildCampaignSeedSave()
+    campSeed.campaign.selectedStageId = 'oakhaven_market'
+    await seedSaveAndReload(page, campSeed, RENDERER_NAMES.canvas, `${tag} (oakhaven testing seed)`)
+
+    await touchTapWidget(page, 'cs-play', `${tag}: tap Play`)
+    await until(() => uiState(page, 'screen'), 'world', `${tag}: entered World Map`)
+    await page.evaluate(`window.__CROWNSHARD__?.openWorldMap?.('oakhaven_market')`)
+    await until(() => uiState(page, 'selectedStageId'), 'oakhaven_market', `${tag}: Oakhaven selected`)
+
+    // Collapse the Testing Mode bar into the floating 'TESTING ▾' pill
+    const collapsed = await until(
+      () => page.evaluate(`(() => {
+        const bar = document.getElementById('ridgetop-testing-bar')
+        const btn = document.getElementById('rt-collapse-btn')
+        if (!bar || !btn) return false
+        if (!bar.classList.contains('rt-bar-collapsed')) btn.click()
+        return bar.classList.contains('rt-bar-collapsed')
+      })()`),
+      true,
+      `${tag}: collapsed Testing Mode bar into TESTING pill`
+    )
+    assert.equal(collapsed, true, `${tag}: Testing Mode bar collapsed`)
+
+    await waitAnimationFrames(page, 3)
+
+    // Verify zero mobile layout violations on World Map with Testing Mode pill mounted
+    const report = await assertMobileLayout(page, {
+      stage: 'cs-stage',
+      uiLayer: 'cs-ui',
+      viewportWidth: viewport.width,
+      viewportHeight: viewport.height,
+      label: `${tag} — World Map with TESTING pill`,
+      ignoreWorldProjectedPrefixes: ['map-node-', 'map-event-', 'world-event-']
+    })
+
+    const rawPillRect = await page.evaluate(`(() => {
+      const bar = document.getElementById('ridgetop-testing-bar')
+      if (!bar) return null
+      const r = bar.getBoundingClientRect()
+      return { x: r.left, y: r.top, width: r.width, height: r.height }
+    })()`)
+    const pillRect =
+      typeof rawPillRect === 'object' &&
+      rawPillRect !== null &&
+      'x' in rawPillRect && typeof rawPillRect.x === 'number' &&
+      'y' in rawPillRect && typeof rawPillRect.y === 'number' &&
+      'width' in rawPillRect && typeof rawPillRect.width === 'number' &&
+      'height' in rawPillRect && typeof rawPillRect.height === 'number'
+        ? { x: rawPillRect.x, y: rawPillRect.y, width: rawPillRect.width, height: rawPillRect.height }
+        : null
+    assert.ok(pillRect && pillRect.width > 0 && pillRect.height > 0, `${tag}: TESTING pill has visible DOM rect`)
+
+    const campWidget = report.widgets.find(w => w.id === 'cs-world-camp')
+    assert.ok(campWidget, `${tag}: cs-world-camp button present`)
+
+    // Verify TESTING pill does not overlap cs-world-camp (or any top-bar action widget)
+    const topBarIds = new Set(['cs-world-camp', 'cs-world-codex', 'cs-world-endless', 'wm-zoom-in', 'wm-zoom-out', 'wm-zoom-fit'])
+    for (const w of report.widgets) {
+      if (!topBarIds.has(w.id)) continue
+      const ix = Math.max(0, Math.min(w.bounds.x + w.bounds.width, pillRect.x + pillRect.width) - Math.max(w.bounds.x, pillRect.x))
+      const iy = Math.max(0, Math.min(w.bounds.y + w.bounds.height, pillRect.y + pillRect.height) - Math.max(w.bounds.y, pillRect.y))
+      assert.equal(
+        ix * iy,
+        0,
+        `${tag}: TESTING pill [x=${pillRect.x.toFixed(1)}, y=${pillRect.y.toFixed(1)}, w=${pillRect.width.toFixed(1)}, h=${pillRect.height.toFixed(1)}] must not overlap "${w.id}" [x=${w.bounds.x.toFixed(1)}, y=${w.bounds.y.toFixed(1)}, w=${w.bounds.width.toFixed(1)}, h=${w.bounds.height.toFixed(1)}]`
+      )
+    }
+
+    assert.deepEqual(page.errors, [], `${tag}: zero console/JS errors`)
+    console.log(`PASS ${tag} — TESTING pill clear of Vanguard Camp and all World Map top-bar buttons`)
+  } finally {
+    await removeNamespace()
+  }
+}
+
 async function main(): Promise<void> {
   const runs = buildRunMatrix()
   const screenshotDir = process.env.RIDGETOP_MOBILE_SCREENSHOT_DIR?.trim() || undefined
@@ -839,7 +1029,7 @@ async function main(): Promise<void> {
   const chrome = await ensureChromeCdp()
   const server = await startHostedServer({
     existingUrl: process.env.RIDGETOP_URL,
-    testing: false,
+    testing: true,
     tempPrefix: 'ridgetop-mobile-smoke-'
   })
 
@@ -856,13 +1046,30 @@ async function main(): Promise<void> {
         await tab.close()
       }
     }
+
+    // Verify Testing Mode 'TESTING ▾' pill leaves clear offset from Vanguard Camp on landscape & portrait phones
+    const testingPillViewports = runs
+      .map(r => r.viewport)
+      .filter((vp, idx, arr) => arr.findIndex(v => v.id === vp.id) === idx)
+    for (const vp of testingPillViewports) {
+      const tab = await openTab('about:blank')
+      openTabs.push(tab)
+      try {
+        await runTestingModePillVerification(tab, server.origin, vp, storageSeed)
+      } finally {
+        const idx = openTabs.indexOf(tab)
+        if (idx >= 0) openTabs.splice(idx, 1)
+        await tab.close()
+      }
+    }
+
     if (capturedPaths.length > 0) {
       console.log(`Captured ${capturedPaths.length} mobile screenshots in ${screenshotDir}:`)
       for (const path of capturedPaths) {
         console.log(`  - ${path}`)
       }
     }
-    console.log(`Crownshard mobile phone verification complete (${runs.length} runs passed).`)
+    console.log(`Crownshard mobile phone verification complete (${runs.length} runs + ${testingPillViewports.length} testing-pill checks passed).`)
   } finally {
     for (const tab of openTabs) {
       await tab.close().catch(() => {

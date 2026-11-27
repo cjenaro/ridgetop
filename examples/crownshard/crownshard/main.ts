@@ -79,6 +79,7 @@ import type { CodexListEntry, FanfareDrawOpts, IconName, ProjectedRegionBanner, 
 
 type Screen = 'title' | 'world' | 'camp' | 'codex' | 'story' | 'battle' | 'victory' | 'defeat' | 'paused'
 type CampTab = 'squad' | 'armory' | 'deck' | 'forge' | 'decks'
+type WorldInspectorTab = 'overview' | 'challenge' | 'trade'
 type ArmoryFilter = 'all' | 'weapon' | 'armor' | 'relic'
 type ForgeCategory = 'heroes' | 'weapon' | 'armor' | 'relic'
 
@@ -243,6 +244,9 @@ async function start() {
   }
   let screen: Screen = 'title'
   let campTab: CampTab = 'squad'
+  let worldInspectorTab: WorldInspectorTab = 'overview'
+  let activeWorldInspectorTab: WorldInspectorTab | 'all' = 'all'
+  let lastInspectedStageId: string | null = null
   let codexTab: CodexTab = 'enemies'
   let codexPage = 0
   let codexSelectedId: string | null = null
@@ -2284,6 +2288,22 @@ async function start() {
     }
   }, sig)
 
+  window.addEventListener('ridgetop:testing-bar-change', () => {
+    uiDirty = true
+  }, sig)
+
+  function getTestingBarTopRightClearance(w: number, topH: number): number {
+    if (typeof document === 'undefined') return 0
+    const bar = document.getElementById('ridgetop-testing-bar')
+    if (!bar) return 0
+    const rect = bar.getBoundingClientRect()
+    if (rect.width <= 0 || rect.height <= 0) return 0
+    if (rect.top >= topH + 16 || rect.right < w - 40) return 0
+    const collapsed = bar.classList.contains('rt-bar-collapsed') || rect.width <= 160
+    if (!collapsed) return 0
+    return Math.max(0, Math.ceil(w - rect.left) + 6)
+  }
+
   // =========================================================================
   // TITLE SCREEN
   // =========================================================================
@@ -2678,30 +2698,343 @@ async function start() {
     const nextReadyMilestone = claimableMilestones[0] ?? null
     const nextUpcomingMilestone = getNextMasteryMilestone(camp)
 
+    if (selected.id !== lastInspectedStageId) {
+      lastInspectedStageId = selected.id
+      worldInspectorTab = 'overview'
+    }
+
+    const narrowPhone = w < 520
     const inspW = mobile ? Math.min(w - 16, 460) : shortH && w < 740 ? 296 : 348
     const extraPanels = (showChallengeControls ? 1 : 0) + (showOakhavenExchange ? 1 : 0)
     const abyssExtraH = selectedIsAbyss ? 42 : 0
-    const masteryExtraH = showMasteryPanel
-      ? (selectedChestClaimable ? (isCompact ? 68 : 94) : (isCompact ? 44 : 66))
-      : 0
     const mobileTopBannersBottom = outerPad + topH + 10
-      + (resumableBattle ? (isCompact ? 48 : 54) : 0)
-      + (nextReadyMilestone ? (isCompact ? 40 : 44) : 0)
-    const inspH = mobile
-      ? Math.min(
-          Math.max(200, h - mobileTopBannersBottom - 20),
-          Math.min(h - topH - 28, Math.round(h * (extraPanels > 0 ? 0.78 : selectedIsAbyss ? 0.56 : 0.49))),
-          (extraPanels > 1 ? 470 : extraPanels > 0 ? 424 : 272) + abyssExtraH + masteryExtraH
-        )
-      : Math.min(h - topH - outerPad * 2 - 26, (extraPanels > 1 ? 664 : extraPanels > 0 ? 648 : 548) + abyssExtraH + (selectedChestClaimable ? 26 : 0))
+      + Math.max(
+        (resumableBattle ? (isCompact ? 48 : 54) : 0) + (nextReadyMilestone ? (isCompact ? 40 : 44) : 0),
+        narrowPhone ? 44 : 0
+      )
+    const inspTopInset = topH + outerPad + (shortH ? 8 : 10)
+    const maxInspH = mobile
+      ? Math.max(220, h - mobileTopBannersBottom - 16)
+      : Math.max(220, h - inspTopInset - outerPad)
+
     const hideFoesForRoom = isCompact || extraPanels > 1 || (showChallengeControls && h < 700)
-    const hideHintForRoom = isCompact && (extraPanels > 0 || selectedChestClaimable)
+    const hideHintForRoom = isCompact && (extraPanels > 0 || selectedChestClaimable || selectedIsAbyss)
+
+    const inspPadV = isCompact ? 16 : 22
+    const inspGap = isCompact ? 5 : extraPanels > 0 ? 6 : 7
+    const headH = shortH ? 36 : isCompact ? 40 : 52
+    const metaH = shortH ? 38 : isCompact ? 42 : 48
+    const foesH = hideFoesForRoom ? 0 : (showChallengeControls ? 60 : 68)
+    const masteryListH = shortH ? 36 : isCompact ? 38 : 62
+    const masteryBtnH = isCompact ? 24 : 26
+    const masteryH = showMasteryPanel
+      ? (selectedChestClaimable ? masteryListH + 4 + masteryBtnH : masteryListH)
+      : 0
+    const abyssBarH = selectedIsAbyss && abyssFloorSpec ? (shortH ? 30 : isCompact ? 32 : 36) : 0
+    const challengeH = showChallengeControls ? (isCompact ? 114 : 124) : 0
+    const exchangeH = showOakhavenExchange ? (isCompact ? 62 : 70) : 0
+    const rewardsMinH = shortH ? 52 : isCompact ? 58 : 76
+    const hintH = hideHintForRoom ? 0 : 20
+    const deployH = shortH ? 34 : isCompact ? 36 : 42
+
+    const stackedHeights = [
+      headH,
+      metaH,
+      ...(foesH > 0 ? [foesH] : []),
+      ...(masteryH > 0 ? [masteryH] : []),
+      ...(abyssBarH > 0 ? [abyssBarH] : []),
+      ...(challengeH > 0 ? [challengeH] : []),
+      ...(exchangeH > 0 ? [exchangeH] : []),
+      rewardsMinH,
+      ...(hintH > 0 ? [hintH] : []),
+      deployH
+    ]
+    const stackedMinH = inspPadV
+      + stackedHeights.reduce((sum, val) => sum + val, 0)
+      + Math.max(0, stackedHeights.length - 1) * inspGap
+
+    const canUseInspectorTabs = showChallengeControls || showOakhavenExchange
+    const useInspectorTabs = canUseInspectorTabs && (isCompact || stackedMinH > maxInspH)
+    const effectiveInspTab: WorldInspectorTab =
+      worldInspectorTab === 'challenge' && !showChallengeControls
+        ? 'overview'
+        : worldInspectorTab === 'trade' && !showOakhavenExchange
+          ? 'overview'
+          : worldInspectorTab
+    activeWorldInspectorTab = useInspectorTabs ? effectiveInspTab : 'all'
+
+    const inspTabsH = useInspectorTabs ? (isCompact ? 26 : 30) : 0
+    const activeChallengeCount = (activeChallenge.tier !== 'normal' ? 1 : 0) + activeChallenge.mutators.length
+    const availableDealsCount = oakhavenOffers.filter(o => !o.purchasedThisCycle).length
+
+    const inspH = useInspectorTabs
+      ? (mobile
+          ? Math.min(maxInspH, Math.max(316, Math.min(356, Math.round(h * 0.50))))
+          : shortH
+            ? Math.min(maxInspH, 336)
+            : Math.min(maxInspH, 440))
+      : mobile
+        ? Math.min(maxInspH, Math.max(stackedMinH + 16, Math.round(h * (selectedIsAbyss ? 0.50 : 0.45))))
+        : shortH
+          ? Math.min(maxInspH, Math.max(stackedMinH + 12, 264))
+          : Math.min(maxInspH, Math.max(stackedMinH + 24, (extraPanels > 1 ? 664 : extraPanels > 0 ? 648 : 548) + abyssExtraH + (selectedChestClaimable ? 26 : 0)))
+
+    const showOverviewBody = !useInspectorTabs || effectiveInspTab === 'overview'
+    const showChallengeBody = showChallengeControls && (!useInspectorTabs || effectiveInspTab === 'challenge')
+    const showTradeBody = showOakhavenExchange && (!useInspectorTabs || effectiveInspTab === 'trade')
+
+    const inspectorTabBarNodes: LayoutNode[] = useInspectorTabs
+      ? [row({ id: 'wm-insp-tabs', style: { height: inspTabsH, gap: 4 } }, [
+          boxNode({
+            id: 'wm-insp-tab-overview',
+            style: { grow: 1.12, height: inspTabsH },
+            widget: {
+              type: 'button',
+              label: 'Battle Tab',
+              selected: effectiveInspTab === 'overview',
+              onPress: () => {
+                audio.unlock()
+                worldInspectorTab = 'overview'
+                state.sounds.push({ kind: 'card', pitch: 1.02 })
+                uiDirty = true
+              },
+              draw: (ctx: CanvasRenderingContext2D, rect: LayoutRect, st: CanvasWidgetDrawState) => drawTab(
+                ctx,
+                rect,
+                'Battle',
+                st,
+                { icon: 'sword', count: selectedChestClaimable ? '★' : undefined }
+              )
+            }
+          }),
+          ...(showChallengeControls ? [boxNode({
+            id: 'wm-insp-tab-challenge',
+            style: { grow: 1.2, height: inspTabsH },
+            widget: {
+              type: 'button',
+              label: 'Challenge Tab',
+              selected: effectiveInspTab === 'challenge',
+              onPress: () => {
+                audio.unlock()
+                worldInspectorTab = 'challenge'
+                state.sounds.push({ kind: 'card', pitch: 1.08 })
+                uiDirty = true
+              },
+              draw: (ctx: CanvasRenderingContext2D, rect: LayoutRect, st: CanvasWidgetDrawState) => drawTab(
+                ctx,
+                rect,
+                'Challenge',
+                st,
+                { icon: 'skull', count: activeChallengeCount > 0 ? String(activeChallengeCount) : undefined }
+              )
+            }
+          })] : []),
+          ...(showOakhavenExchange ? [boxNode({
+            id: 'wm-insp-tab-trade',
+            style: { grow: 1, height: inspTabsH },
+            widget: {
+              type: 'button',
+              label: 'Trade Tab',
+              selected: effectiveInspTab === 'trade',
+              onPress: () => {
+                audio.unlock()
+                worldInspectorTab = 'trade'
+                state.sounds.push({ kind: 'coin', pitch: 1.08 })
+                uiDirty = true
+              },
+              draw: (ctx: CanvasRenderingContext2D, rect: LayoutRect, st: CanvasWidgetDrawState) => drawTab(
+                ctx,
+                rect,
+                'Trade',
+                st,
+                { icon: 'coin', count: availableDealsCount > 0 ? String(availableDealsCount) : undefined }
+              )
+            }
+          })] : [])
+        ])]
+      : []
+
+    const oakhavenExchangeNodes: LayoutNode[] = !showTradeBody
+      ? []
+      : useInspectorTabs
+        ? [column({
+            id: 'wm-oakhaven-exchange',
+            style: { grow: 1, minHeight: 120, padding: [6, 8], gap: 5 },
+            widget: {
+              type: 'panel',
+              blocksPointer: true,
+              draw: (ctx: CanvasRenderingContext2D, rect: LayoutRect) => {
+                drawWell(ctx, rect, RADIUS.md)
+                drawOverline(
+                  ctx,
+                  oakhavenPatron
+                    ? 'Guild Exchange · Patron -20%'
+                    : 'Guild Exchange (Clear for -20%)',
+                  rect.x + 8,
+                  rect.y + 11,
+                  Math.max(40, rect.width - 92),
+                  oakhavenPatron ? '#ffcb57' : '#8fd4ff'
+                )
+                drawChip(ctx, rect.x + rect.width - 8, rect.y + 3, `${camp.gold}g`, {
+                  icon: 'coin',
+                  h: 17,
+                  size: 9,
+                  color: COLOR.accentHi,
+                  bg: '#161f38',
+                  align: 'right'
+                })
+              }
+            }
+          }, [
+            boxNode({ style: { height: isCompact ? 16 : 18 } }),
+            ...oakhavenOffers.map(offer => boxNode({
+              id: `wm-oakhaven-${offer.deal.id}`,
+              style: { grow: 1, minHeight: 28, maxHeight: 46 },
+              widget: {
+                type: 'button',
+                label: `${offer.deal.shortLabel} (${offer.purchasedThisCycle ? 'Sold' : `${offer.cost}g`})`,
+                disabled: !offer.canBuy,
+                onPress: () => {
+                  audio.unlock()
+                  const res = buyOakhavenDeal(state, offer.deal.id)
+                  if (res.ok) {
+                    const gain = res.equipCard
+                      ? EQUIPMENT_BY_ID[res.equipCard.equipId]?.name ?? 'Relic Card'
+                      : res.dustGained > 0
+                        ? `+${res.dustGained} Arcane Dust`
+                        : `+${res.shardsGained} Hero Shards`
+                    showToast(`Oakhaven Trade: ${gain} (-${res.goldSpent}g)`)
+                    saveNow()
+                    uiDirty = true
+                    hudRev++
+                  } else if (res.reason) {
+                    showToast(res.reason)
+                  }
+                },
+                draw: (ctx: CanvasRenderingContext2D, rect: LayoutRect, st: CanvasWidgetDrawState) => {
+                  const hot = offer.canBuy && (st.hovered || st.focused)
+                  drawPanel(ctx, rect, {
+                    r: RADIUS.md,
+                    lipH: 3,
+                    fill: offer.purchasedThisCycle ? '#1a2033eb' : hot ? '#364978f2' : '#202d4ef0',
+                    fillBot: offer.purchasedThisCycle ? '#111624f0' : '#141e38f5'
+                  })
+                  const pillW = isCompact ? 62 : 70
+                  const pillH = Math.min(rect.height - 8, isCompact ? 22 : 26)
+                  const pillX = rect.x + rect.width - pillW - 7
+                  const pillY = rect.y + (rect.height - pillH - 2) * 0.5
+                  const textMaxW = Math.max(60, pillX - rect.x - 16)
+                  if (rect.height >= 38) {
+                    drawText(ctx, offer.deal.name, rect.x + 9, rect.y + 13, {
+                      size: 11,
+                      weight: 900,
+                      color: offer.purchasedThisCycle ? COLOR.faint : offer.deal.accentHex,
+                      maxW: textMaxW,
+                      display: true
+                    })
+                    drawText(
+                      ctx,
+                      offer.purchasedThisCycle ? 'Sold out until next victory' : offer.deal.shortLabel,
+                      rect.x + 9,
+                      rect.y + rect.height - 11,
+                      {
+                        size: 9,
+                        weight: 700,
+                        color: offer.purchasedThisCycle ? '#6e7c9e' : '#cbd8f7',
+                        maxW: textMaxW
+                      }
+                    )
+                  } else {
+                    drawText(ctx, `${offer.deal.shortLabel} · ${offer.deal.name}`, rect.x + 9, rect.y + (rect.height - 2) * 0.5, {
+                      size: 10.5,
+                      weight: 800,
+                      color: offer.purchasedThisCycle ? COLOR.faint : offer.deal.accentHex,
+                      maxW: textMaxW,
+                      display: true
+                    })
+                  }
+                  drawButton(
+                    ctx,
+                    { x: pillX, y: pillY, width: pillW, height: pillH },
+                    offer.purchasedThisCycle ? 'SOLD' : `${offer.cost}g`,
+                    { ...st, disabled: !offer.canBuy },
+                    {
+                      variant: offer.purchasedThisCycle ? 'secondary' : offer.canBuy ? 'primary' : 'secondary',
+                      icon: offer.purchasedThisCycle ? 'check' : 'coin',
+                      size: 9.5
+                    }
+                  )
+                }
+              }
+            }))
+          ])]
+        : [column({
+            id: 'wm-oakhaven-exchange',
+            style: { height: exchangeH, padding: [6, 8], gap: 4 },
+            widget: {
+              type: 'panel',
+              blocksPointer: true,
+              draw: (ctx: CanvasRenderingContext2D, rect: LayoutRect) => {
+                drawWell(ctx, rect, RADIUS.md)
+                drawOverline(
+                  ctx,
+                  oakhavenPatron
+                    ? 'Oakhaven Guild Exchange · Patron -20%'
+                    : 'Oakhaven Guild Exchange (Clear for -20%)',
+                  rect.x + 8,
+                  rect.y + 10,
+                  rect.width - 16,
+                  oakhavenPatron ? '#ffcb57' : '#8fd4ff'
+                )
+              }
+            }
+          }, [
+            spacerNode(isCompact ? 9 : 11),
+            row({ id: 'wm-oakhaven-deals', style: { height: isCompact ? 34 : 38, gap: 4 } }, oakhavenOffers.map(offer => boxNode({
+              id: `wm-oakhaven-${offer.deal.id}`,
+              style: { grow: 1, height: isCompact ? 34 : 38 },
+              widget: {
+                type: 'button',
+                label: `${offer.deal.shortLabel} (${offer.purchasedThisCycle ? 'Sold' : `${offer.cost}g`})`,
+                disabled: !offer.canBuy,
+                onPress: () => {
+                  audio.unlock()
+                  const res = buyOakhavenDeal(state, offer.deal.id)
+                  if (res.ok) {
+                    const gain = res.equipCard
+                      ? EQUIPMENT_BY_ID[res.equipCard.equipId]?.name ?? 'Relic Card'
+                      : res.dustGained > 0
+                        ? `+${res.dustGained} Arcane Dust`
+                        : `+${res.shardsGained} Hero Shards`
+                    showToast(`Oakhaven Trade: ${gain} (-${res.goldSpent}g)`)
+                    saveNow()
+                    uiDirty = true
+                    hudRev++
+                  } else if (res.reason) {
+                    showToast(res.reason)
+                  }
+                },
+                draw: (ctx: CanvasRenderingContext2D, rect: LayoutRect, st: CanvasWidgetDrawState) => drawButton(
+                  ctx,
+                  rect,
+                  offer.purchasedThisCycle ? 'SOLD' : `${offer.deal.shortLabel} · ${offer.cost}g`,
+                  st,
+                  {
+                    variant: offer.purchasedThisCycle ? 'secondary' : offer.canBuy ? 'primary' : 'secondary',
+                    size: isCompact ? 9.5 : 10
+                  }
+                )
+              }
+            })))
+          ])]
 
     const stageInspectorPanel = column({
       id: 'wm-inspector',
       style: mobile
-        ? { anchor: 'bottom', width: inspW, height: inspH, inset: [8, 8], padding: [9, 11], gap: 5, respectSafeArea: true }
-        : { anchor: 'top-right', width: inspW, height: inspH, inset: [outerPad, topH + outerPad + 10], padding: [11, 13], gap: extraPanels > 0 ? 6 : 7, respectSafeArea: true },
+        ? { anchor: 'bottom', width: inspW, height: inspH, inset: [8, 8], padding: [8, 10], gap: inspGap, respectSafeArea: true }
+        : shortH
+          ? { anchor: 'top-right', width: inspW, height: inspH, inset: [outerPad, inspTopInset], padding: [8, 10], gap: inspGap, respectSafeArea: true }
+          : { anchor: 'top-right', width: inspW, height: inspH, inset: [outerPad, inspTopInset], padding: [11, 13], gap: inspGap, respectSafeArea: true },
       widget: {
         type: 'panel',
         blocksPointer: true,
@@ -2716,10 +3049,12 @@ async function start() {
       // Header: Region + Special/Soon Badge + Stage Title
       boxNode({
         id: 'wm-st-head',
-        style: { height: isCompact ? 42 : 52 },
+        style: { height: headH },
         widget: {
           type: 'panel',
           draw: (ctx: CanvasRenderingContext2D, rect: LayoutRect) => {
+            const chipH = shortH ? 16 : 18
+            const chipSize = shortH ? 8.5 : 9
             const tag = selectedSoon
               ? 'COMING SOON'
               : selectedIsAbyss
@@ -2736,22 +3071,22 @@ async function start() {
               : selected.kind === 'elite' ? '#ffa266'
               : selected.kind === 'treasure' || selected.kind === 'special' ? COLOR.accentHi
               : COLOR.ally
-            drawChip(ctx, rect.x, rect.y, tag.toUpperCase(), { h: 18, size: 9, color: tagCol, bg: tagBg })
+            drawChip(ctx, rect.x, rect.y, tag.toUpperCase(), { h: chipH, size: chipSize, color: tagCol, bg: tagBg })
             if (selectedCleared) {
               drawChip(ctx, rect.x + rect.width, rect.y, 'CLEARED', {
-                h: 18, size: 9, color: '#072b16', bg: COLOR.good, icon: 'check', align: 'right'
+                h: chipH, size: chipSize, color: '#072b16', bg: COLOR.good, icon: 'check', align: 'right'
               })
             } else if (!selectedSoon && !selectedUnlocked) {
               drawChip(ctx, rect.x + rect.width, rect.y, 'LOCKED', {
-                h: 18, size: 9, color: COLOR.muted, bg: '#222b42', icon: 'lock', align: 'right'
+                h: chipH, size: chipSize, color: COLOR.muted, bg: '#222b42', icon: 'lock', align: 'right'
               })
             } else {
               drawChip(ctx, rect.x + rect.width, rect.y, regionMeta.name.toUpperCase(), {
-                h: 18, size: 8.5, color: '#d8e3ff', bg: '#161f38', align: 'right'
+                h: chipH, size: 8.5, color: '#d8e3ff', bg: '#161f38', align: 'right'
               })
             }
-            drawText(ctx, selected.title, rect.x, rect.y + (isCompact ? 32 : 38), {
-              size: isCompact ? 15.5 : 19,
+            drawText(ctx, selected.title, rect.x, rect.y + (shortH ? 28 : isCompact ? 31 : 38), {
+              size: shortH ? 14.5 : isCompact ? 15.5 : 19,
               weight: 900,
               color: '#ffffff',
               maxW: rect.width,
@@ -2763,17 +3098,22 @@ async function start() {
         }
       }),
 
+      // Sub-tab bar when compact or stacked sections would overflow (keeps Battle / Challenge / Trade strictly inside viewport)
+      ...inspectorTabBarNodes,
+
       // Difficulty + Arena Size + Recommended Power strip
-      boxNode({
+      ...(showOverviewBody ? [boxNode({
         id: 'wm-st-meta',
-        style: { height: isCompact ? 42 : 48 },
+        style: { height: metaH },
         widget: {
           type: 'panel',
           draw: (ctx: CanvasRenderingContext2D, rect: LayoutRect) => {
             drawWell(ctx, rect, RADIUS.md)
-            const bw = drawDifficultyBadge(ctx, rect.x + 8, rect.y + 6, inspectDifficulty, { h: 20, showLabel: true })
-            const biomeChipW = drawChip(ctx, rect.x + 14 + bw, rect.y + 6, selectedSoon ? biomeName : `${gridCols}x${gridRows} ${biomeName}`, {
-              h: 20, size: 9.5, color: '#dce8ff', bg: '#1e2b4a'
+            const topY = rect.y + (shortH ? 4 : 6)
+            const badgeH = shortH ? 18 : 20
+            const bw = drawDifficultyBadge(ctx, rect.x + 8, topY, inspectDifficulty, { h: badgeH, showLabel: true })
+            const biomeChipW = drawChip(ctx, rect.x + 14 + bw, topY, selectedSoon ? biomeName : `${gridCols}x${gridRows} ${biomeName}`, {
+              h: badgeH, size: shortH ? 9 : 9.5, color: '#dce8ff', bg: '#1e2b4a'
             })
             if (!selectedSoon) {
               const stageAtm = resolveBattleAtmosphere({
@@ -2785,8 +3125,8 @@ async function start() {
               const wx = rect.x + 14 + bw + biomeChipW + 6
               const availW = rect.x + rect.width - 8 - wx
               if (availW >= 54) {
-                drawWeatherPreviewChip(ctx, wx, rect.y + 6, stageAtm.weather, stageAtm.timeOfDay, {
-                  h: 20,
+                drawWeatherPreviewChip(ctx, wx, topY, stageAtm.weather, stageAtm.timeOfDay, {
+                  h: badgeH,
                   maxW: availW
                 })
               }
@@ -2799,17 +3139,17 @@ async function start() {
                   ? `${formatAbyssFloorLabel(abyssSelectedFloor)} · ${abyssFloorSpec.title} (Cleared ${camp.crownlessDeepFloor}/10)`
                   : `Squad Power ${squadPower} / Rec ${effectiveRecPower}`,
               rect.x + 10,
-              rect.y + rect.height - 11,
-              { size: 10.5, weight: 800, color: selectedSoon ? '#f0cf99' : powerColor, maxW: rect.width - 20, display: true }
+              rect.y + rect.height - (shortH ? 8 : 11),
+              { size: shortH ? 10 : 10.5, weight: 800, color: selectedSoon ? '#f0cf99' : powerColor, maxW: rect.width - 20, display: true }
             )
           }
         }
-      }),
+      })] : []),
 
       // Hostile Forces OR Expansion Feature Teaser
-      ...(hideFoesForRoom ? [] : [boxNode({
+      ...(showOverviewBody && !hideFoesForRoom ? [boxNode({
         id: 'wm-st-foes',
-        style: { height: showChallengeControls ? 60 : 68 },
+        style: { height: foesH },
         widget: {
           type: 'panel',
           draw: (ctx: CanvasRenderingContext2D, rect: LayoutRect) => {
@@ -2843,19 +3183,19 @@ async function start() {
             }
           }
         }
-      })]),
+      })] : []),
 
       // 3-Star Stage Mastery Checklist + One-Click 3★ Mastery Chest Claim CTA
-      ...(showMasteryPanel ? [column({
+      ...(showOverviewBody && showMasteryPanel ? [column({
         id: 'wm-st-mastery',
         style: {
-          height: selectedChestClaimable ? (isCompact ? 66 : 92) : (isCompact ? 40 : 62),
+          height: masteryH,
           gap: 4
         }
       }, [
         boxNode({
           id: 'wm-st-mastery-list',
-          style: { height: isCompact ? 38 : 62 },
+          style: { height: masteryListH },
           widget: {
             type: 'panel',
             draw: (ctx: CanvasRenderingContext2D, rect: LayoutRect) => drawStageMasteryChecklist(ctx, rect, {
@@ -2870,7 +3210,7 @@ async function start() {
         }),
         ...(selectedChestClaimable ? [boxNode({
           id: 'cs-world-claim-mastery-chest',
-          style: { height: isCompact ? 24 : 26 },
+          style: { height: masteryBtnH },
           widget: {
             type: 'button',
             label: `Claim 3★ Mastery Chest (+${selectedChestReward.gold}g, +${selectedChestReward.dust} Dust, +${selectedChestReward.shards} Shards)`,
@@ -2899,13 +3239,13 @@ async function start() {
       ])] : []),
 
       // Crownless Deep 10-Floor Selector (push deeper or replay cleared floors)
-      ...(selectedIsAbyss && abyssFloorSpec ? [row({
+      ...(showOverviewBody && selectedIsAbyss && abyssFloorSpec ? [row({
         id: 'wm-abyss-floor-bar',
-        style: { height: isCompact ? 32 : 36, gap: 6 }
+        style: { height: abyssBarH, gap: 6 }
       }, [
         boxNode({
           id: 'wm-abyss-prev',
-          style: { width: 34, height: isCompact ? 32 : 36 },
+          style: { width: 34, height: abyssBarH },
           widget: {
             type: 'button',
             label: 'Previous Abyss Floor',
@@ -2922,7 +3262,7 @@ async function start() {
         }),
         boxNode({
           id: 'wm-abyss-floor-info',
-          style: { grow: 1, height: isCompact ? 32 : 36 },
+          style: { grow: 1, height: abyssBarH },
           widget: {
             type: 'panel',
             draw: (ctx: CanvasRenderingContext2D, rect: LayoutRect) => {
@@ -2939,7 +3279,7 @@ async function start() {
         }),
         boxNode({
           id: 'wm-abyss-next',
-          style: { width: 34, height: isCompact ? 32 : 36 },
+          style: { width: 34, height: abyssBarH },
           widget: {
             type: 'button',
             label: 'Next Abyss Floor',
@@ -2957,9 +3297,9 @@ async function start() {
       ])] : []),
 
       // Cleared-Stage Heroic / Mythic Difficulty Tier & Tactical Mutator Selector
-      ...(showChallengeControls ? [column({
+      ...(showChallengeBody ? [column({
         id: 'wm-st-challenge',
-        style: { height: isCompact ? 114 : 124, padding: [6, 8], gap: 5 },
+        style: { height: challengeH, padding: isCompact ? [5, 7] : [6, 8], gap: isCompact ? 4 : 5 },
         widget: {
           type: 'panel',
           blocksPointer: true,
@@ -2979,9 +3319,9 @@ async function start() {
         }
       }, [
         spacerNode(isCompact ? 9 : 11),
-        row({ id: 'wm-tier-row', style: { height: isCompact ? 29 : 34, gap: 5 } }, STAGE_DIFFICULTY_TIERS.map(tierId => boxNode({
+        row({ id: 'wm-tier-row', style: { height: isCompact ? 28 : 34, gap: 5 } }, STAGE_DIFFICULTY_TIERS.map(tierId => boxNode({
           id: `wm-tier-${tierId}`,
-          style: { grow: 1, height: isCompact ? 29 : 34 },
+          style: { grow: 1, height: isCompact ? 28 : 34 },
           widget: {
             type: 'button',
             label: `${STAGE_TIER_SPECS[tierId].label} Difficulty`,
@@ -2996,9 +3336,9 @@ async function start() {
             )
           }
         }))),
-        row({ id: 'wm-mut-row-1', style: { height: isCompact ? 22 : 25, gap: 4 } }, STAGE_MUTATOR_IDS.slice(0, 3).map(mutId => boxNode({
+        row({ id: 'wm-mut-row-1', style: { height: isCompact ? 24 : 25, gap: 4 } }, STAGE_MUTATOR_IDS.slice(0, 3).map(mutId => boxNode({
           id: `wm-mut-${mutId}`,
-          style: { grow: 1, height: isCompact ? 22 : 25 },
+          style: { grow: 1, height: isCompact ? 24 : 25 },
           widget: {
             type: 'button',
             label: STAGE_MUTATOR_SPECS[mutId].label,
@@ -3013,9 +3353,9 @@ async function start() {
             )
           }
         }))),
-        row({ id: 'wm-mut-row-2', style: { height: isCompact ? 22 : 25, gap: 4 } }, STAGE_MUTATOR_IDS.slice(3).map(mutId => boxNode({
+        row({ id: 'wm-mut-row-2', style: { height: isCompact ? 24 : 25, gap: 4 } }, STAGE_MUTATOR_IDS.slice(3).map(mutId => boxNode({
           id: `wm-mut-${mutId}`,
-          style: { grow: 1, height: isCompact ? 22 : 25 },
+          style: { grow: 1, height: isCompact ? 24 : 25 },
           widget: {
             type: 'button',
             label: STAGE_MUTATOR_SPECS[mutId].label,
@@ -3032,71 +3372,58 @@ async function start() {
         })))
       ])] : []),
 
-      // Oakhaven Guild Exchange (Free Trade Hub Supply Deals)
-      ...(showOakhavenExchange ? [column({
-        id: 'wm-oakhaven-exchange',
-        style: { height: isCompact ? 62 : 70, padding: [6, 8], gap: 4 },
+      // Live Challenge Power + Bonus Replay Spoils preview inside Challenge sub-tab
+      ...(useInspectorTabs && effectiveInspTab === 'challenge' ? [boxNode({
+        id: 'wm-st-challenge-rewards',
+        style: { grow: 1, minHeight: 50 },
         widget: {
           type: 'panel',
-          blocksPointer: true,
           draw: (ctx: CanvasRenderingContext2D, rect: LayoutRect) => {
             drawWell(ctx, rect, RADIUS.md)
-            drawOverline(
+            ctx.save()
+            ctx.beginPath()
+            ctx.rect(rect.x + 1, rect.y + 1, Math.max(0, rect.width - 2), Math.max(0, rect.height - 2))
+            ctx.clip()
+            const px = rect.x + 9
+            const pw = rect.width - 18
+            drawText(
               ctx,
-              oakhavenPatron
-                ? 'Oakhaven Guild Exchange · Patron -20%'
-                : 'Oakhaven Guild Exchange (Clear for -20%)',
-              rect.x + 8,
-              rect.y + 10,
-              rect.width - 16,
-              oakhavenPatron ? '#ffcb57' : '#8fd4ff'
+              `Squad Power ${squadPower} / Rec ${effectiveRecPower} (${activeTierSpec.label})`,
+              px,
+              rect.y + 12,
+              { size: 10, weight: 800, color: powerColor, maxW: pw, display: true }
             )
+            const chipH = shortH ? 18 : 20
+            let rx = px
+            let ry = rect.y + 24
+            for (const item of replayLoot) {
+              const estW = Math.min(pw, item.text.length * 6.5 + 34)
+              if (rx > px && rx + estW > px + pw) {
+                rx = px
+                ry += chipH + 3
+              }
+              const cw = drawChip(ctx, rx, ry, item.text, {
+                icon: item.icon,
+                h: chipH,
+                size: 9.5,
+                color: item.color ?? COLOR.text,
+                bg: '#1c2642',
+                border: COLOR.outline
+              })
+              rx += cw + 5
+            }
+            ctx.restore()
           }
         }
-      }, [
-        spacerNode(isCompact ? 9 : 11),
-        row({ id: 'wm-oakhaven-deals', style: { height: isCompact ? 34 : 38, gap: 4 } }, oakhavenOffers.map(offer => boxNode({
-          id: `wm-oakhaven-${offer.deal.id}`,
-          style: { grow: 1, height: isCompact ? 34 : 38 },
-          widget: {
-            type: 'button',
-            label: `${offer.deal.shortLabel} (${offer.purchasedThisCycle ? 'Sold' : `${offer.cost}g`})`,
-            disabled: !offer.canBuy,
-            onPress: () => {
-              audio.unlock()
-              const res = buyOakhavenDeal(state, offer.deal.id)
-              if (res.ok) {
-                const gain = res.equipCard
-                  ? EQUIPMENT_BY_ID[res.equipCard.equipId]?.name ?? 'Relic Card'
-                  : res.dustGained > 0
-                    ? `+${res.dustGained} Arcane Dust`
-                    : `+${res.shardsGained} Hero Shards`
-                showToast(`Oakhaven Trade: ${gain} (-${res.goldSpent}g)`)
-                saveNow()
-                uiDirty = true
-                hudRev++
-              } else if (res.reason) {
-                showToast(res.reason)
-              }
-            },
-            draw: (ctx: CanvasRenderingContext2D, rect: LayoutRect, st: CanvasWidgetDrawState) => drawButton(
-              ctx,
-              rect,
-              offer.purchasedThisCycle ? 'SOLD' : `${offer.deal.shortLabel} · ${offer.cost}g`,
-              st,
-              {
-                variant: offer.purchasedThisCycle ? 'secondary' : offer.canBuy ? 'primary' : 'secondary',
-                size: isCompact ? 9.5 : 10
-              }
-            )
-          }
-        })))
-      ])] : []),
+      })] : []),
+
+      // Oakhaven Guild Exchange (Free Trade Hub Supply Deals)
+      ...oakhavenExchangeNodes,
 
       // Possible Rewards: One-Time First-Clear vs Replayable
-      boxNode({
+      ...(showOverviewBody ? [boxNode({
         id: 'wm-st-rewards',
-        style: { grow: 1, minHeight: isCompact ? 50 : 76 },
+        style: { grow: 1, minHeight: rewardsMinH },
         widget: {
           type: 'panel',
           draw: (ctx: CanvasRenderingContext2D, rect: LayoutRect) => {
@@ -3107,7 +3434,7 @@ async function start() {
             ctx.clip()
             const px = rect.x + 10
             const pw = rect.width - 20
-            const chipH = isCompact && showChallengeControls ? 19 : 22
+            const chipH = shortH ? 18 : isCompact && showChallengeControls ? 19 : 22
             const compactClaimed = isCompact && selectedCleared
             drawOverline(
               ctx,
@@ -3115,20 +3442,20 @@ async function start() {
                 ? 'Planned First-Clear Spoils'
                 : selectedCleared ? 'First-Clear Special (Claimed)' : 'First-Clear Special (One-Time)',
               px,
-              rect.y + 12,
+              rect.y + (shortH ? 10 : 12),
               pw,
               selectedCleared ? COLOR.faint : COLOR.accentHi
             )
             let cx = px
-            let cy = rect.y + 22
+            let cy = rect.y + (shortH ? 19 : 22)
             if (compactClaimed) {
-              drawText(ctx, firstClearLoot.map(i => i.text).join(' · '), px, cy + 5, {
+              drawText(ctx, firstClearLoot.map(i => i.text).join(' · '), px, cy + (shortH ? 3 : 5), {
                 size: 9.5,
                 weight: 700,
                 color: COLOR.faint,
                 maxW: pw
               })
-              cy -= 8
+              cy -= shortH ? 10 : 8
             } else {
               for (const item of firstClearLoot) {
                 const estW = Math.min(pw, item.text.length * 6.8 + 38)
@@ -3148,7 +3475,7 @@ async function start() {
               }
             }
 
-            const repTop = Math.max(cy + chipH + 9, rect.y + rect.height * (compactClaimed ? 0.42 : 0.52))
+            const repTop = Math.max(cy + chipH + (shortH ? 6 : 9), rect.y + rect.height * (compactClaimed ? 0.44 : 0.52))
             drawOverline(
               ctx,
               challengeRewards.goldBonusPct > 0
@@ -3160,7 +3487,7 @@ async function start() {
               activeChallenge.tier === 'mythic' ? '#e5adff' : activeChallenge.tier === 'veteran' ? '#ffd285' : '#8fd4ff'
             )
             let rx = px
-            let ry = repTop + 9
+            let ry = repTop + (shortH ? 7 : 9)
             for (const item of replayLoot) {
               const estW = Math.min(pw, item.text.length * 6.5 + 34)
               if (rx > px && rx + estW > px + pw) {
@@ -3180,10 +3507,10 @@ async function start() {
             ctx.restore()
           }
         }
-      }),
+      })] : []),
 
       // Unlock hint or modifier blurb
-      ...(hideHintForRoom ? [] : [boxNode({
+      ...(showOverviewBody && !hideHintForRoom ? [boxNode({
         id: 'wm-st-hint',
         style: { height: 20 },
         widget: {
@@ -3204,12 +3531,12 @@ async function start() {
             }
           )
         }
-      })]),
+      })] : []),
 
-      // Deploy / Replay / Coming Soon CTA
+      // Deploy / Replay / Coming Soon CTA (always pinned inside viewport)
       boxNode({
         id: 'cs-world-deploy',
-        style: { height: isCompact ? 36 : 42 },
+        style: { height: deployH },
         widget: {
           type: 'button',
           label: deployLabel,
@@ -3239,8 +3566,8 @@ async function start() {
       const evBiomeName = ev.biome[0].toUpperCase() + ev.biome.slice(1)
       const isMerchant = ev.kind === 'wandering_merchant'
       const evInspH = mobile
-        ? Math.min(h - topH - 36, isMerchant ? (h < 680 ? 298 : 326) : (h < 680 ? 278 : 302))
-        : Math.min(h - topH - outerPad * 3 - 8, isMerchant ? 430 : 444)
+        ? Math.min(maxInspH, isMerchant ? (h < 680 ? 298 : 326) : (h < 680 ? 278 : 302))
+        : Math.min(maxInspH, isMerchant ? 430 : 444)
       const tagLabel = isMerchant ? 'RELIC CARAVAN' : ev.kind === 'goblin_ambush' ? 'ROAD BOUNTY' : 'TIMED GAUNTLET'
       const tagBg = isMerchant ? '#4a3410' : ev.kind === 'goblin_ambush' ? '#571e18' : '#351b5c'
       const tagCol = isMerchant ? COLOR.accentHi : ev.kind === 'goblin_ambush' ? '#ff9e7d' : '#dfb3ff'
@@ -3363,8 +3690,10 @@ async function start() {
       return column({
         id: 'wm-inspector',
         style: mobile
-          ? { anchor: 'bottom', width: inspW, height: evInspH, inset: [8, 8], padding: [10, 12], gap: 6, respectSafeArea: true }
-          : { anchor: 'top-right', width: inspW, height: evInspH, inset: [outerPad, topH + outerPad + 10], padding: [13, 14], gap: 8, respectSafeArea: true },
+          ? { anchor: 'bottom', width: inspW, height: evInspH, inset: [8, 8], padding: [8, 10], gap: 5, respectSafeArea: true }
+          : shortH
+            ? { anchor: 'top-right', width: inspW, height: evInspH, inset: [outerPad, inspTopInset], padding: [8, 10], gap: 5, respectSafeArea: true }
+            : { anchor: 'top-right', width: inspW, height: evInspH, inset: [outerPad, inspTopInset], padding: [13, 14], gap: 8, respectSafeArea: true },
         widget: {
           type: 'panel',
           blocksPointer: true,
@@ -3565,13 +3894,23 @@ async function start() {
     const inspectorPanel = selectedEvent ? buildEventInspectorPanel(selectedEvent) : stageInspectorPanel
 
     const soonCount = CHAPTERS.length - PLAYABLE_CHAPTERS.length
-    const narrowPhone = w < 520
-    const compactTopBar = mobile || w < 780
-    const zoomCtrlW = narrowPhone ? 68 : compactTopBar ? 76 : 138
-    const codexBtnW = narrowPhone ? 66 : compactTopBar ? 84 : 112
-    const campBtnW = narrowPhone ? 66 : compactTopBar ? 84 : 154
-    const endlessBtnW = endlessReady ? (narrowPhone ? 64 : compactTopBar ? 82 : 128) : 0
-    const topActionGap = narrowPhone ? 6 : 8
+    const testingRightInset = getTestingBarTopRightClearance(w, topH)
+    const topRightInset = Math.max(outerPad, testingRightInset)
+    const tightTopBar = narrowPhone && testingRightInset > 0
+    const compactTopBar = mobile || shortH || (w - topRightInset) < 780
+    const zoomCtrlW = narrowPhone ? 68 : compactTopBar ? 74 : 138
+    const codexBtnW = tightTopBar ? 58 : narrowPhone ? 74 : compactTopBar ? 84 : 112
+    const campBtnW = tightTopBar
+      ? 58
+      : narrowPhone
+        ? 72
+        : compactTopBar
+          ? (w - topRightInset >= 760 ? 154 : 84)
+          : 154
+    const endlessBtnW = endlessReady
+      ? (tightTopBar ? 48 : narrowPhone ? 64 : compactTopBar ? 76 : 128)
+      : 0
+    const topActionGap = tightTopBar ? 4 : narrowPhone ? 6 : compactTopBar ? 6 : 8
     const wmTopActionsW = (narrowPhone ? 0 : zoomCtrlW + topActionGap)
       + (endlessReady ? endlessBtnW + topActionGap : 0)
       + codexBtnW + topActionGap + campBtnW
@@ -3592,11 +3931,11 @@ async function start() {
 
     // Omit map pins occluded behind the floating Stage/Event Inspector so non-button inspector clicks never pass through
     const activeInspH = selectedEvent
-      ? (mobile ? Math.min(h - topH - 28, Math.round(h * 0.58)) : Math.min(h - topH - outerPad * 3 - 8, 520))
+      ? (mobile ? Math.min(maxInspH, Math.round(h * 0.58)) : Math.min(maxInspH, 444))
       : inspH
     const safePad = 8
     const inspRectX = mobile ? (w - inspW) * 0.5 : (w - safePad - outerPad - inspW)
-    const inspRectY = mobile ? (h - safePad - 8 - activeInspH) : (safePad + topH + outerPad + 10)
+    const inspRectY = mobile ? (h - safePad - 8 - activeInspH) : (safePad + inspTopInset)
     const mapNodes: LayoutNode[] = []
     for (const entry of mapNodeEntries) {
       const occludedByInspector = entry.cx >= inspRectX && entry.cx <= inspRectX + inspW
@@ -3631,7 +3970,7 @@ async function start() {
 
       // Floating Top-Left Realm Title + Continent Mastery Stars + Gold Pill
       ...(() => {
-        const wmHeaderW = Math.max(106, Math.min(mobile ? 250 : 450, w - wmTopActionsW - outerPad * 2 - 12))
+        const wmHeaderW = Math.max(92, Math.min(mobile ? 250 : 450, w - wmTopActionsW - outerPad - topRightInset - 8))
         return [boxNode({
           id: 'wm-header',
           style: {
@@ -3840,7 +4179,7 @@ async function start() {
           anchor: 'top-right',
           width: wmTopActionsW,
           height: topH,
-          inset: [outerPad, outerPad],
+          inset: [topRightInset, outerPad],
           gap: topActionGap,
           align: 'center',
           respectSafeArea: true
@@ -3848,7 +4187,7 @@ async function start() {
       }, [
         ...(narrowPhone ? [] : [row({
           id: 'wm-zoom-bar',
-          style: { width: zoomCtrlW, height: topH, padding: [5, 6], gap: 5, align: 'center' },
+          style: { width: zoomCtrlW, height: topH, padding: shortH ? [4, 5] : [5, 6], gap: 5, align: 'center' },
           widget: {
             type: 'panel',
             blocksPointer: true,
@@ -3864,7 +4203,7 @@ async function start() {
               draw: (ctx: CanvasRenderingContext2D, rect: LayoutRect, st: CanvasWidgetDrawState) => drawIconButton(ctx, rect, 'minus', st)
             }
           }),
-          ...(mobile ? [] : [boxNode({
+          ...(compactTopBar ? [] : [boxNode({
             id: 'wm-zoom-fit',
             style: { grow: 1, height: 30 },
             widget: {
@@ -3932,7 +4271,7 @@ async function start() {
               openCodex()
             },
             draw: (ctx: CanvasRenderingContext2D, rect: LayoutRect, st: CanvasWidgetDrawState) => drawButton(
-              ctx, rect, 'Codex', st, { variant: 'secondary', icon: 'scroll', trailing: narrowPhone ? undefined : 'C', size: narrowPhone ? 11.5 : 12.5 }
+              ctx, rect, 'Codex', st, { variant: 'secondary', icon: 'scroll', trailing: compactTopBar ? undefined : 'C', size: narrowPhone ? 10.5 : 12.5 }
             )
           }
         }),
@@ -3947,7 +4286,7 @@ async function start() {
               openCamp('squad')
             },
             draw: (ctx: CanvasRenderingContext2D, rect: LayoutRect, st: CanvasWidgetDrawState) => drawButton(
-              ctx, rect, mobile ? 'Camp' : 'Vanguard Camp', st, { variant: 'secondary', icon: 'camp', size: narrowPhone ? 11.5 : 13 }
+              ctx, rect, campBtnW < 132 ? 'Camp' : 'Vanguard Camp', st, { variant: 'secondary', icon: 'camp', size: narrowPhone ? 10.5 : 12.5 }
             )
           }
         })
@@ -9459,6 +9798,7 @@ async function start() {
       clearedStageIds: state.campaign.clearedStageIds.slice(),
       clearedStageTiers: { ...state.campaign.clearedStageTiers },
       selectedStageId: state.campaign.selectedStageId,
+      worldInspectorTab: activeWorldInspectorTab,
       worldEventsCount: state.campaign.worldEvents.length,
       selectedWorldEventId,
       activeWorldEventId: state.battle?.activeWorldEventId ?? null,

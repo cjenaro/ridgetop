@@ -14,7 +14,8 @@ export const MOBILE_VIEWPORTS: readonly MobileViewportSpec[] = [
   { id: '375x667', name: 'iPhone SE Portrait', width: 375, height: 667, captureScreenshots: true },
   { id: '390x844', name: 'iPhone 14/15 Portrait', width: 390, height: 844, captureScreenshots: true },
   { id: '844x390', name: 'Phone Landscape', width: 844, height: 390, captureScreenshots: true },
-  { id: '667x375', name: 'Compact Phone Landscape', width: 667, height: 375, captureScreenshots: false }
+  { id: '667x375', name: 'Compact Phone Landscape', width: 667, height: 375, captureScreenshots: false },
+  { id: '915x412', name: 'Large Phone Landscape', width: 915, height: 412, captureScreenshots: false }
 ]
 
 export type InteractiveWidgetKind = 'button' | 'toggle' | 'select' | 'slider'

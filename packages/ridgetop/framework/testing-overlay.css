@@ -874,8 +874,16 @@
 }
 
 .rt-bar.rt-bar-collapsed {
-  padding: 3px 6px;
-  opacity: 0.72;
+  top: 8px;
+  right: 8px;
+  padding: 2px 4px;
+  opacity: 0.8;
+}
+
+.rt-bar.rt-bar-collapsed #rt-collapse-btn {
+  padding: 3px 7px;
+  font-size: 11px;
+  line-height: 1.25;
 }
 
 .rt-bar.rt-bar-collapsed:hover {
