@@ -259,6 +259,15 @@ export type WorldRegionId =
 
 export type DifficultyLevel = 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8
 
+export type StageDifficultyTier = 'normal' | 'veteran' | 'mythic'
+
+export type StageMutatorId =
+  | 'blood_moon'
+  | 'arcane_surge'
+  | 'fog_of_war'
+  | 'iron_vanguard'
+  | 'venom_mist'
+
 export type FacingDir = 'n' | 's' | 'e' | 'w'
 
 export const FACING_DIRS: readonly FacingDir[] = ['n', 'e', 's', 'w']
@@ -642,6 +651,10 @@ export interface BattleHeroXpGain {
 
 export interface BattleReward {
   readonly gold: number
+  readonly bonusDust?: number
+  readonly bonusShards?: number
+  readonly difficultyTier?: StageDifficultyTier
+  readonly mutators?: readonly StageMutatorId[]
   readonly equipCard: OwnedEquipCard | null
   readonly heroCard: OwnedHeroCard | null
   readonly tacticCard: OwnedTacticCard | null
@@ -865,6 +878,8 @@ export interface BattleState {
   readonly chapterIndex: number
   readonly endlessWave: number
   readonly difficulty: DifficultyLevel
+  readonly difficultyTier: StageDifficultyTier
+  readonly mutators: readonly StageMutatorId[]
   readonly cols: number
   readonly rows: number
   readonly biome: BiomeId
@@ -964,6 +979,8 @@ export interface BattleSaveSnapshot {
   readonly chapterIndex: number
   readonly endlessWave: number
   readonly difficulty: DifficultyLevel
+  readonly difficultyTier?: StageDifficultyTier
+  readonly mutators?: readonly StageMutatorId[]
   readonly cols: number
   readonly rows: number
   readonly biome: BiomeId
@@ -995,6 +1012,7 @@ export interface CampaignState {
   shards: number
   chaptersCleared: number
   clearedStageIds: string[]
+  clearedStageTiers?: Record<string, StageDifficultyTier>
   selectedStageId: string
   endlessBest: number
   battlesWon: number

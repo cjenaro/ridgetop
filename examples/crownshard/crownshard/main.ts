@@ -17,20 +17,21 @@ import {
 import { cameraAlignedFacing, cameraCardinalHeading, createCrownshardScene, facingPickerAnchor } from './scene.ts'
 import {
   MAX_TACTIC_DECK, MIN_TACTIC_DECK,
+  STAGE_DIFFICULTY_TIERS, STAGE_MUTATOR_IDS, STAGE_MUTATOR_SPECS, STAGE_TIER_SPECS,
   abandonBattle, armSkill, armTacticCard, autoBuildTacticDeck, autoEquipBestFit, beginWaitFacingPicker,
   bulkSalvageCommonDupes, buyPack, canBuyPack, canCraftEquipment, canCraftHero, canMergeHero, canUndoMove,
-  cancelWaitFacingPicker, clearSave, computeCombatForecast, computeDangerZone, computeDeckValue,
+  cancelWaitFacingPicker, clearSave, computeChallengeRewards, computeCombatForecast, computeDangerZone, computeDeckValue,
   computeEnemyThreat, computeHeroStats, computeSquadPower, computeTacticDeckCurve, computeZocPerimeterTiles,
   confirmDeployment, confirmWaitFacingPicker, craftEquipment, craftHero, createInitialState,
   createTurnBoundaryTracker, effectiveSpeed, equipItem, evaluateAllFacingExposures, evaluateFacingExposure,
   findBestFitUpgrades, findEquipOwner, findGridPath, formatOpportunityWarning, getActiveTacticDeckUids,
   getChapterObjectiveSummary, getCraftableEquipment, getCraftableHeroes, getEquipCraftCost, getEquipEffect,
   getEquipSalvageDust, getEquipmentByUid, getHeroByUid, getHeroCraftCost, getHeroPassive, getHeroSalvageShards,
-  getHeroSkill, getMergeCandidates, getNextRecommendedStage, getObjectiveProgressText, getPackPityStatus,
+  getHeroSkill, getHighestClearedStageTier, getMergeCandidates, getNextRecommendedStage, getObjectiveProgressText, getPackPityStatus,
   getStageUnlockHint, getTacticByUid, getUnitByUid, hasMaxedHero, heroLevelProgress, isChestClaimed,
-  isDeployTile, isEndlessUnlocked, isStageCleared, isStageUnlocked, loadSave, maxSquadSize, mergeHero,
+  isDeployTile, isEndlessUnlocked, isEnemyShrouded, isStageCleared, isStageUnlocked, loadSave, maxSquadSize, mergeHero,
   moveDeployUnit, persistSave, previewBulkSalvageCommonDupes, previewPathOpportunityAttacks,
-  previewTurnOrderAfterAction, previewWaitFacing, restoreBattleState, rotateDeployUnit, salvageEquipCard,
+  previewTurnOrderAfterAction, previewWaitFacing, resolveStageChallenge, restoreBattleState, rotateDeployUnit, salvageEquipCard,
   salvageHeroCard, selectHeroByUid, selectTile, serializeBattleState, shouldAutoSaveOnTurnBoundary,
   startChapterBattle, stepGame, swapDeployUnit, syncTurnBoundaryTracker, toggleEquipLock, toggleHeroLock,
   toggleSquadMember, toggleTacticInDeck, undoMove, unequipItem, unitAt
@@ -39,17 +40,17 @@ import { FACING_DIRS, cellHeightLevel, gridToWorld, isUnitDowned } from './types
 import type {
   BattleSaveSnapshot, BattleUnit, ChapterSpec, CombatForecast, EnemyArchetypeId, FacingDir, GameState,
   HeroClassId, OwnedEquipCard, OwnedHeroCard, PackId, PackRevealItem, PathOpportunityPreview, Rarity,
-  TurnActionKind, TurnOrderActionPreview
+  StageDifficultyTier, StageMutatorId, TurnActionKind, TurnOrderActionPreview
 } from './types.ts'
 import {
   COLOR, RADIUS, TIER_COLOR, TYPE, UI_THEME_PALETTE, WORLD_MAP_H, WORLD_MAP_W,
   drawAnimatedRevealCard, drawApMeter, drawArmoryStatDiffPanel, drawBattleInfo, drawBoosterPack, drawButton, drawCameraCompassButton, drawCampHeader,
-  drawChapterPicker, drawChip, drawCombatForecast, drawControlHints, drawDefeatBackdrop, drawDeployHeroChip,
+  drawChallengeHudBadges, drawChapterPicker, drawChip, drawCombatForecast, drawControlHints, drawDefeatBackdrop, drawDeployHeroChip,
   drawDifficultyBadge, drawEmptyNote, drawEndTurnButton, drawEquipCard, drawForecastAltChip,
   drawForgeBalanceBanner, drawForgeRecipeCard, drawHeroHeader, drawHeroRosterCard, drawHeroXpSummaryAnimated, drawHintPill, drawIconButton, drawLabel, drawLetterbox,
-  drawLootRow, drawModal, drawObjectiveBadge, drawOverline, drawPackCeremonyBackdrop, drawPanel, drawPassiveBanner, drawPityBanner, drawPortraitTile,
+  drawLootRow, drawModal, drawMutatorChipButton, drawObjectiveBadge, drawOverline, drawPackCeremonyBackdrop, drawPanel, drawPassiveBanner, drawPityBanner, drawPortraitTile,
   drawResultHeadlineAnimated, drawRevealCard, drawRewardRowAnimated, drawSegmentTrack,
-  drawSettingRow, drawSheet, drawSkillRow, drawSkillTile, drawSpeakerPortrait, drawStatStrip,
+  drawSettingRow, drawSheet, drawSkillRow, drawSkillTile, drawSpeakerPortrait, drawStageTierSegment, drawStatStrip,
   drawStoryHeading, drawTab, drawTacticCard, drawTacticDeckCard, drawTacticDeckHeader, drawText, drawTimelineBg, drawTitleCard,
   drawTitleLogo, drawToast, drawToolbarBg, drawTopFade, drawTurnOrderCallout,
   drawTurnOrderPreviewBanner, drawTurnTimelinePreviewOverlay, drawTurnToken, drawUnitCard,
@@ -200,6 +201,37 @@ async function start() {
   let campTab: CampTab = 'squad'
   let pendingChapter = CHAPTER_BY_ID[state.campaign.selectedStageId]?.index ?? getNextRecommendedStage(state.campaign).index
   let pendingEndless = 0
+  const DEFAULT_STAGE_CHALLENGE: { readonly tier: StageDifficultyTier; readonly mutators: readonly StageMutatorId[] } = {
+    tier: 'normal',
+    mutators: []
+  }
+  const stageChallengePrefs = new Map<string, { tier: StageDifficultyTier; mutators: StageMutatorId[] }>()
+
+  function getStageChallenge(stageId: string): { tier: StageDifficultyTier; mutators: StageMutatorId[] } {
+    const raw = stageChallengePrefs.get(stageId)
+    const resolved = resolveStageChallenge(state.campaign, stageId, raw?.tier, raw?.mutators, 0)
+    return { tier: resolved.tier, mutators: resolved.mutators.slice() }
+  }
+
+  function setStageTier(stageId: string, tier: StageDifficultyTier) {
+    if (!isStageCleared(state.campaign, stageId)) return
+    const cur = getStageChallenge(stageId)
+    stageChallengePrefs.set(stageId, { tier, mutators: cur.mutators })
+    state.sounds.push({ kind: 'card', pitch: tier === 'mythic' ? 1.28 : tier === 'veteran' ? 1.15 : 0.98 })
+    uiDirty = true
+  }
+
+  function toggleStageMutator(stageId: string, mutatorId: StageMutatorId) {
+    if (!isStageCleared(state.campaign, stageId)) return
+    const cur = getStageChallenge(stageId)
+    const exists = cur.mutators.includes(mutatorId)
+    const nextMutators = exists
+      ? cur.mutators.filter(m => m !== mutatorId)
+      : [...cur.mutators, mutatorId]
+    stageChallengePrefs.set(stageId, { tier: cur.tier, mutators: nextMutators })
+    state.sounds.push({ kind: 'card', pitch: exists ? 0.92 : 1.22 })
+    uiDirty = true
+  }
   let armorySlotFilter: ArmoryFilter = 'all'
   let forgeCategory: ForgeCategory = 'heroes'
   let rosterPage = 0
@@ -611,7 +643,13 @@ async function start() {
   function launchBattle() {
     audio.unlock()
     resumableBattle = null
-    startChapterBattle(state, pendingChapter, pendingEndless, { deployPhase: true })
+    const chapterId = CHAPTERS[pendingChapter]?.id ?? CHAPTERS[0].id
+    const challenge = pendingEndless === 0 ? getStageChallenge(chapterId) : DEFAULT_STAGE_CHALLENGE
+    startChapterBattle(state, pendingChapter, pendingEndless, {
+      deployPhase: true,
+      tier: challenge.tier,
+      mutators: challenge.mutators
+    })
     lastBattlePhase = state.battle?.phase ?? null
     lastActiveUid = state.battle?.activeUnitUid ?? null
     lastBattleTurn = state.battle?.turn ?? 0
@@ -1547,7 +1585,14 @@ async function start() {
             ctx,
             rect,
             stage,
-            { unlocked, cleared, selected: isSel, time: worldMapTime, compact: mobile },
+            {
+              unlocked,
+              cleared,
+              clearedTier: cleared ? getHighestClearedStageTier(camp, stage.id) : null,
+              selected: isSel,
+              time: worldMapTime,
+              compact: mobile
+            },
             st
           )
         }
@@ -1591,25 +1636,60 @@ async function start() {
       })
     }
 
-    const replayTierText = selected.difficulty <= 2
-      ? 'Com/Unc Drop'
-      : selected.difficulty === 3 ? 'Up to Rare'
-      : 'Rare/Slim Epic'
-    const replayLoot: { icon: IconName; text: string; color?: string }[] = [
-      { icon: 'coin', text: `+${selected.replayGold}g`, color: COLOR.accentHi },
-      { icon: 'cards', text: replayTierText, color: '#9fd3ff' }
-    ]
+    const activeChallenge = selectedCleared && !selectedSoon
+      ? getStageChallenge(selected.id)
+      : DEFAULT_STAGE_CHALLENGE
+    const activeTierSpec = STAGE_TIER_SPECS[activeChallenge.tier]
+    const highestClearedTier = selectedCleared ? getHighestClearedStageTier(camp, selected.id) : null
+    const challengeRewards = computeChallengeRewards(
+      selected.replayGold,
+      selected.difficulty,
+      activeChallenge.tier,
+      activeChallenge.mutators
+    )
+    const effectiveRecPower = Math.round(selected.recommendedPower * activeTierSpec.recommendedPowerMul)
 
-    const powerRatio = squadPower / Math.max(1, selected.recommendedPower)
+    const replayLoot: { icon: IconName; text: string; color?: string }[] = [
+      {
+        icon: 'coin',
+        text: challengeRewards.goldBonusPct > 0
+          ? `+${challengeRewards.replayGold}g (+${challengeRewards.goldBonusPct}%)`
+          : `+${challengeRewards.replayGold}g`,
+        color: COLOR.accentHi
+      },
+      {
+        icon: 'cards',
+        text: challengeRewards.dropTierLabel,
+        color: activeChallenge.tier === 'mythic' ? '#e5adff' : activeChallenge.tier === 'veteran' ? '#ffd285' : '#9fd3ff'
+      }
+    ]
+    if (challengeRewards.bonusDust > 0 || challengeRewards.bonusShards > 0) {
+      replayLoot.push({
+        icon: 'sparkle',
+        text: `+${challengeRewards.bonusDust} Dust · +${challengeRewards.bonusShards} Shd`,
+        color: '#a3f7d0'
+      })
+    }
+
+    const powerRatio = squadPower / Math.max(1, effectiveRecPower)
     const powerColor = powerRatio >= 1.0 ? COLOR.good : powerRatio >= 0.8 ? COLOR.accentHi : COLOR.danger
     const deployLabel = selectedSoon
       ? 'Coming Soon...'
       : !selectedUnlocked
         ? 'Locked'
-        : selectedCleared ? 'Replay Battle' : 'Deploy to Battle'
+        : selectedCleared
+          ? activeChallenge.tier !== 'normal'
+            ? `Deploy (${activeTierSpec.label})`
+            : activeChallenge.mutators.length > 0
+              ? `Deploy (${activeChallenge.mutators.length} Mut)`
+              : 'Replay Battle'
+          : 'Deploy to Battle'
 
-    const inspW = mobile ? Math.min(w - 16, 460) : 332
-    const inspH = mobile ? Math.min(Math.round(h * 0.42), 258) : Math.min(h - topH - outerPad * 3 - 8, 512)
+    const showChallengeControls = selectedCleared && !selectedSoon
+    const inspW = mobile ? Math.min(w - 16, 460) : 344
+    const inspH = mobile
+      ? Math.min(Math.round(h * (showChallengeControls ? 0.56 : 0.42)), showChallengeControls ? 356 : 258)
+      : Math.min(h - topH - outerPad * 3 - 8, showChallengeControls ? 616 : 512)
 
     const inspectorPanel = column({
       id: 'wm-inspector',
@@ -1689,7 +1769,7 @@ async function start() {
               ctx,
               selectedSoon
                 ? `${selected.subtitle} · In Development`
-                : `Squad Power ${squadPower} / Rec ${selected.recommendedPower}`,
+                : `Squad Power ${squadPower} / Rec ${effectiveRecPower}`,
               rect.x + 10,
               rect.y + rect.height - 11,
               { size: 10.5, weight: 800, color: selectedSoon ? '#f0cf99' : powerColor, maxW: rect.width - 20, display: true }
@@ -1737,6 +1817,82 @@ async function start() {
         }
       })]),
 
+      // Cleared-Stage Heroic / Mythic Difficulty Tier & Tactical Mutator Selector
+      ...(showChallengeControls ? [column({
+        id: 'wm-st-challenge',
+        style: { height: isCompact ? 104 : 120, padding: [6, 8], gap: 5 },
+        widget: {
+          type: 'panel',
+          blocksPointer: true,
+          draw: (ctx: CanvasRenderingContext2D, rect: LayoutRect) => {
+            drawWell(ctx, rect, RADIUS.md)
+            drawOverline(
+              ctx,
+              activeChallenge.mutators.length > 0
+                ? `Challenge Tier · ${activeChallenge.mutators.length} Mutator${activeChallenge.mutators.length > 1 ? 's' : ''} (+${challengeRewards.goldBonusPct}%g)`
+                : `Challenge Tier & Mutators (${challengeRewards.goldBonusPct > 0 ? `+${challengeRewards.goldBonusPct}%g` : 'Base'})`,
+              rect.x + 8,
+              rect.y + 10,
+              rect.width - 16,
+              activeChallenge.tier === 'mythic' ? '#e5adff' : activeChallenge.tier === 'veteran' ? '#ffd285' : '#8fd4ff'
+            )
+          }
+        }
+      }, [
+        spacerNode(isCompact ? 9 : 11),
+        row({ id: 'wm-tier-row', style: { height: isCompact ? 29 : 34, gap: 5 } }, STAGE_DIFFICULTY_TIERS.map(tierId => boxNode({
+          id: `wm-tier-${tierId}`,
+          style: { grow: 1, height: isCompact ? 29 : 34 },
+          widget: {
+            type: 'button',
+            label: `${STAGE_TIER_SPECS[tierId].label} Difficulty`,
+            selected: activeChallenge.tier === tierId,
+            onPress: () => setStageTier(selected.id, tierId),
+            draw: (ctx: CanvasRenderingContext2D, rect: LayoutRect, st: CanvasWidgetDrawState) => drawStageTierSegment(
+              ctx,
+              rect,
+              tierId,
+              { selected: activeChallenge.tier === tierId, clearedUpTo: highestClearedTier, compact: isCompact },
+              st
+            )
+          }
+        }))),
+        row({ id: 'wm-mut-row-1', style: { height: isCompact ? 22 : 25, gap: 4 } }, STAGE_MUTATOR_IDS.slice(0, 3).map(mutId => boxNode({
+          id: `wm-mut-${mutId}`,
+          style: { grow: 1, height: isCompact ? 22 : 25 },
+          widget: {
+            type: 'button',
+            label: STAGE_MUTATOR_SPECS[mutId].label,
+            selected: activeChallenge.mutators.includes(mutId),
+            onPress: () => toggleStageMutator(selected.id, mutId),
+            draw: (ctx: CanvasRenderingContext2D, rect: LayoutRect, st: CanvasWidgetDrawState) => drawMutatorChipButton(
+              ctx,
+              rect,
+              mutId,
+              { active: activeChallenge.mutators.includes(mutId), compact: true },
+              st
+            )
+          }
+        }))),
+        row({ id: 'wm-mut-row-2', style: { height: isCompact ? 22 : 25, gap: 4 } }, STAGE_MUTATOR_IDS.slice(3).map(mutId => boxNode({
+          id: `wm-mut-${mutId}`,
+          style: { grow: 1, height: isCompact ? 22 : 25 },
+          widget: {
+            type: 'button',
+            label: STAGE_MUTATOR_SPECS[mutId].label,
+            selected: activeChallenge.mutators.includes(mutId),
+            onPress: () => toggleStageMutator(selected.id, mutId),
+            draw: (ctx: CanvasRenderingContext2D, rect: LayoutRect, st: CanvasWidgetDrawState) => drawMutatorChipButton(
+              ctx,
+              rect,
+              mutId,
+              { active: activeChallenge.mutators.includes(mutId), compact: isCompact },
+              st
+            )
+          }
+        })))
+      ])] : []),
+
       // Possible Rewards: One-Time First-Clear vs Replayable
       boxNode({
         id: 'wm-st-rewards',
@@ -1777,20 +1933,34 @@ async function start() {
               cx += cw + 6
             }
 
-            const repTop = Math.max(cy + chipH + 11, rect.y + rect.height * 0.56)
-            drawOverline(ctx, 'Replay Spoils (Repeatable)', px, repTop, pw, '#8fd4ff')
+            const repTop = Math.max(cy + chipH + 11, rect.y + rect.height * 0.52)
+            drawOverline(
+              ctx,
+              challengeRewards.goldBonusPct > 0
+                ? `Replay Spoils (+${challengeRewards.goldBonusPct}% Gold)`
+                : 'Replay Spoils (Repeatable)',
+              px,
+              repTop,
+              pw,
+              activeChallenge.tier === 'mythic' ? '#e5adff' : activeChallenge.tier === 'veteran' ? '#ffd285' : '#8fd4ff'
+            )
             let rx = px
-            const ry = repTop + 10
+            let ry = repTop + 10
             for (const item of replayLoot) {
+              const estW = Math.min(pw, item.text.length * 6.5 + 34)
+              if (rx > px && rx + estW > px + pw) {
+                rx = px
+                ry += chipH + 4
+              }
               const cw = drawChip(ctx, rx, ry, item.text, {
                 icon: item.icon,
                 h: chipH,
-                size: 10.5,
+                size: 10,
                 color: item.color ?? COLOR.text,
                 bg: '#1c2642',
                 border: COLOR.outline
               })
-              rx += cw + 6
+              rx += cw + 5
             }
           }
         }
@@ -2076,10 +2246,20 @@ async function start() {
     const gridCols = ch.grid[0]?.length ?? 8
     const gridRows = ch.grid.length
     const diffMeta = DIFFICULTY_META[ch.difficulty]
+    const storyChallenge = alreadyCleared
+      ? getStageChallenge(ch.id)
+      : DEFAULT_STAGE_CHALLENGE
+    const storyTierSpec = STAGE_TIER_SPECS[storyChallenge.tier]
+    const storyRewards = alreadyCleared
+      ? computeChallengeRewards(ch.replayGold, ch.difficulty, storyChallenge.tier, storyChallenge.mutators)
+      : null
     const header = pendingEndless > 0 ? `Endless Arena - Wave ${pendingEndless}` : ch.title
+    const challengeTag = alreadyCleared && (storyChallenge.tier !== 'normal' || storyChallenge.mutators.length > 0)
+      ? ` · ${storyTierSpec.label.toUpperCase()}${storyChallenge.mutators.length > 0 ? ` +${storyChallenge.mutators.length} MUT` : ''}`
+      : ''
     const kicker = pendingEndless > 0
       ? `${ch.subtitle} · ${gridCols}x${gridRows}`
-      : `${ch.subtitle} · ${gridCols}x${gridRows} · Diff ${diffMeta.short}`
+      : `${ch.subtitle} · ${gridCols}x${gridRows} · Diff ${diffMeta.short}${challengeTag}`
     const desc = pendingEndless > 0
       ? `Eclipse remnants surge back into ${ch.subtitle}. Every wave scales foes and awards richer gold and weighted loot.`
       : `"${ch.introText}"`
@@ -2091,12 +2271,30 @@ async function start() {
         { icon: 'bag', text: 'Weighted Gear', color: '#9fd3ff' },
         { icon: 'users', text: 'Weighted Hero', color: '#9ff0c4' }
       )
-    } else if (alreadyCleared) {
+    } else if (alreadyCleared && storyRewards) {
       lootItems.push(
-        { icon: 'coin', text: `+${ch.replayGold}g (Replay)`, color: COLOR.accentHi },
-        { icon: 'cards', text: 'Repeatable Drop', color: '#9fd3ff' },
-        { icon: 'check', text: 'Specials Claimed', color: COLOR.muted }
+        {
+          icon: 'coin',
+          text: storyRewards.goldBonusPct > 0
+            ? `+${storyRewards.replayGold}g (+${storyRewards.goldBonusPct}%)`
+            : `+${storyRewards.replayGold}g (Replay)`,
+          color: COLOR.accentHi
+        },
+        {
+          icon: 'cards',
+          text: storyRewards.dropTierLabel,
+          color: storyChallenge.tier === 'mythic' ? '#e5adff' : storyChallenge.tier === 'veteran' ? '#ffd285' : '#9fd3ff'
+        }
       )
+      if (storyRewards.bonusDust > 0 || storyRewards.bonusShards > 0) {
+        lootItems.push({
+          icon: 'sparkle',
+          text: `+${storyRewards.bonusDust} Dust · +${storyRewards.bonusShards} Shd`,
+          color: '#a3f7d0'
+        })
+      } else {
+        lootItems.push({ icon: 'check', text: 'Specials Claimed', color: COLOR.muted })
+      }
     } else {
       const objSum = getChapterObjectiveSummary(ch)
       const objIcon: IconName = objSum.kind === 'assassinate'
@@ -3175,6 +3373,29 @@ async function start() {
           })
         }
       }),
+
+      // Active Heroic/Mythic Tier & Mutator Badges right below objective badge
+      ...(battle.difficultyTier !== 'normal' || battle.mutators.length > 0 ? [boxNode({
+        id: 'battle-challenge-badge',
+        style: {
+          anchor: 'top-left',
+          width: Math.min(w - 16, Math.max(objBadgeW, isPhone ? 240 : 320)),
+          height: isPhone ? 24 : 27,
+          inset: [isPhone ? 6 : 8, (isPhone ? 6 : 8) + topBarH + objBadgeH + 11],
+          respectSafeArea: true
+        },
+        widget: {
+          type: 'panel',
+          blocksPointer: false,
+          draw: (ctx: CanvasRenderingContext2D, rect: LayoutRect) => drawChallengeHudBadges(
+            ctx,
+            rect,
+            battle.difficultyTier,
+            battle.mutators,
+            isPhone
+          )
+        }
+      })] : []),
 
       // Top-right toolbar (aligned on top row for phone portrait & landscape too!)
       row({
@@ -5153,8 +5374,13 @@ async function start() {
       : 0
 
     const title = won ? (reward?.campaignWon ? 'Sunstone Crown Reforged' : 'Victory!') : 'Vanguard Defeated'
+    const rewardTier = reward?.difficultyTier ?? battle?.difficultyTier ?? 'normal'
+    const rewardMutCount = (reward?.mutators ?? battle?.mutators ?? []).length
+    const challengeSubTag = rewardTier !== 'normal' || rewardMutCount > 0
+      ? ` · ${STAGE_TIER_SPECS[rewardTier].label}${rewardMutCount > 0 ? ` +${rewardMutCount} Mut` : ''}`
+      : (reward && !reward.firstClear && (battle?.endlessWave ?? 0) === 0 ? ' · Replay' : '')
     const sub = won
-      ? `${ch.title}${reward && !reward.firstClear && (battle?.endlessWave ?? 0) === 0 ? ' · Replay' : ''}`
+      ? `${ch.title}${challengeSubTag}`
       : `${ch.title} · Regroup & Adapt`
     const quote = won
       ? `${ch.outroSpeaker}: "${ch.outroText}"`
@@ -5179,11 +5405,37 @@ async function start() {
               title: `+${shownGold} Gold`,
               detail: `Treasury total: ${state.campaign.gold}g`,
               color: COLOR.accentHi,
-              badge: reward.firstClear ? 'FIRST CLEAR' : 'REPLAY'
+              badge: reward.firstClear
+                ? 'FIRST CLEAR'
+                : rewardTier !== 'normal'
+                  ? STAGE_TIER_SPECS[rewardTier].label.toUpperCase()
+                  : rewardMutCount > 0
+                    ? 'MUTATED'
+                    : 'REPLAY'
             }, rowReveal(goldIdx))
           }
         })
       )
+      if ((reward.bonusDust ?? 0) > 0 || (reward.bonusShards ?? 0) > 0) {
+        const bonusIdx = rIdx++
+        const bDust = reward.bonusDust ?? 0
+        const bShards = reward.bonusShards ?? 0
+        rewardRows.push(
+          boxNode({
+            id: 'res-challenge-materials', style: { height: rowH },
+            widget: {
+              type: 'panel',
+              draw: (ctx: CanvasRenderingContext2D, rect: LayoutRect) => drawRewardRowAnimated(ctx, rect, {
+                icon: 'sparkle',
+                title: `+${bDust} Dust · +${bShards} Shards`,
+                detail: `Forge spoils · Dust ${state.campaign.dust} · Shards ${state.campaign.shards}`,
+                color: rewardTier === 'mythic' ? '#e5adff' : '#a3f7d0',
+                badge: rewardTier === 'mythic' ? 'MYTHIC BONUS' : rewardTier === 'veteran' ? 'HEROIC BONUS' : 'MUTATOR BONUS'
+              }, rowReveal(bonusIdx))
+            }
+          })
+        )
+      }
       if (reward.equipCard && eqSpec) {
         const eqIdx = rIdx++
         rewardRows.push(
@@ -5588,6 +5840,7 @@ async function start() {
         continue
       }
       if (!u.alive) continue
+      if (isEnemyShrouded(battle, u)) continue
       const projected = scene.project(u.x, u.y + (u.isBoss ? 2.25 : 1.88), u.z, g.width, g.height)
       if (!projected) continue
       const isActive = u.uid === battle.activeUnitUid
@@ -5899,7 +6152,10 @@ async function start() {
       pity: getPackPityStatus(state.campaign),
       chaptersCleared: state.campaign.chaptersCleared,
       clearedStageIds: state.campaign.clearedStageIds.slice(),
+      clearedStageTiers: { ...state.campaign.clearedStageTiers },
       selectedStageId: state.campaign.selectedStageId,
+      battleDifficultyTier: state.battle?.difficultyTier ?? null,
+      battleMutators: state.battle ? state.battle.mutators.slice() : [],
       packAnimPhase: packAnim?.phase ?? null,
       resultAnimTime: Math.round(resultAnimTime * 100) / 100,
       heroesCount: state.campaign.heroes.length,

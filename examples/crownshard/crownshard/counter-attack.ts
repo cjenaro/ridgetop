@@ -1,4 +1,5 @@
 import { computeShieldWallDefBonus } from './passives.ts'
+import { mutatorDamageMultiplier } from './mutators.ts'
 import {
   cellHeightAt, facingVector, terrainDefBonus, vectorToFacing
 } from './types.ts'
@@ -162,7 +163,7 @@ export function getCounterAvoidReason(
  * and attacker's facing toward defender.
  */
 export function computeCounterDamage(
-  battle: Pick<BattleState, 'cells' | 'cols' | 'rows'> & Partial<Pick<BattleState, 'units'>>,
+  battle: Pick<BattleState, 'cells' | 'cols' | 'rows'> & Partial<Pick<BattleState, 'units' | 'mutators'>>,
   defender: Pick<BattleUnit, 'col' | 'row' | 'atk' | 'empowerTurns'>,
   attacker: Pick<BattleUnit, 'col' | 'row' | 'facing' | 'def' | 'hp' | 'shield'> & Partial<Pick<BattleUnit, 'uid' | 'team' | 'alive'>>,
   opts?: CounterDamageOptions
@@ -184,6 +185,7 @@ export function computeCounterDamage(
   if (defender.empowerTurns > 0) {
     raw *= 1.35
   }
+  raw *= mutatorDamageMultiplier(battle)
 
   const attCell = battle.cells[attRow]?.[attCol]
   const terrainDef = attCell ? terrainDefBonus(attCell.terrain) : 0

@@ -20,7 +20,8 @@ import type { StrikeShape } from './vfx.ts'
 import {
   computeDangerZone, computeEnemyThreat, computeZocPerimeterTiles, evaluateAllFacingExposures, findGridPath,
   getEquipmentByUid, getHeroByUid, getHeroSkill, getPatternCells, getTacticByUid, getUnitByUid,
-  isChestClaimed, isIntactBarricade, previewPathOpportunityAttacks, unitAt, unitOrDownedAt
+  hasMutator, isChestClaimed, isEnemyShrouded, isIntactBarricade, isTileRevealedInFog,
+  previewPathOpportunityAttacks, unitAt, unitOrDownedAt
 } from './simulation.ts'
 import { TACTIC_BY_ID } from './data.ts'
 import { BARRICADE_DEFAULT_HP, FACING_DIRS, TILE_SIZE, facingToYaw, facingVector, gridToWorld, isUnitDowned, vectorToFacing } from './types.ts'
@@ -58,6 +59,9 @@ const C_ALLY_MARK: Color = [0.94, 1.0, 0.97, 0.98]
 const C_AOE_PREVIEW: Color = [1.0, 0.84, 0.24, 0.42]
 const C_AOE_MARK: Color = [1.0, 0.97, 0.78, 0.98]
 const C_DANGER_TILE: Color = [0.96, 0.34, 0.16, 0.22]
+const C_FOG_TILE: Color = [0.09, 0.11, 0.22, 0.66]
+const C_FOG_MIST: Color = [0.22, 0.19, 0.38, 0.34]
+const C_FOG_SHROUD_UNIT: Color = [0.16, 0.20, 0.34, 0.34]
 const C_DANGER_TILE_HIGH: Color = [0.96, 0.24, 0.16, 0.30]
 const C_DANGER_HATCH: Color = [1.0, 0.72, 0.30, 0.56]
 const C_DANGER_CORNER: Color = [1.0, 0.56, 0.22, 0.74]
@@ -1702,10 +1706,27 @@ export function createCrownshardScene(renderer: LowPolyRenderer) {
     fx.scl[1] = scale * (1 - squash)
     fx.scl[2] = scale * (1 + squash * 0.6)
 
-    renderRig(rig, { position: fx.pos, yaw: fx.yaw, scale: fx.scl }, pose, pool, flash ? () => C_HIT_FLASH : undefined)
+    const shrouded = isEnemyShrouded(battle, unit)
+    const colorOverride = flash
+      ? () => C_HIT_FLASH
+      : shrouded
+        ? () => C_FOG_SHROUD_UNIT
+        : undefined
+    renderRig(rig, { position: fx.pos, yaw: fx.yaw, scale: fx.scl }, pose, pool, colorOverride)
 
     const groundY = unit.y
-    shadows.add([px, groundY + 0.02, pz], { groundY, radius: 0.58 * scale * (1 - Math.min(0.35, extraY * 0.5)), opacity: 0.30 })
+    shadows.add([px, groundY + 0.02, pz], {
+      groundY,
+      radius: 0.58 * scale * (1 - Math.min(0.35, extraY * 0.5)),
+      opacity: shrouded ? 0.14 : 0.30
+    })
+
+    if (shrouded) {
+      // Shrouded in Fog of War: dim smoky ground veil, hide telemetry rings/chevrons/auras until spotted
+      const fogPulse = (0.68 + Math.sin(time * 2.2 + unit.col + unit.row) * 0.08) * scale
+      pool.add(flatRing, [px, groundY + 0.05, pz], [fogPulse, 1, fogPulse], time * 0.4, C_FOG_MIST, 0.9, 'alpha')
+      return
+    }
 
     // Colorblind-safe unit rings: Allies use smooth Circle ring, Enemies use Diamond ring + directional facing chevron!
     const ringColor = isActive ? C_ACTIVE_RING : isSelected ? C_SELECT_RING : unit.team === 'ally' ? C_ALLY_RING : C_ENEMY_RING
@@ -1999,15 +2020,15 @@ export function createCrownshardScene(renderer: LowPolyRenderer) {
       let focusUid: string | null = null
       if (inspectedEnemyUid) {
         const u = getUnitByUid(battle, inspectedEnemyUid)
-        if (u && u.team === 'enemy') focusUid = u.uid
+        if (u && u.team === 'enemy' && !isEnemyShrouded(battle, u)) focusUid = u.uid
       }
       if (!focusUid && hoveredCell && hoveredCell.row < battle.rows && hoveredCell.col < battle.cols) {
         const hovUnit = unitAt(battle, hoveredCell.col, hoveredCell.row)
-        if (hovUnit && hovUnit.team === 'enemy') focusUid = hovUnit.uid
+        if (hovUnit && hovUnit.team === 'enemy' && !isEnemyShrouded(battle, hovUnit)) focusUid = hovUnit.uid
       }
       if (!focusUid && battle.selectedUnitUid) {
         const selUnit = getUnitByUid(battle, battle.selectedUnitUid)
-        if (selUnit && selUnit.team === 'enemy') focusUid = selUnit.uid
+        if (selUnit && selUnit.team === 'enemy' && !isEnemyShrouded(battle, selUnit)) focusUid = selUnit.uid
       }
 
       if (dangerZoneVisible) {
@@ -2047,6 +2068,21 @@ export function createCrownshardScene(renderer: LowPolyRenderer) {
           const yaw = Math.atan2(origin.fromCol - origin.col, origin.fromRow - origin.row)
           const warnCol = origin.arc === 'back' ? C_BACKSTAB_WARN : C_FLANK_WARN
           pool.add(flankWarningChevronMesh, [wx, wy + 0.036, wz], [TILE_SIZE * 0.56, 1, TILE_SIZE * 0.56], yaw, warnCol, 0.96, 'alpha')
+        }
+      }
+    }
+
+    // 0.25 Fog of War mutator: shroud tiles outside Manhattan distance 4 of any living ally
+    if (hasMutator(battle, 'fog_of_war')) {
+      for (let row = 0; row < battle.rows; row++) {
+        for (let col = 0; col < battle.cols; col++) {
+          const cell = battle.cells[row][col]
+          if (cell.terrain === 'void') continue
+          if (isTileRevealedInFog(battle, col, row)) continue
+          const [wx, wy, wz] = gridToWorld(col, row, cell.elevation, battle.cols, battle.rows)
+          const drift = Math.sin(state.time * 1.4 + col * 1.1 + row * 1.7) * 0.04
+          pool.add(tileQuad, [wx, wy + 0.042, wz], [TILE_SIZE * 0.98, 1, TILE_SIZE * 0.98], 0, C_FOG_TILE, 0.96, 'alpha')
+          pool.add(tileQuad, [wx + drift, wy + 0.26, wz - drift], [TILE_SIZE * 0.86, 1, TILE_SIZE * 0.86], 0, C_FOG_MIST, 0.94, 'alpha')
         }
       }
     }

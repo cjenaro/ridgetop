@@ -2,7 +2,8 @@ import type { CanvasWidgetDrawState, LayoutRect } from 'ridgetop/ui'
 import type {
   BattleHeroXpGain, BattleUnit, ChapterSpec, CombatForecast, CombatForecastAlt, DifficultyLevel,
   ElementalComboPreview, EquipSlot, EquipmentSpec, FacingDir, FacingExposureLevel, HeroSpec,
-  LandmarkKind, OwnedHeroCard, PackPityStatus, PackRevealItem, PackSpec, Rarity, SkillSpec, StatusKind,
+  LandmarkKind, OwnedHeroCard, PackPityStatus, PackRevealItem, PackSpec, Rarity, SkillSpec,
+  StageDifficultyTier, StageMutatorId, StatusKind,
   TacticCardSpec, TurnOrderActionPreview, TurnPreviewEntry
 } from './types.ts'
 import { ARMORY_STAT_ORDER, formatStatDelta, formatStatValue } from './armory-diff.ts'
@@ -10,6 +11,7 @@ import type { EquipmentStatDiff } from './armory-diff.ts'
 import { DIFFICULTY_META, RARITY_META, RARITY_ORDER } from './data.ts'
 import { EPIC_PITY_THRESHOLD, LEGENDARY_PITY_THRESHOLD } from './forge.ts'
 import { heroLevelProgress } from './leveling.ts'
+import { STAGE_MUTATOR_SPECS, STAGE_TIER_SPECS, stageTierRank } from './mutators.ts'
 import { RECOMMENDED_MIN_TACTIC_DECK, getEquipEffect, getHeroPassive } from './passives.ts'
 import type { EquipEffectSpec, HeroPassiveSpec, TacticDeckCurve } from './passives.ts'
 
@@ -1669,6 +1671,150 @@ export function drawObjectiveBadge(
     display: true,
     stroke: true,
     strokeWidth: 2
+  })
+}
+
+/** Compact top-left battle HUD bar displaying active Heroic/Mythic tier and stage mutator badges. */
+export function drawChallengeHudBadges(
+  ctx: CanvasRenderingContext2D,
+  rect: LayoutRect,
+  tier: StageDifficultyTier,
+  mutators: readonly StageMutatorId[],
+  compact = false
+) {
+  if (tier === 'normal' && mutators.length === 0) return
+  const tierSpec = STAGE_TIER_SPECS[tier]
+  const fillTop = tier === 'mythic' ? '#3a1b4f' : tier === 'veteran' ? '#4a2e14' : '#1b294a'
+  const fillBot = tier === 'mythic' ? '#201033' : tier === 'veteran' ? '#29190b' : '#131d36'
+  drawSurface(ctx, rect, { r: RADIUS.md, lipH: 3, fill: fillTop, fillBot, border: tier === 'normal' ? undefined : tierSpec.accentHex })
+
+  const { x, y, width: w, height: h } = rect
+  const cy = y + (h - 3) / 2
+  const chipH = compact ? 16 : 18
+  let cx = x + 6
+  const maxX = x + w - 6
+
+  if (tier !== 'normal') {
+    const tLabel = compact ? tierSpec.shortLabel : tierSpec.label.toUpperCase()
+    const tBg = tier === 'mythic' ? '#5e248a' : '#7a4510'
+    const cw = drawChip(ctx, cx, cy - chipH / 2, tLabel, {
+      h: chipH,
+      size: compact ? 8.5 : 9,
+      color: tier === 'mythic' ? '#f5d4ff' : '#ffe49e',
+      bg: tBg,
+      border: tierSpec.accentHex
+    })
+    cx += cw + 4
+  }
+
+  for (const mId of mutators) {
+    const mSpec = STAGE_MUTATOR_SPECS[mId]
+    const estW = mSpec.shortLabel.length * 5.8 + 14
+    if (cx + estW > maxX) break
+    const cw = drawChip(ctx, cx, cy - chipH / 2, mSpec.shortLabel, {
+      h: chipH,
+      size: compact ? 8 : 8.5,
+      color: mSpec.accentHex,
+      bg: '#12192e',
+      border: mSpec.accentHex
+    })
+    cx += cw + 4
+  }
+}
+
+/** World Map stage drawer segmented button for Normal | Veteran | Mythic difficulty tiers. */
+export function drawStageTierSegment(
+  ctx: CanvasRenderingContext2D,
+  rect: LayoutRect,
+  tier: StageDifficultyTier,
+  opts: {
+    readonly selected: boolean
+    readonly clearedUpTo?: StageDifficultyTier | null
+    readonly compact?: boolean
+  },
+  st: CanvasWidgetDrawState
+) {
+  const spec = STAGE_TIER_SPECS[tier]
+  const active = opts.selected || st.selected
+  const fillTop = active
+    ? (tier === 'mythic' ? '#6e2ea8' : tier === 'veteran' ? '#9e5c14' : '#2d5794')
+    : st.hovered ? '#2d3d66' : '#1b2644'
+  const fillBot = active
+    ? (tier === 'mythic' ? '#3d1666' : tier === 'veteran' ? '#5c3108' : '#1b355e')
+    : '#121a30'
+  drawSurface(ctx, rect, {
+    r: RADIUS.sm,
+    lipH: st.pressed ? 1 : 3,
+    fill: fillTop,
+    fillBot,
+    border: active ? spec.accentHex : st.hovered ? COLOR.borderHi : COLOR.outline
+  })
+
+  const { x, y, width: w, height: h } = rect
+  const cy = y + (h - 3) / 2
+  const clearedThis = Boolean(opts.clearedUpTo && stageTierRank(opts.clearedUpTo) >= spec.rank && tier !== 'normal')
+  const titleText = spec.label
+  const subText = tier === 'normal' ? '1.0x' : `+${spec.goldBonusPct}%g`
+
+  drawText(ctx, titleText, x + w / 2, opts.compact ? cy - 3.5 : cy - 5, {
+    size: opts.compact ? 10 : 11,
+    weight: 900,
+    color: active ? '#ffffff' : spec.accentHex,
+    align: 'center',
+    maxW: w - 10,
+    display: true
+  })
+  drawText(ctx, clearedThis ? `${subText} ★` : subText, x + w / 2, opts.compact ? cy + 6.5 : cy + 7.5, {
+    size: opts.compact ? 8 : 8.5,
+    weight: 800,
+    color: active ? (tier === 'mythic' ? '#f2ccff' : tier === 'veteran' ? '#ffe5a3' : '#cce8ff') : COLOR.muted,
+    align: 'center',
+    maxW: w - 8
+  })
+}
+
+/** World Map stage drawer compact toggle chip for a tactical stage mutator. */
+export function drawMutatorChipButton(
+  ctx: CanvasRenderingContext2D,
+  rect: LayoutRect,
+  mutatorId: StageMutatorId,
+  opts: {
+    readonly active: boolean
+    readonly compact?: boolean
+  },
+  st: CanvasWidgetDrawState
+) {
+  const spec = STAGE_MUTATOR_SPECS[mutatorId]
+  const on = opts.active
+  drawSurface(ctx, rect, {
+    r: RADIUS.sm,
+    lipH: st.pressed ? 1 : 2,
+    fill: on ? '#2a355c' : st.hovered ? '#232e4f' : '#151e36',
+    fillBot: on ? '#1a223d' : '#0f1629',
+    border: on ? spec.accentHex : st.hovered ? COLOR.border : COLOR.outline
+  })
+
+  const { x, y, width: w, height: h } = rect
+  const cy = y + (h - 2) / 2
+  // Accent dot
+  ctx.beginPath()
+  ctx.arc(x + 9, cy, 3.2, 0, Math.PI * 2)
+  ctx.fillStyle = on ? spec.accentHex : '#4d5d82'
+  ctx.fill()
+
+  const bonusStr = `+${spec.goldBonusPct}%`
+  const bonusW = opts.compact ? 24 : 28
+  drawText(ctx, opts.compact ? spec.shortLabel : spec.label, x + 16, cy + 0.5, {
+    size: opts.compact ? 8.5 : 9.5,
+    weight: on ? 900 : 700,
+    color: on ? '#ffffff' : COLOR.muted,
+    maxW: Math.max(24, w - 20 - bonusW)
+  })
+  drawText(ctx, bonusStr, x + w - 6, cy + 0.5, {
+    size: opts.compact ? 8 : 8.5,
+    weight: 900,
+    color: on ? spec.accentHex : COLOR.faint,
+    align: 'right'
   })
 }
 
@@ -7427,6 +7573,7 @@ export function drawWorldMapNode(
   opts: {
     unlocked: boolean
     cleared: boolean
+    clearedTier?: StageDifficultyTier | null
     selected: boolean
     time: number
     compact?: boolean
@@ -7532,14 +7679,20 @@ export function drawWorldMapNode(
   } else if (opts.cleared) {
     const bx = cx + r * 0.72
     const by = cy - r * 0.68
+    const badgeFill = opts.clearedTier === 'mythic'
+      ? '#c86bff'
+      : opts.clearedTier === 'veteran'
+        ? '#ffb84d'
+        : COLOR.good
+    const badgeIcon: IconName = opts.clearedTier === 'mythic' || opts.clearedTier === 'veteran' ? 'star' : 'check'
     ctx.beginPath()
     ctx.arc(bx, by, 7.5, 0, Math.PI * 2)
-    ctx.fillStyle = COLOR.good
+    ctx.fillStyle = badgeFill
     ctx.fill()
     ctx.strokeStyle = COLOR.outline
     ctx.lineWidth = 1.8
     ctx.stroke()
-    drawIcon(ctx, 'check', bx, by, 8.5, '#072b16')
+    drawIcon(ctx, badgeIcon, bx, by, 8.5, '#130c24')
   } else if (!opts.unlocked) {
     const bx = cx + r * 0.72
     const by = cy - r * 0.68
