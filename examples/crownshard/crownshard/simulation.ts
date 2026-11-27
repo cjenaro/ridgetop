@@ -63,6 +63,29 @@ export type {
   AppendCombatLogOptions, CombatLogCategory, CombatLogEntry, ComboLogOptions, DamageLogOptions,
   HazardLogOptions, HealLogOptions, KoLogOptions, ReactionLogOptions, StatusLogOptions
 } from './combat-log.ts'
+import {
+  BANTER_COOLDOWN_SECONDS, BANTER_DURATION_SECONDS, BOND_ASSIST_RANGE, BOND_ATK_MUL,
+  BOND_CRIT_BONUS, BOND_DEF_MUL, BOND_PINCER_MUL, BOND_RANK_THRESHOLDS, BOND_RANK_TITLES,
+  HERO_DISPLAY_NAMES, HERO_SHORT_NAMES, MAX_BANTER_TEXT_LENGTH,
+  bondPairKey, computePincerPairBondMultiplier, computeUnitBondAssist, formatCompactBondChip,
+  formatSquadBondChip, getActiveBattleBondPairs, getBondBattles, getBondRank,
+  getBondRankFromBattles, getBondRankTitle, getNextBondThreshold, getSquadBondSummary,
+  getTotalBondRanks, parseBondPairKey, recordSquadBattleBonds, sanitizeActiveBattleBondPairs,
+  sanitizeHeroBonds, stepBattleBanter, triggerBattleBanter
+} from './hero-bonds.ts'
+export {
+  BANTER_COOLDOWN_SECONDS, BANTER_DURATION_SECONDS, BOND_ASSIST_RANGE, BOND_ATK_MUL,
+  BOND_CRIT_BONUS, BOND_DEF_MUL, BOND_PINCER_MUL, BOND_RANK_THRESHOLDS, BOND_RANK_TITLES,
+  HERO_DISPLAY_NAMES, HERO_SHORT_NAMES, MAX_BANTER_TEXT_LENGTH,
+  bondPairKey, computePincerPairBondMultiplier, computeUnitBondAssist, formatCompactBondChip,
+  formatSquadBondChip, getActiveBattleBondPairs, getBondBattles, getBondRank,
+  getBondRankFromBattles, getBondRankTitle, getNextBondThreshold, getSquadBondSummary,
+  getTotalBondRanks, parseBondPairKey, recordSquadBattleBonds, sanitizeActiveBattleBondPairs,
+  sanitizeHeroBonds, stepBattleBanter, triggerBattleBanter
+}
+export type {
+  BondAssistPartner, TriggerBattleBanterOptions, UnitBondAssistResult
+} from './hero-bonds.ts'
 import { computePincerAssistDamage, findPincerAssisters, isPincerMeleeSkill } from './pincer.ts'
 export { computePincerAssistDamage, findPincerAssisters, isPincerMeleeSkill } from './pincer.ts'
 import {
@@ -1171,7 +1194,8 @@ export function createInitialCampaign(seed = 1337): CampaignState {
     discoveredEnemies: [],
     battleSpeed: DEFAULT_BATTLE_SPEED,
     oakhavenExchange: { cycle: 0, boughtIds: [] },
-    worldEvents: []
+    worldEvents: [],
+    heroBonds: {}
   }
 
   const starterKnight: OwnedHeroCard = {
@@ -1369,7 +1393,8 @@ function cloneCampaignFromSave(c: SavedCampaignState, fallbackSeed: number): Cam
       c.oakhavenExchange,
       Number.isFinite(c.battlesWon) ? Math.max(0, Math.floor(c.battlesWon)) : 0
     ),
-    worldEvents: sanitizeWorldMapEvents(c.worldEvents)
+    worldEvents: sanitizeWorldMapEvents(c.worldEvents),
+    heroBonds: sanitizeHeroBonds(c.heroBonds)
   }
   sanitizeHeroEquipmentFamilies(cloned)
   if (!isStageUnlocked(cloned, cloned.selectedStageId)) {
@@ -1625,7 +1650,10 @@ export function serializeBattleState(
     ...(battle.heroKoCount > 0 ? { heroKoCount: Math.floor(battle.heroKoCount) } : {}),
     ...(battle.anyHeroFallen ? { anyHeroFallen: true } : {}),
     combatLog: battle.combatLog.slice(-MAX_COMBAT_LOG_ENTRIES).map(e => ({ ...e })),
-    nextLogId: Math.max(1, Math.floor(battle.nextLogId || 1))
+    nextLogId: Math.max(1, Math.floor(battle.nextLogId || 1)),
+    ...(battle.bondPairsActive.length > 0 ? { bondPairsActive: battle.bondPairsActive.map(p => ({ ...p })) } : {}),
+    ...(battle.banterCooldown > 0 ? { banterCooldown: Math.round(battle.banterCooldown * 100) / 100 } : {}),
+    ...(battle.nextBanterId > 1 ? { nextBanterId: Math.floor(battle.nextBanterId) } : {})
   }
 }
 
@@ -2001,6 +2029,13 @@ export function validateBattleSnapshot(raw: unknown): BattleSaveSnapshot | null 
   const nextLogId = isFiniteNum(raw.nextLogId) && raw.nextLogId >= 1
     ? Math.max(Math.floor(raw.nextLogId), maxLogId + 1)
     : (combatLog !== undefined ? Math.max(1, maxLogId + 1) : undefined)
+  const bondPairsActive = raw.bondPairsActive !== undefined ? sanitizeActiveBattleBondPairs(raw.bondPairsActive) : undefined
+  const banterCooldown = isFiniteNum(raw.banterCooldown) && raw.banterCooldown >= 0
+    ? Math.min(30, raw.banterCooldown)
+    : undefined
+  const nextBanterId = isFiniteNum(raw.nextBanterId) && raw.nextBanterId >= 1
+    ? Math.floor(raw.nextBanterId)
+    : undefined
 
   return {
     version: 1,
@@ -2047,7 +2082,10 @@ export function validateBattleSnapshot(raw: unknown): BattleSaveSnapshot | null 
     ...(heroKoCount !== undefined ? { heroKoCount } : {}),
     ...(anyHeroFallen !== undefined ? { anyHeroFallen } : {}),
     ...(combatLog !== undefined ? { combatLog } : {}),
-    ...(nextLogId !== undefined ? { nextLogId } : {})
+    ...(nextLogId !== undefined ? { nextLogId } : {}),
+    ...(bondPairsActive !== undefined && bondPairsActive.length > 0 ? { bondPairsActive } : {}),
+    ...(banterCooldown !== undefined ? { banterCooldown } : {}),
+    ...(nextBanterId !== undefined ? { nextBanterId } : {})
   }
 }
 
@@ -2282,7 +2320,16 @@ export function restoreBattleState(state: GameState, snapshot: unknown): boolean
     ),
     reward: null,
     activeTipId: null,
-    tipQueue: []
+    tipQueue: [],
+    activeBanter: null,
+    banterCooldown: valid.banterCooldown ?? 0,
+    nextBanterId: Math.max(1, valid.nextBanterId ?? 1),
+    bondPairsActive: valid.bondPairsActive && valid.bondPairsActive.length > 0
+      ? valid.bondPairsActive.map(p => ({ ...p }))
+      : getActiveBattleBondPairs(
+          state.campaign.heroBonds,
+          units.filter(u => u.team === 'ally' && u.heroId !== undefined).map(u => u.heroId).filter((id): id is HeroClassId => id !== undefined)
+        )
   }
 
   state.battle = battle
@@ -2426,7 +2473,8 @@ export function serializeSave(state: GameState): SaveData {
       discoveredEnemies: normalizeDiscoveredEnemies(state.campaign.discoveredEnemies),
       battleSpeed: normalizeBattleSpeed(state.campaign.battleSpeed),
       oakhavenExchange: normalizeOakhavenExchange(state.campaign.oakhavenExchange, state.campaign.battlesWon),
-      worldEvents: (state.campaign.worldEvents ?? []).map(cloneWorldMapEvent)
+      worldEvents: (state.campaign.worldEvents ?? []).map(cloneWorldMapEvent),
+      heroBonds: sanitizeHeroBonds(state.campaign.heroBonds)
     },
     activeBattle
   }
@@ -2537,7 +2585,8 @@ export function loadSave(storage: StorageLike | null | undefined): SaveData | nu
           'oakhavenExchange' in camp ? camp.oakhavenExchange : undefined,
           'battlesWon' in camp && typeof camp.battlesWon === 'number' ? camp.battlesWon : 0
         ),
-        worldEvents: 'worldEvents' in camp ? sanitizeWorldMapEvents(camp.worldEvents) : []
+        worldEvents: 'worldEvents' in camp ? sanitizeWorldMapEvents(camp.worldEvents) : [],
+        heroBonds: 'heroBonds' in camp ? sanitizeHeroBonds(camp.heroBonds) : {}
       },
       activeBattle
     }
@@ -3122,6 +3171,7 @@ export function confirmDeployment(state: GameState): boolean {
       : (ch?.title ?? battle.stageId)
   appendCombatLog(battle, 'system', `Battle started — ${stageTitle} (${battle.objective.label})`, { turn: 1 })
   advanceToNextUnitTurn(state, true)
+  triggerBattleBanter(battle, 'battle_start', { seed: state.campaign.seed })
   checkDiscoveryTipForBattle(state)
   return true
 }
@@ -3498,7 +3548,11 @@ function launchBattleInternal(
     anyHeroFallen: false,
     reward: null,
     activeTipId: null,
-    tipQueue: []
+    tipQueue: [],
+    activeBanter: null,
+    banterCooldown: 0,
+    nextBanterId: 1,
+    bondPairsActive: getActiveBattleBondPairs(campaign.heroBonds, squad.map(h => h.heroId))
   }
 
   drawTacticCards(battle, campaign, 3)
@@ -3509,6 +3563,7 @@ function launchBattleInternal(
   } else {
     appendCombatLog(battle, 'system', `Battle started — ${stageBannerTitle} (${objective.label})`, { turn: 1 })
     advanceToNextUnitTurn(state, true)
+    triggerBattleBanter(battle, 'battle_start', { seed: campaign.seed })
   }
   checkDiscoveryTipForBattle(state)
   return battle
@@ -4975,6 +5030,8 @@ function previewDamageMath(
   let arcCritBonus = 0
   const hitCell = attacker ? closestFootprintCell(fromCol, fromRow, defender) : { col: defender.col, row: defender.row }
   const terrainDef = terrainDefBonus(battle.cells[hitCell.row][hitCell.col].terrain)
+  const attackerBond = attacker ? computeUnitBondAssist(battle, attacker, { col: fromCol, row: fromRow }) : null
+  const defenderBond = computeUnitBondAssist(battle, defender)
   if (attacker) {
     const aLvl = cellHeightAt(battle, fromCol, fromRow)
     const dLvl = cellHeightAt(battle, hitCell.col, hitCell.row)
@@ -4993,21 +5050,24 @@ function previewDamageMath(
     dmg *= computeAttackerDamageMultiplier(attacker, defender)
     dmg *= mutatorDamageMultiplier(battle)
     dmg *= computeEndlessAttackerDamageMultiplier(battle.endlessBlessings, attacker, defender)
+    if (attackerBond?.active) dmg *= attackerBond.atkMul
   }
   const weatherMod = computeWeatherCombatModifiers(battle.weather, element, attackArc)
   dmg *= weatherMod.damageMul
   dmg *= computeDefenderIncomingDamageMultiplier(defender, isSkillDamage)
   const totalIgnoreArmor = clamp(ignoreArmor + computeBonusIgnoreArmor(attacker, defender.def), 0, 1)
   const shieldWallDef = computeShieldWallDefBonus(battle, defender)
-  const effDef = Math.max(0, (defender.def + shieldWallDef) * (1 - totalIgnoreArmor) + terrainDef + coverBonus)
+  const bondedBaseDef = defender.def * (defenderBond.active ? defenderBond.defMul : 1)
+  const effDef = Math.max(0, (bondedBaseDef + shieldWallDef) * (1 - totalIgnoreArmor) + terrainDef + coverBonus)
   const baseDmg = Math.max(4, Math.round(dmg - effDef * 0.72))
   const rangedTallGrass = attacker !== null &&
     manhattan(fromCol, fromRow, hitCell.col, hitCell.row) >= 2 &&
     battle.cells[hitCell.row][hitCell.col].terrain === 'tall_grass'
   const grassCritPenalty = rangedTallGrass ? TALL_GRASS_RANGED_CRIT_REDUCTION : 0
   const effectiveWeatherCrit = canCrit && attacker ? weatherMod.critBonus : 0
+  const bondCritBonus = canCrit && attackerBond?.active ? attackerBond.critBonus : 0
   const critChance = canCrit && attacker
-    ? clamp(attacker.crit + arcCritBonus + effectiveWeatherCrit - grassCritPenalty, 0, 0.95)
+    ? clamp(attacker.crit + arcCritBonus + effectiveWeatherCrit + bondCritBonus - grassCritPenalty, 0, 0.95)
     : 0
   const critRaw = critChance > 0 ? Math.round(baseDmg * 1.55) : baseDmg
   const normalAfterShield = Math.max(0, baseDmg - defender.shield)
@@ -5523,6 +5583,7 @@ export function computeCombatForecast(state: GameState, col: number, row: number
   // Pincer / Follow-Up assist preview for adjacent melee strikes & single-target melee skills
   let pincerAssister: BattleUnit | null = null
   let pincerDmg = 0
+  let bondPincerBonus = false
   if (
     primary.alive &&
     primary.team !== active.team &&
@@ -5531,7 +5592,8 @@ export function computeCombatForecast(state: GameState, col: number, row: number
     const assisters = findPincerAssisters(battle, active, approachCol, approachRow, primary)
     if (assisters.length > 0) {
       pincerAssister = assisters[0]
-      pincerDmg = computePincerAssistDamage(battle, pincerAssister, primary)
+      pincerDmg = computePincerAssistDamage(battle, pincerAssister, primary, active)
+      bondPincerBonus = computePincerPairBondMultiplier(battle, active, pincerAssister) > 1
       const normalTotalAfterShield = Math.max(0, normalDmg + pincerDmg - primary.shield) + (elementalCombo?.bonusDamage ?? 0)
       const critTotalAfterShield = Math.max(0, critDmg + pincerDmg - primary.shield) + (elementalCombo?.bonusDamage ?? 0)
       hpAfterNormal = Math.max(0, primary.hp - normalTotalAfterShield)
@@ -5587,7 +5649,7 @@ export function computeCombatForecast(state: GameState, col: number, row: number
       const m = previewDamageMath(battle, active, primary, strikeApproach.col, strikeApproach.row, active.atk, 0, true, false, inferBasicAttackElement(active))
       const strikeAssisters = findPincerAssisters(battle, active, strikeApproach.col, strikeApproach.row, primary)
       const strikePincerDmg = strikeAssisters.length > 0
-        ? computePincerAssistDamage(battle, strikeAssisters[0], primary)
+        ? computePincerAssistDamage(battle, strikeAssisters[0], primary, active)
         : 0
       const strikeHpAfter = Math.max(0, primary.hp - Math.max(0, m.normalDmg + strikePincerDmg - primary.shield))
       const strikeDist = manhattan(strikeApproach.col, strikeApproach.row, primary.col, primary.row)
@@ -5698,7 +5760,7 @@ export function computeCombatForecast(state: GameState, col: number, row: number
         ? findPincerAssisters(battle, active, skApproach.col, skApproach.row, primary)
         : []
       const skPincerDmg = skAssisters.length > 0
-        ? computePincerAssistDamage(battle, skAssisters[0], primary)
+        ? computePincerAssistDamage(battle, skAssisters[0], primary, active)
         : 0
       const skCombo = skElement ? previewElementalCombo(battle, skElement, primary, primary.col, primary.row) : null
       const skDispPreview = sk.displacement
@@ -5891,6 +5953,19 @@ export function computeCombatForecast(state: GameState, col: number, row: number
         coverHits: dc.targets
       } : {}
     })() : {}),
+    ...(() => {
+      const activeBond = computeUnitBondAssist(battle, active, { col: approachCol, row: approachRow })
+      if (!activeBond.active || activeBond.highestRank === 0) {
+        return bondPincerBonus ? { bondPincerBonus: true } : {}
+      }
+      return {
+        bondAssistRank: activeBond.highestRank,
+        bondAssistAtkPct: Math.round((activeBond.atkMul - 1) * 100),
+        ...(activeBond.critBonus > 0 ? { bondAssistCritPct: Math.round(activeBond.critBonus * 100) } : {}),
+        ...(activeBond.partners[0] ? { bondAssistPartnerName: activeBond.partners[0].name } : {}),
+        ...(bondPincerBonus ? { bondPincerBonus: true } : {})
+      }
+    })(),
     alternatives
   }
 }
@@ -6070,6 +6145,8 @@ function applyDamageDetailed(
   let coverBonus = 0
   const hitCell = attacker ? closestFootprintCell(attacker.col, attacker.row, defender) : { col: defender.col, row: defender.row }
   const terrainDef = terrainDefBonus(battle.cells[hitCell.row][hitCell.col].terrain)
+  const attackerBond = attacker ? computeUnitBondAssist(battle, attacker) : null
+  const defenderBond = computeUnitBondAssist(battle, defender)
   if (attacker) {
     const aLvl = cellHeightAt(battle, attacker.col, attacker.row)
     const dLvl = cellHeightAt(battle, hitCell.col, hitCell.row)
@@ -6083,6 +6160,7 @@ function applyDamageDetailed(
     dmg *= computeAttackerDamageMultiplier(attacker, defender)
     dmg *= mutatorDamageMultiplier(battle)
     dmg *= computeEndlessAttackerDamageMultiplier(battle.endlessBlessings, attacker, defender)
+    if (attackerBond?.active) dmg *= attackerBond.atkMul
   }
   const weatherMod = computeWeatherCombatModifiers(battle.weather, element, attackArc)
   dmg *= weatherMod.damageMul
@@ -6090,7 +6168,8 @@ function applyDamageDetailed(
 
   const totalIgnoreArmor = clamp(ignoreArmor + computeBonusIgnoreArmor(attacker, defender.def), 0, 1)
   const shieldWallDef = computeShieldWallDefBonus(battle, defender)
-  const effDef = Math.max(0, (defender.def + shieldWallDef) * (1 - totalIgnoreArmor) + terrainDef + coverBonus)
+  const bondedBaseDef = defender.def * (defenderBond.active ? defenderBond.defMul : 1)
+  const effDef = Math.max(0, (bondedBaseDef + shieldWallDef) * (1 - totalIgnoreArmor) + terrainDef + coverBonus)
   let finalDmg = Math.max(4, Math.round(dmg - effDef * 0.72))
 
   let isCrit = false
@@ -6098,7 +6177,8 @@ function applyDamageDetailed(
     manhattan(attacker.col, attacker.row, hitCell.col, hitCell.row) >= 2 &&
     battle.cells[hitCell.row][hitCell.col].terrain === 'tall_grass'
   const grassCritPenalty = rangedTallGrass ? TALL_GRASS_RANGED_CRIT_REDUCTION : 0
-  if (canCrit && attacker && randFloat(state.campaign) < clamp(attacker.crit + arcCritBonus + weatherMod.critBonus - grassCritPenalty, 0, 0.95)) {
+  const bondCritBonus = canCrit && attackerBond?.active ? attackerBond.critBonus : 0
+  if (canCrit && attacker && randFloat(state.campaign) < clamp(attacker.crit + arcCritBonus + weatherMod.critBonus + bondCritBonus - grassCritPenalty, 0, 0.95)) {
     isCrit = true
     finalDmg = Math.round(finalDmg * 1.55)
   }
@@ -6128,6 +6208,9 @@ function applyDamageDetailed(
       cue: 'crit',
       at: [defender.x, defender.y, defender.z]
     })
+    if (attacker && attacker.team === 'ally' && defender.team === 'enemy') {
+      triggerBattleBanter(battle, 'crit', { speakerUnit: attacker, seed: state.campaign.seed })
+    }
   }
   defender.hitFlash = 0.28
   defender.animState = 'hit'
@@ -6199,6 +6282,9 @@ function applyDamageDetailed(
     handleUnitDefeat(state, defender)
     if (!defender.alive) {
       triggerOnKoEffects(state, attacker, defender, { isSkillKill: isSkillDamage, rawHitDamage: rolledDamage })
+      if (attacker && attacker.team === 'ally' && defender.team === 'enemy') {
+        triggerBattleBanter(battle, 'ko', { speakerUnit: attacker, seed: state.campaign.seed })
+      }
     }
   } else {
     if (
@@ -6287,6 +6373,7 @@ function handleUnitDefeat(state: GameState, unit: BattleUnit): void {
     appendCombatLog(battle, 'ko', formatKoLog({ unitName: unit.name, kind: 'downed', countdown: KO_COUNTDOWN_TURNS }))
     state.sounds.push({ kind: 'ko' })
     state.vfx.push({ kind: 'ko', at: [unit.x, unit.y + 0.6, unit.z], isBoss: false, downed: true })
+    triggerBattleBanter(battle, 'ko', { partnerUnit: unit, allyDowned: true, seed: state.campaign.seed })
   } else {
     unit.downed = false
     unit.koCountdown = 0
@@ -6345,6 +6432,14 @@ function reviveHero(
   state.vfx.push({ kind: 'revive', at: [target.x, target.y, target.z], uid: target.uid })
   state.vfx.push({ kind: 'heal', at: [target.x, target.y + 0.5, target.z] })
   state.sounds.push({ kind: 'heal', pitch: 1.2 })
+  const reviverUnit = reviverName
+    ? battle.units.find(u => u.team === 'ally' && u.alive && u.uid !== target.uid && u.name === reviverName) ?? null
+    : null
+  triggerBattleBanter(battle, 'revive', {
+    speakerUnit: reviverUnit ?? target,
+    partnerUnit: reviverUnit ? target : undefined,
+    seed: state.campaign.seed
+  })
   return true
 }
 
@@ -6394,6 +6489,13 @@ function applyHealAndShield(
         sourceLabel: opts?.sourceLabel ?? null
       })
     )
+  }
+  if (healer && healer.team === 'ally' && target.team === 'ally' && healer.uid !== target.uid && (healAmount > 0 || totalShield > 0)) {
+    triggerBattleBanter(battle, 'heal', {
+      speakerUnit: healer,
+      partnerUnit: target,
+      seed: state.campaign.seed
+    })
   }
 }
 
@@ -6926,6 +7028,12 @@ function awardBattleVictory(state: GameState): void {
     })
   }
 
+  const deployedHeroIds: HeroClassId[] = []
+  for (const u of battle.units) {
+    if (u.team === 'ally' && u.heroId) deployedHeroIds.push(u.heroId)
+  }
+  const bondRankUps = recordSquadBattleBonds(campaign, deployedHeroIds)
+
   tickWorldMapEvents(campaign)
 
   const reward: BattleReward = {
@@ -6954,7 +7062,8 @@ function awardBattleVictory(state: GameState): void {
         }
       : {}),
     heroXpGains,
-    ...(masteryEarned !== undefined ? { masteryEarned } : {})
+    ...(masteryEarned !== undefined ? { masteryEarned } : {}),
+    ...(bondRankUps.length > 0 ? { bondRankUps } : {})
   }
   battle.reward = reward
   battle.bannerText = worldEventPlan
@@ -7100,7 +7209,14 @@ function executePincerFollowUp(state: GameState, attacker: BattleUnit, target: B
   let totalDealt = 0
   for (const assister of assisters) {
     if (!target.alive) break
-    const rawDmg = computePincerAssistDamage(battle, assister, target)
+    const rawDmg = computePincerAssistDamage(battle, assister, target, attacker)
+    if (attacker.team === 'ally' && assister.team === 'ally') {
+      triggerBattleBanter(battle, 'pincer', {
+        speakerUnit: assister,
+        partnerUnit: attacker,
+        seed: state.campaign.seed
+      })
+    }
     faceToward(assister, target.x, target.z)
     assister.animState = 'attack'
     assister.animTimer = 0.34
@@ -8251,6 +8367,7 @@ function triggerFrontierBossPhaseIfReady(state: GameState, boss: BattleUnit): vo
       state.vfx.push({ kind: 'burst', style: 'gold', at: [guard.x, guard.y + 0.55, guard.z], radius: 0.85, uid: boss.uid })
       addFloat(battle, guard.x, guard.y + 0.4, guard.z, 'SOLAR VANGUARD!', '#ffd166')
     }
+    triggerBattleBanter(battle, 'boss_phase', { seed: state.campaign.seed })
     battle.turnOrder = computeTurnOrderPreview(battle, 8)
     return
   }
@@ -8283,6 +8400,7 @@ function triggerFrontierBossPhaseIfReady(state: GameState, boss: BattleUnit): vo
     `${shift.bannerText} (+${shift.shieldGain} Shield, +${shift.atkBonus} ATK, Empowered & Hasted)`,
     { accentHex: '#ff70a6' }
   )
+  triggerBattleBanter(battle, 'boss_phase', { seed: state.campaign.seed })
   battle.turnOrder = computeTurnOrderPreview(battle, 8)
 }
 
@@ -9418,6 +9536,7 @@ export function stepGame(state: GameState, dt: number): void {
 
   if (battle.bannerTimer > 0) battle.bannerTimer = Math.max(0, battle.bannerTimer - battleDt)
   if (battle.shake > 0) battle.shake = Math.max(0, battle.shake - battleDt * 1.8)
+  stepBattleBanter(battle, safeDt)
 
   // Floating combat numbers
   for (let i = battle.floatingNumbers.length - 1; i >= 0; i--) {

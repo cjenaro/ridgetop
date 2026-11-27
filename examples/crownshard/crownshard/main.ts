@@ -35,7 +35,7 @@ import {
   bulkSalvageCommonDupes, buyOakhavenDeal, buyPack, buyWorldEventOffer, canBuyPack, canClaimStageMasteryChest, canCraftEquipment, canCraftHero, canHeroEquipItem, canMergeHero, canUndoMove,
   cancelAutoBattle, cancelWaitFacingPicker, checkDiscoveryTipForBattle, claimMasteryMilestone, claimStageMasteryChest, clearSave, computeChallengeRewards,
   computeCombatForecast, computeDangerZone, computeDeckValue,
-  computeEnemyThreat, computeHeroStats, computeSquadPower, computeTacticDeckCurve, computeZocPerimeterTiles,
+  computeEnemyThreat, computeHeroStats, computeSquadPower, computeTacticDeckCurve, computeUnitBondAssist, computeZocPerimeterTiles,
   confirmDeployment, confirmWaitFacingPicker, countBattleDestructibleCover, countUniqueTelegraphTiles, craftEquipment, craftHero, createInitialState,
   createTurnBoundaryTracker, dismissDiscoveryTip, draftEndlessBlessing, effectiveSpeed, equipItem, evaluateAllFacingExposures, evaluateFacingExposure,
   findBestFitUpgrades, findEquipOwner, findGridPath, formatAbyssFloorLabel, formatBattleSpeedLabel, formatBossTelegraphHudSummary, formatCoverTooltip, formatEndlessBiomeLabel, formatOpportunityWarning, formatWeatherHudLabel,
@@ -43,7 +43,7 @@ import {
   getBestiaryEntries, getChapterObjectiveSummary, getClaimableMasteryMilestones, getCodexProgress, getCoverHp, getCraftableEquipment, getCraftableHeroes, getCrownlessDeepFloorSpec, getEquipCodexEntries, getEquipCompatibilityReason, getEquipCraftCost, getEquipEffect, getEquipFamily,
   getEquipSalvageDust, getEquipShortLockLabel, getEquipmentByUid, getHeroByUid, getHeroCodexEntries, getHeroCraftCost, getHeroEquipFamily, getHeroEquipFamilyMeta, getHeroPassive, getHeroSalvageShards,
   getHeroSkill, getHighestClearedStageTier, getMaxCombatLogScroll, getMaxLivingBossPhase, getMaxMasteryStars, getMaxSelectableCrownlessDeepFloor, getMergeCandidates, getNextMasteryMilestone, getNextRecommendedStage, getOakhavenExchangeOffers, getObjectiveProgressText, getPackPityStatus,
-  getSelectedCrownlessDeepFloor, getStageMasteryChestReward, getStageMasteryObjectives, getStageMasteryRecord, getStageUnlockHint, getTacticByUid, getTelegraphsAtCell, getTotalMasteryStars, getUnitByUid, getWorldMapEventById, hasClaimedStageMasteryChest, hasMaxedHero, hasOakhavenPatronDiscount, heroLevelProgress, isChestClaimed,
+  getSelectedCrownlessDeepFloor, getSquadBondSummary, getStageMasteryChestReward, getStageMasteryObjectives, getStageMasteryRecord, getStageUnlockHint, getTacticByUid, getTelegraphsAtCell, getTotalBondRanks, getTotalMasteryStars, getUnitByUid, getWorldMapEventById, hasClaimedStageMasteryChest, hasMaxedHero, hasOakhavenPatronDiscount, heroLevelProgress, isChestClaimed,
   isCrownlessDeepStage, isDeployTile, isDestructibleCover, isEndlessBossWave, isEndlessUnlocked, isEnemyShrouded, isOakhavenExchangeUnlocked, isStageCleared, isStageUnlocked, loadSave, maxSquadSize, mergeHero,
   moveDeployUnit, persistSave, previewBulkSalvageCommonDupes, previewPathOpportunityAttacks,
   previewTurnOrderAfterAction, previewWaitFacing, resetDiscoveryTips, resolveBattleAtmosphere, resolveStageChallenge, restoreBattleState, rotateDeployUnit, salvageEquipCard,
@@ -61,13 +61,13 @@ import type {
 } from './types.ts'
 import {
   COLOR, RADIUS, TIER_COLOR, TYPE, UI_THEME_PALETTE,
-  drawAnimatedRevealCard, drawApMeter, drawArmoryStatDiffPanel, drawAutoBattlePill, drawBattleInfo, drawBoosterPack, drawBossTelegraphBanner, drawButton, drawCameraCompassButton, drawCampHeader,
+  drawAnimatedRevealCard, drawApMeter, drawArmoryStatDiffPanel, drawAutoBattlePill, drawBattleBanterToast, drawBattleInfo, drawBoosterPack, drawBossTelegraphBanner, drawButton, drawCameraCompassButton, drawCampHeader,
   drawChallengeHudBadges, drawChapterPicker, drawChip, drawCodexEnemyDetail, drawCodexEntryCard, drawCodexEquipDetail, drawCodexHeader, drawCodexHeroDetail, drawCombatForecast, drawCombatLogPanel, drawCombatLogToggleButton, drawControlHints, drawDefeatBackdrop, drawDeployHeroChip,
   drawDifficultyBadge, drawDiscoveryTipCard, drawEmptyNote, drawEndTurnButton, drawEndlessBlessingCard, drawEndlessBlessingsHudPill, drawEquipCard, drawEquipFamilyPill, drawForecastAltChip,
   drawForgeBalanceBanner, drawForgeRecipeCard, drawHeroHeader, drawHeroRosterCard, drawHeroXpSummaryAnimated, drawHintPill, drawIconButton, drawLabel, drawLetterbox,
   drawLootRow, drawModal, drawMutatorChipButton, drawObjectiveBadge, drawOverline, drawPackCeremonyBackdrop, drawPanel, drawPassiveBanner, drawPityBanner, drawPortraitTile,
   drawResultHeadlineAnimated, drawRevealCard, drawRewardRowAnimated, drawSegmentTrack,
-  drawSettingRow, drawSheet, drawSkillRow, drawSkillTile, drawSpeakerPortrait, drawStageMasteryChecklist, drawStageTierSegment, drawStatStrip,
+  drawSettingRow, drawSheet, drawSkillRow, drawSkillTile, drawSpeakerPortrait, drawSquadBondsStrip, drawStageMasteryChecklist, drawStageTierSegment, drawStatStrip,
   drawStoryHeading, drawTab, drawTacticCard, drawTacticDeckCard, drawTacticDeckHeader, drawText, drawTimelineBg, drawTitleCard,
   drawTitleLogo, drawToast, drawToolbarBg, drawTopFade, drawTurnOrderCallout,
   drawTurnOrderPreviewBanner, drawTurnTimelinePreviewOverlay, drawTurnToken, drawUnitCard,
@@ -4403,6 +4403,7 @@ async function start() {
       : ''
     const inspectedOwned = inspected?.team === 'ally' ? getHeroByUid(state.campaign, inspected.uid) : undefined
     const inspectedXpProgress = inspectedOwned ? heroLevelProgress(inspectedOwned.level, inspectedOwned.xp) : undefined
+    const inspectedBondAssist = inspected ? computeUnitBondAssist(battle, inspected) : undefined
     const fpsShort = `${Math.round(perf.snapshot().fps || 60)}`
     const chapterShort = battle.activeWorldEventTitle
       ? battle.activeWorldEventTitle
@@ -4741,7 +4742,7 @@ async function start() {
             widget: {
               type: 'panel',
               draw: (ctx: CanvasRenderingContext2D, rect: LayoutRect) => drawUnitCard(
-                ctx, rect, inspected, activePortrait, inspected ? effectiveSpeed(inspected) : 0, roleLabel, inspectedXpProgress
+                ctx, rect, inspected, activePortrait, inspected ? effectiveSpeed(inspected) : 0, roleLabel, inspectedXpProgress, inspectedBondAssist
               )
             }
           }),
@@ -4798,7 +4799,7 @@ async function start() {
           widget: {
             type: 'panel',
             draw: (ctx: CanvasRenderingContext2D, rect: LayoutRect) => drawUnitCard(
-              ctx, rect, inspected, activePortrait, inspected ? effectiveSpeed(inspected) : 0, roleLabel, inspectedXpProgress
+              ctx, rect, inspected, activePortrait, inspected ? effectiveSpeed(inspected) : 0, roleLabel, inspectedXpProgress, inspectedBondAssist
             )
           }
         }),
@@ -4864,7 +4865,7 @@ async function start() {
           widget: {
             type: 'panel',
             draw: (ctx: CanvasRenderingContext2D, rect: LayoutRect) => drawUnitCard(
-              ctx, rect, inspected, activePortrait, inspected ? effectiveSpeed(inspected) : 0, roleLabel, inspectedXpProgress
+              ctx, rect, inspected, activePortrait, inspected ? effectiveSpeed(inspected) : 0, roleLabel, inspectedXpProgress, inspectedBondAssist
             )
           }
         }),
@@ -5833,6 +5834,64 @@ async function start() {
         }
       })] : []),
 
+      // Non-blocking Battle Banter speech pill for bonded heroes (clamped & mobile-safe!)
+      ...(() => {
+        const banter = battle.activeBanter
+        if (!banter || mobileHandOpen) return []
+        const hasTurnSub = Boolean(hoveredTurnUnitUid || ctPreview)
+        const subY = timelineInset[1] + tokenH + (isPhone ? 14 : 16)
+        const banterH = mobileLandscape ? 42 : isPhone ? 44 : 46
+        const speakerUnit = getUnitByUid(battle, banter.speakerUid)
+        const banterPortrait = speakerUnit ? battleUnitPortrait(speakerUnit) : portraits[banter.speakerHeroId]
+        // On narrow mobile portrait, float above dock+hint when no forecast is open so top objective/log stay clear
+        if (mobilePortrait && !activeForecast) {
+          const banterW = Math.min(w - 16, 352)
+          const bottomInsetY = dockH + (showHintPill ? 42 : 12)
+          return [boxNode({
+            id: 'battle-banter-toast',
+            style: {
+              anchor: 'bottom',
+              width: banterW,
+              height: banterH,
+              inset: [8, bottomInsetY],
+              respectSafeArea: true
+            },
+            widget: {
+              type: 'panel',
+              blocksPointer: false,
+              draw: (ctx: CanvasRenderingContext2D, rect: LayoutRect) => drawBattleBanterToast(ctx, rect, banter, {
+                portrait: banterPortrait,
+                compact: true
+              })
+            }
+          })]
+        }
+        const banterW = mobilePortrait
+          ? Math.min(w - 16, 344)
+          : mobileLandscape
+            ? Math.min(w - 120, 360)
+            : Math.min(w - 32, 420)
+        const banterY = subY + (hasTurnSub ? 30 : 2)
+        return [boxNode({
+          id: 'battle-banter-toast',
+          style: {
+            anchor: 'top',
+            width: banterW,
+            height: banterH,
+            inset: [8, banterY],
+            respectSafeArea: true
+          },
+          widget: {
+            type: 'panel',
+            blocksPointer: false,
+            draw: (ctx: CanvasRenderingContext2D, rect: LayoutRect) => drawBattleBanterToast(ctx, rect, banter, {
+              portrait: banterPortrait,
+              compact: isPhone
+            })
+          }
+        })]
+      })(),
+
       ...combatLogPanelNodes,
       ...forecastNodes,
       ...phoneHandNodes,
@@ -6189,10 +6248,26 @@ async function start() {
           })
         })
 
+        const squadBondPairs = getSquadBondSummary(camp)
+        const squadBondsNode = boxNode({
+          id: 'camp-squad-bonds',
+          style: { height: wide ? 26 : shortH ? 22 : 24 },
+          widget: {
+            type: 'panel',
+            draw: (ctx: CanvasRenderingContext2D, rect: LayoutRect) => drawSquadBondsStrip(
+              ctx,
+              rect,
+              squadBondPairs,
+              !wide
+            )
+          }
+        })
+
         if (mobile) {
-          bodyNode = column({ id: 'camp-squad-body', style: { grow: 1, gap: 6 } }, [
+          bodyNode = column({ id: 'camp-squad-body', style: { grow: 1, gap: 5 } }, [
             row({ id: 'camp-roster-row', style: { height: 60, gap: 6 } }, rosterButtons),
             pagerNode,
+            squadBondsNode,
             column({
               id: 'camp-inspector-col',
               style: { grow: 1, gap: 5, padding: 9 },
@@ -6226,14 +6301,15 @@ async function start() {
             ]),
             column({
               id: 'camp-inspector-col',
-              style: { grow: 1.25, gap: 7, padding: 11 },
+              style: { grow: 1.25, gap: 6, padding: 10 },
               widget: { type: 'panel', draw: (ctx: CanvasRenderingContext2D, rect: LayoutRect) => drawWell(ctx, rect) }
             }, [
               headerNode,
               statsNode,
               actionsNode,
               gearHeaderRow,
-              gearRow
+              gearRow,
+              squadBondsNode
             ]),
             column({
               id: 'camp-skills-col',
@@ -6264,7 +6340,7 @@ async function start() {
         } else {
           // Medium tablet / landscape phone: 2 columns
           bodyNode = row({ id: 'camp-squad-body', style: { grow: 1, gap: 10 } }, [
-            column({ id: 'camp-roster-col', style: { width: 214, gap: 6 } }, [
+            column({ id: 'camp-roster-col', style: { width: 214, gap: 5 } }, [
               boxNode({
                 id: 'cr-title', style: { height: 14 },
                 widget: {
@@ -6276,6 +6352,7 @@ async function start() {
               }),
               ...rosterButtons,
               spacerNode(1),
+              squadBondsNode,
               pagerNode
             ]),
             column({
@@ -7860,6 +7937,29 @@ async function start() {
           }
         }))
       }
+      if (reward.bondRankUps && reward.bondRankUps.length > 0) {
+        const bIdx = rIdx++
+        const firstBond = reward.bondRankUps[0]
+        const bondTitle = reward.bondRankUps.length === 1
+          ? `Bond R${firstBond.newRank}: ${firstBond.nameA} ♥ ${firstBond.nameB}`
+          : `${reward.bondRankUps.length} Hero Bonds Forged!`
+        const bondDetail = reward.bondRankUps.length === 1
+          ? `${firstBond.rankTitle} · +5% Assist${firstBond.newRank >= 3 ? ', +10% Pincer' : firstBond.newRank >= 2 ? ', +5% Crit' : ''} & Banter`
+          : reward.bondRankUps.slice(0, 3).map(b => `${b.nameA} ♥ ${b.nameB} R${b.newRank}`).join(' · ')
+        rewardRows.push(boxNode({
+          id: 'res-bonds', style: { height: shortH ? 36 : 44 },
+          widget: {
+            type: 'panel',
+            draw: (ctx: CanvasRenderingContext2D, rect: LayoutRect) => drawRewardRowAnimated(ctx, rect, {
+              icon: 'heart',
+              title: bondTitle,
+              detail: bondDetail,
+              color: firstBond.newRank >= 3 ? '#ffd978' : '#ff8ec4',
+              badge: `♥ R${firstBond.newRank}`
+            }, rowReveal(bIdx))
+          }
+        }))
+      }
       if (reward.unlockedSlot4) {
         const sIdx = rIdx++
         rewardRows.push(boxNode({
@@ -9081,6 +9181,9 @@ async function start() {
       bossPhaseMax: state.battle ? getMaxLivingBossPhase(state.battle) : 0,
       battleSpeed: state.battle?.battleSpeed ?? state.campaign.battleSpeed,
       autoBattle: state.battle?.autoBattle ?? false,
+      activeBondPairsCount: state.battle ? state.battle.bondPairsActive.length : getSquadBondSummary(state.campaign).length,
+      totalBondRanks: getTotalBondRanks(state.campaign.heroBonds),
+      activeBanterText: state.battle?.activeBanter?.text ?? null,
       mobileHandOpen,
       campCollapsed: mobileCampCollapsed,
       cameraZoom: Math.round(scene.getCameraZoom() * 1000) / 1000,
@@ -9289,11 +9392,23 @@ async function start() {
   let perfUiTick = 0
   let lastCompassSig = 0
   let lastDownedCount = 0
+  let lastBanterId = 0
 
   const stop = fixedLoop({
     update(dt) {
       const t0 = performance.now()
       stepGame(state, dt)
+      const curBanterId = state.battle?.activeBanter?.id ?? 0
+      if (curBanterId !== lastBanterId) {
+        lastBanterId = curBanterId
+        uiDirty = true
+        hudRev++
+      } else if (state.battle?.activeBanter) {
+        const b = state.battle.activeBanter
+        if (b.age < 0.28 || b.duration - b.age < 0.52) {
+          uiDirty = true
+        }
+      }
       if (campToastTimer > 0) {
         campToastTimer = Math.max(0, campToastTimer - dt)
         if (campToastTimer === 0) { campToast = ''; uiDirty = true }

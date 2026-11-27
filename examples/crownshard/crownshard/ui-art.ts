@@ -1,11 +1,13 @@
 import type { CanvasWidgetDrawState, LayoutRect } from 'ridgetop/ui'
 import type {
-  BattleHeroXpGain, BattleMasteryEvaluation, BattleUnit, BattleWeatherId, ChapterSpec, CombatForecast, CombatForecastAlt, CombatLogEntry, DifficultyLevel,
+  ActiveBattleBondPair, BattleBanterEntry, BattleHeroXpGain, BattleMasteryEvaluation, BattleUnit, BattleWeatherId, ChapterSpec, CombatForecast, CombatForecastAlt, CombatLogEntry, DifficultyLevel,
   ElementalComboPreview, EndlessBlessingId, EquipFamily, EquipSlot, EquipmentSpec, FacingDir, FacingExposureLevel, HeroSpec,
   LandmarkKind, OwnedHeroCard, PackPityStatus, PackRevealItem, PackSpec, Rarity, SkillSpec,
   StageDifficultyTier, StageMasteryChestReward, StageMasteryObjectiveSpec, StageMasteryRecord, StageMasteryStars, StageMutatorId, StatusKind,
   TacticCardSpec, TimeOfDayId, TurnOrderActionPreview, TurnPreviewEntry, WorldMapEvent
 } from './types.ts'
+import { HERO_SHORT_NAMES, formatCompactBondChip, formatSquadBondChip } from './hero-bonds.ts'
+import type { UnitBondAssistResult } from './hero-bonds.ts'
 import type { BossTelegraphHudSummary } from './boss-telegraphs.ts'
 import { ARMORY_STAT_ORDER, formatStatDelta, formatStatValue } from './armory-diff.ts'
 import type { EquipmentStatDiff } from './armory-diff.ts'
@@ -2532,7 +2534,8 @@ export function drawUnitCard(
   portrait: CanvasImageSource | undefined,
   speedValue: number,
   roleLabel: string,
-  xpProgress?: { readonly xp: number; readonly xpForNext: number; readonly ratio: number; readonly isMaxLevel: boolean }
+  xpProgress?: { readonly xp: number; readonly xpForNext: number; readonly ratio: number; readonly isMaxLevel: boolean },
+  bondAssist?: UnitBondAssistResult
 ) {
   const ally = !unit || unit.team === 'ally'
   const isBossPhase2 = Boolean(unit && unit.isBoss && (unit.bossPhase ?? 1) >= 2)
@@ -2614,6 +2617,24 @@ export function drawUnitCard(
       border: COLOR.outline
     })
     badgeX += lvW + 3
+  }
+  if (ally && bondAssist && bondAssist.active && bondAssist.highestRank >= 1) {
+    const fullBondLabel = '+5% BOND'
+    const shortBondLabel = '♥+5%'
+    const fullEstW = Math.round(measureText(ctx, fullBondLabel, 8, 900, true) + 12)
+    const shortEstW = Math.round(measureText(ctx, shortBondLabel, 8, 900, true) + 10)
+    const bondLabel = !compact && badgeX + fullEstW <= badgeMaxX ? fullBondLabel : shortBondLabel
+    const bondEstW = bondLabel === fullBondLabel ? fullEstW : shortEstW
+    if (badgeX + bondEstW <= badgeMaxX) {
+      const bondW = drawChip(ctx, badgeX, py + 20, bondLabel, {
+        h: 16,
+        size: 8,
+        color: bondAssist.highestRank >= 3 ? '#ffe89c' : '#ffd1e8',
+        bg: '#661a44',
+        border: bondAssist.highestRank >= 3 ? '#ffd978' : '#ff8ec4'
+      })
+      badgeX += bondW + 3
+    }
   }
   const unitBadges = getUnitStatusBadges(unit)
   for (const b of unitBadges) {
@@ -3378,13 +3399,26 @@ export function drawCombatForecast(
   const hasPincer = Boolean(fc.pincerAssisterUid && (fc.pincerDmg ?? 0) > 0)
   if (hasPincer && fc.pincerDmg) {
     const allyShort = (fc.pincerAssisterName ?? 'Ally').split(' ').pop() ?? 'Ally'
-    const fullLabel = `PINCER +${fc.pincerDmg} (${allyShort})`
+    const heartPrefix = fc.bondPincerBonus ? '♥ ' : ''
+    const fullLabel = `${heartPrefix}PINCER +${fc.pincerDmg} (${allyShort})`
     const fullW = Math.round(measureText(ctx, fullLabel, 8.5, 900, true) + 12)
     tags.push({
-      text: fullW <= midW + 6 ? fullLabel : `PINCER +${fc.pincerDmg}`,
+      text: fullW <= midW + 6 ? fullLabel : `${heartPrefix}PINCER +${fc.pincerDmg}`,
       bg: '#7a4d04',
       color: '#ffe878',
-      border: '#ffd45c'
+      border: fc.bondPincerBonus ? '#ff99cc' : '#ffd45c'
+    })
+  }
+  if (fc.bondAssistRank && fc.bondAssistAtkPct && fc.isOffensive && !isEmpty) {
+    const bondLabel = fc.bondAssistCritPct
+      ? `♥+5% BOND · +${fc.bondAssistCritPct}% CRIT`
+      : `♥+${fc.bondAssistAtkPct}% BOND`
+    const fullBondW = Math.round(measureText(ctx, bondLabel, 8.5, 900, true) + 12)
+    tags.push({
+      text: fullBondW <= midW + 6 ? bondLabel : `♥+${fc.bondAssistAtkPct}% BOND`,
+      bg: '#661a44',
+      color: fc.bondAssistRank >= 3 ? '#ffe89c' : '#ffd1e8',
+      border: fc.bondAssistRank >= 3 ? '#ffd978' : '#ff8ec4'
     })
   }
   if (fc.isOffensive && !isEmpty) {
@@ -11356,4 +11390,217 @@ export function drawWeatherPreviewChip(
     display: true
   })
   return w
+}
+
+/**
+ * Sleek comic/tactical Battle Banter speech pill rendered during combat for bonded hero pairs.
+ * Strictly non-blocking (`blocksPointer: false`) and compact so mobile viewports stay unobstructed.
+ */
+export function drawBattleBanterToast(
+  ctx: CanvasRenderingContext2D,
+  rect: LayoutRect,
+  banter: BattleBanterEntry,
+  opts: { readonly portrait?: CanvasImageSource; readonly compact?: boolean } = {}
+) {
+  const { x, y, width: w, height: h } = rect
+  if (w < 60 || h < 28) return
+  const compact = Boolean(opts.compact || h <= 44 || w < 360)
+  const fadeIn = Math.min(1, Math.max(0, banter.age / 0.22))
+  const remaining = Math.max(0, banter.duration - banter.age)
+  const fadeOut = Math.min(1, remaining / 0.45)
+  const alpha = Math.max(0.05, Math.min(fadeIn, fadeOut))
+
+  const isRank3 = banter.bondRank >= 3
+  const rimCol = isRank3 ? '#ffd978' : banter.bondRank === 2 ? '#ff9fd0' : '#f07cb8'
+  const badgeBg = isRank3 ? '#6b470c' : '#631b43'
+  const badgeCol = isRank3 ? '#ffe89c' : '#ffd4ea'
+
+  ctx.save()
+  ctx.globalAlpha = alpha
+
+  drawSurface(ctx, rect, {
+    r: Math.min(14, h * 0.36),
+    lipH: 3,
+    fill: '#2c1f3de8',
+    fillBot: '#18142bf2',
+    rim: rimCol + 'cc'
+  })
+
+  // Left accent bar
+  rr(ctx, x - 1.5, y + 8, 4, Math.max(14, h - 19), 2)
+  ctx.fillStyle = rimCol
+  ctx.fill()
+
+  const pad = compact ? 6 : 8
+  const ps = Math.min(compact ? 30 : 34, h - pad * 2 - 2)
+  const px = x + pad + 2
+  const py = y + Math.round((h - 3 - ps) * 0.5)
+  if (opts.portrait) {
+    drawPortraitTile(ctx, px, py, ps, opts.portrait, {
+      ring: rimCol,
+      ringW: 2,
+      r: 8,
+      bg: '#42224c'
+    })
+  } else {
+    rr(ctx, px, py, ps, ps, 8)
+    ctx.fillStyle = '#42224c'
+    ctx.fill()
+    ctx.strokeStyle = rimCol
+    ctx.lineWidth = 2
+    ctx.stroke()
+    drawIcon(ctx, 'heart', px + ps * 0.5, py + ps * 0.5, ps * 0.52, rimCol)
+  }
+
+  const tx = px + ps + (compact ? 7 : 9)
+  const maxTextW = Math.max(40, x + w - pad - tx)
+  const nameY = y + (compact ? 12 : 13.5)
+  const quipY = y + (compact ? h - 13.5 : h - 14.5)
+
+  const speakerLabel = compact ? HERO_SHORT_NAMES[banter.speakerHeroId] : banter.speakerName
+  const rankLabel = `♥ R${banter.bondRank}`
+  const rankW = Math.round(measureText(ctx, rankLabel, 8.5, 900, true) + 11)
+  const partnerLabel = `w/ ${HERO_SHORT_NAMES[banter.partnerHeroId]}`
+  const partnerW = Math.round(measureText(ctx, partnerLabel, 8.5, 700, true) + 6)
+  const nameMaxW = Math.max(40, maxTextW - rankW - 6)
+  const speakerW = Math.min(nameMaxW, Math.round(measureText(ctx, speakerLabel, compact ? 10.5 : 11.5, 900, true)))
+
+  drawText(ctx, speakerLabel, tx, nameY, {
+    size: compact ? 10.5 : 11.5,
+    weight: 900,
+    color: '#ffeaf5',
+    maxW: nameMaxW,
+    display: true,
+    stroke: true,
+    strokeWidth: 2
+  })
+
+  const rankX = tx + speakerW + 6
+  const drawnRankW = drawChip(ctx, rankX, nameY - 7.5, rankLabel, {
+    h: 15,
+    size: 8.5,
+    color: badgeCol,
+    bg: badgeBg,
+    border: rimCol
+  })
+
+  if (rankX + drawnRankW + 6 + partnerW <= x + w - pad) {
+    drawText(ctx, partnerLabel, x + w - pad, nameY, {
+      size: 8.5,
+      weight: 700,
+      color: '#c8b4dc',
+      align: 'right',
+      maxW: partnerW + 4,
+      display: true
+    })
+  }
+
+  drawText(ctx, `"${banter.text}"`, tx, quipY, {
+    size: compact ? 10.5 : 11.5,
+    weight: 750,
+    color: '#ffffff',
+    maxW: maxTextW,
+    shadow: true
+  })
+
+  ctx.restore()
+}
+
+/**
+ * Compact Camp Squad Bonds summary pill/strip showing active bonded pairs in the current squad.
+ * Strictly clamped to `rect.width` so narrow mobile viewports never clip or overflow.
+ */
+export function drawSquadBondsStrip(
+  ctx: CanvasRenderingContext2D,
+  rect: LayoutRect,
+  pairs: readonly ActiveBattleBondPair[],
+  compact = false
+) {
+  const { x, y, width: w, height: h } = rect
+  if (w < 60 || h < 18) return
+  const hasPairs = pairs.length > 0
+
+  rr(ctx, x, y, w, h, RADIUS.sm)
+  ctx.fillStyle = hasPairs ? '#2c1c39e6' : '#161e34d8'
+  ctx.fill()
+  ctx.strokeStyle = hasPairs ? '#ff8ec488' : '#4a5c8a66'
+  ctx.lineWidth = 1.4
+  ctx.stroke()
+
+  const midY = y + h * 0.5
+  const padX = compact ? 7 : 9
+  drawIcon(ctx, 'heart', x + padX + 5, midY, compact ? 10 : 11, hasPairs ? '#ff8ec4' : '#7c8db5')
+  const title = compact ? 'BONDS' : 'SQUAD BONDS'
+  const titleSize = compact ? 8.5 : 9
+  const titleW = Math.round(measureText(ctx, title, titleSize, 900, true))
+  drawText(ctx, title, x + padX + 14, midY + 0.5, {
+    size: titleSize,
+    weight: 900,
+    color: hasPairs ? '#ffb5db' : COLOR.muted,
+    display: true
+  })
+
+  let cx = x + padX + 14 + titleW + (compact ? 6 : 9)
+  const rightEdge = x + w - padX
+  const availW = rightEdge - cx
+  if (availW <= 20) return
+
+  if (!hasPairs) {
+    const hint = compact
+      ? 'Deploy heroes together to forge Bonds'
+      : 'Deploy heroes together to forge Bonds (+5% ATK/DEF assist)'
+    drawText(ctx, hint, cx, midY + 0.5, {
+      size: compact ? 9 : 10,
+      weight: 600,
+      color: COLOR.faint,
+      maxW: availW
+    })
+    return
+  }
+
+  const chipH = Math.min(18, h - 5)
+  const chipY = Math.round(midY - chipH * 0.5)
+  let shown = 0
+  for (let i = 0; i < pairs.length; i++) {
+    const p = pairs[i]
+    const label = compact ? formatCompactBondChip(p) : formatSquadBondChip(p)
+    const chipW = Math.round(measureText(ctx, label, compact ? 8 : 8.5, 900, true) + 12)
+    const remainingPairs = pairs.length - (i + 1)
+    const reserveOverflow = remainingPairs > 0 ? 30 : 0
+    if (cx + chipW + reserveOverflow > rightEdge) {
+      if (shown === 0) {
+        const fallbackText = formatCompactBondChip(p)
+        drawText(ctx, fallbackText, cx, midY + 0.5, {
+          size: 8.5,
+          weight: 900,
+          color: '#ffd1e8',
+          maxW: rightEdge - cx,
+          display: true
+        })
+      } else {
+        const moreLabel = `+${pairs.length - shown}`
+        const moreW = Math.round(measureText(ctx, moreLabel, 8, 900, true) + 10)
+        if (cx + moreW <= rightEdge) {
+          drawChip(ctx, cx, chipY, moreLabel, {
+            h: chipH,
+            size: 8,
+            color: '#ffd1e8',
+            bg: '#4f1838',
+            border: '#ff8ec4'
+          })
+        }
+      }
+      break
+    }
+    const isRank3 = p.rank >= 3
+    const drawn = drawChip(ctx, cx, chipY, label, {
+      h: chipH,
+      size: compact ? 8 : 8.5,
+      color: isRank3 ? '#ffe89c' : '#ffd4ea',
+      bg: isRank3 ? '#66430a' : '#5e1a40',
+      border: isRank3 ? '#ffd978' : '#ff8ec4'
+    })
+    cx += drawn + 5
+    shown++
+  }
 }

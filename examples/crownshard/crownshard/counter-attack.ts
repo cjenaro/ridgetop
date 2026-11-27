@@ -1,4 +1,5 @@
 import { computeEndlessAttackerDamageMultiplier } from './endless-roguelite.ts'
+import { computeUnitBondAssist } from './hero-bonds.ts'
 import { computeShieldWallDefBonus } from './passives.ts'
 import { mutatorDamageMultiplier } from './mutators.ts'
 import {
@@ -164,9 +165,9 @@ export function getCounterAvoidReason(
  * and attacker's facing toward defender.
  */
 export function computeCounterDamage(
-  battle: Pick<BattleState, 'cells' | 'cols' | 'rows'> & Partial<Pick<BattleState, 'units' | 'mutators' | 'endlessBlessings'>>,
-  defender: Pick<BattleUnit, 'col' | 'row' | 'atk' | 'empowerTurns'> & Partial<Pick<BattleUnit, 'team'>>,
-  attacker: Pick<BattleUnit, 'col' | 'row' | 'facing' | 'def' | 'hp' | 'shield'> & Partial<Pick<BattleUnit, 'uid' | 'team' | 'alive' | 'slowTurns' | 'stunTurns'>>,
+  battle: Pick<BattleState, 'cells' | 'cols' | 'rows'> & Partial<Pick<BattleState, 'units' | 'mutators' | 'endlessBlessings' | 'bondPairsActive'>>,
+  defender: Pick<BattleUnit, 'col' | 'row' | 'atk' | 'empowerTurns'> & Partial<Pick<BattleUnit, 'uid' | 'team' | 'alive' | 'heroId' | 'downed'>>,
+  attacker: Pick<BattleUnit, 'col' | 'row' | 'facing' | 'def' | 'hp' | 'shield'> & Partial<Pick<BattleUnit, 'uid' | 'team' | 'alive' | 'heroId' | 'downed' | 'slowTurns' | 'stunTurns'>>,
   opts?: CounterDamageOptions
 ): CounterDamageResult {
   const attCol = opts?.attackerCol ?? attacker.col
@@ -192,6 +193,21 @@ export function computeCounterDamage(
     { slowTurns: attacker.slowTurns ?? 0, stunTurns: attacker.stunTurns ?? 0 }
   )
   raw *= mutatorDamageMultiplier(battle)
+  if (battle.units && defender.uid && defender.team) {
+    const defBond = computeUnitBondAssist(
+      { units: battle.units, bondPairsActive: battle.bondPairsActive },
+      {
+        uid: defender.uid,
+        team: defender.team,
+        col: defender.col,
+        row: defender.row,
+        alive: defender.alive ?? true,
+        heroId: defender.heroId,
+        downed: defender.downed
+      }
+    )
+    if (defBond.active) raw *= defBond.atkMul
+  }
 
   const attCell = battle.cells[attRow]?.[attCol]
   const terrainDef = attCell ? terrainDefBonus(attCell.terrain) : 0
@@ -202,7 +218,24 @@ export function computeCounterDamage(
         { uid: attacker.uid, team: attacker.team, col: attCol, row: attRow, alive: attacker.alive ?? true }
       )
     : 0
-  const effDef = Math.max(0, attacker.def + shieldWallDef + terrainDef + coverBonus)
+  let bondedAttDef = attacker.def
+  if (battle.units && attacker.uid && attacker.team) {
+    const attBond = computeUnitBondAssist(
+      { units: battle.units, bondPairsActive: battle.bondPairsActive },
+      {
+        uid: attacker.uid,
+        team: attacker.team,
+        col: attCol,
+        row: attRow,
+        alive: attacker.alive ?? true,
+        heroId: attacker.heroId,
+        downed: attacker.downed
+      },
+      { col: attCol, row: attRow }
+    )
+    if (attBond.active) bondedAttDef *= attBond.defMul
+  }
+  const effDef = Math.max(0, bondedAttDef + shieldWallDef + terrainDef + coverBonus)
 
   const fullBasicDmg = Math.max(4, Math.round(raw - effDef * 0.72))
   const counterMul = COUNTER_DAMAGE_MULTIPLIER * (opts?.counterMul ?? 1.0)
