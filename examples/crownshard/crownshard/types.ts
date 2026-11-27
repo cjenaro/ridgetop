@@ -121,6 +121,8 @@ export type EnemyArchetypeId =
   | 'unbroken_crown_boss'
   | 'lich_vaelen'
   | 'frostwyrm_rimefang'
+  | 'ignis_titan'
+  | 'abyssal_sentinel'
 
 export type EquipSlot = 'weapon' | 'armor' | 'relic'
 
@@ -720,6 +722,9 @@ export interface BattleReward {
   readonly specialRewardsClaimed: boolean
   readonly unlockedSlot4: boolean
   readonly campaignWon: boolean
+  readonly abyssFloor?: number
+  readonly abyssCompleted?: boolean
+  readonly gauntletRoundsCleared?: number
   readonly heroXpGains: readonly BattleHeroXpGain[]
 }
 
@@ -951,6 +956,9 @@ export interface BattleState {
   readonly stageId: string
   readonly chapterIndex: number
   readonly endlessWave: number
+  gauntletRound?: number
+  gauntletMaxRounds?: number
+  abyssFloor?: number
   readonly difficulty: DifficultyLevel
   readonly difficultyTier: StageDifficultyTier
   readonly mutators: readonly StageMutatorId[]
@@ -1063,6 +1071,9 @@ export interface BattleSaveSnapshot {
   readonly stageId: string
   readonly chapterIndex: number
   readonly endlessWave: number
+  readonly gauntletRound?: number
+  readonly gauntletMaxRounds?: number
+  readonly abyssFloor?: number
   readonly difficulty: DifficultyLevel
   readonly difficultyTier?: StageDifficultyTier
   readonly mutators?: readonly StageMutatorId[]
@@ -1104,6 +1115,9 @@ export interface CampaignState {
   clearedStageTiers?: Record<string, StageDifficultyTier>
   selectedStageId: string
   endlessBest: number
+  crownlessDeepFloor: number
+  crownlessDeepSelectedFloor?: number
+  crownlessDeepRewardClaimed?: boolean
   battlesWon: number
   packsOpened: number
   packsSinceEpic: number
@@ -1131,7 +1145,13 @@ export interface GameState {
 
 export type SavedCampaignState = Omit<
   CampaignState,
-  'dust' | 'shards' | 'packsSinceEpic' | 'packsSinceLegendary' | 'seenTips' | 'battleSpeed'
+  | 'dust'
+  | 'shards'
+  | 'packsSinceEpic'
+  | 'packsSinceLegendary'
+  | 'seenTips'
+  | 'battleSpeed'
+  | 'crownlessDeepFloor'
 > & {
   dust?: number
   shards?: number
@@ -1141,6 +1161,9 @@ export type SavedCampaignState = Omit<
   tipsDisabled?: boolean
   battleSpeed?: BattleSpeedMultiplier
   oakhavenExchange?: OakhavenExchangeState
+  crownlessDeepFloor?: number
+  crownlessDeepSelectedFloor?: number
+  crownlessDeepRewardClaimed?: boolean
 }
 
 export interface SaveData {

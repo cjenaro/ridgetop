@@ -801,6 +801,61 @@ export const ENEMY_CHARACTER_SPECS: Readonly<Record<EnemyArchetypeId, CharacterS
       glow: '#7cf8ff'
     },
     parts: {}
+  },
+  ignis_titan: {
+    // Towering molten-core volcanic colossus: charred basalt plates fused over white-hot magma fissures,
+    // crowned with volcanic shards, spiked obsidian pauldrons, and a molten greatsword + caldera shield.
+    body: 'frost_golem',
+    palette: {
+      skin: '#2b1b1e',
+      primary: '#d93d16',
+      primaryDark: '#261416',
+      secondary: '#ff8a1f',
+      metal: '#ffb347',
+      metalDark: '#2c2226',
+      leather: '#3b1c17',
+      accent: '#ffe066',
+      glow: '#ff6414'
+    },
+    parts: {
+      headgear: 'crown_eclipse',
+      pauldrons: 'pauldrons_spiked',
+      collar: 'collar_gold_mantle',
+      bracerL: 'bracer_plate',
+      bracerR: 'bracer_plate',
+      mainHand: 'weapon_obsidian_greatsword',
+      offHand: 'shield_obsidian'
+    }
+  },
+  abyssal_sentinel: {
+    // Crownless Deep void-armored sentinel: obsidian plate, eclipse mantle, dark halberd & tower shield.
+    body: 'humanoid_broad',
+    palette: {
+      skin: '#7e739e',
+      primary: '#2c1e4a',
+      primaryDark: '#171029',
+      secondary: '#7d38c9',
+      metal: '#a69cc7',
+      metalDark: '#332a4d',
+      leather: '#292038',
+      accent: '#d89bff',
+      glow: '#c96bff'
+    },
+    parts: {
+      headgear: 'helm_dark_lord',
+      chest: 'chest_obsidian_plate',
+      pauldrons: 'pauldrons_eclipse',
+      collar: 'collar_gold_mantle',
+      belt: 'belt_hex_plate',
+      skirt: 'skirt_tassets',
+      back: 'mantle_eclipse',
+      bracerL: 'bracer_plate',
+      bracerR: 'bracer_plate',
+      bootL: 'boot_greave_plate',
+      bootR: 'boot_greave_plate',
+      mainHand: 'weapon_dragonfang_halberd',
+      offHand: 'shield_obsidian'
+    }
   }
 }
 
@@ -837,7 +892,9 @@ export const ENEMY_RIGS: Record<EnemyArchetypeId, Rig> = {
   astral_warden_boss: crownshardCharacterBuilder.assemble(ENEMY_CHARACTER_SPECS.astral_warden_boss),
   unbroken_crown_boss: crownshardCharacterBuilder.assemble(ENEMY_CHARACTER_SPECS.unbroken_crown_boss),
   lich_vaelen: crownshardCharacterBuilder.assemble(ENEMY_CHARACTER_SPECS.lich_vaelen),
-  frostwyrm_rimefang: crownshardCharacterBuilder.assemble(ENEMY_CHARACTER_SPECS.frostwyrm_rimefang)
+  frostwyrm_rimefang: crownshardCharacterBuilder.assemble(ENEMY_CHARACTER_SPECS.frostwyrm_rimefang),
+  ignis_titan: crownshardCharacterBuilder.assemble(ENEMY_CHARACTER_SPECS.ignis_titan),
+  abyssal_sentinel: crownshardCharacterBuilder.assemble(ENEMY_CHARACTER_SPECS.abyssal_sentinel)
 }
 
 const customHeroRigCache = new Map<string, Rig>()

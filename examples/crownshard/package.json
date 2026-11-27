@@ -30,6 +30,7 @@
       "crownshard/simulation.ts",
       "crownshard/expansion-act2.ts",
       "crownshard/enemy-archetypes.ts",
+      "crownshard/expansion-endgame.ts",
       "crownshard/expansion-frontier.ts",
       "crownshard/forge.ts",
       "crownshard/passives.ts",

@@ -99,9 +99,9 @@ test('All 7 Outer Frontier nodes are playable, jump-1 connected, with valid spaw
 
   assert.deepEqual([...FRONTIER_STAGE_IDS], expectedFrontier.map(e => e.id))
 
-  // Verify non-overlap ownership: starfall_atoll and abyssal_deep were NOT touched
-  assert.equal(CHAPTER_BY_ID.starfall_atoll.comingSoon, true, 'starfall_atoll must remain untouched by this bead')
-  assert.equal(CHAPTER_BY_ID.abyssal_deep.comingSoon, true, 'abyssal_deep must remain untouched by this bead')
+  // Verify sibling endgame stages (starfall_atoll & abyssal_deep) exist and are playable post-Wave 7 merge
+  assert.ok(CHAPTER_BY_ID.starfall_atoll && !CHAPTER_BY_ID.starfall_atoll.comingSoon)
+  assert.ok(CHAPTER_BY_ID.abyssal_deep && !CHAPTER_BY_ID.abyssal_deep.comingSoon)
 
   const state = createInitialState(9001)
   // Unlock progression chain step by step starting after eclipse_throne

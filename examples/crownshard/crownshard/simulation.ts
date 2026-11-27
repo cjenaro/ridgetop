@@ -173,6 +173,41 @@ export {
   isValidFootprintAnchor, mergeInnateStageMutators, unitOccupiesCell
 }
 export type { FrostwyrmSpecialPlan, LichSoulNovaSpec } from './expansion-act2.ts'
+import {
+  BRIMSTONE_MAW_STAGE_ID, CINDER_ARENA_INTER_ROUND_AP_BONUS, CINDER_ARENA_INTER_ROUND_HEAL_RATIO,
+  CINDER_ARENA_MAX_ROUNDS, CINDER_ARENA_STAGE_ID, CINDER_ARENA_WAVES,
+  CROWNLESS_DEEP_FLOOR10_BONUS_DUST, CROWNLESS_DEEP_FLOOR10_BONUS_SHARDS,
+  CROWNLESS_DEEP_FLOOR10_LEGEND_EQUIP, CROWNLESS_DEEP_FLOOR10_LEGEND_HERO,
+  CROWNLESS_DEEP_FLOORS, CROWNLESS_DEEP_MAX_FLOOR, CROWNLESS_DEEP_STAGE_ID,
+  IGNIS_TITAN_GEYSER_IGNITE_RADIUS, STARFALL_ATOLL_FIRST_CLEAR_DUST,
+  STARFALL_ATOLL_FIRST_CLEAR_SHARDS, STARFALL_ATOLL_STAGE_ID,
+  applyGauntletInterRoundRecovery, canAdvanceGauntletRound, createGauntletWaveUnits,
+  findOpenGauntletSpawnTile, formatAbyssFloorLabel, getCrownlessDeepFloorSpec,
+  getGauntletMaxRounds, getGauntletWaveSpec, getMaxSelectableCrownlessDeepFloor,
+  getNextCrownlessDeepFloor, getSelectedCrownlessDeepFloor, getStarfallFirstClearBonus,
+  igniteNearbyLavaGeysers, isCrownlessDeepStage, isGauntletStage,
+  normalizeCrownlessDeepFloorCleared, resolveCrownlessDeepVictoryRewards,
+  setSelectedCrownlessDeepFloor
+} from './expansion-endgame.ts'
+export {
+  BRIMSTONE_MAW_STAGE_ID, CINDER_ARENA_INTER_ROUND_AP_BONUS, CINDER_ARENA_INTER_ROUND_HEAL_RATIO,
+  CINDER_ARENA_MAX_ROUNDS, CINDER_ARENA_STAGE_ID, CINDER_ARENA_WAVES,
+  CROWNLESS_DEEP_FLOOR10_BONUS_DUST, CROWNLESS_DEEP_FLOOR10_BONUS_SHARDS,
+  CROWNLESS_DEEP_FLOOR10_LEGEND_EQUIP, CROWNLESS_DEEP_FLOOR10_LEGEND_HERO,
+  CROWNLESS_DEEP_FLOORS, CROWNLESS_DEEP_MAX_FLOOR, CROWNLESS_DEEP_STAGE_ID,
+  IGNIS_TITAN_GEYSER_IGNITE_RADIUS, STARFALL_ATOLL_FIRST_CLEAR_DUST,
+  STARFALL_ATOLL_FIRST_CLEAR_SHARDS, STARFALL_ATOLL_STAGE_ID,
+  applyGauntletInterRoundRecovery, canAdvanceGauntletRound, createGauntletWaveUnits,
+  findOpenGauntletSpawnTile, formatAbyssFloorLabel, getCrownlessDeepFloorSpec,
+  getGauntletMaxRounds, getGauntletWaveSpec, getMaxSelectableCrownlessDeepFloor,
+  getNextCrownlessDeepFloor, getSelectedCrownlessDeepFloor, getStarfallFirstClearBonus,
+  igniteNearbyLavaGeysers, isCrownlessDeepStage, isGauntletStage,
+  normalizeCrownlessDeepFloorCleared, resolveCrownlessDeepVictoryRewards,
+  setSelectedCrownlessDeepFloor
+}
+export type {
+  CrownlessDeepFloorSpec, CrownlessDeepRewardPlan, GauntletRecoveryResult, GauntletWaveSpec
+} from './expansion-endgame.ts'
 import { executeBulkSalvageCommonDupes } from './inventory-ops.ts'
 export {
   findBulkSalvageableCommonDupes, isEquipLocked, isHeroLocked,
@@ -947,6 +982,7 @@ export function createInitialCampaign(seed = 1337): CampaignState {
     clearedStageTiers: {},
     selectedStageId: CHAPTERS[0].id,
     endlessBest: 0,
+    crownlessDeepFloor: 0,
     battlesWon: 0,
     packsOpened: 0,
     packsSinceEpic: 0,
@@ -1063,7 +1099,9 @@ const ENEMY_ID_LOOKUP: ReadonlyMap<string, EnemyArchetypeId> = new Map<string, E
   ['astral_warden_boss', 'astral_warden_boss'],
   ['unbroken_crown_boss', 'unbroken_crown_boss'],
   ['lich_vaelen', 'lich_vaelen'],
-  ['frostwyrm_rimefang', 'frostwyrm_rimefang']
+  ['frostwyrm_rimefang', 'frostwyrm_rimefang'],
+  ['ignis_titan', 'ignis_titan'],
+  ['abyssal_sentinel', 'abyssal_sentinel']
 ])
 
 function toDifficultyLevel(raw: number): DifficultyLevel {
@@ -1112,6 +1150,17 @@ function cloneCampaignFromSave(c: SavedCampaignState, fallbackSeed: number): Cam
       ? c.selectedStageId
       : CHAPTERS[0].id,
     endlessBest: Number.isFinite(c.endlessBest) ? Math.max(0, Math.floor(c.endlessBest)) : 0,
+    crownlessDeepFloor: normalizeCrownlessDeepFloorCleared(c.crownlessDeepFloor),
+    ...(isFiniteNum(c.crownlessDeepSelectedFloor)
+      ? {
+          crownlessDeepSelectedFloor: clamp(
+            Math.floor(c.crownlessDeepSelectedFloor),
+            1,
+            Math.min(CROWNLESS_DEEP_MAX_FLOOR, normalizeCrownlessDeepFloorCleared(c.crownlessDeepFloor) + 1)
+          )
+        }
+      : {}),
+    ...(c.crownlessDeepRewardClaimed === true ? { crownlessDeepRewardClaimed: true } : {}),
     battlesWon: Number.isFinite(c.battlesWon) ? Math.max(0, Math.floor(c.battlesWon)) : 0,
     packsOpened: Number.isFinite(c.packsOpened) ? Math.max(0, Math.floor(c.packsOpened)) : 0,
     packsSinceEpic: isFiniteNum(c.packsSinceEpic) ? Math.max(0, Math.floor(c.packsSinceEpic)) : 0,
@@ -1345,6 +1394,9 @@ export function serializeBattleState(
     stageId: battle.stageId,
     chapterIndex: battle.chapterIndex,
     endlessWave: battle.endlessWave,
+    ...(battle.gauntletRound !== undefined ? { gauntletRound: battle.gauntletRound } : {}),
+    ...(battle.gauntletMaxRounds !== undefined ? { gauntletMaxRounds: battle.gauntletMaxRounds } : {}),
+    ...(battle.abyssFloor !== undefined ? { abyssFloor: battle.abyssFloor } : {}),
     difficulty: battle.difficulty,
     difficultyTier: battle.difficultyTier,
     mutators: battle.mutators.slice(),
@@ -1389,6 +1441,24 @@ export function validateBattleSnapshot(raw: unknown): BattleSaveSnapshot | null 
 
   if (!isFiniteNum(raw.endlessWave) || raw.endlessWave < 0) return null
   const endlessWave = Math.floor(raw.endlessWave)
+
+  let gauntletRound: number | undefined
+  let gauntletMaxRounds: number | undefined
+  if (raw.gauntletMaxRounds !== undefined) {
+    if (!isFiniteNum(raw.gauntletMaxRounds) || raw.gauntletMaxRounds < 1) return null
+    gauntletMaxRounds = clamp(Math.floor(raw.gauntletMaxRounds), 1, 10)
+  }
+  if (raw.gauntletRound !== undefined) {
+    if (!isFiniteNum(raw.gauntletRound) || raw.gauntletRound < 1) return null
+    const maxR = gauntletMaxRounds ?? Math.max(1, getGauntletMaxRounds(stageId))
+    gauntletRound = clamp(Math.floor(raw.gauntletRound), 1, maxR)
+    if (gauntletMaxRounds === undefined && maxR > 1) gauntletMaxRounds = maxR
+  }
+  let abyssFloor: number | undefined
+  if (raw.abyssFloor !== undefined) {
+    if (!isFiniteNum(raw.abyssFloor) || raw.abyssFloor < 1) return null
+    abyssFloor = clamp(Math.floor(raw.abyssFloor), 1, CROWNLESS_DEEP_MAX_FLOOR)
+  }
 
   const rawDiff = isFiniteNum(raw.difficulty) ? raw.difficulty : chapter.difficulty
   const difficulty: DifficultyLevel = toDifficultyLevel(rawDiff)
@@ -1683,6 +1753,9 @@ export function validateBattleSnapshot(raw: unknown): BattleSaveSnapshot | null 
     stageId,
     chapterIndex,
     endlessWave,
+    ...(gauntletRound !== undefined ? { gauntletRound } : {}),
+    ...(gauntletMaxRounds !== undefined ? { gauntletMaxRounds } : {}),
+    ...(abyssFloor !== undefined ? { abyssFloor } : {}),
     difficulty,
     difficultyTier,
     mutators,
@@ -1849,6 +1922,9 @@ export function restoreBattleState(state: GameState, snapshot: unknown): boolean
     stageId: valid.stageId,
     chapterIndex: valid.chapterIndex,
     endlessWave: valid.endlessWave,
+    ...(valid.gauntletRound !== undefined ? { gauntletRound: valid.gauntletRound } : {}),
+    ...(valid.gauntletMaxRounds !== undefined ? { gauntletMaxRounds: valid.gauntletMaxRounds } : {}),
+    ...(valid.abyssFloor !== undefined ? { abyssFloor: valid.abyssFloor } : {}),
     difficulty: valid.difficulty,
     difficultyTier: valid.difficultyTier ?? 'normal',
     mutators: valid.mutators ? valid.mutators.slice() : [],
@@ -1936,7 +2012,7 @@ export function createTurnBoundaryTracker(): BattleTurnBoundaryTracker {
 export function battleTurnBoundaryKey(battle: BattleState | null): string | null {
   if (!battle) return null
   if (battle.phase !== 'player' && battle.phase !== 'enemy') return null
-  return `${battle.stageId}:${battle.endlessWave}:${battle.turn}:${battle.phase}:${battle.activeUnitUid ?? ''}`
+  return `${battle.stageId}:${battle.endlessWave}:${battle.gauntletRound ?? 0}:${battle.abyssFloor ?? 0}:${battle.turn}:${battle.phase}:${battle.activeUnitUid ?? ''}`
 }
 
 export function syncTurnBoundaryTracker(
@@ -2082,6 +2158,22 @@ export function loadSave(storage: StorageLike | null | undefined): SaveData | nu
         ),
         selectedStageId,
         endlessBest: 'endlessBest' in camp && typeof camp.endlessBest === 'number' ? camp.endlessBest : 0,
+        crownlessDeepFloor: 'crownlessDeepFloor' in camp ? normalizeCrownlessDeepFloorCleared(camp.crownlessDeepFloor) : 0,
+        ...('crownlessDeepSelectedFloor' in camp && isFiniteNum(camp.crownlessDeepSelectedFloor)
+          ? {
+              crownlessDeepSelectedFloor: clamp(
+                Math.floor(camp.crownlessDeepSelectedFloor),
+                1,
+                Math.min(
+                  CROWNLESS_DEEP_MAX_FLOOR,
+                  ('crownlessDeepFloor' in camp ? normalizeCrownlessDeepFloorCleared(camp.crownlessDeepFloor) : 0) + 1
+                )
+              )
+            }
+          : {}),
+        ...('crownlessDeepRewardClaimed' in camp && camp.crownlessDeepRewardClaimed === true
+          ? { crownlessDeepRewardClaimed: true }
+          : {}),
         battlesWon: 'battlesWon' in camp && typeof camp.battlesWon === 'number' ? camp.battlesWon : 0,
         packsOpened: 'packsOpened' in camp && typeof camp.packsOpened === 'number' ? camp.packsOpened : 0,
         packsSinceEpic: 'packsSinceEpic' in camp && isFiniteNum(camp.packsSinceEpic) && camp.packsSinceEpic >= 0 ? Math.floor(camp.packsSinceEpic) : 0,
@@ -2257,6 +2349,7 @@ export interface StartBattleOptions {
   readonly deployPhase?: boolean
   readonly tier?: StageDifficultyTier
   readonly mutators?: readonly StageMutatorId[]
+  readonly abyssFloor?: number
 }
 
 export function isChestClaimed(
@@ -2509,10 +2602,13 @@ export function evaluateBattleObjective(battle: BattleState): BattleObjectiveEva
     }
   }
 
-  // 3. Clearing every enemy on the board always secures Victory
+  // 3. Clearing every enemy on the board secures Victory (unless another Gladiator Gauntlet wave remains)
   const enemiesAlive = battle.units.some(u => u.alive && u.team === 'enemy')
   if (!enemiesAlive) {
-    return { status: 'victory', reason: 'All Enemies Routed!' }
+    if (canAdvanceGauntletRound(battle)) {
+      return { status: 'ongoing', reason: null }
+    }
+    return { status: 'victory', reason: battle.gauntletMaxRounds ? `All ${battle.gauntletMaxRounds} Rounds Cleared!` : 'All Enemies Routed!' }
   }
 
   // 4. Turn limit check (for timed Seize or timed missions)
@@ -2526,21 +2622,26 @@ export function evaluateBattleObjective(battle: BattleState): BattleObjectiveEva
 /** Concise live HUD progress string for the active battle objective. */
 export function getObjectiveProgressText(battle: BattleState): string {
   const obj = battle.objective
+  const abyssPrefix = battle.abyssFloor ? `${formatAbyssFloorLabel(battle.abyssFloor)} · ` : ''
+  if (battle.gauntletMaxRounds && battle.gauntletMaxRounds > 1) {
+    const aliveEnemies = battle.units.filter(u => u.alive && u.team === 'enemy').length
+    return `Round ${battle.gauntletRound ?? 1}/${battle.gauntletMaxRounds} · ${aliveEnemies} Foe${aliveEnemies === 1 ? '' : 's'} Left`
+  }
   if (obj.kind === 'assassinate') {
     const target = obj.targetEnemyUid
       ? battle.units.find(u => u.uid === obj.targetEnemyUid)
       : battle.units.find(u => u.team === 'enemy' && u.isBoss)
     const name = obj.targetName ?? target?.name ?? 'Boss'
-    if (!target || !target.alive) return `${name} Slain!`
-    return `Slay ${name} (${target.hp}/${target.maxHp} HP)`
+    if (!target || !target.alive) return `${abyssPrefix}${name} Slain!`
+    return `${abyssPrefix}Slay ${name} (${target.hp}/${target.maxHp} HP)`
   }
   if (obj.kind === 'defend') {
     const turnsTotal = obj.targetTurns ?? 6
     const turnsDone = Math.min(turnsTotal, obj.roundsElapsed)
     if (obj.protectTile) {
-      return `Hold ${obj.protectLabel ?? 'Altar'} · ${turnsDone}/${turnsTotal}T`
+      return `${abyssPrefix}Hold ${obj.protectLabel ?? 'Altar'} · ${turnsDone}/${turnsTotal}T`
     }
-    return `Survive · ${turnsDone}/${turnsTotal} Turns`
+    return `${abyssPrefix}Survive · ${turnsDone}/${turnsTotal} Turns`
   }
   if (obj.kind === 'seize') {
     const parts: string[] = []
@@ -2555,12 +2656,12 @@ export function getObjectiveProgressText(battle: BattleState): string {
       const left = Math.max(0, obj.turnLimit - obj.roundsElapsed)
       parts.push(`${left}T Left`)
     }
-    return parts.join(' · ') || obj.label
+    return `${abyssPrefix}${parts.join(' · ') || obj.label}`
   }
   const totalEnemies = battle.units.filter(u => u.team === 'enemy').length
   const aliveEnemies = battle.units.filter(u => u.alive && u.team === 'enemy').length
   const defeated = totalEnemies - aliveEnemies
-  return `Rout Enemies · ${defeated}/${totalEnemies}`
+  return `${abyssPrefix}Rout Enemies · ${defeated}/${totalEnemies}`
 }
 
 /** Short summary of a chapter's mission objective for Story Briefing / World Map. */
@@ -2710,8 +2811,31 @@ export function startChapterBattle(
     : options
   const { campaign } = state
   const safeIdx = clamp(chapterIndex, 0, CHAPTERS.length - 1)
-  const chapter = CHAPTERS[safeIdx]
-  campaign.selectedStageId = chapter.id
+  const baseChapter = CHAPTERS[safeIdx]
+  campaign.selectedStageId = baseChapter.id
+
+  // Crownless Deep 10-Floor Secret Abyss resolves per-floor layout, enemies, biome, and modifiers
+  const isAbyss = endlessWave === 0 && isCrownlessDeepStage(baseChapter.id)
+  const resolvedAbyssFloor = isAbyss
+    ? (resolvedOpts?.abyssFloor !== undefined
+        ? clamp(Math.floor(resolvedOpts.abyssFloor), 1, CROWNLESS_DEEP_MAX_FLOOR)
+        : getSelectedCrownlessDeepFloor(campaign))
+    : undefined
+  const abyssSpec = resolvedAbyssFloor !== undefined ? getCrownlessDeepFloorSpec(resolvedAbyssFloor) : null
+  const chapter: ChapterSpec = abyssSpec
+    ? {
+        ...baseChapter,
+        difficulty: abyssSpec.difficulty,
+        recommendedPower: abyssSpec.recommendedPower,
+        biome: abyssSpec.biome,
+        grid: abyssSpec.grid,
+        heights: abyssSpec.heights,
+        heroSpawns: abyssSpec.heroSpawns,
+        objective: abyssSpec.objective,
+        enemies: abyssSpec.enemies
+      }
+    : baseChapter
+
   const challenge = resolveStageChallenge(
     campaign,
     chapter.id,
@@ -2720,9 +2844,11 @@ export function startChapterBattle(
     endlessWave
   )
   const difficultyTier = challenge.tier
-  const mutators = endlessWave === 0
-    ? mergeInnateStageMutators(chapter.id, challenge.mutators)
-    : challenge.mutators.slice()
+  const mutators = abyssSpec
+    ? normalizeStageMutators([...abyssSpec.mutators, ...challenge.mutators])
+    : endlessWave === 0
+      ? mergeInnateStageMutators(chapter.id, challenge.mutators)
+      : challenge.mutators.slice()
   const biome: BiomeId = chapter.biome
   const cells = buildCells(chapter.grid, chapter.heights)
   const rows = cells.length
@@ -2891,10 +3017,20 @@ export function startChapterBattle(
   const useDeploy = Boolean(resolvedOpts?.deployPhase)
   const apBonus = arcaneSurgeApBonuses(mutators)
   const deckUids = shuffleStrings(getActiveTacticDeckUids(campaign), campaign)
+  const gauntletMax = endlessWave === 0 ? getGauntletMaxRounds(chapter.id) : 0
+  const stageBannerTitle = endlessWave > 0
+    ? `Endless Wave ${endlessWave}`
+    : abyssSpec
+      ? `${chapter.title} · ${formatAbyssFloorLabel(abyssSpec.floor)}`
+      : gauntletMax > 1
+        ? `${chapter.title} · Round 1/${gauntletMax}`
+        : chapter.title
   const battle: BattleState = {
     stageId: chapter.id,
     chapterIndex: safeIdx,
     endlessWave,
+    ...(gauntletMax > 1 ? { gauntletRound: 1, gauntletMaxRounds: gauntletMax } : {}),
+    ...(resolvedAbyssFloor !== undefined ? { abyssFloor: resolvedAbyssFloor } : {}),
     difficulty: chapter.difficulty,
     difficultyTier,
     mutators,
@@ -2937,7 +3073,7 @@ export function startChapterBattle(
     nextFloatId: 1,
     combatLog: [],
     nextLogId: 1,
-    bannerText: useDeploy ? 'DEPLOY SQUAD' : endlessWave > 0 ? `Endless Wave ${endlessWave}` : chapter.title,
+    bannerText: useDeploy ? 'DEPLOY SQUAD' : stageBannerTitle,
     bannerTimer: 2.1,
     shake: 0,
     xpEarnedByHero: {},
@@ -2954,8 +3090,7 @@ export function startChapterBattle(
   if (useDeploy) {
     battle.turnOrder = computeTurnOrderPreview(battle, 8)
   } else {
-    const stageTitle = endlessWave > 0 ? `Endless Wave ${endlessWave}` : chapter.title
-    appendCombatLog(battle, 'system', `Battle started — ${stageTitle} (${objective.label})`, { turn: 1 })
+    appendCombatLog(battle, 'system', `Battle started — ${stageBannerTitle} (${objective.label})`, { turn: 1 })
     advanceToNextUnitTurn(state, true)
   }
   checkDiscoveryTipForBattle(state)
@@ -5798,9 +5933,57 @@ function checkTileObjectiveInteractions(state: GameState, unit: BattleUnit): voi
   }
 }
 
+function advanceGauntletWave(state: GameState): boolean {
+  const battle = state.battle
+  if (!battle || !canAdvanceGauntletRound(battle)) return false
+  const nextRound = (battle.gauntletRound ?? 1) + 1
+  const wave = getGauntletWaveSpec(battle.stageId, nextRound)
+  if (!wave) return false
+
+  battle.gauntletRound = nextRound
+
+  // Inter-round vanguard recovery (+25% max HP to living allies & +1 AP)
+  const hpBefore = new Map<string, number>()
+  for (const u of battle.units) {
+    if (u.alive && u.team === 'ally') hpBefore.set(u.uid, u.hp)
+  }
+  const recovery = applyGauntletInterRoundRecovery(battle)
+  for (const u of battle.units) {
+    if (!u.alive || u.team !== 'ally') continue
+    const gained = u.hp - (hpBefore.get(u.uid) ?? u.hp)
+    if (gained > 0) {
+      addFloat(battle, u.x, u.y + 0.45, u.z, `+${gained} HP`, '#5ef29b')
+      state.vfx.push({ kind: 'heal', at: [u.x, u.y + 0.5, u.z] })
+    }
+  }
+
+  // Deploy the incoming gladiator wave onto open arena tiles
+  const newFoes = createGauntletWaveUnits(battle, nextRound)
+  for (const foe of newFoes) {
+    battle.units.push(foe)
+    state.vfx.push({ kind: 'burst', style: 'fire', at: [foe.x, foe.y + 0.5, foe.z], radius: 1.0, uid: foe.uid })
+  }
+
+  battle.bannerText = wave.bannerText
+  battle.bannerTimer = 2.6
+  battle.shake = Math.max(battle.shake, 0.28)
+  state.sounds.push({ kind: 'turn', team: 'enemy' })
+  if (recovery.totalHealed > 0) state.sounds.push({ kind: 'heal', pitch: 1.08 })
+  appendCombatLog(
+    battle,
+    'system',
+    `Round ${nextRound}/${battle.gauntletMaxRounds ?? CINDER_ARENA_MAX_ROUNDS} — ${wave.title} enters the pit! Heroes recover +25% HP${recovery.apGained > 0 ? ` & +${recovery.apGained} AP` : ''}.`,
+    { accentHex: '#ffba52' }
+  )
+  battle.turnOrder = computeTurnOrderPreview(battle, 8)
+  refreshHighlights(battle, state.campaign)
+  return true
+}
+
 function checkBattleOutcome(state: GameState): void {
   const battle = state.battle
   if (!battle || battle.phase === 'deploy' || battle.phase === 'victory' || battle.phase === 'defeat') return
+  if (canAdvanceGauntletRound(battle) && advanceGauntletWave(state)) return
   const outcome = evaluateBattleObjective(battle)
 
   if (outcome.status === 'victory') {
@@ -5867,17 +6050,28 @@ function awardBattleVictory(state: GameState): void {
   if (!battle) return
   const { campaign } = state
   const chapter = CHAPTERS[battle.chapterIndex]
-  const firstClear = battle.endlessWave === 0 && !isStageCleared(campaign, chapter.id)
-  const challengeRewards = battle.endlessWave === 0 && !firstClear
+  const isAbyss = battle.endlessWave === 0 && battle.abyssFloor !== undefined && isCrownlessDeepStage(chapter.id)
+  const abyssPlan = isAbyss && battle.abyssFloor !== undefined
+    ? resolveCrownlessDeepVictoryRewards(campaign, battle.abyssFloor)
+    : null
+  const firstClear = battle.endlessWave === 0 && (
+    abyssPlan ? abyssPlan.firstFloorClear : !isStageCleared(campaign, chapter.id)
+  )
+  const challengeRewards = battle.endlessWave === 0 && !firstClear && !abyssPlan
     ? computeChallengeRewards(chapter.replayGold, chapter.difficulty, battle.difficultyTier, battle.mutators)
     : null
+  const starfallBonus = battle.endlessWave === 0
+    ? getStarfallFirstClearBonus(chapter.id, firstClear)
+    : { bonusDust: 0, bonusShards: 0 }
   const gold = battle.endlessWave > 0
     ? 130 + battle.endlessWave * 35
-    : firstClear
-      ? chapter.rewardGold
-      : (challengeRewards?.replayGold ?? chapter.replayGold)
-  const bonusDust = challengeRewards?.bonusDust ?? 0
-  const bonusShards = challengeRewards?.bonusShards ?? 0
+    : abyssPlan
+      ? abyssPlan.gold
+      : firstClear
+        ? chapter.rewardGold
+        : (challengeRewards?.replayGold ?? chapter.replayGold)
+  const bonusDust = (abyssPlan?.bonusDust ?? 0) + (challengeRewards?.bonusDust ?? 0) + starfallBonus.bonusDust
+  const bonusShards = (abyssPlan?.bonusShards ?? 0) + (challengeRewards?.bonusShards ?? 0) + starfallBonus.bonusShards
 
   campaign.gold += gold
   if (bonusDust > 0) campaign.dust += bonusDust
@@ -5886,8 +6080,23 @@ function awardBattleVictory(state: GameState): void {
 
   let unlockedSlot4 = false
   let campaignWon = false
+  let abyssCompleted = false
   if (battle.endlessWave > 0) {
     if (battle.endlessWave > campaign.endlessBest) campaign.endlessBest = battle.endlessWave
+  } else if (abyssPlan) {
+    if (abyssPlan.floor > campaign.crownlessDeepFloor) {
+      campaign.crownlessDeepFloor = abyssPlan.floor
+    }
+    campaign.crownlessDeepSelectedFloor = Math.min(CROWNLESS_DEEP_MAX_FLOOR, abyssPlan.floor + 1)
+    if (abyssPlan.isFloor10FirstClear) {
+      campaign.crownlessDeepRewardClaimed = true
+      abyssCompleted = true
+    }
+    if (!isStageCleared(campaign, chapter.id)) {
+      campaign.clearedStageIds.push(chapter.id)
+      campaign.chaptersCleared = campaign.clearedStageIds.length
+    }
+    recordClearedStageTier(campaign, chapter.id, battle.difficultyTier)
   } else if (firstClear) {
     const prevSlots = maxSquadSize(campaign)
     campaign.clearedStageIds.push(chapter.id)
@@ -5932,6 +6141,57 @@ function awardBattleVictory(state: GameState): void {
       relicUid: null
     }
     campaign.heroes.push(heroCard)
+  } else if (abyssPlan) {
+    if (abyssPlan.isFloor10FirstClear) {
+      // Pinnacle Floor 10 one-time legendary completion spoils!
+      specialRewardsClaimed = true
+      if (abyssPlan.legendEquipId) {
+        const eqSpec = EQUIPMENT_BY_ID[abyssPlan.legendEquipId] ?? EQUIPMENT_LIST[0]
+        equipCard = { uid: allocUid(campaign, 'eq'), equipId: eqSpec.id, slot: eqSpec.slot }
+        campaign.equipment.push(equipCard)
+      }
+      if (abyssPlan.legendHeroId) {
+        heroCard = {
+          uid: allocUid(campaign, 'hero'),
+          heroId: abyssPlan.legendHeroId,
+          stars: 1,
+          level: 1,
+          xp: 0,
+          weaponUid: null,
+          armorUid: null,
+          relicUid: null
+        }
+        campaign.heroes.push(heroCard)
+      }
+    } else {
+      // Escalating Abyss floor drop (rare+ guarantee on Floors 5+)
+      const abyssWeights = replayWeightsForDifficulty(battle.difficulty)
+      const minDropRarity: Rarity = abyssPlan.floor >= 5 ? 'rare' : 'uncommon'
+      const rarity = rollRarity(campaign, abyssWeights, minDropRarity)
+      const kindRoll = randFloat(campaign)
+      if (kindRoll < 0.50) {
+        const eqSpec = pickNearestByRarity(EQUIPMENT_LIST, rarity, campaign)
+        equipCard = { uid: allocUid(campaign, 'eq'), equipId: eqSpec.id, slot: eqSpec.slot }
+        campaign.equipment.push(equipCard)
+      } else if (kindRoll < 0.85) {
+        const hSpec = pickNearestByRarity(HERO_LIST, rarity, campaign)
+        heroCard = {
+          uid: allocUid(campaign, 'hero'),
+          heroId: hSpec.id,
+          stars: 1,
+          level: 1,
+          xp: 0,
+          weaponUid: null,
+          armorUid: null,
+          relicUid: null
+        }
+        campaign.heroes.push(heroCard)
+      } else {
+        const tSpec = pickNearestByRarity(TACTIC_LIST, rarity, campaign)
+        tacticCard = { uid: allocUid(campaign, 'tac'), tacticId: tSpec.id }
+        campaign.tactics.push(tacticCard)
+      }
+    }
   } else if (firstClear) {
     // First-clear ONE-TIME special rewards!
     specialRewardsClaimed = Boolean(chapter.rewardEquipId || chapter.rewardHeroId || unlockedSlot4 || campaignWon)
@@ -5987,7 +6247,7 @@ function awardBattleVictory(state: GameState): void {
   for (const u of battle.units) {
     if (u.team !== 'ally' || !u.heroId) continue
     const survived = u.alive
-    const bonusXp = victoryXpBonus(chapter.difficulty, battle.endlessWave, survived)
+    const bonusXp = victoryXpBonus(battle.difficulty, battle.endlessWave, survived)
     awardHeroBattleXp(state, u, bonusXp)
     const owned = getHeroByUid(campaign, u.uid)
     const oldLevel = battle.heroStartLevelByUid[u.uid] ?? normalizeHeroLevel(owned?.level ?? u.level)
@@ -6022,10 +6282,15 @@ function awardBattleVictory(state: GameState): void {
     specialRewardsClaimed,
     unlockedSlot4,
     campaignWon,
+    ...(battle.abyssFloor !== undefined ? { abyssFloor: battle.abyssFloor } : {}),
+    ...(abyssCompleted ? { abyssCompleted: true } : {}),
+    ...(battle.gauntletMaxRounds ? { gauntletRoundsCleared: battle.gauntletMaxRounds } : {}),
     heroXpGains
   }
   battle.reward = reward
-  battle.bannerText = 'VICTORY!'
+  battle.bannerText = abyssPlan
+    ? (abyssCompleted ? 'CROWNLESS DEEP CONQUERED!' : `${formatAbyssFloorLabel(abyssPlan.floor).toUpperCase()} CLEARED!`)
+    : 'VICTORY!'
   battle.bannerTimer = 3.0
 }
 
@@ -7954,6 +8219,24 @@ function performEnemyAttack(state: GameState, enemy: BattleUnit, target: BattleU
         if (victim.alive && special.knockbackDistance && special.knockbackDistance > 0) {
           targetsHit.push(victim)
         }
+      }
+    }
+
+    if (special.ignitesGeysers) {
+      const ignited = igniteNearbyLavaGeysers(battle, target.col, target.row, IGNIS_TITAN_GEYSER_IGNITE_RADIUS)
+      if (ignited.length > 0) {
+        for (const g of ignited) {
+          const gCell = battle.cells[g.row]?.[g.col]
+          if (!gCell) continue
+          const [gx, gy, gz] = gridToWorld(g.col, g.row, gCell.elevation, battle.cols, battle.rows)
+          state.vfx.push({ kind: 'burst', style: 'fire', at: [gx, gy + 0.55, gz], radius: 0.9, uid: enemy.uid })
+        }
+        appendCombatLog(
+          battle,
+          'hazard',
+          `${enemy.name}'s Cataclysm Slam ignites ${ignited.length} magma geyser${ignited.length === 1 ? '' : 's'}!`,
+          { accentHex: '#ff7b3b' }
+        )
       }
     }
 

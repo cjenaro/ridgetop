@@ -73,7 +73,7 @@ function buildStance(heroId?: HeroClassId, enemyId?: EnemyArchetypeId): Record<s
   if (
     enemyId === 'orc_brute' || enemyId === 'frost_golem' ||
     enemyId === 'river_troll' || enemyId === 'briar_warlord' ||
-    enemyId === 'magma_warden' || enemyId === 'frostwyrm_rimefang'
+    enemyId === 'magma_warden' || enemyId === 'frostwyrm_rimefang' || enemyId === 'ignis_titan'
   ) {
     return {
       body: { rotation: [0.10, 0, 0] },
@@ -1624,7 +1624,7 @@ function archetypeOf(heroId?: HeroClassId, enemyId?: EnemyArchetypeId): Archetyp
   if (
     enemyId === 'orc_brute' || heroId === 'champion' || enemyId === 'crypt_knight' || enemyId === 'frost_golem' ||
     enemyId === 'river_troll' || enemyId === 'briar_warlord' || enemyId === 'frost_jarl' || enemyId === 'magma_warden' ||
-    enemyId === 'dune_sovereign_boss' || enemyId === 'frostwyrm_rimefang'
+    enemyId === 'dune_sovereign_boss' || enemyId === 'frostwyrm_rimefang' || enemyId === 'ignis_titan' || enemyId === 'abyssal_sentinel'
   ) return 'heavy'
   if (heroId === 'rogue' || enemyId === 'goblin' || enemyId === 'bone_thrall') return 'stab'
   if (
@@ -1643,7 +1643,7 @@ export type Gait = 'normal' | 'heavy' | 'agile' | 'glide' | 'stomp'
 export function gaitFor(heroId?: HeroClassId, enemyId?: EnemyArchetypeId): Gait {
   if (
     heroId === 'knight' || heroId === 'paladin' || enemyId === 'crypt_knight' ||
-    enemyId === 'frost_jarl' || enemyId === 'dune_sovereign_boss'
+    enemyId === 'frost_jarl' || enemyId === 'dune_sovereign_boss' || enemyId === 'abyssal_sentinel'
   ) return 'heavy'
   if (heroId === 'rogue' || enemyId === 'goblin' || enemyId === 'bone_thrall') return 'agile'
   if (
@@ -1655,7 +1655,7 @@ export function gaitFor(heroId?: HeroClassId, enemyId?: EnemyArchetypeId): Gait 
   if (
     enemyId === 'frost_golem' || enemyId === 'orc_brute' ||
     enemyId === 'river_troll' || enemyId === 'briar_warlord' ||
-    enemyId === 'magma_warden' || enemyId === 'frostwyrm_rimefang'
+    enemyId === 'magma_warden' || enemyId === 'frostwyrm_rimefang' || enemyId === 'ignis_titan'
   ) return 'stomp'
   return 'normal'
 }
@@ -1703,7 +1703,9 @@ const ENEMY_ATTACK: Readonly<Record<EnemyArchetypeId, UnitClipName>> = {
   astral_warden_boss: 'attack_thrust',
   unbroken_crown_boss: 'attack_staff',
   lich_vaelen: 'attack_staff',
-  frostwyrm_rimefang: 'attack_heavy'
+  frostwyrm_rimefang: 'attack_heavy',
+  ignis_titan: 'attack_pound',
+  abyssal_sentinel: 'attack_dark_cleave'
 }
 
 /** Basic attack clip per class/archetype; hero weapon ids can override the class default. */
@@ -1780,7 +1782,7 @@ export function deathClipFor(heroId?: HeroClassId, enemyId?: EnemyArchetypeId, i
   if (
     enemyId === 'frost_golem' || enemyId === 'orc_brute' ||
     enemyId === 'river_troll' || enemyId === 'briar_warlord' ||
-    enemyId === 'magma_warden' || enemyId === 'frostwyrm_rimefang'
+    enemyId === 'magma_warden' || enemyId === 'frostwyrm_rimefang' || enemyId === 'ignis_titan'
   ) return 'death_crumble'
   if (
     enemyId === 'eclipse_archon' || isBoss || enemyId === 'bog_shaman' ||
@@ -1789,7 +1791,7 @@ export function deathClipFor(heroId?: HeroClassId, enemyId?: EnemyArchetypeId, i
     enemyId === 'ash_inquisitor' || enemyId === 'lich_vaelen'
   ) return 'death_dissolve'
   if (enemyId === 'goblin' || enemyId === 'bone_thrall') return 'death_tumble'
-  if (heroId === 'knight' || heroId === 'paladin' || heroId === 'champion' || enemyId === 'crypt_knight' || enemyId === 'frost_jarl') return 'death_kneel'
+  if (heroId === 'knight' || heroId === 'paladin' || heroId === 'champion' || enemyId === 'crypt_knight' || enemyId === 'frost_jarl' || enemyId === 'abyssal_sentinel') return 'death_kneel'
   return 'death'
 }
 
@@ -1828,9 +1830,10 @@ export function idleClipFor(team: 'ally' | 'enemy', hpRatio: number, stunned: bo
 /** Idle playback rate per archetype (heavy units breathe slowly, goblins fidget fast) with per-unit jitter in [0,1). */
 export function idleRateFor(enemyId: EnemyArchetypeId | undefined, jitter: number): number {
   const base =
-    enemyId === 'frost_golem' || enemyId === 'magma_warden' ? 0.68
+    enemyId === 'ignis_titan' ? 0.62
+      : enemyId === 'frost_golem' || enemyId === 'magma_warden' ? 0.68
       : enemyId === 'frostwyrm_rimefang' ? 0.72
-      : enemyId === 'orc_brute' || enemyId === 'river_troll' || enemyId === 'briar_warlord' ? 0.82
+      : enemyId === 'orc_brute' || enemyId === 'river_troll' || enemyId === 'briar_warlord' || enemyId === 'abyssal_sentinel' ? 0.82
       : enemyId === 'goblin' || enemyId === 'bone_thrall' ? 1.25
       : enemyId === 'ice_wraith' ? 1.15
       : 1

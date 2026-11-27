@@ -248,7 +248,7 @@ const ENEMY_IDS: readonly EnemyArchetypeId[] = [
   'ember_pyromancer', 'ice_wraith', 'bone_necromancer', 'bone_thrall', 'river_troll',
   'briar_warlord', 'mire_matriarch', 'ash_inquisitor', 'frost_jarl', 'magma_warden',
   'dune_sovereign_boss', 'astral_warden_boss', 'unbroken_crown_boss',
-  'lich_vaelen', 'frostwyrm_rimefang'
+  'lich_vaelen', 'frostwyrm_rimefang', 'ignis_titan', 'abyssal_sentinel'
 ]
 
 /** DOM-free bust portraits for every hero and enemy rig (usable from Node tools, tests, and packagers). */

@@ -285,11 +285,9 @@ test('Crownshard battle simulation passes Ridgetop verifyTrace determinism & bou
   assert.equal(report.status, 'pass')
 })
 
-test('World Map has branching stages, special levels, upcoming Soon nodes, difficulty tiers, and valid variable-size grids', () => {
+test('World Map has branching stages, special levels, full continent playable nodes, difficulty tiers, and valid variable-size grids', () => {
   assert.ok(CHAPTERS.length >= 24, 'World Map should span a full multi-region continent')
-  assert.ok(PLAYABLE_CHAPTERS.length >= 14, 'Should have 14+ playable tactical stages')
-  const soonStages = CHAPTERS.filter(ch => ch.comingSoon)
-  assert.ok(soonStages.length >= 10, 'Should include upcoming Soon... expansion locations across the continent')
+  assert.equal(PLAYABLE_CHAPTERS.length, CHAPTERS.length, 'All continent & frontier World Map stages should be playable')
 
   const gridSizes = new Set<string>()
   const kinds = new Set<string>()
@@ -383,7 +381,7 @@ test('World Map enforces prerequisite locks, bifurcations, coming-soon gating, a
   assert.equal(isStageUnlocked(state.campaign, 'sunken_bridge'), true)
   assert.equal(isStageUnlocked(state.campaign, 'miller_ford'), true)
   assert.equal(isStageUnlocked(state.campaign, 'oakhaven_market'), true, 'Oakhaven City unlocks after clearing Border Watch')
-  assert.equal(isStageUnlocked(state.campaign, 'gloomwood_heart'), false, 'Coming-soon expansion nodes must stay unlaunchable')
+  assert.equal(isStageUnlocked(state.campaign, 'gloomwood_heart'), false, 'Later regional expansion nodes stay locked until prerequisite stages are cleared')
 
   // Replaying Border Watch awards replayGold and does NOT re-award both one-time specials!
   const replayReward = winStage('border_watch')

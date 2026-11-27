@@ -53,6 +53,8 @@ export type EnemySpecialMoveKind =
   | 'ash_nova'
   | 'frost_breath'
   | 'magma_slam'
+  | 'cataclysm_slam'
+  | 'abyssal_cleave'
   | 'eclipse_nova'
   | 'sandstorm_vortex'
   | 'tempest_surge'
@@ -80,6 +82,7 @@ export interface EnemySpecialDecision {
   readonly statusStacks?: number
   readonly element?: ElementKind
   readonly knockbackDistance?: number
+  readonly ignitesGeysers?: boolean
   readonly label: string
 }
 
@@ -117,7 +120,7 @@ export function isRegionalMiniBoss(enemyId?: EnemyArchetypeId): boolean {
 
 /** Home biome affinity for each enemy archetype. */
 export function getEnemyBiomeAffinity(enemyId: EnemyArchetypeId): BiomeId {
-  if (enemyId === 'ember_pyromancer' || enemyId === 'magma_warden') return 'volcano'
+  if (enemyId === 'ember_pyromancer' || enemyId === 'magma_warden' || enemyId === 'ignis_titan') return 'volcano'
   if (
     enemyId === 'ice_wraith' ||
     enemyId === 'frost_golem' ||
@@ -137,7 +140,7 @@ export function getEnemyBiomeAffinity(enemyId: EnemyArchetypeId): BiomeId {
     return 'crypt'
   }
   if (enemyId === 'river_troll' || enemyId === 'bog_shaman' || enemyId === 'mire_matriarch') return 'river'
-  if (enemyId === 'eclipse_archon') return 'throne'
+  if (enemyId === 'eclipse_archon' || enemyId === 'abyssal_sentinel') return 'throne'
   if (enemyId === 'dune_sovereign_boss') return 'dunes'
   if (enemyId === 'astral_warden_boss') return 'aether'
   if (enemyId === 'unbroken_crown_boss') return 'expanse'
@@ -149,12 +152,13 @@ export function getEnemyProjectileStyle(
   enemyId?: EnemyArchetypeId
 ): 'arrow' | 'fire' | 'frost' | 'shadow' | 'arcane' {
   if (enemyId === 'bone_archer') return 'arrow'
-  if (enemyId === 'ember_pyromancer' || enemyId === 'magma_warden' || enemyId === 'dune_sovereign_boss') return 'fire'
+  if (enemyId === 'ember_pyromancer' || enemyId === 'magma_warden' || enemyId === 'ignis_titan' || enemyId === 'dune_sovereign_boss') return 'fire'
   if (enemyId === 'ice_wraith' || enemyId === 'frost_jarl' || enemyId === 'frostwyrm_rimefang') return 'frost'
   if (enemyId === 'astral_warden_boss') return 'arcane'
   if (
     enemyId === 'eclipse_archon' ||
     enemyId === 'unbroken_crown_boss' ||
+    enemyId === 'abyssal_sentinel' ||
     enemyId === 'bog_shaman' ||
     enemyId === 'bone_necromancer' ||
     enemyId === 'ash_inquisitor' ||
@@ -174,7 +178,7 @@ export function getEnemyBasicAttackStatus(enemyId?: EnemyArchetypeId): EnemyBasi
   if (enemyId === 'lich_vaelen') {
     return { status: 'poison', stacks: 1 }
   }
-  if (enemyId === 'ember_pyromancer' || enemyId === 'magma_warden' || enemyId === 'unbroken_crown_boss') {
+  if (enemyId === 'ember_pyromancer' || enemyId === 'magma_warden' || enemyId === 'ignis_titan' || enemyId === 'unbroken_crown_boss') {
     return { status: 'burn' }
   }
   if (
@@ -182,7 +186,8 @@ export function getEnemyBasicAttackStatus(enemyId?: EnemyArchetypeId): EnemyBasi
     enemyId === 'frost_jarl' ||
     enemyId === 'frostwyrm_rimefang' ||
     enemyId === 'dune_sovereign_boss' ||
-    enemyId === 'astral_warden_boss'
+    enemyId === 'astral_warden_boss' ||
+    enemyId === 'abyssal_sentinel'
   ) {
     return { status: 'slow' }
   }
@@ -191,7 +196,7 @@ export function getEnemyBasicAttackStatus(enemyId?: EnemyArchetypeId): EnemyBasi
 
 /** Elemental affinity of an enemy's basic attack for Wave 4 elemental combos. */
 export function getEnemyAttackElement(enemyId?: EnemyArchetypeId): ElementKind | null {
-  if (enemyId === 'ember_pyromancer' || enemyId === 'magma_warden' || enemyId === 'unbroken_crown_boss') return 'fire'
+  if (enemyId === 'ember_pyromancer' || enemyId === 'magma_warden' || enemyId === 'ignis_titan' || enemyId === 'unbroken_crown_boss') return 'fire'
   if (enemyId === 'ice_wraith' || enemyId === 'frost_jarl' || enemyId === 'frostwyrm_rimefang') return 'frost'
   if (enemyId === 'bog_shaman' || enemyId === 'mire_matriarch' || enemyId === 'lich_vaelen') return 'poison'
   if (enemyId === 'astral_warden_boss') return 'arcane'
@@ -563,6 +568,35 @@ export function chooseEnemySpecialMove(
       status: 'burn',
       element: 'fire',
       label: 'SOLAR CORONA!'
+    }
+  }
+
+  if (eid === 'ignis_titan' && enemy.cooldowns[0] <= 0) {
+    return {
+      move: 'cataclysm_slam',
+      vfxMove: 'titan_slam',
+      cooldownTurns: MINIBOSS_SPECIAL_COOLDOWN,
+      pattern: 'cross',
+      powerMul: 1.30,
+      ignoreArmor: 0.35,
+      status: 'burn',
+      element: 'fire',
+      knockbackDistance: 1,
+      ignitesGeysers: true,
+      label: 'CATACLYSM SLAM!'
+    }
+  }
+
+  if (eid === 'abyssal_sentinel' && enemy.cooldowns[0] <= 0) {
+    return {
+      move: 'abyssal_cleave',
+      vfxMove: 'eclipse_nova',
+      cooldownTurns: 3,
+      pattern: 'cross',
+      powerMul: 1.20,
+      ignoreArmor: 0.30,
+      status: 'slow',
+      label: 'ABYSSAL CLEAVE!'
     }
   }
 
