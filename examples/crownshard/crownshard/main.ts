@@ -65,7 +65,7 @@ import {
   drawChallengeHudBadges, drawChapterPicker, drawChip, drawCodexEnemyDetail, drawCodexEntryCard, drawCodexEquipDetail, drawCodexHeader, drawCodexHeroDetail, drawCodexSilhouetteTile, drawCombatForecast, drawCombatLogPanel, drawCombatLogToggleButton, drawControlHints, drawDefeatBackdrop, drawDeployHeroChip,
   drawDifficultyBadge, drawDevVersionPill, drawDiscoveryTipCard, drawEmptyNote, drawEndTurnButton, drawEndlessBlessingCard, drawEndlessBlessingsHudPill, drawEquipCard, drawEquipFamilyPill, drawForecastAltChip,
   drawForgeBalanceBanner, drawForgeRecipeCard, drawGearSetBanner, drawHeroHeader, drawHeroRosterCard, drawHeroXpSummaryAnimated, drawHintPill, drawIconButton, drawLabel, drawLetterbox,
-  drawLootRow, drawModal, drawMutatorChipButton, drawNotchBezel, drawObjectiveBadge, drawOtaUpdateBanner, drawOverline, drawPackCeremonyBackdrop, drawPanel, drawPassiveBanner, drawPityBanner, drawPortraitTile,
+  drawLootRow, drawModal, drawMutatorChipButton, drawObjectiveBadge, drawOtaUpdateBanner, drawOverline, drawPackCeremonyBackdrop, drawPanel, drawPassiveBanner, drawPityBanner, drawPortraitTile,
   drawResultHeadlineAnimated, drawRevealCard, drawRewardRowAnimated, drawSegmentTrack,
   drawSettingRow, drawSheet, drawSkillRow, drawSkillTile, drawSpeakerPortrait, drawSquadBondsStrip, drawStageMasteryChecklist, drawStageTierSegment, drawStatStrip,
   drawStoryHeading, drawSubSpecCard, drawSubSpecHeader, drawTab, drawTacticCard, drawTacticDeckCard, drawTacticDeckHeader, drawText, drawTimelineBg, drawTitleCard,
@@ -77,9 +77,9 @@ import {
 } from './ui-art.ts'
 import type { CodexListEntry, FanfareDrawOpts, IconName, ProjectedRegionBanner, StatStripItem } from './ui-art.ts'
 import {
-  computeNotchBezelSpec, computeViewportProfile, createInputModalityTracker, detectInitialInputModality, isIosRuntime, readDomSafeAreaInsets, readScreenOrientation, uiCopy
+  computeViewportProfile, createInputModalityTracker, detectInitialInputModality, readDomSafeAreaInsets, uiCopy
 } from './viewport-profile.ts'
-import type { SafeAreaInsets, ViewportProfile } from './viewport-profile.ts'
+import type { ViewportProfile } from './viewport-profile.ts'
 import {
   areAdvancedBattleToolsUnlocked, areMutatorsUnlockedForStage, areSecondaryCurrenciesVisible,
   getAllowedChallengeTiers, getUnlockedCampTabs, isBossRematchSkirmish, isBulkSalvageUnlocked,
@@ -444,40 +444,11 @@ async function start() {
       })
   }
 
-  const notchParam = page.url.searchParams.get('notch')
-  const previewNotch = notchParam === '1' || notchParam === 'left' || notchParam === 'right' || notchParam === 'top'
-  const isIosDevice = isIosRuntime(
-    page.platform.kind,
-    typeof navigator !== 'undefined' ? navigator.userAgent : '',
-    typeof navigator !== 'undefined' ? navigator.maxTouchPoints : 0
-  )
-  function readEffectiveRawSafeArea(w: number, h: number): SafeAreaInsets {
-    const dom = readDomSafeAreaInsets()
-    if (!previewNotch) return dom
-    return w > h
-      ? { top: Math.max(dom.top, 0), right: Math.max(dom.right, 59), bottom: Math.max(dom.bottom, 21), left: Math.max(dom.left, 59) }
-      : { top: Math.max(dom.top, 59), right: Math.max(dom.right, 0), bottom: Math.max(dom.bottom, 34), left: Math.max(dom.left, 0) }
-  }
-  function readEffectiveOrientation(): { readonly angle: number; readonly type: string } {
-    if (notchParam === 'right') return { angle: 270, type: 'landscape-secondary' }
-    if (notchParam === 'left') return { angle: 90, type: 'landscape-primary' }
-    if (notchParam === 'top') return { angle: 0, type: 'portrait-primary' }
-    return readScreenOrientation()
-  }
-  if (typeof window !== 'undefined') {
-    const onOrientationChange = () => { uiDirty = true }
-    window.addEventListener('orientationchange', onOrientationChange)
-    window.screen?.orientation?.addEventListener?.('change', onOrientationChange)
-    page.onDispose(() => {
-      window.removeEventListener('orientationchange', onOrientationChange)
-      window.screen?.orientation?.removeEventListener?.('change', onOrientationChange)
-    })
-  }
   const liveSafeArea = { top: 8, right: 8, bottom: 8, left: 8 }
   function getViewportProfile(w: number, h: number): ViewportProfile {
     const vp = computeViewportProfile(w, h, {
       modality: modalityTracker.getModality(),
-      safeArea: readEffectiveRawSafeArea(w, h)
+      safeArea: readDomSafeAreaInsets()
     })
     liveSafeArea.top = vp.safeArea.top
     liveSafeArea.right = vp.safeArea.right
@@ -10346,22 +10317,8 @@ async function start() {
       : screen === 'defeat' ? buildResultTree(w, h, false)
       : buildPausedTree(w, h)
     const otaBanner = buildOtaUpdateBannerNode(w, h)
-    const notchSpec = computeNotchBezelSpec(
-      w, h, readEffectiveRawSafeArea(w, h), isIosDevice || previewNotch, readEffectiveOrientation()
-    )
-    const notchNode = notchSpec.side !== 'none'
-      ? boxNode({
-          id: 'cs-notch-bezel',
-          style: { anchor: 'fill' },
-          widget: {
-            type: 'panel',
-            draw: (ctx: CanvasRenderingContext2D, rect: LayoutRect) => drawNotchBezel(ctx, rect, notchSpec)
-          }
-        })
-      : null
-    if (!showPerfPanel && !otaBanner && !notchNode) return base
+    if (!showPerfPanel && !otaBanner) return base
     const layers: LayoutNode[] = [base]
-    if (notchNode) layers.push(notchNode)
     if (otaBanner) layers.push(otaBanner)
     if (showPerfPanel) layers.push(buildPerfDebugNode())
     return overlay({ id: 'root-overlay', style: { anchor: 'fill' } }, layers)

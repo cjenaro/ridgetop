@@ -1,11 +1,9 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import {
-  computeNotchBezelSpec,
   computeViewportProfile,
   createInputModalityTracker,
   detectInitialInputModality,
-  isIosRuntime,
   readDomSafeAreaInsets,
   uiCopy
 } from '../examples/crownshard/crownshard/viewport-profile.ts'
@@ -365,43 +363,4 @@ test('ui-art draw helpers hide keycaps and swap mouse copy when touch/hideKeycap
   const autoTouch = createTextRecorderCtx()
   drawAutoBattlePill(autoTouch.ctx, { x: 0, y: 0, width: 260, height: 32 }, 2, IDLE_STATE, false, true)
   assert.ok(autoTouch.texts.includes('AUTO-BATTLE 2x · TAP TO STOP'))
-})
-
-test('isIosRuntime and computeNotchBezelSpec strictly gate notch collar to iOS and detect the exact notch side', () => {
-  assert.equal(isIosRuntime('ios'), true)
-  assert.equal(isIosRuntime('android', 'Mozilla/5.0 (Linux; Android 14; Pixel 8)'), false)
-  assert.equal(isIosRuntime('desktop', 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)'), false)
-  assert.equal(isIosRuntime('web', 'Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X)'), true)
-  assert.equal(isIosRuntime('web', 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)', 5), true)
-  assert.equal(isIosRuntime('web', 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)', 0), false)
-
-  // Non-iOS device (e.g. Android punch-hole phone with 59px cutouts) NEVER activates iOS collar
-  const androidCutout = computeNotchBezelSpec(844, 390, { top: 0, right: 59, bottom: 21, left: 59 }, false, { angle: 90 })
-  assert.equal(androidCutout.side, 'none')
-
-  // iOS without notch (e.g. iPhone SE / iPad) -> none
-  const noNotchIos = computeNotchBezelSpec(667, 375, { top: 0, right: 0, bottom: 0, left: 0 }, true, { angle: 90 })
-  assert.equal(noNotchIos.side, 'none')
-
-  // iPhone landscape-primary (90 deg) -> Dynamic Island on LEFT only
-  const landscapeLeft = computeNotchBezelSpec(844, 390, { top: 0, right: 59, bottom: 21, left: 59 }, true, { angle: 90, type: 'landscape-primary' })
-  assert.equal(landscapeLeft.side, 'left')
-  assert.equal(landscapeLeft.style, 'island')
-  assert.equal(landscapeLeft.inset, 59)
-
-  // iPhone landscape-secondary (270 deg / -90 deg) -> Dynamic Island on RIGHT only
-  const landscapeRight = computeNotchBezelSpec(844, 390, { top: 0, right: 59, bottom: 21, left: 59 }, true, { angle: 270, type: 'landscape-secondary' })
-  assert.equal(landscapeRight.side, 'right')
-  assert.equal(landscapeRight.style, 'island')
-  assert.equal(landscapeRight.inset, 59)
-
-  // Older Notch iPhone (47px inset) -> classic notch style
-  const classicNotch = computeNotchBezelSpec(844, 390, { top: 0, right: 47, bottom: 21, left: 47 }, true, { angle: 90 })
-  assert.equal(classicNotch.side, 'left')
-  assert.equal(classicNotch.style, 'notch')
-
-  // iPhone portrait -> top Dynamic Island
-  const portrait = computeNotchBezelSpec(390, 844, { top: 59, right: 0, bottom: 34, left: 0 }, true, { angle: 0, type: 'portrait-primary' })
-  assert.equal(portrait.side, 'top')
-  assert.equal(portrait.style, 'island')
 })
