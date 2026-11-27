@@ -24,6 +24,7 @@
     "godotEntries": [
       "crownshard/armory-diff.ts",
       "crownshard/simulation.ts",
+      "crownshard/enemy-archetypes.ts",
       "crownshard/forge.ts",
       "crownshard/passives.ts",
       "crownshard/counter-attack.ts",

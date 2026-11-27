@@ -105,7 +105,12 @@ const SPEAKER_PORTRAIT: Record<string, string> = {
   'Sir Aldric': 'knight',
   Lyra: 'archer',
   Vesper: 'mage',
-  'Archon Malakor': 'eclipse_archon'
+  'Archon Malakor': 'eclipse_archon',
+  'Grom, Briar Warlord': 'briar_warlord',
+  'Vex, Mire Matriarch': 'mire_matriarch',
+  'Vaelen, Ash Inquisitor': 'ash_inquisitor',
+  'Jarl Skadi': 'frost_jarl',
+  'Ignar, Magma Warden': 'magma_warden'
 }
 
 const ACT_ID_ALIASES: Record<string, string> = {

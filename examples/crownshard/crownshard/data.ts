@@ -641,6 +641,38 @@ export const ENEMY_SPECS: Record<EnemyArchetypeId, EnemySpec> = {
   },
   eclipse_archon: {
     id: 'eclipse_archon', name: 'Archon Malakor', maxHp: 190, atk: 26, def: 7, speed: 11, move: 3, jump: 3, range: 3, ai: 'boss', isBoss: true, zoc: true
+  },
+  // Biome-specific archetypes
+  ember_pyromancer: {
+    id: 'ember_pyromancer', name: 'Ember Pyromancer', maxHp: 52, atk: 18, def: 2, speed: 11, move: 3, jump: 2, range: 3, ai: 'ranged', zoc: false
+  },
+  ice_wraith: {
+    id: 'ice_wraith', name: 'Ice Wraith', maxHp: 48, atk: 16, def: 3, speed: 13, move: 4, jump: 2, range: 2, ai: 'ranged', zoc: false, evadeZoc: true
+  },
+  bone_necromancer: {
+    id: 'bone_necromancer', name: 'Bone Necromancer', maxHp: 56, atk: 16, def: 3, speed: 10, move: 2, jump: 2, range: 3, ai: 'support', zoc: false
+  },
+  bone_thrall: {
+    id: 'bone_thrall', name: 'Bone Thrall', maxHp: 28, atk: 11, def: 2, speed: 10, move: 3, jump: 1, range: 1, ai: 'melee', zoc: true
+  },
+  river_troll: {
+    id: 'river_troll', name: 'River Troll', maxHp: 94, atk: 19, def: 4, speed: 7, move: 3, jump: 1, range: 1, ai: 'melee', zoc: true
+  },
+  // Named regional mini-bosses for Special / Elite nodes
+  briar_warlord: {
+    id: 'briar_warlord', name: 'Grom, Briar Warlord', maxHp: 112, atk: 19, def: 6, speed: 8, move: 3, jump: 1, range: 1, ai: 'boss', isBoss: true, zoc: true
+  },
+  mire_matriarch: {
+    id: 'mire_matriarch', name: 'Vex, Mire Matriarch', maxHp: 98, atk: 17, def: 4, speed: 10, move: 2, jump: 2, range: 3, ai: 'boss', isBoss: true, zoc: false
+  },
+  ash_inquisitor: {
+    id: 'ash_inquisitor', name: 'Vaelen, Ash Inquisitor', maxHp: 128, atk: 21, def: 5, speed: 10, move: 2, jump: 2, range: 3, ai: 'boss', isBoss: true, zoc: false
+  },
+  frost_jarl: {
+    id: 'frost_jarl', name: 'Jarl Skadi', maxHp: 152, atk: 24, def: 8, speed: 9, move: 3, jump: 2, range: 2, ai: 'boss', isBoss: true, zoc: true
+  },
+  magma_warden: {
+    id: 'magma_warden', name: 'Ignar, Magma Warden', maxHp: 168, atk: 25, def: 8, speed: 8, move: 2, jump: 1, range: 2, ai: 'boss', isBoss: true, zoc: true
   }
 }
 
@@ -827,7 +859,7 @@ export const CHAPTERS: readonly ChapterSpec[] = [
       protectLabel: 'River Shrine'
     },
     enemies: [
-      { id: 'orc_brute', col: 4, row: 1 },
+      { id: 'river_troll', col: 4, row: 1 },
       { id: 'goblin', col: 4, row: 4 },
       { id: 'bone_archer', col: 6, row: 0 },
       { id: 'bog_shaman', col: 7, row: 3 }
@@ -845,14 +877,14 @@ export const CHAPTERS: readonly ChapterSpec[] = [
     mapY: 0.28,
     requires: ['sunken_bridge'],
     specialTag: 'Forest Ambush',
-    modifierDesc: '8x5 Sunken Timber Road · High Ridge Snipers',
+    modifierDesc: '8x5 Sunken Timber Road · Mini-Boss: Grom, Briar Warlord',
     title: 'Briar Hollow',
-    subtitle: 'Special: Woodland Ambush',
+    subtitle: 'Special: Briar Warlord Ambush',
     biome: 'meadow',
     introSpeaker: 'Lyra',
-    introText: 'Eclipse scouts are perched along the timber ridges of Briar Hollow. Push down the sunken road and flush their archers off the high ground!',
+    introText: 'Grom the Briar Warlord and his scouts hold the timber ridges of Briar Hollow. Push down the sunken road and topple their warlord!',
     outroSpeaker: 'Lyra',
-    outroText: 'The timber road is ours! Ahead through the sunlit oaks lies the sacred Sunwell Glade.',
+    outroText: 'The Briar Warlord falls and the timber road is ours! Ahead through the sunlit oaks lies the sacred Sunwell Glade.',
     rewardGold: 115,
     replayGold: 64,
     rewardEquipId: 'hunter_bow',
@@ -874,7 +906,7 @@ export const CHAPTERS: readonly ChapterSpec[] = [
     heroSpawns: [[0, 1], [1, 2], [0, 3], [1, 1]],
     enemies: [
       { id: 'goblin', col: 5, row: 1 },
-      { id: 'orc_brute', col: 5, row: 3 },
+      { id: 'briar_warlord', col: 5, row: 3 },
       { id: 'bone_archer', col: 5, row: 0 },
       { id: 'bone_archer', col: 5, row: 4 }
     ]
@@ -892,12 +924,12 @@ export const CHAPTERS: readonly ChapterSpec[] = [
     requires: ['briar_hollow', 'sunken_bridge'],
     unlockMode: 'any',
     specialTag: 'Shrine Trial',
-    modifierDesc: '7x7 Sacred Grove · 3 Sun Shrines · Recruits Sera',
+    modifierDesc: '7x7 Sacred Grove · Mini-Boss: Vex, Mire Matriarch · Recruits Sera',
     title: 'Sunwell Glade',
-    subtitle: 'Special: Sacred Shrine Trial',
+    subtitle: 'Special: Mire Matriarch Trial',
     biome: 'meadow',
     introSpeaker: 'Lyra',
-    introText: 'Raiders are desecrating the Sunwell shrines! Hold the healing altars on this square ridge and Sera of the Sun Order will pledge to our banner.',
+    introText: 'Vex the Mire Matriarch and a River Troll are corrupting the Sunwell shrines! Hold the healing altars and Sera of the Sun Order will pledge to our banner.',
     outroSpeaker: 'Lyra',
     outroText: 'The shrines glow again and Sera rides with us! The mountain trail now climbs north into Frostspire Highlands.',
     rewardGold: 120,
@@ -932,11 +964,11 @@ export const CHAPTERS: readonly ChapterSpec[] = [
       protectLabel: 'Sunwell Altar'
     },
     enemies: [
-      { id: 'goblin', col: 5, row: 2 },
+      { id: 'river_troll', col: 5, row: 2 },
       { id: 'goblin', col: 5, row: 4 },
       { id: 'bone_archer', col: 5, row: 0 },
       { id: 'bone_archer', col: 5, row: 6 },
-      { id: 'bog_shaman', col: 6, row: 3 }
+      { id: 'mire_matriarch', col: 6, row: 3 }
     ]
   },
 
@@ -994,7 +1026,7 @@ export const CHAPTERS: readonly ChapterSpec[] = [
       { id: 'crypt_knight', col: 5, row: 2, name: 'Crypt Warden' },
       { id: 'orc_brute', col: 5, row: 3 },
       { id: 'bone_archer', col: 7, row: 1 },
-      { id: 'bog_shaman', col: 7, row: 4 }
+      { id: 'bone_necromancer', col: 7, row: 4 }
     ]
   },
   {
@@ -1009,14 +1041,14 @@ export const CHAPTERS: readonly ChapterSpec[] = [
     mapY: 0.70,
     requires: ['lantern_crypt'],
     specialTag: 'Barrow Raid',
-    modifierDesc: '7x6 Sunken Crypt Gallery · Twin Elevation Flanks',
+    modifierDesc: '7x6 Sunken Crypt Gallery · Mini-Boss: Vaelen, Ash Inquisitor',
     title: 'Whispering Barrow',
-    subtitle: 'Special: Sunken Archer Gallery',
+    subtitle: 'Special: Ash Inquisitor Sanctum',
     biome: 'crypt',
     introSpeaker: 'Vesper',
-    introText: 'Bone Archers hold both elevated ledges of the Whispering Barrow while a Dread Knight seals the center lane. Break their crossfire!',
+    introText: 'Vaelen the Ash Inquisitor and his Bone Necromancer raise endless dead across the Whispering Barrow! Cut down the summoners before their thralls overwhelm us!',
     outroSpeaker: 'Vesper',
-    outroText: 'The barrow bells fall silent — and we recovered a gleaming Frostbite Staff from the crypt reliquary!',
+    outroText: 'The Inquisitor falls and the barrow bells fall silent — and we recovered a gleaming Frostbite Staff from the crypt reliquary!',
     rewardGold: 155,
     replayGold: 84,
     rewardEquipId: 'frostbite_staff',
@@ -1041,8 +1073,8 @@ export const CHAPTERS: readonly ChapterSpec[] = [
     enemies: [
       { id: 'crypt_knight', col: 4, row: 2 },
       { id: 'bone_archer', col: 5, row: 0, levelScale: 1.12 },
-      { id: 'bone_archer', col: 5, row: 5, levelScale: 1.12 },
-      { id: 'bog_shaman', col: 6, row: 3 }
+      { id: 'bone_necromancer', col: 5, row: 5, levelScale: 1.08 },
+      { id: 'ash_inquisitor', col: 6, row: 3 }
     ]
   },
   {
@@ -1062,7 +1094,7 @@ export const CHAPTERS: readonly ChapterSpec[] = [
     subtitle: 'Special: Sealed Reliquary',
     biome: 'crypt',
     introSpeaker: 'Vesper',
-    introText: 'A cramped obsidian reliquary overflowing with stolen Solis gold! Two Dread Knights guard the tight floor — strike fast before they box us in.',
+    introText: 'A cramped obsidian reliquary overflowing with stolen Solis gold! Dread Knights and a Bone Necromancer seal the tight floor — strike fast before they box us in.',
     outroSpeaker: 'Vesper',
     outroText: 'The war-chest is cracked open and Sunsteel steel gleams inside! A tunnel here climbs straight toward Emberwaste.',
     rewardGold: 220,
@@ -1100,7 +1132,7 @@ export const CHAPTERS: readonly ChapterSpec[] = [
       { id: 'crypt_knight', col: 4, row: 2, levelScale: 1.08 },
       { id: 'crypt_knight', col: 4, row: 3, levelScale: 1.08 },
       { id: 'bone_archer', col: 5, row: 1, levelScale: 1.1 },
-      { id: 'bone_archer', col: 5, row: 4, levelScale: 1.1 }
+      { id: 'bone_necromancer', col: 5, row: 4, levelScale: 1.08 }
     ]
   },
   {
@@ -1119,7 +1151,7 @@ export const CHAPTERS: readonly ChapterSpec[] = [
     subtitle: 'Glacial Alpine Ridge',
     biome: 'frost',
     introSpeaker: 'Lyra',
-    introText: 'Massive Frost Golems guard the broad mountain stairs. Armor-piercing skills and magic cut right through their icy hide!',
+    introText: 'Frost Golems and swift Ice Wraiths guard the broad mountain stairs! Watch your flanks — the Wraiths slip right past Zones of Control and punish chilled targets.',
     outroSpeaker: 'Sir Aldric',
     outroText: 'The pass is ours and Kael joins our banner! Explore Mirror Tarn and Glacial Citadel, or march east to Obsidian Gate.',
     rewardGold: 165,
@@ -1146,8 +1178,8 @@ export const CHAPTERS: readonly ChapterSpec[] = [
     enemies: [
       { id: 'frost_golem', col: 5, row: 2 },
       { id: 'frost_golem', col: 6, row: 4 },
-      { id: 'bone_archer', col: 8, row: 1, levelScale: 1.15 },
-      { id: 'bog_shaman', col: 8, row: 3, levelScale: 1.15 }
+      { id: 'ice_wraith', col: 8, row: 1, levelScale: 1.12 },
+      { id: 'ice_wraith', col: 8, row: 3, levelScale: 1.12 }
     ]
   },
   {
@@ -1167,7 +1199,7 @@ export const CHAPTERS: readonly ChapterSpec[] = [
     subtitle: 'Special: Frozen Shrine Island',
     biome: 'frost',
     introSpeaker: 'Lyra',
-    introText: 'An icy moat encircles a lone highland shrine! Seize the bridges and push the Frost Golem off the central crown.',
+    introText: 'An icy moat encircles a lone highland shrine! Ice Wraiths haunt the frozen bridges while a Frost Golem anchors the central crown.',
     outroSpeaker: 'Lyra',
     outroText: 'Mirror Tarn gleams beneath the snow! Skyhawk Crest is ours — giving our ranged scouts unmatched reach.',
     rewardGold: 185,
@@ -1203,8 +1235,8 @@ export const CHAPTERS: readonly ChapterSpec[] = [
     },
     enemies: [
       { id: 'frost_golem', col: 4, row: 3, levelScale: 1.12 },
-      { id: 'crypt_knight', col: 6, row: 1, levelScale: 1.08 },
-      { id: 'bone_archer', col: 6, row: 5, levelScale: 1.15 },
+      { id: 'ice_wraith', col: 6, row: 1, levelScale: 1.10 },
+      { id: 'ice_wraith', col: 6, row: 5, levelScale: 1.10 },
       { id: 'bog_shaman', col: 7, row: 3, levelScale: 1.15 }
     ]
   },
@@ -1221,14 +1253,14 @@ export const CHAPTERS: readonly ChapterSpec[] = [
     requires: ['frostspire_pass', 'frozen_lake'],
     unlockMode: 'any',
     specialTag: 'Elite Siege',
-    modifierDesc: '10x6 Twin-Bridge Siege · Epic Halberd Bounty',
+    modifierDesc: '10x6 Twin-Bridge Siege · Mini-Boss: Jarl Skadi · Epic Halberd',
     title: 'Glacial Citadel',
     subtitle: 'Special: Elite Ice Stronghold',
     biome: 'frost',
     introSpeaker: 'Sir Aldric',
-    introText: 'An optional elite stronghold perched over twin ice chasms. Strike down the Citadel Marshal to break this garrison and claim the Dragonfang Halberd!',
+    introText: 'Jarl Skadi commands this elite stronghold perched over twin ice chasms! Bring down the Frostborn Jarl to shatter the garrison and claim the Dragonfang Halberd!',
     outroSpeaker: 'Lyra',
-    outroText: 'The Glacial Citadel yields its Dragonfang Halberd! Our champions are truly forged for the Throne.',
+    outroText: 'Jarl Skadi yields the Dragonfang Halberd! Our champions are truly forged for the Throne.',
     rewardGold: 240,
     replayGold: 130,
     rewardEquipId: 'dragonfang_spear',
@@ -1252,18 +1284,18 @@ export const CHAPTERS: readonly ChapterSpec[] = [
     heroSpawns: [[0, 1], [1, 1], [0, 4], [1, 4]],
     objective: {
       kind: 'assassinate',
-      label: 'Slay Citadel Marshal',
-      description: 'Defeat the Citadel Marshal commanding the ice stronghold.',
+      label: 'Slay Jarl Skadi',
+      description: 'Defeat Jarl Skadi commanding the Glacial Citadel.',
       targetEnemyIndex: 2,
-      targetEnemyId: 'crypt_knight',
-      targetName: 'Citadel Marshal'
+      targetEnemyId: 'frost_jarl',
+      targetName: 'Jarl Skadi'
     },
     enemies: [
-      { id: 'frost_golem', col: 5, row: 1, levelScale: 1.2 },
-      { id: 'frost_golem', col: 5, row: 4, levelScale: 1.2 },
-      { id: 'crypt_knight', col: 7, row: 2, levelScale: 1.2, name: 'Citadel Marshal' },
-      { id: 'bone_archer', col: 9, row: 1, levelScale: 1.25 },
-      { id: 'bog_shaman', col: 9, row: 4, levelScale: 1.25 }
+      { id: 'frost_golem', col: 5, row: 1, levelScale: 1.15 },
+      { id: 'frost_golem', col: 5, row: 4, levelScale: 1.15 },
+      { id: 'frost_jarl', col: 7, row: 2, levelScale: 1.05, name: 'Jarl Skadi' },
+      { id: 'ice_wraith', col: 9, row: 1, levelScale: 1.18 },
+      { id: 'ice_wraith', col: 9, row: 4, levelScale: 1.18 }
     ]
   },
 
@@ -1286,7 +1318,7 @@ export const CHAPTERS: readonly ChapterSpec[] = [
     subtitle: 'Volcanic Ember Bastion',
     biome: 'volcano',
     introSpeaker: 'Sir Aldric',
-    introText: 'Molten rifts split the basalt causeway! Hold the Ember Ward for 6 turns against Malakor\'s royal guard or shatter their line.',
+    introText: 'Ember Pyromancers rain fire across the molten causeway! Hold the Ember Ward for 6 turns against Malakor\'s vanguard or shatter their line.',
     outroSpeaker: 'Vesper',
     outroText: 'The outer bastion falls and Dame Isolde joins our vanguard! Raid Ashfall Foundry or storm the Eclipse Throne!',
     rewardGold: 210,
@@ -1320,10 +1352,10 @@ export const CHAPTERS: readonly ChapterSpec[] = [
     },
     enemies: [
       { id: 'crypt_knight', col: 4, row: 1, levelScale: 1.15 },
-      { id: 'frost_golem', col: 4, row: 3, levelScale: 1.15 },
+      { id: 'orc_brute', col: 4, row: 3, levelScale: 1.18 },
       { id: 'orc_brute', col: 6, row: 2, levelScale: 1.2 },
-      { id: 'bog_shaman', col: 8, row: 1, levelScale: 1.2 },
-      { id: 'bone_archer', col: 8, row: 4, levelScale: 1.2 }
+      { id: 'ember_pyromancer', col: 8, row: 1, levelScale: 1.15 },
+      { id: 'ember_pyromancer', col: 8, row: 4, levelScale: 1.15 }
     ]
   },
   {
@@ -1338,14 +1370,14 @@ export const CHAPTERS: readonly ChapterSpec[] = [
     mapY: 0.63,
     requires: ['obsidian_gate'],
     specialTag: 'Magma Vault',
-    modifierDesc: '7x7 Magma Forge · Epic Frostguard Plate Bounty',
+    modifierDesc: '7x7 Magma Forge · Mini-Boss: Ignar, Magma Warden · Frostguard Plate',
     title: 'Ashfall Foundry',
-    subtitle: 'Special: Volcanic Armories',
+    subtitle: 'Special: Magma Warden Forge',
     biome: 'volcano',
     introSpeaker: 'Sir Aldric',
-    introText: 'Malakor\'s war-forges churn inside Ashfall Foundry! Seize the central anvil shrine and claim their masterwork plate armor.',
+    introText: 'Ignar the Magma Warden and his Ember Pyromancers guard Malakor\'s war-forges! Seize the central anvil shrine and claim their masterwork plate armor.',
     outroSpeaker: 'Sir Aldric',
-    outroText: 'The foundries go cold and Frostguard Plate gleams in our hands — we are ready for Archon Malakor!',
+    outroText: 'Ignar\'s forge goes cold and Frostguard Plate gleams in our hands — we are ready for Archon Malakor!',
     rewardGold: 270,
     replayGold: 140,
     rewardEquipId: 'frostguard_plate',
@@ -1380,11 +1412,11 @@ export const CHAPTERS: readonly ChapterSpec[] = [
       turnLimit: 10
     },
     enemies: [
-      { id: 'crypt_knight', col: 4, row: 3, levelScale: 1.2 },
-      { id: 'frost_golem', col: 5, row: 1, levelScale: 1.2 },
-      { id: 'orc_brute', col: 5, row: 5, levelScale: 1.25 },
-      { id: 'bog_shaman', col: 6, row: 3, levelScale: 1.25 },
-      { id: 'bone_archer', col: 5, row: 2, levelScale: 1.2 }
+      { id: 'magma_warden', col: 4, row: 3, levelScale: 1.05 },
+      { id: 'crypt_knight', col: 5, row: 1, levelScale: 1.18 },
+      { id: 'orc_brute', col: 5, row: 5, levelScale: 1.2 },
+      { id: 'ember_pyromancer', col: 6, row: 3, levelScale: 1.15 },
+      { id: 'ember_pyromancer', col: 5, row: 2, levelScale: 1.15 }
     ]
   },
   {
@@ -1443,8 +1475,8 @@ export const CHAPTERS: readonly ChapterSpec[] = [
       { id: 'eclipse_archon', col: 7, row: 3 },
       { id: 'crypt_knight', col: 6, row: 2 },
       { id: 'crypt_knight', col: 6, row: 4 },
-      { id: 'bog_shaman', col: 8, row: 2, levelScale: 1.2 },
-      { id: 'bone_archer', col: 8, row: 4, levelScale: 1.2 }
+      { id: 'bone_necromancer', col: 8, row: 2, levelScale: 1.15 },
+      { id: 'ember_pyromancer', col: 8, row: 4, levelScale: 1.15 }
     ]
   },
 

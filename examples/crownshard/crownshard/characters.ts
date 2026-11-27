@@ -402,6 +402,273 @@ export const ENEMY_CHARACTER_SPECS: Readonly<Record<EnemyArchetypeId, CharacterS
       mainHand: 'weapon_eclipse_scepter',
       offHand: 'offhand_spell_orb'
     }
+  },
+  ember_pyromancer: {
+    body: 'humanoid_slim',
+    palette: {
+      skin: '#d99a74',
+      hair: '#3a1a18',
+      primary: '#8c231c',
+      primaryDark: '#4d1414',
+      secondary: '#e8611e',
+      metal: '#c48342',
+      metalDark: '#5c3320',
+      leather: '#4a261b',
+      accent: '#ffb845',
+      glow: '#ff7b24'
+    },
+    parts: {
+      brows: 'brows_fierce',
+      face: 'face_mask_rogue',
+      headgear: 'hat_wizard',
+      chest: 'chest_arcane_robe',
+      pauldrons: 'pauldrons_arcane',
+      collar: 'collar_gold_mantle',
+      belt: 'belt_arcane_sash',
+      skirt: 'skirt_robe_hem',
+      back: 'cape_tattered',
+      bracerL: 'bracer_gold',
+      bracerR: 'bracer_gold',
+      mainHand: 'weapon_ember_scepter',
+      offHand: 'offhand_spell_orb'
+    }
+  },
+  ice_wraith: {
+    body: 'skeleton',
+    palette: {
+      skin: '#d4f4ff',
+      primary: '#1f5e8c',
+      primaryDark: '#123859',
+      secondary: '#62c8f5',
+      metal: '#bae9ff',
+      metalDark: '#3f6e94',
+      leather: '#284a68',
+      accent: '#b8f3ff',
+      glow: '#7cf4ff'
+    },
+    parts: {
+      headgear: 'helm_bone_hood',
+      chest: 'chest_arcane_robe',
+      pauldrons: 'pauldrons_frostguard',
+      collar: 'collar_frostguard',
+      skirt: 'skirt_robe_hem',
+      back: 'cape_windrunner',
+      mainHand: 'weapon_frostbite_staff',
+      offHand: 'offhand_spell_orb'
+    }
+  },
+  bone_necromancer: {
+    body: 'skeleton',
+    palette: {
+      skin: '#e8e0cc',
+      primary: '#362259',
+      primaryDark: '#201338',
+      secondary: '#48b878',
+      metal: '#a29db8',
+      metalDark: '#423a59',
+      leather: '#382a45',
+      accent: '#5ce89a',
+      glow: '#48ff9c'
+    },
+    parts: {
+      headgear: 'helm_bone_hood',
+      chest: 'chest_arcane_robe',
+      pauldrons: 'pauldrons_spiked',
+      collar: 'collar_blood_amulet',
+      belt: 'belt_arcane_sash',
+      skirt: 'skirt_robe_hem',
+      back: 'cape_tattered',
+      bracerL: 'bracer_gold',
+      bracerR: 'bracer_gold',
+      mainHand: 'weapon_scythe_bone',
+      offHand: 'offhand_tome'
+    }
+  },
+  bone_thrall: {
+    body: 'skeleton',
+    palette: {
+      skin: '#d9d0bc',
+      primary: '#3f524c',
+      primaryDark: '#263631',
+      secondary: '#52b884',
+      metal: '#7c858f',
+      metalDark: '#474f59',
+      leather: '#4a3d2e',
+      accent: '#8da398',
+      glow: '#62ffa8'
+    },
+    parts: {
+      headgear: 'helm_goblin_scrap',
+      belt: 'belt_ranger_pouches',
+      mainHand: 'weapon_goblin_cleaver',
+      offHand: 'shield_buckler'
+    }
+  },
+  river_troll: {
+    body: 'orc_brute',
+    palette: {
+      skin: '#3d7c6e',
+      primary: '#2c544b',
+      primaryDark: '#1b3832',
+      secondary: '#62a856',
+      metal: '#6e8c82',
+      metalDark: '#39524b',
+      leather: '#5c4630',
+      accent: '#7cd96e',
+      glow: '#b4ff4a'
+    },
+    parts: {
+      face: 'face_warpaint',
+      collar: 'collar_fur',
+      pauldrons: 'pauldrons_brigandine',
+      belt: 'belt_hex_plate',
+      bracerL: 'bracer_leather',
+      bracerR: 'bracer_leather',
+      bootL: 'boot_cuff_fur',
+      bootR: 'boot_cuff_fur',
+      mainHand: 'weapon_greataxe',
+      offHand: 'shield_buckler'
+    }
+  },
+  briar_warlord: {
+    body: 'orc_brute',
+    palette: {
+      skin: '#466e3a',
+      primary: '#7a2c24',
+      primaryDark: '#471916',
+      secondary: '#c98832',
+      metal: '#b89458',
+      metalDark: '#524432',
+      leather: '#4d311c',
+      accent: '#f0b848',
+      glow: '#ff7038'
+    },
+    parts: {
+      headgear: 'helm_dark_lord',
+      face: 'face_scar',
+      chest: 'chest_plate',
+      pauldrons: 'pauldrons_spiked',
+      collar: 'collar_fur',
+      belt: 'belt_hex_plate',
+      skirt: 'skirt_tassets',
+      back: 'cape_tattered',
+      bracerL: 'bracer_plate',
+      bracerR: 'bracer_plate',
+      bootL: 'boot_greave_plate',
+      bootR: 'boot_greave_plate',
+      mainHand: 'weapon_greataxe',
+      offHand: 'shield_obsidian'
+    }
+  },
+  mire_matriarch: {
+    body: 'humanoid_slim',
+    palette: {
+      skin: '#95b89e',
+      hair: '#2b4736',
+      primary: '#2c5c46',
+      primaryDark: '#1b3b2d',
+      secondary: '#8f3eb8',
+      metal: '#8ea882',
+      metalDark: '#3b4f3d',
+      leather: '#3e3326',
+      accent: '#6aff7e',
+      glow: '#88ff4d'
+    },
+    parts: {
+      ears: 'elf_pointed',
+      brows: 'brows_fierce',
+      headgear: 'hat_wizard',
+      chest: 'chest_arcane_robe',
+      pauldrons: 'pauldrons_windrunner',
+      collar: 'collar_windrunner',
+      belt: 'belt_arcane_sash',
+      skirt: 'skirt_robe_hem',
+      back: 'cape_windrunner',
+      bracerL: 'bracer_copper_signet',
+      bracerR: 'bracer_copper_signet',
+      mainHand: 'weapon_scythe_bone',
+      offHand: 'offhand_spell_orb'
+    }
+  },
+  ash_inquisitor: {
+    body: 'skeleton',
+    palette: {
+      skin: '#ece5d4',
+      primary: '#471f66',
+      primaryDark: '#2a1240',
+      secondary: '#a82c5e',
+      metal: '#c4b8db',
+      metalDark: '#4a3d66',
+      leather: '#3c2547',
+      accent: '#f2c15a',
+      glow: '#4dffb8'
+    },
+    parts: {
+      headgear: 'crown_eclipse',
+      chest: 'chest_arcane_robe',
+      pauldrons: 'pauldrons_eclipse',
+      collar: 'collar_blood_amulet',
+      belt: 'belt_arcane_sash',
+      skirt: 'skirt_robe_hem',
+      back: 'mantle_eclipse',
+      bracerL: 'bracer_gold',
+      bracerR: 'bracer_gold',
+      mainHand: 'weapon_eclipse_scepter',
+      offHand: 'offhand_tome'
+    }
+  },
+  frost_jarl: {
+    body: 'humanoid_broad',
+    palette: {
+      skin: '#cfe2f0',
+      hair: '#dff4ff',
+      primary: '#1e4878',
+      primaryDark: '#122c4d',
+      secondary: '#62b8e8',
+      metal: '#c6e8fa',
+      metalDark: '#4b6e8c',
+      leather: '#344759',
+      accent: '#9cf0ff',
+      glow: '#78f4ff'
+    },
+    parts: {
+      brows: 'brows_fierce',
+      beard: 'beard_braided',
+      headgear: 'helm_paladin_winged',
+      chest: 'chest_frostguard',
+      pauldrons: 'pauldrons_frostguard',
+      collar: 'collar_frostguard',
+      belt: 'belt_hex_plate',
+      skirt: 'skirt_tassets',
+      back: 'cape_royal',
+      bracerL: 'bracer_plate',
+      bracerR: 'bracer_plate',
+      bootL: 'boot_cuff_fur',
+      bootR: 'boot_cuff_fur',
+      mainHand: 'weapon_dragonfang_halberd',
+      offHand: 'shield_heater'
+    }
+  },
+  magma_warden: {
+    body: 'frost_golem',
+    palette: {
+      skin: '#4a2824',
+      primary: '#a6341c',
+      primaryDark: '#361b19',
+      secondary: '#ff7828',
+      metal: '#ff9642',
+      metalDark: '#3d3033',
+      leather: '#45241c',
+      accent: '#ffd259',
+      glow: '#ff5e1a'
+    },
+    parts: {
+      headgear: 'helm_dark_lord',
+      pauldrons: 'pauldrons_spiked',
+      bracerL: 'bracer_plate',
+      bracerR: 'bracer_plate',
+      mainHand: 'weapon_obsidian_greatsword'
+    }
   }
 }
 
@@ -423,7 +690,17 @@ export const ENEMY_RIGS: Record<EnemyArchetypeId, Rig> = {
   bog_shaman: crownshardCharacterBuilder.assemble(ENEMY_CHARACTER_SPECS.bog_shaman),
   crypt_knight: crownshardCharacterBuilder.assemble(ENEMY_CHARACTER_SPECS.crypt_knight),
   frost_golem: crownshardCharacterBuilder.assemble(ENEMY_CHARACTER_SPECS.frost_golem),
-  eclipse_archon: crownshardCharacterBuilder.assemble(ENEMY_CHARACTER_SPECS.eclipse_archon)
+  eclipse_archon: crownshardCharacterBuilder.assemble(ENEMY_CHARACTER_SPECS.eclipse_archon),
+  ember_pyromancer: crownshardCharacterBuilder.assemble(ENEMY_CHARACTER_SPECS.ember_pyromancer),
+  ice_wraith: crownshardCharacterBuilder.assemble(ENEMY_CHARACTER_SPECS.ice_wraith),
+  bone_necromancer: crownshardCharacterBuilder.assemble(ENEMY_CHARACTER_SPECS.bone_necromancer),
+  bone_thrall: crownshardCharacterBuilder.assemble(ENEMY_CHARACTER_SPECS.bone_thrall),
+  river_troll: crownshardCharacterBuilder.assemble(ENEMY_CHARACTER_SPECS.river_troll),
+  briar_warlord: crownshardCharacterBuilder.assemble(ENEMY_CHARACTER_SPECS.briar_warlord),
+  mire_matriarch: crownshardCharacterBuilder.assemble(ENEMY_CHARACTER_SPECS.mire_matriarch),
+  ash_inquisitor: crownshardCharacterBuilder.assemble(ENEMY_CHARACTER_SPECS.ash_inquisitor),
+  frost_jarl: crownshardCharacterBuilder.assemble(ENEMY_CHARACTER_SPECS.frost_jarl),
+  magma_warden: crownshardCharacterBuilder.assemble(ENEMY_CHARACTER_SPECS.magma_warden)
 }
 
 const customHeroRigCache = new Map<string, Rig>()

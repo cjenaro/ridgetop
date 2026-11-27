@@ -106,6 +106,16 @@ export type EnemyArchetypeId =
   | 'crypt_knight'
   | 'frost_golem'
   | 'eclipse_archon'
+  | 'ember_pyromancer'
+  | 'ice_wraith'
+  | 'bone_necromancer'
+  | 'bone_thrall'
+  | 'river_troll'
+  | 'briar_warlord'
+  | 'mire_matriarch'
+  | 'ash_inquisitor'
+  | 'frost_jarl'
+  | 'magma_warden'
 
 export type EquipSlot = 'weapon' | 'armor' | 'relic'
 
@@ -511,6 +521,7 @@ export interface BattleUnit {
   readonly stars: 1 | 2 | 3
   level: number
   readonly isBoss: boolean
+  readonly summonerUid?: string
   readonly weaponId?: string
   readonly armorId?: string
   readonly relicId?: string
@@ -924,6 +935,7 @@ export interface BattleUnitSnapshot {
   readonly stars: 1 | 2 | 3
   readonly level?: number
   readonly isBoss: boolean
+  readonly summonerUid?: string
   readonly weaponId?: string
   readonly armorId?: string
   readonly relicId?: string
