@@ -105,6 +105,18 @@ const TERRAIN_LABEL: Record<string, string> = {
   barricade: 'Timber Barricade (Destructible · Blocks LoS)'
 }
 
+export const BIOME_NAME: Readonly<Record<string, string>> = {
+  meadow: 'Solis Meadow',
+  river: 'Silverfen River',
+  crypt: 'Ashen Crypt',
+  frost: 'Frostspire Highlands',
+  volcano: 'Emberwaste Caldera',
+  throne: 'Eclipse Throne',
+  dunes: 'Sunbleached Dunes',
+  aether: 'Aether Isles',
+  expanse: 'Shattered Expanse'
+}
+
 const SPEAKER_PORTRAIT: Record<string, string> = {
   'Sir Aldric': 'knight',
   Lyra: 'archer',
@@ -114,7 +126,10 @@ const SPEAKER_PORTRAIT: Record<string, string> = {
   'Vex, Mire Matriarch': 'mire_matriarch',
   'Vaelen, Ash Inquisitor': 'ash_inquisitor',
   'Jarl Skadi': 'frost_jarl',
-  'Ignar, Magma Warden': 'magma_warden'
+  'Ignar, Magma Warden': 'magma_warden',
+  'Dune Sovereign': 'dune_sovereign_boss',
+  'Astral Warden': 'astral_warden_boss',
+  'The Unbroken Crown': 'unbroken_crown_boss'
 }
 
 const ACT_ID_ALIASES: Record<string, string> = {

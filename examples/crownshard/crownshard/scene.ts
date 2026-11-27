@@ -4,6 +4,8 @@ import {
   view, worldToScreen
 } from 'ridgetop'
 import type { Color, InstanceBatch, JointPose, LowPolyRenderer, Matrix, PointLight, RenderStats, Vec3 } from 'ridgetop'
+export { BIOME_STYLES as BIOME_SCENE_PALETTES } from './art.ts'
+
 import {
   BIOME_STYLES, ENEMY_RIGS,
   buildCampDioramaBatches, buildStaticBoardBatches, crispBevel, crownMesh, crystalMesh, flatRing,
@@ -790,7 +792,14 @@ export function createCrownshardScene(renderer: LowPolyRenderer) {
         position: boardBraziers[i],
         color: [style.propGlow[0], style.propGlow[1], style.propGlow[2]],
         radius: 7.2,
-        intensity: battle.biome === 'crypt' || battle.biome === 'volcano' || battle.biome === 'throne' ? 1.18 : 0.72
+        intensity:
+          battle.biome === 'crypt' || battle.biome === 'volcano' || battle.biome === 'throne' || battle.biome === 'expanse'
+            ? 1.18
+            : battle.biome === 'aether'
+              ? 0.96
+              : battle.biome === 'dunes'
+                ? 0.84
+                : 0.72
       })
     }
 
@@ -1384,7 +1393,9 @@ export function createCrownshardScene(renderer: LowPolyRenderer) {
         })
       : ENEMY_RIGS[unit.enemyId ?? 'goblin']
 
-    const scale = unit.enemyId === 'eclipse_archon' ? 1.38
+    const scale = unit.enemyId === 'unbroken_crown_boss' ? (unit.bossPhase === 2 ? 1.48 : 1.42)
+      : unit.enemyId === 'eclipse_archon' ? 1.38
+      : unit.enemyId === 'dune_sovereign_boss' || unit.enemyId === 'astral_warden_boss' ? 1.36
       : unit.isBoss ? 1.32
       : unit.enemyId === 'frost_golem' || unit.enemyId === 'river_troll' ? 1.24
       : unit.enemyId === 'goblin' || unit.enemyId === 'bone_thrall' ? 0.90
@@ -1796,16 +1807,22 @@ export function createCrownshardScene(renderer: LowPolyRenderer) {
       const bossCrystalCol = unit.enemyId === 'magma_warden' ? C_FIRE_CORE
         : unit.enemyId === 'frost_jarl' ? C_FROST
         : unit.enemyId === 'mire_matriarch' ? C_POISON
-        : unit.enemyId === 'briar_warlord' ? C_STAR2_GOLD
+        : unit.enemyId === 'briar_warlord' || unit.enemyId === 'dune_sovereign_boss' ? C_STAR2_GOLD
+        : unit.enemyId === 'astral_warden_boss' ? C_FROST
+        : unit.enemyId === 'unbroken_crown_boss' && (unit.bossPhase ?? 1) >= 2 ? C_STAR2_GOLD
         : C_SHADOW
-      for (let i = 0; i < 3; i++) {
-        const a = time * 1.6 + (i / 3) * Math.PI * 2
+      const crystalCount = unit.enemyId === 'unbroken_crown_boss' && (unit.bossPhase ?? 1) >= 2 ? 5 : 3
+      for (let i = 0; i < crystalCount; i++) {
+        const a = time * (crystalCount > 3 ? 2.4 : 1.6) + (i / crystalCount) * Math.PI * 2
+        const col = unit.enemyId === 'unbroken_crown_boss' && (unit.bossPhase ?? 1) >= 2 && i % 2 === 1
+          ? C_SHADOW
+          : bossCrystalCol
         pool.add(
           crystalMesh,
           [px + Math.cos(a) * 0.94, py + 1.18 + Math.sin(time * 3 + i) * 0.14, pz + Math.sin(a) * 0.94],
           [0.20, 0.30, 0.20],
           a,
-          bossCrystalCol,
+          col,
           0.95
         )
       }

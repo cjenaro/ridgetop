@@ -669,6 +669,96 @@ export const ENEMY_CHARACTER_SPECS: Readonly<Record<EnemyArchetypeId, CharacterS
       bracerR: 'bracer_plate',
       mainHand: 'weapon_obsidian_greatsword'
     }
+  },
+  dune_sovereign_boss: {
+    // Tier VI Sunbleached Dunes Raid Boss: gilded pharaoh-construct in sun-gold plate & lapis mantle
+    body: 'humanoid_broad',
+    palette: {
+      skin: '#c9a66b',
+      primary: '#c98e2b',
+      primaryDark: '#7a5216',
+      secondary: '#1e788a',
+      metal: '#f7d265',
+      metalDark: '#78531b',
+      leather: '#5c3c1e',
+      accent: '#ffe88a',
+      glow: '#ffba38'
+    },
+    parts: {
+      headgear: 'helm_champion_crown',
+      chest: 'chest_aegis_dawn',
+      pauldrons: 'pauldrons_gilded',
+      collar: 'collar_gold_mantle',
+      belt: 'belt_heart_of_solis',
+      skirt: 'skirt_tassets',
+      back: 'mantle_eclipse',
+      bracerL: 'bracer_gold',
+      bracerR: 'bracer_gold',
+      bootL: 'boot_cuff_gold',
+      bootR: 'boot_cuff_gold',
+      mainHand: 'weapon_sunblade',
+      offHand: 'shield_aegis_dawn'
+    }
+  },
+  astral_warden_boss: {
+    // Tier VII Aether Isles Raid Boss: radiant winged sentinel of alabaster marble & lightning cyan-gold
+    body: 'humanoid_broad',
+    palette: {
+      skin: '#e8f4ff',
+      primary: '#dce8f7',
+      primaryDark: '#5b7aa8',
+      secondary: '#2b8cd9',
+      metal: '#f2f7ff',
+      metalDark: '#4e6f9c',
+      leather: '#3b4e6e',
+      accent: '#ffe16e',
+      glow: '#6ef4ff'
+    },
+    parts: {
+      headgear: 'helm_paladin_winged',
+      chest: 'chest_frostguard',
+      pauldrons: 'pauldrons_paladin',
+      collar: 'collar_aegis_dawn',
+      belt: 'belt_skyhawk_crest',
+      skirt: 'skirt_tassets',
+      back: 'halo_radiant',
+      bracerL: 'bracer_gold',
+      bracerR: 'bracer_gold',
+      bootL: 'boot_gale_striders',
+      bootR: 'boot_gale_striders',
+      mainHand: 'weapon_dragonfang_halberd',
+      offHand: 'offhand_spell_orb'
+    }
+  },
+  unbroken_crown_boss: {
+    // Tier VIII Shattered Expanse Apex Raid Boss: primordial solar-eclipse sovereign with radiant halo & crown
+    body: 'humanoid_broad',
+    palette: {
+      skin: '#261c3a',
+      primary: '#301d52',
+      primaryDark: '#190f2e',
+      secondary: '#e6a62e',
+      metal: '#ffd866',
+      metalDark: '#4e3973',
+      leather: '#2b1b42',
+      accent: '#fff0a6',
+      glow: '#ffae38'
+    },
+    parts: {
+      headgear: 'crown_eclipse',
+      chest: 'chest_obsidian_plate',
+      pauldrons: 'pauldrons_eclipse',
+      collar: 'collar_heart_of_solis',
+      belt: 'belt_heart_of_solis',
+      skirt: 'skirt_robe_hem',
+      back: 'halo_radiant',
+      bracerL: 'bracer_gold',
+      bracerR: 'bracer_gold',
+      bootL: 'boot_greave_plate',
+      bootR: 'boot_greave_plate',
+      mainHand: 'weapon_eclipse_scepter',
+      offHand: 'offhand_spell_orb'
+    }
   }
 }
 
@@ -700,7 +790,10 @@ export const ENEMY_RIGS: Record<EnemyArchetypeId, Rig> = {
   mire_matriarch: crownshardCharacterBuilder.assemble(ENEMY_CHARACTER_SPECS.mire_matriarch),
   ash_inquisitor: crownshardCharacterBuilder.assemble(ENEMY_CHARACTER_SPECS.ash_inquisitor),
   frost_jarl: crownshardCharacterBuilder.assemble(ENEMY_CHARACTER_SPECS.frost_jarl),
-  magma_warden: crownshardCharacterBuilder.assemble(ENEMY_CHARACTER_SPECS.magma_warden)
+  magma_warden: crownshardCharacterBuilder.assemble(ENEMY_CHARACTER_SPECS.magma_warden),
+  dune_sovereign_boss: crownshardCharacterBuilder.assemble(ENEMY_CHARACTER_SPECS.dune_sovereign_boss),
+  astral_warden_boss: crownshardCharacterBuilder.assemble(ENEMY_CHARACTER_SPECS.astral_warden_boss),
+  unbroken_crown_boss: crownshardCharacterBuilder.assemble(ENEMY_CHARACTER_SPECS.unbroken_crown_boss)
 }
 
 const customHeroRigCache = new Map<string, Rig>()

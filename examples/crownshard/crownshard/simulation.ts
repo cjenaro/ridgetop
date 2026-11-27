@@ -124,6 +124,32 @@ export {
 export type {
   EnemyBasicStatusEffect, EnemySpecialDecision, EnemySpecialMoveKind, TurnStartRegenResult
 } from './enemy-archetypes.ts'
+import {
+  ASTRAL_RIFT_DAMAGE, ASTRAL_RIFT_PERIOD, FRONTIER_BIOMES, FRONTIER_BOSS_IDS, FRONTIER_STAGE_IDS,
+  LIGHTNING_CONDUIT_DAMAGE, LIGHTNING_CONDUIT_PERIOD, SANDSTORM_GUST_DAMAGE, SANDSTORM_GUST_PERIOD,
+  UNBROKEN_CROWN_PHASE2_ATK_BONUS, UNBROKEN_CROWN_PHASE2_BANNER, UNBROKEN_CROWN_PHASE2_EMPOWER_TURNS,
+  UNBROKEN_CROWN_PHASE2_HASTE_TURNS, UNBROKEN_CROWN_PHASE2_HP_RATIO, UNBROKEN_CROWN_PHASE2_SHIELD,
+  UNBROKEN_CROWN_PHASE2_SUMMON_COUNT,
+  applyFrontierBossPhaseTransition, computeAstralRiftStrikes, computeLightningConduitStrikes,
+  computeSandstormGustStrikes, evaluateFrontierRoundHazard, findFrontierSummonTiles,
+  getFrontierHazardKind, getUnbrokenCrownPhase2Config, isFrontierBiome, isFrontierBoss,
+  shouldTriggerUnbrokenCrownPhase2
+} from './expansion-frontier.ts'
+export {
+  ASTRAL_RIFT_DAMAGE, ASTRAL_RIFT_PERIOD, FRONTIER_BIOMES, FRONTIER_BOSS_IDS, FRONTIER_STAGE_IDS,
+  LIGHTNING_CONDUIT_DAMAGE, LIGHTNING_CONDUIT_PERIOD, SANDSTORM_GUST_DAMAGE, SANDSTORM_GUST_PERIOD,
+  UNBROKEN_CROWN_PHASE2_ATK_BONUS, UNBROKEN_CROWN_PHASE2_BANNER, UNBROKEN_CROWN_PHASE2_EMPOWER_TURNS,
+  UNBROKEN_CROWN_PHASE2_HASTE_TURNS, UNBROKEN_CROWN_PHASE2_HP_RATIO, UNBROKEN_CROWN_PHASE2_SHIELD,
+  UNBROKEN_CROWN_PHASE2_SUMMON_COUNT,
+  applyFrontierBossPhaseTransition, computeAstralRiftStrikes, computeLightningConduitStrikes,
+  computeSandstormGustStrikes, evaluateFrontierRoundHazard, findFrontierSummonTiles,
+  getFrontierHazardKind, getUnbrokenCrownPhase2Config, isFrontierBiome, isFrontierBoss,
+  shouldTriggerUnbrokenCrownPhase2
+}
+export type {
+  FrontierBossPhaseConfig, FrontierBossPhaseResult, FrontierHazardKind,
+  FrontierHazardStrike, FrontierRoundHazardResult
+} from './expansion-frontier.ts'
 import { executeBulkSalvageCommonDupes } from './inventory-ops.ts'
 export {
   findBulkSalvageableCommonDupes, isEquipLocked, isHeroLocked,
@@ -975,7 +1001,10 @@ const BIOME_LOOKUP: ReadonlyMap<string, BiomeId> = new Map<string, BiomeId>([
   ['crypt', 'crypt'],
   ['frost', 'frost'],
   ['volcano', 'volcano'],
-  ['throne', 'throne']
+  ['throne', 'throne'],
+  ['dunes', 'dunes'],
+  ['aether', 'aether'],
+  ['expanse', 'expanse']
 ])
 
 const FACING_LOOKUP: ReadonlyMap<string, FacingDir> = new Map<string, FacingDir>([
@@ -1006,7 +1035,10 @@ const ENEMY_ID_LOOKUP: ReadonlyMap<string, EnemyArchetypeId> = new Map<string, E
   ['mire_matriarch', 'mire_matriarch'],
   ['ash_inquisitor', 'ash_inquisitor'],
   ['frost_jarl', 'frost_jarl'],
-  ['magma_warden', 'magma_warden']
+  ['magma_warden', 'magma_warden'],
+  ['dune_sovereign_boss', 'dune_sovereign_boss'],
+  ['astral_warden_boss', 'astral_warden_boss'],
+  ['unbroken_crown_boss', 'unbroken_crown_boss']
 ])
 
 function toDifficultyLevel(raw: number): DifficultyLevel {
@@ -1224,6 +1256,7 @@ export function serializeBattleState(
       stars: u.stars,
       level: normalizeHeroLevel(u.level),
       isBoss: u.isBoss,
+      ...(u.bossPhase !== undefined ? { bossPhase: u.bossPhase } : {}),
       ...(u.summonerUid !== undefined ? { summonerUid: u.summonerUid } : {}),
       ...(u.weaponId !== undefined ? { weaponId: u.weaponId } : {}),
       ...(u.armorId !== undefined ? { armorId: u.armorId } : {}),
@@ -1435,6 +1468,8 @@ export function validateBattleSnapshot(raw: unknown): BattleSaveSnapshot | null 
     if (item.level !== undefined && !isFiniteNum(item.level)) return null
     const unitLevel = item.level !== undefined ? normalizeHeroLevel(item.level) : 1
     const isBoss = Boolean(item.isBoss)
+    if (item.bossPhase !== undefined && !isFiniteNum(item.bossPhase)) return null
+    const bossPhase = item.bossPhase !== undefined ? clamp(Math.floor(item.bossPhase), 1, 4) : undefined
 
     if (!isFiniteNum(item.col) || !isFiniteNum(item.row)) return null
     const col = Math.floor(item.col)
@@ -1510,6 +1545,7 @@ export function validateBattleSnapshot(raw: unknown): BattleSaveSnapshot | null 
       stars,
       level: unitLevel,
       isBoss,
+      ...(bossPhase !== undefined ? { bossPhase } : {}),
       ...(summonerUid !== undefined ? { summonerUid } : {}),
       ...(weaponId !== undefined ? { weaponId } : {}),
       ...(armorId !== undefined ? { armorId } : {}),
@@ -1668,6 +1704,7 @@ export function restoreBattleState(state: GameState, snapshot: unknown): boolean
       stars: u.stars,
       level: normalizeHeroLevel(u.level),
       isBoss: u.isBoss,
+      ...(u.bossPhase !== undefined ? { bossPhase: u.bossPhase } : {}),
       ...(u.summonerUid !== undefined ? { summonerUid: u.summonerUid } : {}),
       ...(u.weaponId !== undefined ? { weaponId: u.weaponId } : {}),
       ...(u.armorId !== undefined ? { armorId: u.armorId } : {}),
@@ -2745,6 +2782,7 @@ export function startChapterBattle(
       stars: spec.isBoss ? 3 : 1,
       level: normalizeHeroLevel(Math.round(chapter.difficulty * 2 - 1 + (endlessWave > 0 ? endlessWave : 0) + (spec.isBoss ? 2 : 0))),
       isBoss: Boolean(spec.isBoss),
+      ...(spawn.id === 'unbroken_crown_boss' ? { bossPhase: 1 } : {}),
       col: spawn.col,
       row: spawn.row,
       x: wx,
@@ -5390,8 +5428,11 @@ function applyDamageDetailed(
   if (defender.hp <= 0) {
     handleUnitDefeat(state, defender)
     triggerOnKoEffects(state, attacker, defender, { isSkillKill: isSkillDamage, rawHitDamage: rolledDamage })
-  } else if (isCrit && attacker && attacker.team !== defender.team && shouldApplyBurnOnCrit(attacker)) {
-    applyStatus(battle, defender, 'burn')
+  } else {
+    if (isCrit && attacker && attacker.team !== defender.team && shouldApplyBurnOnCrit(attacker)) {
+      applyStatus(battle, defender, 'burn')
+    }
+    triggerFrontierBossPhaseIfReady(state, defender)
   }
   if (attacker && attacker.team === 'ally' && defender.team === 'enemy' && (finalDmg > 0 || absorbed > 0)) {
     const koBonus = defender.hp <= 0 ? (defender.isBoss ? XP_ACTION_BOSS_KO : XP_ACTION_KO) : 0
@@ -7111,13 +7152,83 @@ function triggerStepOnHazard(state: GameState, unit: BattleUnit, cell: GridCell)
   }
 }
 
-/** Apply round-boundary stage mechanics & tactical mutator effects (`venom_mist` poison & `arcane_surge` enemy cooldown surge). */
+/** Trigger multi-phase raid boss awakening (e.g. Unbroken Crown Phase 1 -> Phase 2 at <= 50% HP). */
+function triggerFrontierBossPhaseIfReady(state: GameState, boss: BattleUnit): void {
+  const battle = state.battle
+  if (!battle || !shouldTriggerUnbrokenCrownPhase2(boss)) return
+  const result = applyFrontierBossPhaseTransition(boss)
+  if (!result.triggered) return
+
+  const cfg = getUnbrokenCrownPhase2Config()
+  battle.bannerText = result.bannerText
+  battle.bannerTimer = 2.0
+  battle.shake = Math.max(battle.shake, 0.55)
+  state.sounds.push({ kind: 'magic', pitch: 0.68 })
+  addFloat(battle, boss.x, boss.y + 0.72, boss.z, 'PHASE 2: SOLAR ECLIPSE!', '#ffe078')
+  addFloat(battle, boss.x, boss.y + 0.35, boss.z, `+${result.shieldGain} SHIELD`, '#7ed9ff')
+  state.vfx.push({
+    kind: 'special',
+    uid: boss.uid,
+    move: 'eclipse_nova',
+    at: [boss.x, boss.y, boss.z],
+    cells: [[boss.x, boss.y, boss.z]]
+  })
+  appendCombatLog(
+    battle,
+    'system',
+    `${boss.name} enters Phase 2 (${result.bannerText}) — +${result.shieldGain} Shield, cleansed, Empowered!`,
+    { accentHex: '#ffd166' }
+  )
+
+  const summonTiles = findFrontierSummonTiles(battle, boss, cfg.summonCount)
+  for (const tile of summonTiles) {
+    const guard = createSummonedEnemyUnit(battle, boss, cfg.summonArchetype, tile.col, tile.row)
+    battle.units.push(guard)
+    state.vfx.push({ kind: 'burst', style: 'gold', at: [guard.x, guard.y + 0.55, guard.z], radius: 0.85, uid: boss.uid })
+    addFloat(battle, guard.x, guard.y + 0.4, guard.z, 'SOLAR VANGUARD!', '#ffd166')
+  }
+  battle.turnOrder = computeTurnOrderPreview(battle, 8)
+}
+
+/** Apply round-boundary frontier biome hazards (Sandstorm Gusts, Lightning Conduits, Astral Rift Pulses). */
+function applyRoundBoundaryFrontierHazards(state: GameState): void {
+  const battle = state.battle
+  if (!battle || isBattleEnded(battle)) return
+  if (!isFrontierBiome(battle.biome)) return
+
+  const evalResult = evaluateFrontierRoundHazard(battle, battle.objective.roundsElapsed)
+  if (!evalResult.triggered || evalResult.strikes.length === 0) return
+
+  battle.bannerText = evalResult.bannerText
+  battle.bannerTimer = 1.45
+  battle.shake = Math.max(battle.shake, 0.24)
+  state.sounds.push({ kind: evalResult.kind === 'lightning_conduit' ? 'magic' : 'hit', pitch: 0.92 })
+
+  for (const strike of evalResult.strikes) {
+    const target = getUnitByUid(battle, strike.unitUid)
+    if (!target || !target.alive) continue
+    const cell = battle.cells[target.row]?.[target.col]
+    const [cx, cy, cz] = gridToWorld(target.col, target.row, cell?.elevation ?? target.y, battle.cols, battle.rows)
+    state.vfx.push({ kind: 'burst', style: strike.vfxStyle, at: [cx, cy + 0.55, cz], radius: 0.78 })
+    addFloat(battle, target.x, target.y + 0.52, target.z, strike.label, '#ffd166')
+    applyDamageDetailed(state, null, target, strike.damage, 1, false, false, {
+      skillName: evalResult.label
+    })
+    if (target.alive && strike.status) {
+      applyStatus(battle, target, strike.status)
+    }
+  }
+  checkBattleOutcome(state)
+}
+
+/** Apply round-boundary stage mechanics, frontier hazards & tactical mutator effects. */
 function applyRoundBoundaryMutators(state: GameState): void {
   const battle = state.battle
   if (!battle || isBattleEnded(battle)) return
-
   applyAct1StageRoundBoundary(state)
   checkBattleOutcome(state)
+  if (isBattleEnded(battle)) return
+  applyRoundBoundaryFrontierHazards(state)
   if (isBattleEnded(battle) || battle.mutators.length === 0) return
 
   if (hasMutator(battle, 'arcane_surge')) {

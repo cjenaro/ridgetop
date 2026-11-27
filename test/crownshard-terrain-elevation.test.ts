@@ -439,15 +439,18 @@ test('Multi-height pickCellAt() accurately picks cells across height levels 0..4
   assert.equal(voidPick, null, 'Void chasm cell must not be pickable')
 })
 
-test('buildStaticBoardBatches builds distinct biome perimeter architecture across all 6 biomes without throwing', () => {
-  const biomes: readonly BiomeId[] = ['meadow', 'river', 'crypt', 'frost', 'volcano', 'throne']
+test('buildStaticBoardBatches builds distinct biome perimeter architecture across all 9 biomes without throwing', () => {
+  const biomes: readonly BiomeId[] = ['meadow', 'river', 'crypt', 'frost', 'volcano', 'throne', 'dunes', 'aether', 'expanse']
   const stageByBiome: Record<BiomeId, string> = {
     meadow: 'border_watch',
     river: 'sunken_bridge',
     crypt: 'lantern_crypt',
     frost: 'glacial_citadel',
     volcano: 'ashfall_foundry',
-    throne: 'eclipse_throne'
+    throne: 'eclipse_throne',
+    dunes: 'dune_sovereign',
+    aether: 'skybreak_bastion',
+    expanse: 'first_sun_sanctum'
   }
 
   const signatures = new Set<string>()

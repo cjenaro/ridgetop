@@ -6,7 +6,7 @@ import type {
 import type { BiomeId, GameState, SoundEvent } from './types.ts'
 
 export const BIOME_IDS: readonly BiomeId[] = [
-  'meadow', 'river', 'crypt', 'frost', 'volcano', 'throne'
+  'meadow', 'river', 'crypt', 'frost', 'volcano', 'throne', 'dunes', 'aether', 'expanse'
 ] as const
 
 export type MusicMode = 'camp' | 'world' | 'battle'
@@ -49,7 +49,16 @@ export interface BiomeDroneSpec {
 }
 
 export interface BiomeAmbientAccentSpec {
-  readonly kind: 'bird' | 'ripple' | 'whisper' | 'chime' | 'crackle' | 'eclipse_pulse'
+  readonly kind:
+    | 'bird'
+    | 'ripple'
+    | 'whisper'
+    | 'chime'
+    | 'crackle'
+    | 'eclipse_pulse'
+    | 'sandstorm_gust'
+    | 'aether_chime'
+    | 'void_choir'
   readonly intervalMin: number
   readonly intervalMax: number
   readonly frequencies?: readonly number[]
@@ -375,6 +384,141 @@ export const BIOME_MUSIC_THEMES: Readonly<Record<BiomeId, BiomeMusicTheme>> = {
       highFreq: 920,
       volume: 0.11
     }
+  },
+  dunes: {
+    biome: 'dunes',
+    name: 'Sunbleached Mirage',
+    mode: 'D Hijaz / Phrygian Dominant',
+    bpm: 102,
+    stepsPerBeat: 2,
+    stepDuration: stepFromBpm(102, 2),
+    bossStepDuration: stepFromBpm(116, 2),
+    musicCutoff: 1920,
+    bossCutoff: 2250,
+    melody: {
+      notes: [
+        293.66, 311.13, 369.99, 392.0, 440.0, 466.16, 440.0, 392.0,
+        369.99, 0, 440.0, 466.16, 554.37, 587.33, 466.16, 440.0
+      ],
+      waveform: 'triangle',
+      volume: 0.23,
+      gate: 0.96
+    },
+    bossMelody: [
+      293.66, 369.99, 440.0, 466.16, 554.37, 587.33, 554.37, 466.16,
+      440.0, 466.16, 587.33, 622.25, 587.33, 466.16, 440.0, 369.99
+    ],
+    bass: {
+      notes: [146.83, 146.83, 155.56, 146.83, 220.0, 196.0, 155.56, 146.83],
+      divide: 2,
+      waveform: 'triangle',
+      volume: 0.25,
+      gate: 1.45
+    },
+    harmony: {
+      notes: [369.99, 0, 440.0, 0, 466.16, 0, 440.0, 0, 369.99, 0, 311.13, 0, 440.0, 0, 369.99, 0],
+      waveform: 'sine',
+      volume: 0.11,
+      gate: 1.15
+    },
+    percussion: {
+      pattern: [1, 0, 2, 1, 0, 2, 1, 2, 1, 0, 2, 1, 2, 0, 1, 2],
+      lowFreq: 140,
+      highFreq: 1450,
+      volume: 0.095
+    }
+  },
+  aether: {
+    biome: 'aether',
+    name: 'Skybreak Chimes',
+    mode: 'B Lydian / Astral Pentatonic',
+    bpm: 92,
+    stepsPerBeat: 2,
+    stepDuration: stepFromBpm(92, 2),
+    bossStepDuration: stepFromBpm(106, 2),
+    musicCutoff: 3600,
+    bossCutoff: 3900,
+    melody: {
+      notes: [
+        493.88, 622.25, 739.99, 830.61, 987.77, 0, 830.61, 739.99,
+        622.25, 739.99, 987.77, 1108.73, 987.77, 830.61, 739.99, 622.25
+      ],
+      waveform: 'sine',
+      volume: 0.22,
+      gate: 1.55
+    },
+    bossMelody: [
+      493.88, 739.99, 987.77, 1108.73, 1244.51, 1108.73, 987.77, 830.61,
+      739.99, 987.77, 1244.51, 1479.98, 1244.51, 1108.73, 987.77, 739.99
+    ],
+    bass: {
+      notes: [246.94, 185.0, 207.65, 164.81, 246.94, 220.0, 185.0, 155.56],
+      divide: 2,
+      waveform: 'sine',
+      volume: 0.22,
+      gate: 1.95
+    },
+    harmony: {
+      notes: [
+        739.99, 987.77, 0, 830.61, 0, 1108.73, 987.77, 0,
+        739.99, 0, 1244.51, 987.77, 830.61, 0, 739.99, 622.25
+      ],
+      waveform: 'triangle',
+      volume: 0.12,
+      gate: 1.35
+    },
+    percussion: {
+      pattern: [0, 2, 0, 0, 1, 0, 2, 0, 0, 2, 1, 0, 0, 2, 0, 2],
+      lowFreq: 260,
+      highFreq: 3100,
+      volume: 0.05
+    }
+  },
+  expanse: {
+    biome: 'expanse',
+    name: 'First Sun Cataclysm',
+    mode: 'C# Cosmic Harmonic Minor',
+    bpm: 120,
+    stepsPerBeat: 2,
+    stepDuration: stepFromBpm(120, 2),
+    bossStepDuration: stepFromBpm(134, 2),
+    musicCutoff: 2800,
+    bossCutoff: 3150,
+    melody: {
+      notes: [
+        277.18, 329.63, 415.3, 440.0, 523.25, 440.0, 415.3, 329.63,
+        554.37, 523.25, 440.0, 415.3, 329.63, 311.13, 277.18, 415.3
+      ],
+      waveform: 'sawtooth',
+      volume: 0.24,
+      gate: 1.30
+    },
+    bossMelody: [
+      554.37, 659.25, 830.61, 880.0, 1046.5, 880.0, 830.61, 659.25,
+      554.37, 622.25, 659.25, 830.61, 880.0, 830.61, 659.25, 554.37
+    ],
+    bass: {
+      notes: [138.59, 138.59, 110.0, 103.83, 138.59, 164.81, 130.81, 103.83],
+      divide: 2,
+      waveform: 'sawtooth',
+      volume: 0.27,
+      gate: 1.85
+    },
+    harmony: {
+      notes: [
+        277.18, 0, 329.63, 0, 415.3, 440.0, 415.3, 0,
+        277.18, 0, 523.25, 0, 440.0, 415.3, 329.63, 277.18
+      ],
+      waveform: 'square',
+      volume: 0.13,
+      gate: 1.65
+    },
+    percussion: {
+      pattern: [1, 0, 2, 1, 1, 2, 0, 2, 1, 1, 2, 0, 1, 2, 2, 1],
+      lowFreq: 78,
+      highFreq: 1280,
+      volume: 0.125
+    }
   }
 }
 
@@ -534,6 +678,82 @@ export const BIOME_AMBIENT_PROFILES: Readonly<Record<BiomeId, BiomeAmbientProfil
       frequencies: [110.0, 164.81, 207.65],
       duration: 0.72,
       volume: 0.032
+    }
+  },
+  dunes: {
+    biome: 'dunes',
+    character: 'shifting desert sandstorm gusts & warm sandstone resonance',
+    bedId: 'dunes_sandstorm',
+    noiseBed: { type: 'bandpass', frequency: 980, q: 2.1, gain: 0.030 },
+    drone: {
+      frequency: 146.83,
+      harmonicFrequency: 220.0,
+      waveform: 'triangle',
+      filterType: 'bandpass',
+      filterFrequency: 460,
+      filterQ: 1.9,
+      gain: 0.018,
+      pulseRateHz: 0.36,
+      pulseDepth: 0.34
+    },
+    accent: {
+      kind: 'sandstorm_gust',
+      intervalMin: 1.8,
+      intervalMax: 3.6,
+      noiseFrequency: 1420,
+      noiseType: 'bandpass',
+      duration: 0.36,
+      volume: 0.034
+    }
+  },
+  aether: {
+    biome: 'aether',
+    character: 'airy sky-chasm zephyrs & astral crystalline harp chimes',
+    bedId: 'aether_skywind',
+    noiseBed: { type: 'highpass', frequency: 1320, q: 1.5, gain: 0.017 },
+    drone: {
+      frequency: 246.94,
+      harmonicFrequency: 369.99,
+      waveform: 'sine',
+      filterType: 'lowpass',
+      filterFrequency: 1120,
+      filterQ: 1.1,
+      gain: 0.013,
+      pulseRateHz: 0.28,
+      pulseDepth: 0.24
+    },
+    accent: {
+      kind: 'aether_chime',
+      intervalMin: 1.6,
+      intervalMax: 3.2,
+      frequencies: [987.77, 1244.51, 1479.98, 1864.66],
+      duration: 0.32,
+      volume: 0.026
+    }
+  },
+  expanse: {
+    biome: 'expanse',
+    character: 'cosmic astral void resonance & solemn synth-organ choir swells',
+    bedId: 'expanse_void',
+    noiseBed: { type: 'lowpass', frequency: 340, q: 3.4, gain: 0.032 },
+    drone: {
+      frequency: 69.3,
+      harmonicFrequency: 103.83,
+      waveform: 'sawtooth',
+      filterType: 'lowpass',
+      filterFrequency: 290,
+      filterQ: 2.9,
+      gain: 0.030,
+      pulseRateHz: 0.62,
+      pulseDepth: 0.40
+    },
+    accent: {
+      kind: 'void_choir',
+      intervalMin: 2.2,
+      intervalMax: 3.9,
+      frequencies: [277.18, 329.63, 415.3, 523.25],
+      duration: 0.68,
+      volume: 0.030
     }
   }
 }
@@ -839,6 +1059,53 @@ export function createCrownshardAudio(options: CrownshardAudioOptions = {}) {
             duration: accent.duration,
             type: 'triangle',
             volume: accent.volume,
+            bus: 'ambience'
+          })
+        }
+        break
+      case 'sandstorm_gust':
+        sound.noiseBurst({
+          duration: accent.duration,
+          frequency: (accent.noiseFrequency ?? 1420) * (0.85 + (idx % 4) * 0.12),
+          type: accent.noiseType ?? 'bandpass',
+          volume: accent.volume,
+          bus: 'ambience'
+        })
+        break
+      case 'aether_chime':
+        if (pickFreq > 0) {
+          sound.tone({
+            frequency: pickFreq,
+            duration: accent.duration,
+            type: 'sine',
+            volume: accent.volume,
+            bus: 'ambience'
+          })
+          sound.tone({
+            frequency: pickFreq * 1.25,
+            duration: accent.duration * 0.85,
+            delay: accent.duration * 0.35,
+            type: 'triangle',
+            volume: accent.volume * 0.7,
+            bus: 'ambience'
+          })
+        }
+        break
+      case 'void_choir':
+        if (pickFreq > 0) {
+          sound.tone({
+            frequency: pickFreq,
+            endFrequency: pickFreq * 1.01,
+            duration: accent.duration,
+            type: 'sawtooth',
+            volume: accent.volume * 0.55,
+            bus: 'ambience'
+          })
+          sound.tone({
+            frequency: pickFreq * 1.5,
+            duration: accent.duration * 0.95,
+            type: 'triangle',
+            volume: accent.volume * 0.65,
             bus: 'ambience'
           })
         }

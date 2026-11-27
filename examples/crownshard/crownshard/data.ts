@@ -673,6 +673,16 @@ export const ENEMY_SPECS: Record<EnemyArchetypeId, EnemySpec> = {
   },
   magma_warden: {
     id: 'magma_warden', name: 'Ignar, Magma Warden', maxHp: 168, atk: 25, def: 8, speed: 8, move: 2, jump: 1, range: 2, ai: 'boss', isBoss: true, zoc: true
+  },
+  // Outer Frontier Raid Bosses (Tiers VI–VIII)
+  dune_sovereign_boss: {
+    id: 'dune_sovereign_boss', name: 'Dune Sovereign', maxHp: 235, atk: 29, def: 9, speed: 10, move: 3, jump: 2, range: 3, ai: 'boss', isBoss: true, zoc: true
+  },
+  astral_warden_boss: {
+    id: 'astral_warden_boss', name: 'Astral Warden', maxHp: 270, atk: 32, def: 9, speed: 12, move: 4, jump: 3, range: 3, ai: 'boss', isBoss: true, zoc: true
+  },
+  unbroken_crown_boss: {
+    id: 'unbroken_crown_boss', name: 'The Unbroken Crown', maxHp: 340, atk: 35, def: 11, speed: 12, move: 3, jump: 3, range: 3, ai: 'boss', isBoss: true, zoc: true
   }
 }
 
@@ -1891,7 +1901,7 @@ export const CHAPTERS: readonly ChapterSpec[] = [
   },
 
   // =========================================================================
-  // ACT IV+ FUTURE FRONTIER REGIONS (TIERS VI–VIII — BEYOND TODAY'S ENDGAME)
+  // ACT IV+ OUTER FRONTIER REGIONS (TIERS V–VIII — BEYOND ECLIPSE THRONE)
   // =========================================================================
   {
     id: 'mirage_oasis',
@@ -1903,26 +1913,50 @@ export const CHAPTERS: readonly ChapterSpec[] = [
     recommendedPower: 1420,
     mapX: 0.14,
     mapY: 0.86,
-    requires: ['gloomwood_heart', 'emerald_delta'],
-    unlockMode: 'any',
+    requires: ['eclipse_throne'],
     seaRoute: true,
-    comingSoon: true,
-    soonNote: 'Soon... Act IV Desert Frontier · Shifting Sandstorms & Nomad Outpost',
-    specialTag: 'Act IV Soon',
+    specialTag: 'Sandstorm Frontier',
+    modifierDesc: '9x6 Oasis Bridges · Shifting Sandstorm Gusts (Shelter by Pillars)',
     title: 'Mirage Oasis',
     subtitle: 'Desert Strait Landing',
-    biome: 'meadow',
+    biome: 'dunes',
     introSpeaker: 'Lyra',
-    introText: 'Across the southern strait lie sun-baked ruins older than Solis.',
+    introText: 'Across the southern strait lie sun-baked ruins older than Solis! Hold beside the sandstone obelisks when the desert gusts howl across the dunes.',
     outroSpeaker: 'Lyra',
-    outroText: 'The desert caravan welcomes our banner.',
+    outroText: 'The oasis bridges are secure! Our desert caravan can now push inland toward the Sunken Obelisk.',
     rewardGold: 440,
     replayGold: 205,
     rewardEquipId: 'swift_boots',
     rewardHeroId: null,
-    grid: SOON_GRID,
-    heroSpawns: [[0, 1], [0, 2], [0, 3], [1, 2]],
-    enemies: [{ id: 'crypt_knight', col: 5, row: 2 }, { id: 'bone_archer', col: 5, row: 1 }, { id: 'bog_shaman', col: 5, row: 3 }]
+    grid: [
+      [V, G, H, W, W, G, H, H, V],
+      [G, S, T, B, B, S, T, S, H],
+      [G, R, P, W, W, P, S, G, G],
+      [G, S, G, W, W, G, P, S, G],
+      [G, S, T, B, B, S, T, H, H],
+      [V, G, H, W, W, G, H, G, V]
+    ],
+    heights: [
+      [0, 0, 1, 0, 0, 1, 2, 2, 0],
+      [0, 0, 1, 1, 1, 1, 2, 2, 2],
+      [0, 0, 1, 0, 0, 1, 1, 1, 1],
+      [0, 0, 1, 0, 0, 1, 1, 1, 1],
+      [0, 0, 1, 1, 1, 1, 2, 2, 2],
+      [0, 0, 1, 0, 0, 1, 2, 1, 0]
+    ],
+    heroSpawns: [[0, 1], [1, 1], [0, 4], [1, 4]],
+    objective: {
+      kind: 'rout',
+      label: 'Clear Mirage Oasis',
+      description: 'Defeat the desert vanguard holding the twin oasis bridges.'
+    },
+    enemies: [
+      { id: 'crypt_knight', col: 5, row: 1, levelScale: 1.25, name: 'Dune Sentinel' },
+      { id: 'ember_pyromancer', col: 7, row: 0, levelScale: 1.25, name: 'Sunfire Magus' },
+      { id: 'river_troll', col: 5, row: 4, levelScale: 1.25, name: 'Sandstone Brute' },
+      { id: 'bog_shaman', col: 8, row: 2, levelScale: 1.28, name: 'Mirage Mystic' },
+      { id: 'bone_archer', col: 8, row: 4, levelScale: 1.28, name: 'Desert Marksman' }
+    ]
   },
   {
     id: 'sunken_obelisk',
@@ -1935,23 +1969,53 @@ export const CHAPTERS: readonly ChapterSpec[] = [
     mapX: 0.25,
     mapY: 0.90,
     requires: ['mirage_oasis'],
-    comingSoon: true,
-    soonNote: 'Soon... Tier VI Mythic Vault · Quicksand Traps & Solar Constructs',
-    specialTag: 'Tier VI Soon',
+    specialTag: 'Tier VI Vault',
+    modifierDesc: '8x6 Sunken Reliquary · Seize Sun-Prism · Obelisk Cover & Cursed Altars',
     title: 'Sunken Obelisk',
     subtitle: 'Mythic Desert Reliquary',
-    biome: 'volcano',
+    biome: 'dunes',
     introSpeaker: 'Vesper',
-    introText: 'An ancient sun-prism sleeps half-buried beneath golden dunes.',
+    introText: 'An ancient sun-prism sleeps half-buried beneath golden dunes! Use the obelisk pillars to weather the sandstorm, claim the reliquary chest, and seize the prism.',
     outroSpeaker: 'Vesper',
-    outroText: 'The sun-prism awakens.',
+    outroText: 'The sun-prism awakens and blazes across the sand! Ahead rises the terraced Sunscar Pyramid of the Dune Sovereign.',
     rewardGold: 520,
     replayGold: 230,
     rewardEquipId: 'heart_of_solis',
     rewardHeroId: null,
-    grid: SOON_GRID,
-    heroSpawns: [[0, 1], [0, 2], [0, 3], [1, 2]],
-    enemies: [{ id: 'frost_golem', col: 5, row: 2 }, { id: 'crypt_knight', col: 5, row: 1 }, { id: 'bog_shaman', col: 5, row: 3 }]
+    grid: [
+      [V, S, H, P, H, H, S, V],
+      [G, T, S, A, S, T, H, S],
+      [G, S, P, S, S, P, S, R],
+      [G, S, S, S, A, S, T, S],
+      [G, T, S, P, S, S, H, S],
+      [V, S, H, H, H, S, S, V]
+    ],
+    heights: [
+      [0, 1, 2, 2, 2, 2, 1, 0],
+      [0, 1, 1, 1, 1, 2, 2, 2],
+      [0, 0, 1, 1, 1, 1, 2, 2],
+      [0, 0, 0, 1, 1, 1, 2, 2],
+      [0, 1, 1, 1, 1, 1, 2, 2],
+      [0, 1, 2, 2, 2, 1, 1, 0]
+    ],
+    heroSpawns: [[0, 1], [0, 2], [0, 3], [0, 4]],
+    objective: {
+      kind: 'seize',
+      label: 'Seize Sun-Prism Shrine',
+      description: 'Reach the Sun-Prism Shrine within 11 turns. Reliquary chests grant bonus gold!',
+      goalTile: { col: 7, row: 2 },
+      goalLabel: 'Sun-Prism Shrine',
+      chestTiles: [{ col: 3, row: 1 }, { col: 6, row: 4 }],
+      requiredChests: 0,
+      turnLimit: 11
+    },
+    enemies: [
+      { id: 'crypt_knight', col: 4, row: 2, levelScale: 1.32, name: 'Obelisk Guard' },
+      { id: 'frost_golem', col: 5, row: 3, levelScale: 1.30, name: 'Sandstone Construct' },
+      { id: 'ember_pyromancer', col: 6, row: 1, levelScale: 1.32, name: 'Solar Magus' },
+      { id: 'bone_necromancer', col: 7, row: 4, levelScale: 1.30, name: 'Tomb Acolyte' },
+      { id: 'ice_wraith', col: 6, row: 2, levelScale: 1.30, name: 'Mirage Wraith' }
+    ]
   },
   {
     id: 'dune_sovereign',
@@ -1963,25 +2027,54 @@ export const CHAPTERS: readonly ChapterSpec[] = [
     recommendedPower: 1780,
     mapX: 0.37,
     mapY: 0.91,
-    requires: ['sunken_obelisk', 'bone_cathedral'],
-    unlockMode: 'any',
-    comingSoon: true,
-    soonNote: 'Soon... Act IV Mythic Boss: Sandstorm Pharaoh & Twin Sphinxes',
+    requires: ['sunken_obelisk'],
     specialTag: 'Tier VI Boss',
+    modifierDesc: '9x7 Sunscar Pyramid · Boss: Dune Sovereign · Sandstorm Vortex',
     title: 'Sunscar Pyramid',
     subtitle: 'Mythic Boss: Dune Sovereign',
-    biome: 'volcano',
-    introSpeaker: 'Sir Aldric',
-    introText: 'A towering sandstone citadel guards the forgotten crown-vault.',
+    biome: 'dunes',
+    introSpeaker: 'Dune Sovereign',
+    introText: 'Mortals of the green valley, you trespass upon the Eternal Sands! Bow before the Sandstorm Vortex or be buried beneath the Sunscar!',
     outroSpeaker: 'Sir Aldric',
-    outroText: 'The desert throne yields.',
+    outroText: 'The gilded pharaoh-construct shatters! Its astral compass points skyward — the way to Tempest Spire in the Aether Isles is open!',
     rewardGold: 620,
     replayGold: 260,
     rewardEquipId: 'solis_crownblade',
     rewardHeroId: null,
-    grid: SOON_GRID,
-    heroSpawns: [[0, 1], [0, 2], [0, 3], [1, 2]],
-    enemies: [{ id: 'eclipse_archon', col: 5, row: 2 }, { id: 'frost_golem', col: 5, row: 1 }, { id: 'crypt_knight', col: 5, row: 3 }]
+    grid: [
+      [V, V, S, H, H, H, S, V, V],
+      [V, S, T, S, P, S, T, H, V],
+      [G, S, S, T, H, T, H, H, S],
+      [G, R, S, S, A, S, T, H, H],
+      [G, S, S, T, H, T, H, H, S],
+      [V, S, T, S, P, S, T, H, V],
+      [V, V, S, H, H, H, S, V, V]
+    ],
+    heights: [
+      [0, 0, 1, 2, 2, 2, 2, 0, 0],
+      [0, 0, 1, 2, 2, 2, 3, 3, 0],
+      [0, 0, 1, 2, 3, 3, 3, 4, 3],
+      [0, 0, 1, 2, 2, 3, 3, 4, 4],
+      [0, 0, 1, 2, 3, 3, 3, 4, 3],
+      [0, 0, 1, 2, 2, 2, 3, 3, 0],
+      [0, 0, 1, 2, 2, 2, 2, 0, 0]
+    ],
+    heroSpawns: [[0, 2], [0, 3], [0, 4], [1, 2]],
+    objective: {
+      kind: 'assassinate',
+      label: 'Slay Dune Sovereign',
+      description: 'Defeat the Dune Sovereign atop the Sunscar Pyramid.',
+      targetEnemyIndex: 0,
+      targetEnemyId: 'dune_sovereign_boss',
+      targetName: 'Dune Sovereign'
+    },
+    enemies: [
+      { id: 'dune_sovereign_boss', col: 7, row: 3 },
+      { id: 'crypt_knight', col: 5, row: 2, levelScale: 1.32, name: 'Pyramid Guard' },
+      { id: 'crypt_knight', col: 5, row: 4, levelScale: 1.32, name: 'Pyramid Guard' },
+      { id: 'ember_pyromancer', col: 7, row: 1, levelScale: 1.30, name: 'Solar Magus' },
+      { id: 'bone_necromancer', col: 7, row: 5, levelScale: 1.30, name: 'Tomb Priest' }
+    ]
   },
   {
     id: 'starfall_atoll',
@@ -2024,26 +2117,50 @@ export const CHAPTERS: readonly ChapterSpec[] = [
     recommendedPower: 1960,
     mapX: 0.88,
     mapY: 0.16,
-    requires: ['starfall_atoll', 'wyrm_eyrie'],
-    unlockMode: 'any',
+    requires: ['dune_sovereign'],
     seaRoute: true,
-    comingSoon: true,
-    soonNote: 'Soon... Tier VII Cataclysm Spire · Lightning Conduit Tiles & Storm Knights',
-    specialTag: 'Tier VII Soon',
+    specialTag: 'Tier VII Spire',
+    modifierDesc: '10x6 Sky-Bridge Terraces (H0–H4) · Lightning Conduit Strikes Every 2 Rounds',
     title: 'Tempest Spire',
     subtitle: 'Cataclysm Storm Tower',
-    biome: 'frost',
+    biome: 'aether',
     introSpeaker: 'Lyra',
-    introText: 'Eternal thunder arcs between floating basalt obelisks.',
+    introText: 'Eternal thunder arcs between floating alabaster sky-bridges! Watch the lightning conduits on even rounds as we climb four tiers toward the storm crest.',
     outroSpeaker: 'Lyra',
-    outroText: 'The storm spire falls quiet.',
+    outroText: 'The storm spire falls quiet! Ahead across the cloud chasm looms Skybreak Bastion and the Astral Warden.',
     rewardGold: 680,
     replayGold: 290,
     rewardEquipId: 'aegis_of_dawn',
     rewardHeroId: null,
-    grid: SOON_GRID,
-    heroSpawns: [[0, 1], [0, 2], [0, 3], [1, 2]],
-    enemies: [{ id: 'frost_golem', col: 5, row: 2 }, { id: 'eclipse_archon', col: 5, row: 1 }, { id: 'bog_shaman', col: 5, row: 3 }]
+    grid: [
+      [V, V, S, T, V, V, S, T, H, V],
+      [S, T, S, B, B, S, P, H, H, H],
+      [S, R, P, V, V, S, T, H, S, H],
+      [S, S, S, V, V, S, T, H, P, H],
+      [S, T, S, B, B, S, S, H, H, H],
+      [V, V, S, T, V, V, S, T, H, V]
+    ],
+    heights: [
+      [0, 0, 1, 2, 0, 0, 3, 3, 4, 0],
+      [0, 1, 1, 2, 2, 2, 3, 3, 4, 4],
+      [0, 0, 1, 0, 0, 2, 3, 3, 3, 4],
+      [0, 0, 1, 0, 0, 2, 3, 3, 3, 4],
+      [0, 1, 1, 2, 2, 2, 3, 3, 4, 4],
+      [0, 0, 1, 2, 0, 0, 3, 3, 4, 0]
+    ],
+    heroSpawns: [[0, 1], [0, 2], [0, 3], [0, 4]],
+    objective: {
+      kind: 'rout',
+      label: 'Conquer Tempest Spire',
+      description: 'Defeat the storm garrison across the vertical sky-bridge terraces.'
+    },
+    enemies: [
+      { id: 'frost_golem', col: 5, row: 1, levelScale: 1.38, name: 'Storm Colossus' },
+      { id: 'crypt_knight', col: 5, row: 4, levelScale: 1.38, name: 'Tempest Knight' },
+      { id: 'ice_wraith', col: 7, row: 1, levelScale: 1.40, name: 'Aether Wraith' },
+      { id: 'ember_pyromancer', col: 8, row: 0, levelScale: 1.40, name: 'Lightning Savant' },
+      { id: 'ember_pyromancer', col: 8, row: 5, levelScale: 1.40, name: 'Lightning Savant' }
+    ]
   },
   {
     id: 'skybreak_bastion',
@@ -2055,25 +2172,54 @@ export const CHAPTERS: readonly ChapterSpec[] = [
     recommendedPower: 2150,
     mapX: 0.93,
     mapY: 0.32,
-    requires: ['starfall_atoll', 'tempest_spire'],
-    unlockMode: 'any',
-    comingSoon: true,
-    soonNote: 'Soon... Act V Cataclysm Boss: Astral Warden atop Shattered Sky-Bridges',
+    requires: ['tempest_spire'],
     specialTag: 'Tier VII Boss',
+    modifierDesc: '10x7 Floating Citadel · Boss: Astral Warden · Starlight Lance & Tempest Surge',
     title: 'Skybreak Bastion',
     subtitle: 'Cataclysm Boss: Astral Warden',
-    biome: 'throne',
-    introSpeaker: 'Sir Aldric',
-    introText: 'Beyond Solis, the Astral Warden commands legions of star-forged knights.',
+    biome: 'aether',
+    introSpeaker: 'Astral Warden',
+    introText: 'You dare ascend the Skybreak Bastion? Let Starlight Lance and Tempest Surge cast your vanguard back into the cloud chasm!',
     outroSpeaker: 'Sir Aldric',
-    outroText: 'The sky-bridges hold.',
+    outroText: 'The Astral Warden salutes and lowers its wings — the outer chart to Obsidian Rift in the Shattered Expanse is ours!',
     rewardGold: 780,
     replayGold: 320,
     rewardEquipId: 'solis_crownblade',
     rewardHeroId: 'champion',
-    grid: SOON_GRID,
-    heroSpawns: [[0, 1], [0, 2], [0, 3], [1, 2]],
-    enemies: [{ id: 'eclipse_archon', col: 5, row: 2 }, { id: 'frost_golem', col: 5, row: 1 }, { id: 'crypt_knight', col: 5, row: 3 }]
+    grid: [
+      [V, V, V, S, H, H, S, V, V, V],
+      [V, S, T, B, S, P, T, H, S, V],
+      [S, S, P, V, S, T, H, H, H, S],
+      [S, R, T, B, S, S, T, H, H, H],
+      [S, S, P, V, S, T, H, H, H, S],
+      [V, S, T, B, S, P, T, H, S, V],
+      [V, V, V, S, H, H, S, V, V, V]
+    ],
+    heights: [
+      [0, 0, 0, 2, 2, 3, 3, 0, 0, 0],
+      [0, 1, 1, 2, 2, 3, 3, 4, 3, 0],
+      [0, 1, 1, 0, 2, 3, 3, 4, 4, 3],
+      [0, 0, 1, 2, 2, 2, 3, 4, 4, 4],
+      [0, 1, 1, 0, 2, 3, 3, 4, 4, 3],
+      [0, 1, 1, 2, 2, 3, 3, 4, 3, 0],
+      [0, 0, 0, 2, 2, 3, 3, 0, 0, 0]
+    ],
+    heroSpawns: [[0, 2], [0, 3], [0, 4], [1, 3]],
+    objective: {
+      kind: 'assassinate',
+      label: 'Slay Astral Warden',
+      description: 'Defeat the Astral Warden commanding Skybreak Bastion.',
+      targetEnemyIndex: 0,
+      targetEnemyId: 'astral_warden_boss',
+      targetName: 'Astral Warden'
+    },
+    enemies: [
+      { id: 'astral_warden_boss', col: 8, row: 3 },
+      { id: 'crypt_knight', col: 5, row: 2, levelScale: 1.42, name: 'Starlight Sentinel' },
+      { id: 'crypt_knight', col: 5, row: 4, levelScale: 1.42, name: 'Starlight Sentinel' },
+      { id: 'ice_wraith', col: 7, row: 1, levelScale: 1.42, name: 'Skybreak Wraith' },
+      { id: 'ember_pyromancer', col: 7, row: 5, levelScale: 1.42, name: 'Astral Conduit' }
+    ]
   },
   {
     id: 'abyssal_deep',
@@ -2116,26 +2262,50 @@ export const CHAPTERS: readonly ChapterSpec[] = [
     recommendedPower: 2240,
     mapX: 0.81,
     mapY: 0.74,
-    requires: ['eclipse_throne', 'molten_core'],
-    unlockMode: 'any',
+    requires: ['skybreak_bastion'],
     seaRoute: true,
-    comingSoon: true,
-    soonNote: 'Soon... Tier VII Outer Void Rift · Dual-Boss Vanguard Gauntlet',
-    specialTag: 'Tier VII Soon',
+    specialTag: 'Tier VII Rift',
+    modifierDesc: '10x6 Fractured Void Isles · Narrow Obsidian Spans · Astral Rift Pulses',
     title: 'Obsidian Rift',
     subtitle: 'Outer Void Crossing',
-    biome: 'throne',
+    biome: 'expanse',
     introSpeaker: 'Vesper',
-    introText: 'Where the ocean ends, shattered islands float over an endless eclipse.',
+    introText: 'Where the ocean ends, fractured obsidian shards float above an endless eclipse! Cross the narrow void spans and break the elite Rift Vanguard.',
     outroSpeaker: 'Vesper',
-    outroText: 'The outer rift stabilizes.',
+    outroText: 'The outer rift stabilizes! Beyond the last shattered monolith stands the First Sun Sanctum — the throne of The Unbroken Crown.',
     rewardGold: 820,
     replayGold: 340,
     rewardEquipId: 'heart_of_solis',
     rewardHeroId: null,
-    grid: SOON_GRID,
-    heroSpawns: [[0, 1], [0, 2], [0, 3], [1, 2]],
-    enemies: [{ id: 'eclipse_archon', col: 5, row: 2 }, { id: 'crypt_knight', col: 5, row: 1 }, { id: 'frost_golem', col: 5, row: 3 }]
+    grid: [
+      [V, D, S, V, V, D, H, V, V, V],
+      [D, S, T, B, D, T, A, B, D, H],
+      [D, R, D, V, D, P, D, V, T, H],
+      [D, S, D, V, D, S, D, V, T, H],
+      [D, S, T, B, D, T, A, B, D, H],
+      [V, D, S, V, V, D, H, V, V, V]
+    ],
+    heights: [
+      [0, 1, 1, 0, 0, 2, 2, 0, 0, 0],
+      [0, 1, 1, 2, 2, 2, 2, 3, 3, 3],
+      [0, 0, 1, 0, 2, 2, 2, 0, 3, 4],
+      [0, 0, 1, 0, 2, 2, 2, 0, 3, 4],
+      [0, 1, 1, 2, 2, 2, 2, 3, 3, 3],
+      [0, 1, 1, 0, 0, 2, 2, 0, 0, 0]
+    ],
+    heroSpawns: [[0, 1], [0, 2], [0, 3], [0, 4]],
+    objective: {
+      kind: 'rout',
+      label: 'Breach Obsidian Rift',
+      description: 'Defeat the elite Rift Vanguard across the fractured obsidian islands.'
+    },
+    enemies: [
+      { id: 'crypt_knight', col: 4, row: 2, levelScale: 1.48, name: 'Rift Vanguard' },
+      { id: 'crypt_knight', col: 4, row: 3, levelScale: 1.48, name: 'Rift Vanguard' },
+      { id: 'frost_golem', col: 6, row: 2, levelScale: 1.45, name: 'Obsidian Colossus' },
+      { id: 'bone_necromancer', col: 8, row: 1, levelScale: 1.48, name: 'Void Necromancer' },
+      { id: 'ember_pyromancer', col: 9, row: 3, levelScale: 1.50, name: 'Eclipse Savant' }
+    ]
   },
   {
     id: 'first_sun_sanctum',
@@ -2147,26 +2317,55 @@ export const CHAPTERS: readonly ChapterSpec[] = [
     recommendedPower: 2600,
     mapX: 0.91,
     mapY: 0.86,
-    requires: ['obsidian_rift', 'abyssal_deep', 'skybreak_bastion'],
-    unlockMode: 'any',
+    requires: ['obsidian_rift'],
     seaRoute: true,
-    comingSoon: true,
-    soonNote: 'Soon... Tier VIII Apex Endgame Raid · Beyond Act VI (Multi-Phase Sovereign)',
     specialTag: 'Tier VIII Apex',
+    modifierDesc: '10x7 Primordial Sanctum · 2-Phase Apex Raid Boss: The Unbroken Crown',
     title: 'First Sun Sanctum',
-    subtitle: 'Apex Raid: Unbroken Crown',
-    biome: 'throne',
-    introSpeaker: 'Sir Aldric',
-    introText: 'At the edge of all charts waits the primordial citadel of the First Sun.',
+    subtitle: 'Apex Raid: The Unbroken Crown',
+    biome: 'expanse',
+    introSpeaker: 'The Unbroken Crown',
+    introText: 'Before Solis, before the Eclipse, I burned eternal! Strike me down if you can — at half strength the Solar Eclipse awakens!',
     outroSpeaker: 'Sir Aldric',
-    outroText: 'A new age dawns beyond the horizon.',
+    outroText: 'The Unbroken Crown yields to a new dawn! From Sunbleached Dunes to the Shattered Expanse, the Outer Frontier belongs to Solis!',
     rewardGold: 1200,
     replayGold: 450,
     rewardEquipId: 'solis_crownblade',
     rewardHeroId: 'champion',
-    grid: SOON_GRID,
-    heroSpawns: [[0, 1], [0, 2], [0, 3], [1, 2]],
-    enemies: [{ id: 'eclipse_archon', col: 5, row: 2 }, { id: 'eclipse_archon', col: 5, row: 1 }, { id: 'frost_golem', col: 5, row: 3 }]
+    grid: [
+      [V, V, V, D, H, H, D, V, V, V],
+      [V, D, T, B, A, P, T, H, D, V],
+      [D, S, D, V, D, T, H, H, H, D],
+      [D, R, T, B, D, S, T, H, H, H],
+      [D, S, D, V, D, T, H, H, H, D],
+      [V, D, T, B, A, P, T, H, D, V],
+      [V, V, V, D, H, H, D, V, V, V]
+    ],
+    heights: [
+      [0, 0, 0, 2, 2, 3, 3, 0, 0, 0],
+      [0, 1, 1, 2, 2, 3, 3, 4, 3, 0],
+      [0, 1, 1, 0, 2, 3, 3, 4, 4, 3],
+      [0, 0, 1, 2, 2, 2, 3, 4, 4, 4],
+      [0, 1, 1, 0, 2, 3, 3, 4, 4, 3],
+      [0, 1, 1, 2, 2, 3, 3, 4, 3, 0],
+      [0, 0, 0, 2, 2, 3, 3, 0, 0, 0]
+    ],
+    heroSpawns: [[0, 2], [0, 3], [0, 4], [1, 3]],
+    objective: {
+      kind: 'assassinate',
+      label: 'Shatter The Unbroken Crown',
+      description: 'Defeat The Unbroken Crown across both raid phases to claim the First Sun Sanctum.',
+      targetEnemyIndex: 0,
+      targetEnemyId: 'unbroken_crown_boss',
+      targetName: 'The Unbroken Crown'
+    },
+    enemies: [
+      { id: 'unbroken_crown_boss', col: 8, row: 3 },
+      { id: 'crypt_knight', col: 5, row: 2, levelScale: 1.50, name: 'Crownblade Warden' },
+      { id: 'crypt_knight', col: 5, row: 4, levelScale: 1.50, name: 'Crownblade Warden' },
+      { id: 'bone_necromancer', col: 7, row: 1, levelScale: 1.50, name: 'Solar Archivist' },
+      { id: 'ember_pyromancer', col: 7, row: 5, levelScale: 1.50, name: 'Eclipse Hierophant' }
+    ]
   }
 ]
 

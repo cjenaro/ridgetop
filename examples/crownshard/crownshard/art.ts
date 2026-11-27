@@ -246,7 +246,8 @@ const HERO_IDS: readonly HeroClassId[] = [
 const ENEMY_IDS: readonly EnemyArchetypeId[] = [
   'goblin', 'bone_archer', 'orc_brute', 'bog_shaman', 'crypt_knight', 'frost_golem', 'eclipse_archon',
   'ember_pyromancer', 'ice_wraith', 'bone_necromancer', 'bone_thrall', 'river_troll',
-  'briar_warlord', 'mire_matriarch', 'ash_inquisitor', 'frost_jarl', 'magma_warden'
+  'briar_warlord', 'mire_matriarch', 'ash_inquisitor', 'frost_jarl', 'magma_warden',
+  'dune_sovereign_boss', 'astral_warden_boss', 'unbroken_crown_boss'
 ]
 
 /** DOM-free bust portraits for every hero and enemy rig (usable from Node tools, tests, and packagers). */
@@ -549,6 +550,114 @@ export const BIOME_STYLES: Record<BiomeId, BiomeStyle> = {
     treeTiers: [color('3e2d59'), color('563e78'), color('76589e')],
     treeAccentTiers: [color('946d34'), color('bd8d3e'), color('e0b152')],
     propGlow: C_SHADOW_GLOW
+  },
+  dunes: {
+    sky: color('c9995b'),
+    fog: [0.76, 0.59, 0.37],
+    lightDir: [-0.58, 0.84, 0.36],
+    lightColor: [1.0, 0.93, 0.76],
+    ambient: 0.52,
+    skyBounce: [0.88, 0.76, 0.56],
+    groundBounce: [0.64, 0.48, 0.28],
+    shadowTint: [0.34, 0.24, 0.18],
+    baseStone: color('c99c61'),
+    cliff: color('8c6238'),
+    tileEarth: color('ad7b45'),
+    tiles: {
+      grass: [color('e3be78'), color('d6b069')],
+      stone: [color('d4b483'), color('c4a372')],
+      hill: [color('f0ce86'), color('e0bc75')],
+      bridge: [color('a86c3c'), color('965d32')],
+      water: [color('2aa3ad'), color('218f99')],
+      shrine: [color('ffe58a'), color('f0d173')],
+      pillar: [color('d9b477'), color('c49e62')],
+      lava: [color('eb632d'), color('d65322')],
+      snow: [color('f5e6c4'), color('e6d4b0')],
+      darkstone: [color('78583c'), color('694b32')],
+      stairs: [color('e0c088'), color('cfaf78')],
+      void: [color('382618'), color('2b1d12')],
+      lava_geyser: [color('6b422a'), color('593622')],
+      ice: [color('94e6eb'), color('7cd4db')],
+      cursed_altar: [color('633d5e'), color('52314e')],
+      tall_grass: [color('7fa852'), color('6e9645')],
+      barricade: [color('c9a571'), color('b89460')]
+    },
+    treeColor: color('4a8c4e'),
+    treeTiers: [color('387340'), color('4f9452'), color('70b565')],
+    treeAccentTiers: [color('b57f38'), color('d49c48'), color('ebb85e')],
+    propGlow: C_GOLD_BRIGHT
+  },
+  aether: {
+    sky: color('476ca8'),
+    fog: [0.32, 0.48, 0.72],
+    lightDir: [-0.46, 0.86, 0.42],
+    lightColor: [0.96, 0.98, 1.0],
+    ambient: 0.54,
+    skyBounce: [0.68, 0.86, 1.0],
+    groundBounce: [0.46, 0.56, 0.76],
+    shadowTint: [0.22, 0.30, 0.52],
+    baseStone: color('cbd9eb'),
+    cliff: color('7b91b3'),
+    tileEarth: color('a5b8d4'),
+    tiles: {
+      grass: [color('b8d9eb'), color('a6cce0')],
+      stone: [color('e8eff7'), color('d8e3f0')],
+      hill: [color('f5f8fc'), color('e3ecf7')],
+      bridge: [color('d9b766'), color('c7a454')],
+      water: [color('45b8db'), color('38a3c7')],
+      shrine: [color('8af7ff'), color('72e3f0')],
+      pillar: [color('dce7f5'), color('c7d6eb')],
+      lava: [color('eb632d'), color('d65322')],
+      snow: [color('f0f7ff'), color('e0edfa')],
+      darkstone: [color('5c7296'), color('4e6385')],
+      stairs: [color('dde7f5'), color('cad8eb')],
+      void: [color('1c2e4f'), color('152440')],
+      lava_geyser: [color('4a4a6e'), color('3d3d5c')],
+      ice: [color('9ceeff'), color('82e0f7')],
+      cursed_altar: [color('4b3d7a'), color('3e3269')],
+      tall_grass: [color('58b3a8'), color('4a9e94')],
+      barricade: [color('dce7f5'), color('c7d6eb')]
+    },
+    treeColor: color('66b8d4'),
+    treeTiers: [color('4e97bd'), color('70bde0'), color('b8ecff')],
+    treeAccentTiers: [color('c9a44b'), color('e6c05e'), color('ffe58a')],
+    propGlow: C_CYAN
+  },
+  expanse: {
+    sky: color('160f29'),
+    fog: [0.10, 0.07, 0.19],
+    lightDir: [-0.44, 0.82, 0.40],
+    lightColor: [1.0, 0.88, 0.72],
+    ambient: 0.40,
+    skyBounce: [0.46, 0.30, 0.68],
+    groundBounce: [0.38, 0.24, 0.18],
+    shadowTint: [0.12, 0.08, 0.22],
+    baseStone: color('3c3054'),
+    cliff: color('241b36'),
+    tileEarth: color('302445'),
+    tiles: {
+      grass: [color('413259'), color('372a4d')],
+      stone: [color('50406b'), color('45365e')],
+      hill: [color('6b507d'), color('5e4570')],
+      bridge: [color('c9963e'), color('b38332')],
+      water: [color('2e1d52'), color('241642')],
+      shrine: [color('ffde73'), color('ebc75b')],
+      pillar: [color('3b2c52'), color('312445')],
+      lava: [color('f06230'), color('d95022')],
+      snow: [color('7c6b96'), color('6d5d85')],
+      darkstone: [color('2d2240'), color('251c36')],
+      stairs: [color('8c6c8f'), color('785b7a')],
+      void: [color('0c0717'), color('080410')],
+      lava_geyser: [color('472236'), color('3b1b2c')],
+      ice: [color('78b8e0'), color('65a3cc')],
+      cursed_altar: [color('4f246e'), color('401c5c')],
+      tall_grass: [color('4e3a6b'), color('42305c')],
+      barricade: [color('50406b'), color('45365e')]
+    },
+    treeColor: color('6e4a8c'),
+    treeTiers: [color('442b63'), color('68438f'), color('a678cc')],
+    treeAccentTiers: [color('b57a28'), color('de9c35'), color('ffcf5c')],
+    propGlow: C_GOLD_BRIGHT
   }
 }
 
@@ -779,6 +888,18 @@ export function buildStaticBoardBatches(biome: BiomeId, cells: GridCell[][]): {
           cones.add([wx, baseY + 0.86, wz], [0.54, 1.24, 0.54], h * 1.2, C_ICE)
           cones.add([wx + 0.24, baseY + 0.54, wz + 0.18], [0.24, 0.62, 0.24], 0.4, C_ICE_DEEP)
           crystals.add([wx, baseY + 1.56, wz], [0.24, 0.36, 0.24], 0, C_CYAN, 0.85)
+        } else if (biome === 'dunes') {
+          bevelProps.add([wx, baseY + 0.78, wz], [0.58, 1.10, 0.58], 0, tint)
+          rings.add([wx, baseY + 0.86, wz], [0.50, 0.12, 0.50], 0, C_GOLD)
+          cones.add([wx, baseY + 1.54, wz], [0.46, 0.42, 0.46], Math.PI * 0.25, C_GOLD_BRIGHT, 0.72)
+        } else if (biome === 'aether') {
+          cyls.add([wx, baseY + 0.78, wz], [0.34, 1.06, 0.34], 0, C_IVORY)
+          rings.add([wx, baseY + 0.96, wz], [0.54, 0.12, 0.54], 0, C_GOLD)
+          crystals.add([wx, baseY + 1.58, wz], [0.26, 0.48, 0.26], h, C_CYAN, 0.96)
+        } else if (biome === 'expanse') {
+          bevelProps.add([wx, baseY + 0.80, wz], [0.52, 1.14, 0.52], h * 0.4, C_OBSIDIAN)
+          rings.add([wx, baseY + 0.90, wz], [0.56, 0.12, 0.56], 0, C_GOLD)
+          crystals.add([wx, baseY + 1.62, wz], [0.24, 0.46, 0.24], h, C_SHADOW_GLOW, 0.96)
         } else {
           cyls.add([wx, baseY + 0.78, wz], [0.38, 1.02, 0.38], 0, tint)
           rings.add([wx, baseY + 0.78, wz], [0.46, 0.14, 0.46], 0, style.baseStone)
@@ -1048,6 +1169,92 @@ export function buildStaticBoardBatches(biome: BiomeId, cells: GridCell[][]): {
       const [cx, cz, sc] = crags[i]
       bevelProps.add([cx, 0.28 * sc, cz], [0.85 * sc, 1.65 * sc, 0.78 * sc], i * 0.45, style.cliff)
       crystals.add([cx, 1.25 * sc, cz], [0.24, 0.44, 0.24], i, C_EMBER, 0.96)
+    }
+  } else if (biome === 'dunes') {
+    // SUNBLEACHED DUNES: Sandstone Obelisks, Sunscar Ruin Arches, Desert Braziers & Oasis Palms
+    const obeliskXs = [-halfW * 0.76, -halfW * 0.24, halfW * 0.24, halfW * 0.76]
+    for (let i = 0; i < obeliskXs.length; i++) {
+      const ox = obeliskXs[i]
+      const tall = i === 1 || i === 2 ? 2.75 : 2.10
+      tileBases.add([ox, -0.52, backZ - 0.18], [1.75, 1.75, 1.45], 0, style.cliff)
+      bevelProps.add([ox, 0.35 + tall * 0.5, backZ - 0.18], [0.76, tall, 0.76], 0, style.baseStone)
+      rings.add([ox, 0.45 + tall * 0.65, backZ - 0.18], [0.64, 0.14, 0.64], 0, C_GOLD)
+      cones.add([ox, 0.56 + tall, backZ - 0.18], [0.58, 0.55, 0.58], Math.PI * 0.25, C_GOLD_BRIGHT, 0.82)
+      brazierPositions.push([ox, 0.72 + tall, backZ - 0.18])
+    }
+    // Central weathered Sandstone Ruin Archway
+    arches.add([0, 1.35, backZ - 0.22], [2.65, 2.05, 0.46], 0, style.tiles.stone[0])
+    copings.add([0, 2.48, backZ - 0.22], [2.95, 0.18, 0.58], 0, C_GOLD)
+    // Flanking Oasis Palms & Sandstone Braziers
+    const flankSpots: readonly [number, number][] = [
+      [-sideX - 0.10, -halfD * 0.48],
+      [sideX + 0.10, -halfD * 0.48],
+      [-sideX - 0.12, halfD * 0.42],
+      [sideX + 0.12, halfD * 0.42]
+    ]
+    for (let i = 0; i < flankSpots.length; i++) {
+      const [fx, fz] = flankSpots[i]
+      addLayeredTree(trunks, foliageTiers, foliageTips, fx, -0.26, fz, 1.08, i % 2 === 0 ? style.treeTiers : style.treeAccentTiers, C_WOOD_WARM, i * 1.1, true)
+      addRockCluster(pills, pebbles, fx + (i % 2 === 0 ? 0.52 : -0.52), -0.26, fz + 0.35, 0.82, style.baseStone, style.cliff, i + 2.1)
+    }
+  } else if (biome === 'aether') {
+    // AETHER ISLES: Floating Alabaster Sky-Spires, Glowing Cyan-Gold Lightning Conduits & Cloud Arches
+    const spireXs = [-halfW * 0.78, -halfW * 0.26, halfW * 0.26, halfW * 0.78]
+    for (let i = 0; i < spireXs.length; i++) {
+      const sx = spireXs[i]
+      const hoverY = i === 1 || i === 2 ? 0.65 : 0.25
+      const tall = i === 1 || i === 2 ? 2.65 : 2.05
+      // Floating tapered alabaster crystal island base
+      cones.add([sx, hoverY - 0.55, backZ - 0.25], [1.15, 1.25, 1.15], quaternionFromEuler(Math.PI, i * 0.6, 0), style.cliff)
+      tileCaps.add([sx, hoverY + 0.12, backZ - 0.25], [1.65, 0.22, 1.45], 0, C_IVORY)
+      cyls.add([sx, hoverY + 0.25 + tall * 0.5, backZ - 0.25], [0.34, tall, 0.34], 0, C_IVORY)
+      rings.add([sx, hoverY + 0.45 + tall * 0.6, backZ - 0.25], [0.68, 0.14, 0.68], 0, C_GOLD_BRIGHT, 0.65)
+      crystals.add([sx, hoverY + 0.58 + tall, backZ - 0.25], [0.34, 0.64, 0.34], i * 0.8, C_CYAN, 0.98)
+      brazierPositions.push([sx, hoverY + 0.75 + tall, backZ - 0.25])
+    }
+    // Celestial Alabaster Sky-Arch linking central conduits
+    arches.add([0, 1.95, backZ - 0.28], [3.10, 2.25, 0.42], 0, C_IVORY)
+    copings.add([0, 3.12, backZ - 0.28], [3.35, 0.14, 0.52], 0, C_GOLD_BRIGHT, 0.72)
+    // Flanking floating lightning pylons
+    const pylonSpots: readonly [number, number][] = [
+      [-sideX - 0.18, -halfD * 0.44],
+      [sideX + 0.18, -halfD * 0.44],
+      [-sideX - 0.15, halfD * 0.44],
+      [sideX + 0.15, halfD * 0.44]
+    ]
+    for (let i = 0; i < pylonSpots.length; i++) {
+      const [px, pz] = pylonSpots[i]
+      bevelProps.add([px, 0.18, pz], [0.76, 1.05, 0.76], 0, C_IVORY)
+      rings.add([px, 0.85, pz], [0.62, 0.12, 0.62], 0, C_GOLD)
+      crystals.add([px, 1.38, pz], [0.28, 0.56, 0.28], i * 0.9, C_CYAN, 0.96)
+    }
+  } else if (biome === 'expanse') {
+    // SHATTERED EXPANSE: Fractured Obsidian Monoliths, Molten Gold-Violet Void Shards & First Sun Crown Dais
+    const daisZ = backZ - 0.30
+    tileBases.add([0, -0.35, daisZ], [5.8, 2.15, 2.5], 0, C_OBSIDIAN)
+    copings.add([0, 0.80, daisZ], [6.0, 0.14, 2.65], 0, C_GOLD_BRIGHT, 0.78)
+    arches.add([0, 2.45, daisZ - 0.52], [3.15, 2.55, 0.48], 0, C_OBSIDIAN)
+    crowns.add([0, 3.55, daisZ - 0.28], [0.96, 0.76, 0.96], 0, C_GOLD_BRIGHT, 0.98)
+    crystals.add([0, 4.18, daisZ - 0.28], [0.30, 0.58, 0.30], 0, C_SHADOW_GLOW, 0.98)
+    brazierPositions.push([0, 3.95, daisZ - 0.20])
+
+    // Fractured Shattered Crown Monoliths orbiting the back and flanks
+    const monoliths: readonly [number, number, number, number][] = [
+      [-halfW * 0.82, backZ - 0.22, 1.35, 0.18],
+      [-halfW * 0.38, backZ - 0.38, 1.55, -0.14],
+      [halfW * 0.38, backZ - 0.38, 1.55, 0.14],
+      [halfW * 0.82, backZ - 0.22, 1.35, -0.18],
+      [-sideX - 0.22, -halfD * 0.35, 1.25, 0.22],
+      [sideX + 0.22, -halfD * 0.35, 1.25, -0.22],
+      [-sideX - 0.18, halfD * 0.42, 1.12, -0.16],
+      [sideX + 0.18, halfD * 0.42, 1.12, 0.16]
+    ]
+    for (let i = 0; i < monoliths.length; i++) {
+      const [mx, mz, sc, tilt] = monoliths[i]
+      bevelProps.add([mx, 0.52 * sc, mz], [0.76 * sc, 2.05 * sc, 0.68 * sc], quaternionFromEuler(tilt, i * 0.7, -tilt * 0.6), C_OBSIDIAN)
+      rings.add([mx, 1.18 * sc, mz], [0.62 * sc, 0.12, 0.62 * sc], 0, C_GOLD, 0.75)
+      crystals.add([mx, 1.88 * sc, mz], [0.26, 0.52, 0.26], i, i % 2 === 0 ? C_GOLD_BRIGHT : C_SHADOW_GLOW, 0.98)
+      if (i < 4) brazierPositions.push([mx, 1.92 * sc, mz])
     }
   } else {
     // THRONE: Grand Obsidian Throne Dais, Gothic Spires, Floating Eclipse Crown & Royal Banners

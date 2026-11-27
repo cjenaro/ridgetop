@@ -54,6 +54,10 @@ export type EnemySpecialMoveKind =
   | 'frost_breath'
   | 'magma_slam'
   | 'eclipse_nova'
+  | 'sandstorm_vortex'
+  | 'tempest_surge'
+  | 'solar_corona'
+  | 'eclipse_cataclysm'
 
 export interface TurnStartRegenResult {
   readonly amount: number
@@ -126,6 +130,9 @@ export function getEnemyBiomeAffinity(enemyId: EnemyArchetypeId): BiomeId {
   }
   if (enemyId === 'river_troll' || enemyId === 'bog_shaman' || enemyId === 'mire_matriarch') return 'river'
   if (enemyId === 'eclipse_archon') return 'throne'
+  if (enemyId === 'dune_sovereign_boss') return 'dunes'
+  if (enemyId === 'astral_warden_boss') return 'aether'
+  if (enemyId === 'unbroken_crown_boss') return 'expanse'
   return 'meadow'
 }
 
@@ -134,10 +141,12 @@ export function getEnemyProjectileStyle(
   enemyId?: EnemyArchetypeId
 ): 'arrow' | 'fire' | 'frost' | 'shadow' | 'arcane' {
   if (enemyId === 'bone_archer') return 'arrow'
-  if (enemyId === 'ember_pyromancer' || enemyId === 'magma_warden') return 'fire'
+  if (enemyId === 'ember_pyromancer' || enemyId === 'magma_warden' || enemyId === 'dune_sovereign_boss') return 'fire'
   if (enemyId === 'ice_wraith' || enemyId === 'frost_jarl') return 'frost'
+  if (enemyId === 'astral_warden_boss') return 'arcane'
   if (
     enemyId === 'eclipse_archon' ||
+    enemyId === 'unbroken_crown_boss' ||
     enemyId === 'bog_shaman' ||
     enemyId === 'bone_necromancer' ||
     enemyId === 'ash_inquisitor' ||
@@ -153,10 +162,10 @@ export function getEnemyBasicAttackStatus(enemyId?: EnemyArchetypeId): EnemyBasi
   if (enemyId === 'bog_shaman' || enemyId === 'mire_matriarch') {
     return { status: 'poison', stacks: 2 }
   }
-  if (enemyId === 'ember_pyromancer' || enemyId === 'magma_warden') {
+  if (enemyId === 'ember_pyromancer' || enemyId === 'magma_warden' || enemyId === 'unbroken_crown_boss') {
     return { status: 'burn' }
   }
-  if (enemyId === 'ice_wraith' || enemyId === 'frost_jarl') {
+  if (enemyId === 'ice_wraith' || enemyId === 'frost_jarl' || enemyId === 'dune_sovereign_boss' || enemyId === 'astral_warden_boss') {
     return { status: 'slow' }
   }
   return null
@@ -164,9 +173,10 @@ export function getEnemyBasicAttackStatus(enemyId?: EnemyArchetypeId): EnemyBasi
 
 /** Elemental affinity of an enemy's basic attack for Wave 4 elemental combos. */
 export function getEnemyAttackElement(enemyId?: EnemyArchetypeId): ElementKind | null {
-  if (enemyId === 'ember_pyromancer' || enemyId === 'magma_warden') return 'fire'
+  if (enemyId === 'ember_pyromancer' || enemyId === 'magma_warden' || enemyId === 'unbroken_crown_boss') return 'fire'
   if (enemyId === 'ice_wraith' || enemyId === 'frost_jarl') return 'frost'
   if (enemyId === 'bog_shaman' || enemyId === 'mire_matriarch') return 'poison'
+  if (enemyId === 'astral_warden_boss') return 'arcane'
   return null
 }
 
@@ -375,7 +385,7 @@ export function createSummonedEnemyUnit(
  */
 export function chooseEnemySpecialMove(
   battle: Pick<BattleState, 'turn'>,
-  enemy: Pick<BattleUnit, 'enemyId' | 'isBoss' | 'cooldowns'>
+  enemy: Pick<BattleUnit, 'enemyId' | 'isBoss' | 'cooldowns' | 'bossPhase'>
 ): EnemySpecialDecision | null {
   const eid = enemy.enemyId
 
@@ -474,6 +484,64 @@ export function chooseEnemySpecialMove(
       element: 'fire',
       knockbackDistance: 1,
       label: 'MAGMA SLAM!'
+    }
+  }
+
+  // Outer Frontier Raid Bosses (Tiers VI-VIII)
+  if (eid === 'dune_sovereign_boss' && enemy.cooldowns[0] <= 0) {
+    return {
+      move: 'sandstorm_vortex',
+      vfxMove: 'titan_slam',
+      cooldownTurns: MINIBOSS_SPECIAL_COOLDOWN,
+      pattern: 'cross',
+      powerMul: 1.25,
+      ignoreArmor: 0.35,
+      status: 'slow',
+      knockbackDistance: 1,
+      label: 'SANDSTORM VORTEX!'
+    }
+  }
+
+  if (eid === 'astral_warden_boss' && enemy.cooldowns[0] <= 0) {
+    return {
+      move: 'tempest_surge',
+      vfxMove: 'frostwyrm_breath',
+      cooldownTurns: MINIBOSS_SPECIAL_COOLDOWN,
+      pattern: 'cross',
+      powerMul: 1.30,
+      ignoreArmor: 0.40,
+      status: 'stun',
+      element: 'arcane',
+      knockbackDistance: 1,
+      label: 'TEMPEST SURGE!'
+    }
+  }
+
+  if (eid === 'unbroken_crown_boss' && enemy.cooldowns[0] <= 0) {
+    if ((enemy.bossPhase ?? 1) >= 2) {
+      return {
+        move: 'eclipse_cataclysm',
+        vfxMove: 'eclipse_nova',
+        cooldownTurns: MINIBOSS_SPECIAL_COOLDOWN,
+        pattern: 'cross',
+        powerMul: 1.45,
+        ignoreArmor: 0.45,
+        status: 'burn',
+        element: 'fire',
+        knockbackDistance: 1,
+        label: 'SOLAR ECLIPSE CORONA!'
+      }
+    }
+    return {
+      move: 'solar_corona',
+      vfxMove: 'eclipse_nova',
+      cooldownTurns: MINIBOSS_SPECIAL_COOLDOWN,
+      pattern: 'cross',
+      powerMul: 1.25,
+      ignoreArmor: 0.35,
+      status: 'burn',
+      element: 'fire',
+      label: 'SOLAR CORONA!'
     }
   }
 
