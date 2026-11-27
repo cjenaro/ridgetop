@@ -117,12 +117,12 @@ function parseOtaPrivateKey(privateKeyInput: string) {
   const pemMatch = /-----BEGIN PRIVATE KEY-----([\s\S]*?)-----END PRIVATE KEY-----/.exec(normalized)
   const b64Body = (pemMatch ? pemMatch[1] : normalized).replace(/\s+/g, '')
   if (!b64Body) {
-    throw new Error('Invalid OTA signing key: empty key. Generate one with "pnpm run ota:keygen" and paste the full PRIVATE KEY block.')
+    throw new Error('Invalid OTA signing key: empty key. Generate one with `ridgetop ota-keygen` and paste the full PRIVATE KEY block.')
   }
   try {
     return createPrivateKey({ key: Buffer.from(b64Body, 'base64'), format: 'der', type: 'pkcs8' })
   } catch {
-    throw new Error('Invalid OTA signing key: expected an Ed25519 PKCS#8 private key (from "pnpm run ota:keygen", including the -----BEGIN PRIVATE KEY----- block).')
+    throw new Error('Invalid OTA signing key: expected an Ed25519 PKCS#8 private key (generated with `ridgetop ota-keygen`, including the -----BEGIN PRIVATE KEY----- block).')
   }
 }
 

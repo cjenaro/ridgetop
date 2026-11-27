@@ -137,11 +137,24 @@ private final class OtaSessionDelegate: NSObject, URLSessionDownloadDelegate {
     let allowLocalHttp: Bool
     let allowedHost: String
     let maxZipBytes: Int64
+    let ownedDestination: URL
+    private let completion: (URL?, URLResponse?, Error?) -> Void
+    private var movedUrl: URL?
+    private var moveError: Error?
+    private var finished = false
 
-    init(allowLocalHttp: Bool, allowedHost: String, maxZipBytes: Int64) {
+    init(
+        allowLocalHttp: Bool,
+        allowedHost: String,
+        maxZipBytes: Int64,
+        ownedDestination: URL,
+        completion: @escaping (URL?, URLResponse?, Error?) -> Void
+    ) {
         self.allowLocalHttp = allowLocalHttp
         self.allowedHost = allowedHost
         self.maxZipBytes = maxZipBytes
+        self.ownedDestination = ownedDestination
+        self.completion = completion
     }
 
     func urlSession(
@@ -171,7 +184,27 @@ private final class OtaSessionDelegate: NSObject, URLSessionDownloadDelegate {
     }
 
     func urlSession(_ session: URLSession, downloadTask: URLSessionDownloadTask, didFinishDownloadingTo location: URL) {
-        // Completion-handler downloadTask handles the file synchronously.
+        let attrs = try? FileManager.default.attributesOfItem(atPath: location.path)
+        let fileSize = (attrs?[.size] as? NSNumber)?.int64Value ?? 0
+        guard fileSize > 0 && fileSize <= maxZipBytes else {
+            try? FileManager.default.removeItem(at: location)
+            moveError = NSError(domain: "RidgetopOta", code: 20, userInfo: [NSLocalizedDescriptionKey: "OTA bundle size out of allowed bounds"])
+            return
+        }
+        do {
+            try FileManager.default.moveItem(at: location, to: ownedDestination)
+            movedUrl = ownedDestination
+        } catch {
+            try? FileManager.default.removeItem(at: location)
+            moveError = error
+        }
+    }
+
+    func urlSession(_ session: URLSession, task: URLSessionTask, didCompleteWithError error: Error?) {
+        guard !finished else { return }
+        finished = true
+        session.finishTasksAndInvalidate()
+        completion(movedUrl, task.response, error ?? moveError)
     }
 }
 
@@ -428,50 +461,35 @@ public class RidgetopOtaPlugin: CAPPlugin, CAPBridgedPlugin {
         config.timeoutIntervalForRequest = 15
         config.timeoutIntervalForResource = 60
 
+        let ownedZipUrl = self.bundlesRoot.appendingPathComponent(".tmp-dl-\\(UUID().uuidString).zip")
         let delegate = OtaSessionDelegate(
             allowLocalHttp: allowLocalHttp,
             allowedHost: Self.allowedHost,
-            maxZipBytes: Int64(Self.maxZipBytes)
-        )
-        let session = URLSession(configuration: config, delegate: delegate, delegateQueue: nil)
-
-        let task = session.downloadTask(with: url) { [weak self] tempFileUrl, response, error in
-            defer { session.finishTasksAndInvalidate() }
-            guard let self = self else { return }
+            maxZipBytes: Int64(Self.maxZipBytes),
+            ownedDestination: ownedZipUrl
+        ) { [weak self] movedUrl, response, error in
+            guard let self = self else {
+                try? FileManager.default.removeItem(at: ownedZipUrl)
+                return
+            }
             if let error = error {
+                try? FileManager.default.removeItem(at: ownedZipUrl)
                 call.reject("Download failed: \\(error.localizedDescription)")
                 return
             }
             guard let http = response as? HTTPURLResponse, (200...299).contains(http.statusCode) else {
+                try? FileManager.default.removeItem(at: ownedZipUrl)
                 call.reject("Download failed with non-2xx HTTP response")
                 return
             }
-            guard let downloadedUrl = tempFileUrl else {
+            guard let readyZipUrl = movedUrl else {
                 call.reject("Empty OTA bundle response")
                 return
             }
 
-            let attrs = try? FileManager.default.attributesOfItem(atPath: downloadedUrl.path)
-            let fileSize = (attrs?[.size] as? NSNumber)?.intValue ?? 0
-            guard fileSize > 0 && fileSize <= Self.maxZipBytes else {
-                try? FileManager.default.removeItem(at: downloadedUrl)
-                call.reject("OTA bundle size out of allowed bounds")
-                return
-            }
-
-            // Synchronously move the URLSession temp file to an owned path before returning from the handler.
-            let ownedZipUrl = self.bundlesRoot.appendingPathComponent(".tmp-dl-\\(UUID().uuidString).zip")
-            do {
-                try FileManager.default.moveItem(at: downloadedUrl, to: ownedZipUrl)
-            } catch {
-                try? FileManager.default.removeItem(at: downloadedUrl)
-                call.reject("Could not persist downloaded OTA bundle")
-                return
-            }
-
             self.workQueue.async {
-                defer { try? FileManager.default.removeItem(at: ownedZipUrl) }
-                guard let zipData = try? Data(contentsOf: ownedZipUrl) else {
+                defer { try? FileManager.default.removeItem(at: readyZipUrl) }
+                guard let zipData = try? Data(contentsOf: readyZipUrl) else {
                     call.reject("Could not read downloaded OTA bundle")
                     return
                 }
@@ -511,6 +529,8 @@ public class RidgetopOtaPlugin: CAPPlugin, CAPBridgedPlugin {
                 }
             }
         }
+        let session = URLSession(configuration: config, delegate: delegate, delegateQueue: nil)
+        let task = session.downloadTask(with: url)
         task.resume()
     }
 

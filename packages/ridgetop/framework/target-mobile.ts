@@ -65,6 +65,7 @@ export function renderMobileBridgeJs(orientation: MobileOrientation, ota?: Mobil
   let bootErrorCount = 0
   let otaConfirmed = false
   let prefsOverridden = false
+  let autoConfirmTimer = null
 
   globalThis.addEventListener('error', function () { bootErrorCount++ })
   globalThis.addEventListener('unhandledrejection', function () { bootErrorCount++ })
@@ -356,7 +357,12 @@ export function renderMobileBridgeJs(orientation: MobileOrientation, ota?: Mobil
       },
       applyUpdate: async function (options) {
         if (!plugins.RidgetopOta || typeof plugins.RidgetopOta.apply !== 'function') return false
-        const res = await plugins.RidgetopOta.apply({ reload: options && options.reload === false ? false : true })
+        const shouldReload = !(options && options.reload === false)
+        if (shouldReload && autoConfirmTimer !== null) {
+          clearTimeout(autoConfirmTimer)
+          autoConfirmTimer = null
+        }
+        const res = await plugins.RidgetopOta.apply({ reload: shouldReload })
         return Boolean(res && res.applied)
       },
       confirmReady: function () {
@@ -388,6 +394,10 @@ export function renderMobileBridgeJs(orientation: MobileOrientation, ota?: Mobil
       reset: async function () {
         await otaPrefsReady
         prefsOverridden = true
+        if (autoConfirmTimer !== null) {
+          clearTimeout(autoConfirmTimer)
+          autoConfirmTimer = null
+        }
         otaChannel = DEFAULT_OTA_CHANNEL
         otaBaseUrl = DEFAULT_OTA_URL
         const prefs = plugins.Preferences
@@ -420,7 +430,8 @@ export function renderMobileBridgeJs(orientation: MobileOrientation, ota?: Mobil
     if (plugins.SplashScreen && typeof plugins.SplashScreen.hide === 'function') {
       plugins.SplashScreen.hide().catch(function () {})
     }
-    setTimeout(function () {
+    autoConfirmTimer = setTimeout(function () {
+      autoConfirmTimer = null
       if (bootErrorCount === 0 && !otaConfirmed) {
         void confirmOtaReady()
       }
