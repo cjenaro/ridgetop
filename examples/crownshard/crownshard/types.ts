@@ -285,6 +285,30 @@ export type StageMutatorId =
   | 'iron_vanguard'
   | 'venom_mist'
 
+export type EndlessBlessingId =
+  | 'solar_zeal'
+  | 'aegis_ward'
+  | 'quicksilver_step'
+  | 'arcane_font'
+  | 'vampiric_edge'
+  | 'windrunner_stride'
+  | 'executioners_eye'
+  | 'iron_bastion'
+  | 'battle_mender'
+  | 'ember_blade'
+  | 'frost_heart'
+  | 'phoenix_grace'
+
+export type EndlessBlessingRarity = 'common' | 'rare' | 'epic' | 'legendary'
+
+export interface EndlessRunState {
+  seed: number
+  currentWave: number
+  activeBlessings: EndlessBlessingId[]
+  pendingDraft: EndlessBlessingId[]
+  lastBiome?: BiomeId
+}
+
 export type FacingDir = 'n' | 's' | 'e' | 'w'
 
 export const FACING_DIRS: readonly FacingDir[] = ['n', 'e', 's', 'w']
@@ -956,6 +980,8 @@ export interface BattleState {
   readonly stageId: string
   readonly chapterIndex: number
   readonly endlessWave: number
+  readonly endlessBlessings?: readonly EndlessBlessingId[]
+  phoenixGraceUsed?: boolean
   gauntletRound?: number
   gauntletMaxRounds?: number
   abyssFloor?: number
@@ -1071,6 +1097,8 @@ export interface BattleSaveSnapshot {
   readonly stageId: string
   readonly chapterIndex: number
   readonly endlessWave: number
+  readonly endlessBlessings?: readonly EndlessBlessingId[]
+  readonly phoenixGraceUsed?: boolean
   readonly gauntletRound?: number
   readonly gauntletMaxRounds?: number
   readonly abyssFloor?: number
@@ -1115,6 +1143,7 @@ export interface CampaignState {
   clearedStageTiers?: Record<string, StageDifficultyTier>
   selectedStageId: string
   endlessBest: number
+  endlessRun: EndlessRunState | null
   crownlessDeepFloor: number
   crownlessDeepSelectedFloor?: number
   crownlessDeepRewardClaimed?: boolean
@@ -1152,6 +1181,7 @@ export type SavedCampaignState = Omit<
   | 'seenTips'
   | 'battleSpeed'
   | 'crownlessDeepFloor'
+  | 'endlessRun'
 > & {
   dust?: number
   shards?: number
@@ -1164,6 +1194,7 @@ export type SavedCampaignState = Omit<
   crownlessDeepFloor?: number
   crownlessDeepSelectedFloor?: number
   crownlessDeepRewardClaimed?: boolean
+  endlessRun?: EndlessRunState | null
 }
 
 export interface SaveData {

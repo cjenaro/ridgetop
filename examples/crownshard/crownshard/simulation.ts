@@ -306,8 +306,37 @@ export type {
   MonasteryReinforcementSpawnSpec, MonasteryWaveResult, MonasteryWaveSpec,
   OakhavenExchangeDealSpec, OakhavenExchangeOffer, OakhavenPurchaseResult
 } from './expansion-act1.ts'
+import {
+  ENDLESS_BIOME_POOLS, ENDLESS_BIOME_ROTATION, ENDLESS_BLESSINGS, ENDLESS_BLESSING_BY_ID,
+  ENDLESS_BLESSING_IDS, ENDLESS_BLESSING_RARITY_META, ENDLESS_BOSS_WAVE_INTERVAL,
+  ENDLESS_DRAFT_CHOICES,
+  abandonEndlessRun, applyEndlessBlessingsToUnit, buildEndlessWaveEnemies,
+  canTriggerPhoenixGrace, cloneEndlessRunState, computeEndlessAttackerDamageMultiplier,
+  computeEndlessBlessingModifiers, computeEndlessTurnStartRegen, draftEndlessBlessing,
+  formatEndlessBiomeLabel, generateEndlessBlessingDraft, getEndlessBlessingSpec,
+  isEndlessBiomeId, isEndlessBlessingId, isEndlessBossWave, normalizeEndlessBlessings,
+  prepareEndlessVictoryDraft, sanitizeEndlessRunState, selectEndlessWaveStage,
+  shouldEndlessApplyBurnOnCrit, startEndlessRun
+} from './endless-roguelite.ts'
+export {
+  ENDLESS_BIOME_POOLS, ENDLESS_BIOME_ROTATION, ENDLESS_BLESSINGS, ENDLESS_BLESSING_BY_ID,
+  ENDLESS_BLESSING_IDS, ENDLESS_BLESSING_RARITY_META, ENDLESS_BOSS_WAVE_INTERVAL,
+  ENDLESS_DRAFT_CHOICES,
+  abandonEndlessRun, applyEndlessBlessingsToUnit, buildEndlessWaveEnemies,
+  canTriggerPhoenixGrace, cloneEndlessRunState, computeEndlessAttackerDamageMultiplier,
+  computeEndlessBlessingModifiers, computeEndlessTurnStartRegen, draftEndlessBlessing,
+  formatEndlessBiomeLabel, generateEndlessBlessingDraft, getEndlessBlessingSpec,
+  isEndlessBiomeId, isEndlessBlessingId, isEndlessBossWave, normalizeEndlessBlessings,
+  prepareEndlessVictoryDraft, sanitizeEndlessRunState, selectEndlessWaveStage,
+  shouldEndlessApplyBurnOnCrit, startEndlessRun
+}
+export type {
+  EndlessBiomePoolSpec, EndlessBlessingIcon, EndlessBlessingModifiers,
+  EndlessBlessingSpec, EndlessWaveStageSelection
+} from './endless-roguelite.ts'
 import type {
   AttackArc, BattleCellSnapshot, BattleHeroXpGain, BattleObjectiveEvaluation, BattleObjectiveKind,
+  EndlessBlessingId,
   BattleObjectiveSnapshot, BattleObjectiveState, BattleReward, BattleSaveSnapshot, BattleSpeedMultiplier,
   BattleState, BattleUnit, BattleUnitSnapshot, BiomeId, CampaignState, ChapterSpec, CombatForecast,
   CombatForecastAlt, CounterAvoidReason, DangerZoneMap, DangerZoneTile, DifficultyLevel, DisplacementPreview,
@@ -982,6 +1011,7 @@ export function createInitialCampaign(seed = 1337): CampaignState {
     clearedStageTiers: {},
     selectedStageId: CHAPTERS[0].id,
     endlessBest: 0,
+    endlessRun: null,
     crownlessDeepFloor: 0,
     battlesWon: 0,
     packsOpened: 0,
@@ -1150,6 +1180,7 @@ function cloneCampaignFromSave(c: SavedCampaignState, fallbackSeed: number): Cam
       ? c.selectedStageId
       : CHAPTERS[0].id,
     endlessBest: Number.isFinite(c.endlessBest) ? Math.max(0, Math.floor(c.endlessBest)) : 0,
+    endlessRun: sanitizeEndlessRunState(c.endlessRun),
     crownlessDeepFloor: normalizeCrownlessDeepFloorCleared(c.crownlessDeepFloor),
     ...(isFiniteNum(c.crownlessDeepSelectedFloor)
       ? {
@@ -1394,6 +1425,10 @@ export function serializeBattleState(
     stageId: battle.stageId,
     chapterIndex: battle.chapterIndex,
     endlessWave: battle.endlessWave,
+    ...(battle.endlessBlessings && battle.endlessBlessings.length > 0
+      ? { endlessBlessings: battle.endlessBlessings.slice() }
+      : {}),
+    ...(battle.phoenixGraceUsed ? { phoenixGraceUsed: true } : {}),
     ...(battle.gauntletRound !== undefined ? { gauntletRound: battle.gauntletRound } : {}),
     ...(battle.gauntletMaxRounds !== undefined ? { gauntletMaxRounds: battle.gauntletMaxRounds } : {}),
     ...(battle.abyssFloor !== undefined ? { abyssFloor: battle.abyssFloor } : {}),
@@ -1441,6 +1476,18 @@ export function validateBattleSnapshot(raw: unknown): BattleSaveSnapshot | null 
 
   if (!isFiniteNum(raw.endlessWave) || raw.endlessWave < 0) return null
   const endlessWave = Math.floor(raw.endlessWave)
+
+  let endlessBlessings: EndlessBlessingId[] | undefined
+  if (raw.endlessBlessings !== undefined) {
+    if (!Array.isArray(raw.endlessBlessings)) return null
+    for (const item of raw.endlessBlessings) {
+      if (!isEndlessBlessingId(item)) return null
+    }
+    const normBlessings = normalizeEndlessBlessings(raw.endlessBlessings)
+    if (normBlessings.length > 0) endlessBlessings = normBlessings
+  }
+  if (raw.phoenixGraceUsed !== undefined && typeof raw.phoenixGraceUsed !== 'boolean') return null
+  const phoenixGraceUsed = raw.phoenixGraceUsed === true ? true : undefined
 
   let gauntletRound: number | undefined
   let gauntletMaxRounds: number | undefined
@@ -1753,6 +1800,8 @@ export function validateBattleSnapshot(raw: unknown): BattleSaveSnapshot | null 
     stageId,
     chapterIndex,
     endlessWave,
+    ...(endlessBlessings !== undefined ? { endlessBlessings } : {}),
+    ...(phoenixGraceUsed ? { phoenixGraceUsed: true } : {}),
     ...(gauntletRound !== undefined ? { gauntletRound } : {}),
     ...(gauntletMaxRounds !== undefined ? { gauntletMaxRounds } : {}),
     ...(abyssFloor !== undefined ? { abyssFloor } : {}),
@@ -1922,6 +1971,10 @@ export function restoreBattleState(state: GameState, snapshot: unknown): boolean
     stageId: valid.stageId,
     chapterIndex: valid.chapterIndex,
     endlessWave: valid.endlessWave,
+    ...(valid.endlessBlessings && valid.endlessBlessings.length > 0
+      ? { endlessBlessings: valid.endlessBlessings.slice() }
+      : {}),
+    ...(valid.phoenixGraceUsed ? { phoenixGraceUsed: true } : {}),
     ...(valid.gauntletRound !== undefined ? { gauntletRound: valid.gauntletRound } : {}),
     ...(valid.gauntletMaxRounds !== undefined ? { gauntletMaxRounds: valid.gauntletMaxRounds } : {}),
     ...(valid.abyssFloor !== undefined ? { abyssFloor: valid.abyssFloor } : {}),
@@ -1997,6 +2050,9 @@ export function restoreBattleState(state: GameState, snapshot: unknown): boolean
 
 export function abandonBattle(state: GameState): boolean {
   if (!state.battle) return false
+  if (state.battle.endlessWave > 0) {
+    abandonEndlessRun(state)
+  }
   state.battle = null
   return true
 }
@@ -2075,6 +2131,7 @@ export function serializeSave(state: GameState): SaveData {
     version: 1,
     campaign: {
       ...state.campaign,
+      endlessRun: cloneEndlessRunState(state.campaign.endlessRun),
       clearedStageIds: state.campaign.clearedStageIds.slice(),
       clearedStageTiers: sanitizeClearedStageTiers(state.campaign.clearedStageTiers, state.campaign.clearedStageIds),
       heroes: state.campaign.heroes.map(h => {
@@ -2158,6 +2215,7 @@ export function loadSave(storage: StorageLike | null | undefined): SaveData | nu
         ),
         selectedStageId,
         endlessBest: 'endlessBest' in camp && typeof camp.endlessBest === 'number' ? camp.endlessBest : 0,
+        endlessRun: 'endlessRun' in camp ? sanitizeEndlessRunState(camp.endlessRun) : null,
         crownlessDeepFloor: 'crownlessDeepFloor' in camp ? normalizeCrownlessDeepFloorCleared(camp.crownlessDeepFloor) : 0,
         ...('crownlessDeepSelectedFloor' in camp && isFiniteNum(camp.crownlessDeepSelectedFloor)
           ? {
@@ -2451,10 +2509,14 @@ export function buildBattleObjective(
   endlessWave = 0
 ): BattleObjectiveState {
   if (endlessWave > 0) {
+    const biomeLabel = formatEndlessBiomeLabel(chapter.biome)
+    const bossTag = isEndlessBossWave(endlessWave) ? ' · Boss' : ''
     return {
       kind: 'rout',
-      label: `Endless Wave ${endlessWave}`,
-      description: 'Defeat all enemies in this Endless Arena wave.',
+      label: `Endless W${endlessWave} · ${biomeLabel}${bossTag}`,
+      description: isEndlessBossWave(endlessWave)
+        ? `Defeat the ${biomeLabel} Boss and all foes to draft a Run Blessing.`
+        : `Defeat all enemies across the ${biomeLabel} to draft a Run Blessing.`,
       protectBreached: false,
       seized: false,
       chestTiles: [],
@@ -2780,7 +2842,9 @@ export function confirmDeployment(state: GameState): boolean {
   battle.bannerText = 'BATTLE START!'
   battle.bannerTimer = 1.4
   const ch = CHAPTERS[battle.chapterIndex]
-  const stageTitle = battle.endlessWave > 0 ? `Endless Wave ${battle.endlessWave}` : (ch?.title ?? battle.stageId)
+  const stageTitle = battle.endlessWave > 0
+    ? `Endless Wave ${battle.endlessWave} · ${formatEndlessBiomeLabel(battle.biome)}`
+    : (ch?.title ?? battle.stageId)
   appendCombatLog(battle, 'system', `Battle started — ${stageTitle} (${battle.objective.label})`, { turn: 1 })
   advanceToNextUnitTurn(state, true)
   checkDiscoveryTipForBattle(state)
@@ -2814,6 +2878,18 @@ export function startChapterBattle(
   const baseChapter = CHAPTERS[safeIdx]
   campaign.selectedStageId = baseChapter.id
 
+  // Roguelite Endless Mode rotates biomes/maps each wave and scales biome-appropriate enemies + periodic bosses
+  let endlessSelection = null
+  let endlessBlessings: EndlessBlessingId[] = []
+  if (endlessWave > 0) {
+    const run = campaign.endlessRun ?? startEndlessRun(state, endlessWave)
+    const prevBiomeGuard = run.lastBiome && run.currentWave !== endlessWave ? run.lastBiome : undefined
+    endlessSelection = selectEndlessWaveStage(run.seed, endlessWave, prevBiomeGuard)
+    run.currentWave = endlessWave
+    run.lastBiome = endlessSelection.biome
+    endlessBlessings = normalizeEndlessBlessings(run.activeBlessings)
+  }
+
   // Crownless Deep 10-Floor Secret Abyss resolves per-floor layout, enemies, biome, and modifiers
   const isAbyss = endlessWave === 0 && isCrownlessDeepStage(baseChapter.id)
   const resolvedAbyssFloor = isAbyss
@@ -2822,19 +2898,28 @@ export function startChapterBattle(
         : getSelectedCrownlessDeepFloor(campaign))
     : undefined
   const abyssSpec = resolvedAbyssFloor !== undefined ? getCrownlessDeepFloorSpec(resolvedAbyssFloor) : null
-  const chapter: ChapterSpec = abyssSpec
+  const chapter: ChapterSpec = endlessSelection
     ? {
-        ...baseChapter,
-        difficulty: abyssSpec.difficulty,
-        recommendedPower: abyssSpec.recommendedPower,
-        biome: abyssSpec.biome,
-        grid: abyssSpec.grid,
-        heights: abyssSpec.heights,
-        heroSpawns: abyssSpec.heroSpawns,
-        objective: abyssSpec.objective,
-        enemies: abyssSpec.enemies
+        ...endlessSelection.chapter,
+        enemies: buildEndlessWaveEnemies(endlessSelection.chapter, endlessWave, campaign.endlessRun?.seed ?? campaign.seed)
       }
-    : baseChapter
+    : abyssSpec
+      ? {
+          ...baseChapter,
+          difficulty: abyssSpec.difficulty,
+          recommendedPower: abyssSpec.recommendedPower,
+          biome: abyssSpec.biome,
+          grid: abyssSpec.grid,
+          heights: abyssSpec.heights,
+          heroSpawns: abyssSpec.heroSpawns,
+          objective: abyssSpec.objective,
+          enemies: abyssSpec.enemies
+        }
+      : baseChapter
+  const resolvedChapterIndex = chapter.index
+  if (endlessSelection) {
+    campaign.selectedStageId = chapter.id
+  }
 
   const challenge = resolveStageChallenge(
     campaign,
@@ -2884,7 +2969,7 @@ export function startChapterBattle(
       else if (st === 'taunt') startTaunt = Math.max(startTaunt, 2)
       else if (st === 'haste') startHaste = Math.max(startHaste, 2)
     }
-    units.push({
+    const allyUnit: BattleUnit = {
       uid: hero.uid,
       team: 'ally',
       name: spec.name,
@@ -2934,7 +3019,11 @@ export function startChapterBattle(
       hitFlash: 0,
       lungeX: 0,
       lungeZ: 0
-    })
+    }
+    if (endlessBlessings.length > 0) {
+      applyEndlessBlessingsToUnit(allyUnit, endlessBlessings)
+    }
+    units.push(allyUnit)
   }
 
   const waveScale = endlessWave > 0 ? 1 + endlessWave * 0.22 : 1
@@ -3016,10 +3105,11 @@ export function startChapterBattle(
   const deployTiles = computeDeployTiles(chapter, cells, objective)
   const useDeploy = Boolean(resolvedOpts?.deployPhase)
   const apBonus = arcaneSurgeApBonuses(mutators)
+  const blessingMods = computeEndlessBlessingModifiers(endlessBlessings)
   const deckUids = shuffleStrings(getActiveTacticDeckUids(campaign), campaign)
   const gauntletMax = endlessWave === 0 ? getGauntletMaxRounds(chapter.id) : 0
   const stageBannerTitle = endlessWave > 0
-    ? `Endless Wave ${endlessWave}`
+    ? `Endless Wave ${endlessWave} · ${formatEndlessBiomeLabel(biome)}${isEndlessBossWave(endlessWave) ? ' · BOSS' : ''}`
     : abyssSpec
       ? `${chapter.title} · ${formatAbyssFloorLabel(abyssSpec.floor)}`
       : gauntletMax > 1
@@ -3027,8 +3117,9 @@ export function startChapterBattle(
         : chapter.title
   const battle: BattleState = {
     stageId: chapter.id,
-    chapterIndex: safeIdx,
+    chapterIndex: resolvedChapterIndex,
     endlessWave,
+    ...(endlessBlessings.length > 0 ? { endlessBlessings: endlessBlessings.slice() } : {}),
     ...(gauntletMax > 1 ? { gauntletRound: 1, gauntletMaxRounds: gauntletMax } : {}),
     ...(resolvedAbyssFloor !== undefined ? { abyssFloor: resolvedAbyssFloor } : {}),
     difficulty: chapter.difficulty,
@@ -3051,8 +3142,8 @@ export function startChapterBattle(
     turnOrder: [],
     armedSkillIndex: null,
     armedTacticUid: null,
-    ap: 2 + apBonus.startApBonus,
-    maxAp: 4 + apBonus.maxApBonus,
+    ap: 2 + apBonus.startApBonus + blessingMods.startApBonus,
+    maxAp: 4 + apBonus.maxApBonus + blessingMods.maxApBonus,
     drawPile: deckUids,
     hand: [],
     discardPile: [],
@@ -4539,6 +4630,7 @@ function previewDamageMath(
     }
     dmg *= computeAttackerDamageMultiplier(attacker, defender)
     dmg *= mutatorDamageMultiplier(battle)
+    dmg *= computeEndlessAttackerDamageMultiplier(battle.endlessBlessings, attacker, defender)
   }
   dmg *= computeDefenderIncomingDamageMultiplier(defender, isSkillDamage)
   const totalIgnoreArmor = clamp(ignoreArmor + computeBonusIgnoreArmor(attacker, defender.def), 0, 1)
@@ -5546,6 +5638,7 @@ function applyDamageDetailed(
     if (attacker.empowerTurns > 0) dmg *= 1.35
     dmg *= computeAttackerDamageMultiplier(attacker, defender)
     dmg *= mutatorDamageMultiplier(battle)
+    dmg *= computeEndlessAttackerDamageMultiplier(battle.endlessBlessings, attacker, defender)
   }
   dmg *= computeDefenderIncomingDamageMultiplier(defender, isSkillDamage)
 
@@ -5651,9 +5744,16 @@ function applyDamageDetailed(
 
   if (defender.hp <= 0) {
     handleUnitDefeat(state, defender)
-    triggerOnKoEffects(state, attacker, defender, { isSkillKill: isSkillDamage, rawHitDamage: rolledDamage })
+    if (!defender.alive) {
+      triggerOnKoEffects(state, attacker, defender, { isSkillKill: isSkillDamage, rawHitDamage: rolledDamage })
+    }
   } else {
-    if (isCrit && attacker && attacker.team !== defender.team && shouldApplyBurnOnCrit(attacker)) {
+    if (
+      isCrit &&
+      attacker &&
+      attacker.team !== defender.team &&
+      (shouldApplyBurnOnCrit(attacker) || shouldEndlessApplyBurnOnCrit(battle.endlessBlessings, attacker))
+    ) {
       applyStatus(battle, defender, 'burn')
     }
     triggerFrontierBossPhaseIfReady(state, defender)
@@ -5683,6 +5783,34 @@ function applyDamage(
 function handleUnitDefeat(state: GameState, unit: BattleUnit): void {
   const battle = state.battle
   if (!battle) return
+  if (unit.team === 'ally' && canTriggerPhoenixGrace(battle, unit)) {
+    const ratio = computeEndlessBlessingModifiers(battle.endlessBlessings).phoenixReviveRatio
+    battle.phoenixGraceUsed = true
+    unit.alive = true
+    unit.downed = false
+    unit.koCountdown = 0
+    unit.hp = computeReviveHp(unit, ratio)
+    unit.shield = 0
+    unit.path = []
+    unit.moveProgress = 0
+    unit.burnTurns = 0
+    unit.slowTurns = 0
+    unit.stunTurns = 0
+    unit.poisonStacks = 0
+    unit.animState = 'idle'
+    unit.animTimer = 0
+    addFloat(battle, unit.x, unit.y + 0.55, unit.z, 'PHOENIX GRACE!', '#ffcb57')
+    addFloat(battle, unit.x, unit.y + 0.12, unit.z, `+${unit.hp} HP`, '#6effa8')
+    appendCombatLog(
+      battle,
+      'heal',
+      `Phoenix Grace revives ${unit.name} with ${unit.hp} HP!`,
+      { accentHex: '#ffcb57' }
+    )
+    state.sounds.push({ kind: 'heal', pitch: 1.15 })
+    state.vfx.push({ kind: 'revive', at: [unit.x, unit.y + 0.55, unit.z], uid: unit.uid })
+    return
+  }
   unit.hp = 0
   unit.alive = false
   unit.shield = 0
@@ -6054,6 +6182,9 @@ function checkBattleOutcome(state: GameState): void {
     battle.armedTacticUid = null
     battle.bannerText = outcome.reason ?? 'Vanguard Defeated'
     battle.bannerTimer = 3.0
+    if (battle.endlessWave > 0) {
+      abandonEndlessRun(state)
+    }
     appendCombatLog(
       battle,
       'system',
@@ -6106,6 +6237,7 @@ function awardBattleVictory(state: GameState): void {
   let abyssCompleted = false
   if (battle.endlessWave > 0) {
     if (battle.endlessWave > campaign.endlessBest) campaign.endlessBest = battle.endlessWave
+    prepareEndlessVictoryDraft(state, battle.endlessWave, battle.biome)
   } else if (abyssPlan) {
     if (abyssPlan.floor > campaign.crownlessDeepFloor) {
       campaign.crownlessDeepFloor = abyssPlan.floor
@@ -7782,6 +7914,10 @@ function advanceToNextUnitTurn(state: GameState, initial = false): void {
     const turnStartGear = computeTurnStartGearEffects(next)
     if (turnStartGear.hpRegen > 0 || turnStartGear.shieldGain > 0) {
       applyHealAndShield(state, next, turnStartGear.hpRegen, turnStartGear.shieldGain, null, { sourceLabel: 'Gear' })
+    }
+    const blessingRegen = computeEndlessTurnStartRegen(battle.endlessBlessings, next)
+    if (blessingRegen > 0) {
+      applyHealAndShield(state, next, blessingRegen, 0, null, { sourceLabel: 'Battle Mender' })
     }
 
     if (next.stunTurns > 0) {

@@ -1,7 +1,7 @@
 import type { CanvasWidgetDrawState, LayoutRect } from 'ridgetop/ui'
 import type {
   BattleHeroXpGain, BattleUnit, ChapterSpec, CombatForecast, CombatForecastAlt, CombatLogEntry, DifficultyLevel,
-  ElementalComboPreview, EquipSlot, EquipmentSpec, FacingDir, FacingExposureLevel, HeroSpec,
+  ElementalComboPreview, EndlessBlessingId, EquipSlot, EquipmentSpec, FacingDir, FacingExposureLevel, HeroSpec,
   LandmarkKind, OwnedHeroCard, PackPityStatus, PackRevealItem, PackSpec, Rarity, SkillSpec,
   StageDifficultyTier, StageMutatorId, StatusKind,
   TacticCardSpec, TurnOrderActionPreview, TurnPreviewEntry
@@ -10,6 +10,8 @@ import { ARMORY_STAT_ORDER, formatStatDelta, formatStatValue } from './armory-di
 import type { EquipmentStatDiff } from './armory-diff.ts'
 import { getMaxCombatLogScroll, getRecentCombatLog } from './combat-log.ts'
 import type { DiscoveryTipSpec } from './discovery-tips.ts'
+import { ENDLESS_BLESSING_BY_ID, ENDLESS_BLESSING_RARITY_META } from './endless-roguelite.ts'
+import type { EndlessBlessingSpec } from './endless-roguelite.ts'
 import { DIFFICULTY_META, RARITY_META, RARITY_ORDER } from './data.ts'
 import { EPIC_PITY_THRESHOLD, LEGENDARY_PITY_THRESHOLD } from './forge.ts'
 import { heroLevelProgress } from './leveling.ts'
@@ -9141,4 +9143,204 @@ export function drawCombatLogPanel(
   }
 
   ctx.restore()
+}
+
+/**
+ * Sleek Roguelite Endless Blessing Draft Card (1-of-3 Victory Draft Modal).
+ * Features rarity glow aura, icon medallion, rarity pill, title, and concise effect description.
+ */
+export function drawEndlessBlessingCard(
+  ctx: CanvasRenderingContext2D,
+  rect: LayoutRect,
+  spec: EndlessBlessingSpec,
+  st: CanvasWidgetDrawState,
+  compact = false
+) {
+  const rarity = ENDLESS_BLESSING_RARITY_META[spec.rarity]
+  const hovered = st.hovered || st.focused
+  const pressed = st.pressed
+  const liftY = pressed ? 2 : hovered ? -2 : 0
+  const cardRect: LayoutRect = {
+    x: rect.x,
+    y: rect.y + liftY,
+    width: rect.width,
+    height: rect.height
+  }
+
+  ctx.save()
+  if (hovered || spec.rarity === 'epic' || spec.rarity === 'legendary') {
+    ctx.shadowColor = rarity.glowHex
+    ctx.shadowBlur = hovered ? 18 : spec.rarity === 'legendary' ? 12 : 7
+  }
+  drawSurface(ctx, cardRect, {
+    r: RADIUS.md,
+    lipH: 4,
+    fill: hovered ? '#273558' : rarity.bgHex,
+    fillBot: '#12192d',
+    border: hovered ? '#ffffff' : rarity.hex
+  })
+  ctx.shadowBlur = 0
+
+  const { x, y, width: w, height: h } = cardRect
+  const innerH = h - 4
+
+  // Subtle top rarity sheen bar
+  rr(ctx, x + 3, y + 3, w - 6, compact ? 16 : 20, RADIUS.sm)
+  const bandGrad = ctx.createLinearGradient(x, y, x + w, y)
+  bandGrad.addColorStop(0, `${rarity.hex}36`)
+  bandGrad.addColorStop(0.5, `${rarity.hex}18`)
+  bandGrad.addColorStop(1, `${rarity.hex}36`)
+  ctx.fillStyle = bandGrad
+  ctx.fill()
+
+  // Rarity chip centered at top
+  const chipH = compact ? 13 : 15
+  const chipW = Math.round(measureText(ctx, rarity.label, compact ? 7.5 : 8.2, 900, true) + 12)
+  drawChip(ctx, x + (w - chipW) * 0.5, y + (compact ? 5 : 6), rarity.label, {
+    h: chipH,
+    size: compact ? 7.5 : 8.2,
+    color: rarity.hex,
+    bg: '#0f1629',
+    border: rarity.hex
+  })
+
+  // Circular icon medallion
+  const iconR = compact ? 13 : 16
+  const iconCy = y + (compact ? 35 : 42)
+  const iconCx = x + w * 0.5
+  ctx.beginPath()
+  ctx.arc(iconCx, iconCy, iconR + 2, 0, Math.PI * 2)
+  ctx.fillStyle = `${spec.accentHex}28`
+  ctx.fill()
+  ctx.beginPath()
+  ctx.arc(iconCx, iconCy, iconR, 0, Math.PI * 2)
+  ctx.fillStyle = '#0f1629'
+  ctx.fill()
+  ctx.strokeStyle = spec.accentHex
+  ctx.lineWidth = hovered ? 2.2 : 1.7
+  ctx.stroke()
+  drawIcon(ctx, spec.icon, iconCx, iconCy, compact ? 14 : 17, spec.accentHex)
+
+  // Title
+  const titleY = iconCy + iconR + (compact ? 11 : 14)
+  drawText(ctx, spec.name, x + w * 0.5, titleY, {
+    size: compact ? 10.5 : 12,
+    weight: 900,
+    color: '#ffffff',
+    align: 'center',
+    maxW: w - 12,
+    display: true,
+    stroke: true,
+    strokeWidth: 2
+  })
+
+  // Concise stat pill
+  const tagY = titleY + (compact ? 9 : 11)
+  const tagH = compact ? 14 : 16
+  const tagW = Math.min(w - 14, Math.round(measureText(ctx, spec.shortLabel, compact ? 8 : 8.8, 800, true) + 12))
+  drawChip(ctx, x + (w - tagW) * 0.5, tagY, spec.shortLabel, {
+    h: tagH,
+    size: compact ? 8 : 8.8,
+    color: spec.accentHex,
+    bg: '#10182b',
+    border: `${spec.accentHex}aa`
+  })
+
+  // Wrapped description
+  const descTop = tagY + tagH + (compact ? 4 : 6)
+  const descBottom = y + innerH - (compact ? 16 : 20)
+  const descMaxH = Math.max(12, descBottom - descTop)
+  if (descMaxH >= 14) {
+    drawParagraph(ctx, spec.desc, x + 8, descTop, w - 16, descMaxH, {
+      size: compact ? 9 : 9.8,
+      weight: 600,
+      color: COLOR.muted,
+      align: 'center',
+      lineHeight: compact ? 11.5 : 13,
+      valign: 'top'
+    })
+  }
+
+  // Bottom Claim callout bar
+  const ctaY = y + innerH - (compact ? 14 : 17)
+  drawText(ctx, hovered ? 'CLAIM BLESSING' : 'SELECT', x + w * 0.5, ctaY + 4, {
+    size: compact ? 8 : 8.8,
+    weight: 900,
+    color: hovered ? COLOR.accentHi : rarity.hex,
+    align: 'center',
+    display: true,
+    spacing: 0.6
+  })
+
+  if (st.focused) {
+    drawFocusRing(ctx, x - 1, y - 1, w + 2, h + 2, RADIUS.md + 1)
+  }
+  ctx.restore()
+}
+
+/**
+ * Compact Battle HUD pill displaying active Endless Run Blessings count and short chips.
+ */
+export function drawEndlessBlessingsHudPill(
+  ctx: CanvasRenderingContext2D,
+  rect: LayoutRect,
+  blessings: readonly EndlessBlessingId[],
+  compact = false
+) {
+  if (blessings.length === 0) return
+  drawSurface(ctx, rect, {
+    r: RADIUS.md,
+    lipH: 3,
+    fill: '#2b2048',
+    fillBot: '#17122c',
+    border: '#ffcb57aa'
+  })
+
+  const { x, y, width: w, height: h } = rect
+  const cy = y + (h - 3) * 0.5
+  const chipH = compact ? 15 : 17
+  let cx = x + 6
+  const maxX = x + w - 6
+
+  // Count badge
+  const countLabel = compact ? `${blessings.length}` : `BLESS ${blessings.length}`
+  const countW = drawChip(ctx, cx, cy - chipH * 0.5, countLabel, {
+    h: chipH,
+    size: compact ? 8 : 8.5,
+    color: '#ffe680',
+    bg: '#4b3314',
+    border: '#ffcb57'
+  })
+  cx += countW + 4
+
+  let shown = 0
+  for (let i = 0; i < blessings.length; i++) {
+    const spec = ENDLESS_BLESSING_BY_ID[blessings[i]]
+    if (!spec) continue
+    const label = spec.shortLabel
+    const estW = Math.round(measureText(ctx, label, compact ? 7.8 : 8.2, 800, true) + 12)
+    const remainingAfter = blessings.length - i - 1
+    const overflowReserve = remainingAfter > 0 ? 28 : 0
+    if (cx + estW + overflowReserve > maxX) break
+    const cw = drawChip(ctx, cx, cy - chipH * 0.5, label, {
+      h: chipH,
+      size: compact ? 7.8 : 8.2,
+      color: spec.accentHex,
+      bg: '#12182d',
+      border: spec.accentHex
+    })
+    cx += cw + 4
+    shown++
+  }
+
+  const hidden = blessings.length - shown
+  if (hidden > 0 && cx + 22 <= maxX) {
+    drawChip(ctx, cx, cy - chipH * 0.5, `+${hidden}`, {
+      h: chipH,
+      size: compact ? 8 : 8.5,
+      color: '#ffe680',
+      bg: '#2c224a',
+      border: '#ffcb57'
+    })
+  }
 }
