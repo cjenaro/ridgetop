@@ -1,6 +1,7 @@
 import { canCounterAttack, computeCounterDamage, isMeleeSkillEligibleForCounter } from './counter-attack.ts'
 import { HERO_SPECS, TACTIC_BY_ID } from './data.ts'
 import { classifyElement, previewElementalCombo } from './elemental-combos.ts'
+import { isEnemyShrouded, mutatorDamageMultiplier } from './mutators.ts'
 import {
   adjustCoverBonusForAttacker,
   computeAttackerDamageMultiplier,
@@ -568,6 +569,7 @@ export function findAutoBattleProvokingTaunters(
       u.alive &&
       u.team !== actor.team &&
       u.tauntTurns > 0 &&
+      !(actor.team === 'ally' && isEnemyShrouded(battle, u)) &&
       manhattan(actor.col, actor.row, u.col, u.row) <= reachRadius
   )
 }
@@ -578,7 +580,11 @@ export function findAutoBattleProvokingTaunters(
  */
 export function chooseBestTurnEndFacing(battle: BattleState, unit: BattleUnit): FacingDir {
   if (!unit.alive) return unit.facing
-  const opponents = battle.units.filter(u => u.alive && u.team !== unit.team)
+  const allOpponents = battle.units.filter(u => u.alive && u.team !== unit.team)
+  const visibleOpponents = unit.team === 'ally'
+    ? allOpponents.filter(u => !isEnemyShrouded(battle, u))
+    : allOpponents
+  const opponents = visibleOpponents.length > 0 ? visibleOpponents : allOpponents
   if (opponents.length === 0) return unit.facing
 
   const weighted = opponents.map(opp => {
@@ -649,10 +655,11 @@ function estimateStrikeDamage(
   )
   const empowerMul = attacker.empowerTurns > 0 ? 1.35 : 1.0
   const passiveAtkMul = computeAttackerDamageMultiplier(attacker, target)
+  const mutMul = mutatorDamageMultiplier(battle)
   const passiveDefMul = computeDefenderIncomingDamageMultiplier(target, isSkill)
   const dmg = Math.max(
     4,
-    Math.round((rawPower * empowerMul * elevMul * aMul * passiveAtkMul - effDef * 0.72) * passiveDefMul)
+    Math.round((rawPower * empowerMul * elevMul * aMul * passiveAtkMul * mutMul - effDef * 0.72) * passiveDefMul)
   )
   return {
     damage: dmg,
@@ -825,7 +832,7 @@ function planBestTacticCard(
 
   const allies = battle.units.filter(u => u.team === 'ally' && u.alive)
   const downedAllies = battle.units.filter(u => u.team === 'ally' && isUnitDowned(u))
-  const enemies = battle.units.filter(u => u.team === 'enemy' && u.alive)
+  const enemies = battle.units.filter(u => u.team === 'enemy' && u.alive && !isEnemyShrouded(battle, u))
   if (enemies.length === 0) return null
 
   let best: AutoBattleActionPlan | null = null
@@ -1056,6 +1063,7 @@ export function planAutoBattleAction(state: GameState): AutoBattleActionPlan | n
   }
 
   const enemies = battle.units.filter(u => u.alive && u.team === 'enemy')
+  const visibleEnemies = enemies.filter(u => !isEnemyShrouded(battle, u))
   const allies = battle.units.filter(u => u.alive && u.team === 'ally')
   const downedAllies = battle.units.filter(u => isUnitDowned(u) && u.team === 'ally')
   const provokingTaunters = findAutoBattleProvokingTaunters(battle, actor)
@@ -1222,7 +1230,7 @@ export function planAutoBattleAction(state: GameState): AutoBattleActionPlan | n
             candTargets.push({ col, row })
           }
         }
-        for (const e of enemies) {
+        for (const e of visibleEnemies) {
           addCand(e.col, e.row)
           if (skill.pattern === 'cross' || skill.pattern === 'area3') {
             addCand(e.col + 1, e.row)
@@ -1272,9 +1280,9 @@ export function planAutoBattleAction(state: GameState): AutoBattleActionPlan | n
       }
     }
 
-    // 3c. Basic Attacks on alive enemies
+    // 3c. Basic Attacks on alive visible enemies
     for (const stand of stands) {
-      for (const enemy of enemies) {
+      for (const enemy of visibleEnemies) {
         const dist = manhattan(stand.col, stand.row, enemy.col, enemy.row)
         const effR = effectiveRange(battle, stand.col, stand.row, enemy.col, enemy.row, actor.range, actor)
         if (dist > effR) continue

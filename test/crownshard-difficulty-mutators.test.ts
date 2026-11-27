@@ -12,12 +12,14 @@ import {
   armTacticCard,
   computeChallengeRewards,
   computeCombatForecast,
+  computeDangerZone,
   computeIronVanguardShield,
   computeMoveAttackTiles,
   computeScaledEnemyStats,
   computeTacticTargetTiles,
   computeTargetTiles,
   createInitialState,
+  createSummonedEnemyUnit,
   endPlayerTurn,
   getHighestClearedStageTier,
   hasMutator,
@@ -26,6 +28,8 @@ import {
   isUnitVisibleToPlayer,
   loadSave,
   persistSave,
+  planAutoBattleAction,
+  previewPathOpportunityAttacks,
   recordClearedStageTier,
   refreshHighlights,
   resolveStageChallenge,
@@ -673,4 +677,85 @@ test('persistence: mid-battle save/resume & campaign save round-trip preserve di
   stepGame(resumed, 0.016)
   assert.equal(armSkill(resumed, null), true)
   assert.equal(armTacticCard(resumed, null), true)
+})
+
+test('Wave 6 QA regressions: Auto-Battle & Danger Zone respect fog_of_war, OA matches blood_moon, Mythic summons scale', () => {
+  // 1. Auto-Battle & Danger Zone under fog_of_war must not target or leak shrouded enemies
+  const fogState = makeClearedState(0, 9101)
+  const fogBattle = startChapterBattle(fogState, 0, 0, { tier: 'veteran', mutators: ['fog_of_war'] })
+  const allies = fogBattle.units.filter(u => u.alive && u.team === 'ally')
+  const archer = allies.find(u => u.heroId === 'archer') ?? allies[0]
+  const enemies = fogBattle.units.filter(u => u.alive && u.team === 'enemy')
+  for (let i = 1; i < enemies.length; i++) {
+    enemies[i].alive = false
+    enemies[i].hp = 0
+  }
+  const farFoe = enemies[0]
+  allies.forEach((a, idx) => placeUnit(fogState, a, 0, Math.min(fogBattle.rows - 1, idx)))
+  placeUnit(fogState, archer, 0, 2)
+  archer.range = 6
+  placeUnit(fogState, farFoe, 6, 2)
+  for (let c = 0; c < fogBattle.cols; c++) {
+    fogBattle.cells[2][c].terrain = 'grass'
+    fogBattle.cells[2][c].walkable = true
+  }
+  forceActiveAlly(fogState, archer)
+  assert.equal(isEnemyShrouded(fogBattle, farFoe), true)
+
+  const dz = computeDangerZone(fogBattle)
+  assert.equal(dz.enemyThreats.length, 0, 'Danger Zone must not leak shrouded enemies')
+
+  const plan = planAutoBattleAction(fogState)
+  assert.ok(plan !== null)
+  assert.notEqual(plan.kind, 'attack', 'Auto-Battle must not directly attack a shrouded enemy')
+  assert.notEqual(plan.kind, 'skill', 'Auto-Battle must not directly cast an offensive skill on a shrouded enemy')
+  assert.notEqual(plan.kind, 'tactic', 'Auto-Battle must not cast an enemy-targeted tactic on a shrouded enemy')
+
+  // 2. ZoC Opportunity Attack preview matches live blood_moon +25% damage
+  const bmState = makeClearedState(0, 9102)
+  const bmBattle = startChapterBattle(bmState, 0, 0, { tier: 'normal', mutators: ['blood_moon'] })
+  const hero = bmBattle.units.find(u => u.alive && u.team === 'ally' && u.heroId !== 'rogue')!
+  const sentinel = bmBattle.units.find(u => u.alive && u.team === 'enemy')!
+  for (const u of bmBattle.units) {
+    if (u.uid !== hero.uid && u.uid !== sentinel.uid) {
+      u.alive = false
+      u.hp = 0
+    }
+  }
+  for (let r = 0; r < bmBattle.rows; r++) {
+    for (let c = 0; c < bmBattle.cols; c++) {
+      bmBattle.cells[r][c] = {
+        ...bmBattle.cells[r][c],
+        terrain: 'grass',
+        heightLevel: 0,
+        elevation: 0,
+        walkable: true
+      }
+    }
+  }
+  placeUnit(bmState, hero, 2, 2)
+  placeUnit(bmState, sentinel, 2, 3)
+  hero.hp = 60
+  hero.maxHp = 60
+  hero.shield = 0
+  sentinel.atk = 24
+  forceActiveAlly(bmState, hero)
+  const oaPreview = previewPathOpportunityAttacks(bmBattle, hero, [{ col: 3, row: 2 }])
+  assert.equal(oaPreview.triggers.length, 1)
+  const hpBeforeOa = hero.hp
+  assert.equal(selectTile(bmState, 3, 2), true)
+  for (let i = 0; i < 60; i++) stepGame(bmState, 1 / 60)
+  assert.equal(hpBeforeOa - hero.hp, oaPreview.totalHpLoss, 'Live blood_moon OA damage must match preview')
+
+  // 3. Summoned Bone Thrall inherits Mythic tier scaling & iron_vanguard shield
+  const mythState = makeClearedState(0, 9103)
+  const mythBattle = startChapterBattle(mythState, 0, 0, { tier: 'mythic', mutators: ['iron_vanguard'] })
+  const baseState = createInitialState(9104)
+  const baseBattle = startChapterBattle(baseState, 0, 0, { tier: 'normal', mutators: [] })
+  const dummySummoner = { uid: 'en_necro', level: 4, facing: 's' as const }
+  const normThrall = createSummonedEnemyUnit(baseBattle, dummySummoner, 'bone_thrall', 3, 3)
+  const mythThrall = createSummonedEnemyUnit(mythBattle, dummySummoner, 'bone_thrall', 3, 3)
+  assert.ok(mythThrall.maxHp > normThrall.maxHp, 'Mythic summon must inherit Mythic HP scaling')
+  assert.ok(mythThrall.atk > normThrall.atk, 'Mythic summon must inherit Mythic ATK scaling')
+  assert.ok(mythThrall.shield > 0, 'iron_vanguard summon must receive Fortified Shield')
 })

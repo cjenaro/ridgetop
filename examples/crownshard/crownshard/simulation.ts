@@ -3439,7 +3439,7 @@ export function computeDangerZone(battle: BattleState): DangerZoneMap {
   }>()
 
   for (const unit of battle.units) {
-    if (!unit.alive || unit.team !== 'enemy' || unit.stunTurns > 0) continue
+    if (!unit.alive || unit.team !== 'enemy' || unit.stunTurns > 0 || isEnemyShrouded(battle, unit)) continue
     const threat = computeEnemyThreat(battle, unit.uid)
     enemyThreats.push(threat)
 
@@ -6117,6 +6117,11 @@ function executeCounterAttack(
       const heal = Math.max(2, Math.round(hpDmg * counterDrain))
       defender.hp = Math.min(defender.maxHp, defender.hp + heal)
       addFloat(battle, defender.x, defender.y, defender.z, `+${heal}`, '#6effa8')
+      appendCombatLog(
+        battle,
+        'heal',
+        formatHealLog({ sourceName: defender.name, targetName: defender.name, healAmount: heal, sourceLabel: 'Lifesteal' })
+      )
     }
   } else if (absorbed > 0) {
     addFloat(battle, attacker.x, attacker.y + 0.12, attacker.z, `BLOCK ${absorbed}`, '#7ed9ff')
@@ -6140,6 +6145,8 @@ function executeCounterAttack(
     battle.moveUndo = null
     battle.facingPicker = null
     battle.objective.roundsElapsed += 1
+    applyRoundBoundaryMutators(state)
+    if (isBattleEnded(battle)) return calc.normalDmg
     advanceToNextUnitTurn(state)
   }
 
@@ -7198,10 +7205,16 @@ function advanceToNextUnitTurn(state: GameState, initial = false): void {
         poisonStacks: hadPoisonAtTurnStart ? 1 : 0
       })
       if (regen.amount > 0) {
-        applyHealAndShield(state, next, regen.amount, 0)
+        applyHealAndShield(state, next, regen.amount, 0, next, { sourceLabel: 'Regeneration' })
         addFloat(battle, next.x, next.y + 0.45, next.z, `REGEN +${regen.amount}`, '#62f58e')
       } else if (regen.suppressedBy !== 'none' && next.hp < next.maxHp) {
         addFloat(battle, next.x, next.y + 0.45, next.z, 'REGEN BLOCKED', '#ff8e47')
+        appendCombatLog(
+          battle,
+          'status',
+          `${next.name}'s Regeneration blocked by ${regen.suppressedBy === 'burn' ? 'Burn' : 'Poison'}`,
+          { accentHex: '#ff8e47' }
+        )
       }
     }
     if (next.slowTurns > 0) next.slowTurns -= 1
@@ -7380,6 +7393,7 @@ function executeEnemyUnitTurn(state: GameState, enemy: BattleUnit): void {
         cells: [[summoned.x, summoned.y, summoned.z]]
       })
       addFloat(battle, summoned.x, summoned.y + 0.4, summoned.z, 'RAISE SKELETON!', '#68ffaa')
+      appendCombatLog(battle, 'system', `${enemy.name} raises ${summoned.name}`, { accentHex: '#68ffaa' })
       battle.turnOrder = computeTurnOrderPreview(battle, 8)
       return
     }
@@ -7671,18 +7685,21 @@ export function executeAutoBattleStep(state: GameState): boolean {
   }
 
   if (plan.kind === 'skill' && plan.skillIndex !== undefined && plan.targetCol !== undefined && plan.targetRow !== undefined) {
-    executeHeroSkill(state, actor, plan.skillIndex, plan.targetCol, plan.targetRow)
-    battle.armedSkillIndex = null
-    if (battle.phase === 'player') {
-      refreshHighlights(battle, state.campaign)
+    const skillTarget = unitAt(battle, plan.targetCol, plan.targetRow)
+    if (!skillTarget || skillTarget.team !== 'enemy' || !isEnemyShrouded(battle, skillTarget)) {
+      executeHeroSkill(state, actor, plan.skillIndex, plan.targetCol, plan.targetRow)
+      battle.armedSkillIndex = null
+      if (battle.phase === 'player') {
+        refreshHighlights(battle, state.campaign)
+      }
+      battle.autoBattleDelay = AUTO_BATTLE_POST_ACT_DELAY
+      return true
     }
-    battle.autoBattleDelay = AUTO_BATTLE_POST_ACT_DELAY
-    return true
   }
 
   if (plan.kind === 'attack' && plan.targetCol !== undefined && plan.targetRow !== undefined) {
     const target = unitAt(battle, plan.targetCol, plan.targetRow)
-    if (target && target.team === 'enemy') {
+    if (target && target.team === 'enemy' && !isEnemyShrouded(battle, target)) {
       executeBasicAttack(state, actor, target)
       if (battle.phase === 'player') refreshHighlights(battle, state.campaign)
       battle.autoBattleDelay = AUTO_BATTLE_POST_ACT_DELAY

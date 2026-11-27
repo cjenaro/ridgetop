@@ -1,4 +1,5 @@
 import { ENEMY_SPECS } from './data.ts'
+import { computeScaledEnemyStats } from './mutators.ts'
 import {
   gridToWorld,
   isUnitDowned,
@@ -296,7 +297,8 @@ export function generateSummonUid(
 
 /** Construct a ready-to-deploy summoned BattleUnit at `(col, row)` owned by `summoner`. */
 export function createSummonedEnemyUnit(
-  battle: Pick<BattleState, 'cells' | 'cols' | 'rows' | 'units' | 'difficulty' | 'endlessWave'>,
+  battle: Pick<BattleState, 'cells' | 'cols' | 'rows' | 'units' | 'difficulty' | 'endlessWave'> &
+    Partial<Pick<BattleState, 'difficultyTier' | 'mutators'>>,
   summoner: Pick<BattleUnit, 'uid' | 'level' | 'facing'>,
   archetype: EnemyArchetypeId,
   col: number,
@@ -308,9 +310,14 @@ export function createSummonedEnemyUnit(
   const scale = waveScale * diffScale
   const cell = battle.cells[row][col]
   const [wx, wy, wz] = gridToWorld(col, row, cell.elevation, battle.cols, battle.rows)
-  const maxHp = Math.max(12, Math.round(spec.maxHp * scale))
-  const atk = Math.max(6, Math.round(spec.atk * scale))
-  const def = Math.max(0, Math.round(spec.def * (1 + (scale - 1) * 0.5)))
+  const baseMaxHp = Math.max(12, Math.round(spec.maxHp * scale))
+  const baseAtk = Math.max(6, Math.round(spec.atk * scale))
+  const baseDef = Math.max(0, Math.round(spec.def * (1 + (scale - 1) * 0.5)))
+  const scaled = computeScaledEnemyStats(
+    { maxHp: baseMaxHp, atk: baseAtk, def: baseDef, speed: spec.speed },
+    battle.difficultyTier ?? 'normal',
+    battle.mutators ?? []
+  )
 
   return {
     uid: generateSummonUid(battle, summoner.uid, archetype),
@@ -330,13 +337,13 @@ export function createSummonedEnemyUnit(
     facing: summoner.facing,
     path: [],
     moveProgress: 0,
-    hp: maxHp,
-    maxHp,
-    shield: 0,
-    atk,
-    def,
-    speed: spec.speed,
-    ct: spec.speed * 2,
+    hp: scaled.maxHp,
+    maxHp: scaled.maxHp,
+    shield: scaled.shield,
+    atk: scaled.atk,
+    def: scaled.def,
+    speed: scaled.speed,
+    ct: scaled.speed * 2,
     move: spec.move,
     jump: spec.jump,
     range: spec.range,

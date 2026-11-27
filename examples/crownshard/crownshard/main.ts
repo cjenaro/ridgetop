@@ -1862,8 +1862,8 @@ async function start() {
     const showChallengeControls = selectedCleared && !selectedSoon
     const inspW = mobile ? Math.min(w - 16, 460) : 344
     const inspH = mobile
-      ? Math.min(Math.round(h * (showChallengeControls ? 0.56 : 0.42)), showChallengeControls ? 356 : 258)
-      : Math.min(h - topH - outerPad * 3 - 8, showChallengeControls ? 616 : 512)
+      ? Math.min(Math.min(h - topH - 36, Math.round(h * (showChallengeControls ? 0.66 : 0.42))), showChallengeControls ? 408 : 258)
+      : Math.min(h - topH - outerPad * 3 - 8, showChallengeControls ? 624 : 512)
 
     const inspectorPanel = column({
       id: 'wm-inspector',
@@ -1994,7 +1994,7 @@ async function start() {
       // Cleared-Stage Heroic / Mythic Difficulty Tier & Tactical Mutator Selector
       ...(showChallengeControls ? [column({
         id: 'wm-st-challenge',
-        style: { height: isCompact ? 104 : 120, padding: [6, 8], gap: 5 },
+        style: { height: isCompact ? 114 : 124, padding: [6, 8], gap: 5 },
         widget: {
           type: 'panel',
           blocksPointer: true,
@@ -2075,39 +2075,54 @@ async function start() {
           type: 'panel',
           draw: (ctx: CanvasRenderingContext2D, rect: LayoutRect) => {
             drawWell(ctx, rect, RADIUS.md)
+            ctx.save()
+            ctx.beginPath()
+            ctx.rect(rect.x + 1, rect.y + 1, Math.max(0, rect.width - 2), Math.max(0, rect.height - 2))
+            ctx.clip()
             const px = rect.x + 10
             const pw = rect.width - 20
+            const chipH = isCompact && showChallengeControls ? 19 : 22
+            const compactClaimed = isCompact && selectedCleared
             drawOverline(
               ctx,
               selectedSoon
                 ? 'Planned First-Clear Spoils'
                 : selectedCleared ? 'First-Clear Special (Claimed)' : 'First-Clear Special (One-Time)',
               px,
-              rect.y + 13,
+              rect.y + 12,
               pw,
               selectedCleared ? COLOR.faint : COLOR.accentHi
             )
             let cx = px
-            let cy = rect.y + 24
-            const chipH = 22
-            for (const item of firstClearLoot) {
-              const estW = Math.min(pw, item.text.length * 6.8 + 38)
-              if (cx > px && cx + estW > px + pw) {
-                cx = px
-                cy += chipH + 5
-              }
-              const cw = drawChip(ctx, cx, cy, item.text, {
-                icon: item.icon,
-                h: chipH,
-                size: 10.5,
-                color: item.color ?? COLOR.text,
-                bg: '#1c2642',
-                border: COLOR.outline
+            let cy = rect.y + 22
+            if (compactClaimed) {
+              drawText(ctx, firstClearLoot.map(i => i.text).join(' · '), px, cy + 5, {
+                size: 9.5,
+                weight: 700,
+                color: COLOR.faint,
+                maxW: pw
               })
-              cx += cw + 6
+              cy -= 8
+            } else {
+              for (const item of firstClearLoot) {
+                const estW = Math.min(pw, item.text.length * 6.8 + 38)
+                if (cx > px && cx + estW > px + pw) {
+                  cx = px
+                  cy += chipH + 4
+                }
+                const cw = drawChip(ctx, cx, cy, item.text, {
+                  icon: item.icon,
+                  h: chipH,
+                  size: isCompact ? 9.5 : 10.5,
+                  color: item.color ?? COLOR.text,
+                  bg: '#1c2642',
+                  border: COLOR.outline
+                })
+                cx += cw + 5
+              }
             }
 
-            const repTop = Math.max(cy + chipH + 11, rect.y + rect.height * 0.52)
+            const repTop = Math.max(cy + chipH + 9, rect.y + rect.height * (compactClaimed ? 0.42 : 0.52))
             drawOverline(
               ctx,
               challengeRewards.goldBonusPct > 0
@@ -2119,23 +2134,24 @@ async function start() {
               activeChallenge.tier === 'mythic' ? '#e5adff' : activeChallenge.tier === 'veteran' ? '#ffd285' : '#8fd4ff'
             )
             let rx = px
-            let ry = repTop + 10
+            let ry = repTop + 9
             for (const item of replayLoot) {
               const estW = Math.min(pw, item.text.length * 6.5 + 34)
               if (rx > px && rx + estW > px + pw) {
                 rx = px
-                ry += chipH + 4
+                ry += chipH + 3
               }
               const cw = drawChip(ctx, rx, ry, item.text, {
                 icon: item.icon,
                 h: chipH,
-                size: 10,
+                size: isCompact ? 9.5 : 10,
                 color: item.color ?? COLOR.text,
                 bg: '#1c2642',
                 border: COLOR.outline
               })
               rx += cw + 5
             }
+            ctx.restore()
           }
         }
       }),
@@ -2213,41 +2229,46 @@ async function start() {
       ...mapNodes,
 
       // Floating Top-Left Realm Title + Progress + Gold Pill
-      boxNode({
-        id: 'wm-header',
-        style: {
-          anchor: 'top-left',
-          width: mobile ? Math.min(w - 118, 250) : 410,
-          height: topH,
-          inset: [outerPad, outerPad],
-          respectSafeArea: true
-        },
-        widget: {
-          type: 'panel',
-          blocksPointer: true,
-          draw: (ctx: CanvasRenderingContext2D, rect: LayoutRect) => {
-            drawPanel(ctx, rect, { r: RADIUS.lg, lipH: 4, fill: '#263459eb', fillBot: '#151e38f0' })
-            const cy = rect.y + (rect.height - 4) / 2
-            drawText(ctx, mobile ? 'SOLIS MAP' : 'REALM OF SOLIS', rect.x + 14, cy + 0.5, {
-              size: isCompact ? 13 : 15.5,
-              weight: 900,
-              color: COLOR.accentHi,
-              display: true,
-              stroke: true,
-              strokeWidth: 2.6
-            })
-            const prog = `${camp.clearedStageIds.length}/${PLAYABLE_CHAPTERS.length}`
-            drawChip(ctx, rect.x + rect.width - 10, cy - 10, `${camp.gold}g · ${prog}`, {
-              icon: 'coin',
-              h: 21,
-              size: 10.5,
-              color: COLOR.accentHi,
-              bg: COLOR.wellDeep,
-              align: 'right'
-            })
+      ...(() => {
+        const wmTopActionsW = (mobile ? 92 : 164) + zoomCtrlW + (endlessReady ? (mobile ? 88 : 134) : 0) + (endlessReady ? 16 : 8)
+        const wmHeaderW = Math.max(176, Math.min(mobile ? 250 : 410, w - wmTopActionsW - outerPad * 2 - 28))
+        return [boxNode({
+          id: 'wm-header',
+          style: {
+            anchor: 'top-left',
+            width: wmHeaderW,
+            height: topH,
+            inset: [outerPad, outerPad],
+            respectSafeArea: true
+          },
+          widget: {
+            type: 'panel',
+            blocksPointer: true,
+            draw: (ctx: CanvasRenderingContext2D, rect: LayoutRect) => {
+              drawPanel(ctx, rect, { r: RADIUS.lg, lipH: 4, fill: '#263459eb', fillBot: '#151e38f0' })
+              const cy = rect.y + (rect.height - 4) / 2
+              const prog = `${camp.clearedStageIds.length}/${PLAYABLE_CHAPTERS.length}`
+              const chipW = drawChip(ctx, rect.x + rect.width - 10, cy - 10, `${camp.gold}g · ${prog}`, {
+                icon: 'coin',
+                h: 21,
+                size: 10.5,
+                color: COLOR.accentHi,
+                bg: COLOR.wellDeep,
+                align: 'right'
+              })
+              drawText(ctx, mobile || rect.width < 290 ? 'SOLIS MAP' : 'REALM OF SOLIS', rect.x + 12, cy + 0.5, {
+                size: isCompact || rect.width < 290 ? 12.5 : 15.5,
+                weight: 900,
+                color: COLOR.accentHi,
+                maxW: Math.max(40, rect.width - chipW - 28),
+                display: true,
+                stroke: true,
+                strokeWidth: 2.6
+              })
+            }
           }
-        }
-      }),
+        })]
+      })(),
 
       // Floating Top-Left Resume Battle Banner (when a mid-battle auto-save exists)
       ...(resumableBattle ? (() => {
@@ -2386,8 +2407,8 @@ async function start() {
         })
       ]),
 
-      // Bottom-left subtle cartography legend pill (desktop)
-      ...(mobile ? [] : [boxNode({
+      // Bottom-left subtle cartography legend pill (wide desktop only so it never overlaps wm-inspector)
+      ...(mobile || w < 920 ? [] : [boxNode({
         id: 'wm-legend',
         style: { anchor: 'bottom-left', width: 512, height: 28, inset: [outerPad, outerPad], respectSafeArea: true },
         widget: {
@@ -2650,6 +2671,8 @@ async function start() {
           label: entry.name,
           selected: entry.isCurrent,
           onPress: () => {
+            const clickedUnit = getUnitByUid(battle, entry.uid)
+            if (clickedUnit && isEnemyShrouded(battle, clickedUnit)) return
             lockedForecastCell = null
             selectHeroByUid(state, entry.uid)
             uiDirty = true
@@ -2862,8 +2885,10 @@ async function start() {
     const fpsShort = `${Math.round(perf.snapshot().fps || 60)}`
     const chapterShort = battle.endlessWave > 0 ? `Endless Wave ${battle.endlessWave}` : `${ch.title} · D${battle.difficulty}`
 
-    // Top-right toolbar (compact on phone: Undo when active, Speed 1x/2x, Auto-Battle, Danger Zone, Music, Pause)
+    // Top-right toolbar (compact on phone & narrow tablets so top-left bar never collides)
     const tbIconS = isPhone ? 28 : 30
+    const tinyPhone = mobilePortrait && w <= 380
+    const compactDesktopTb = !isPhone && narrow
     const camYawActual = scene.getCameraYawActual()
     const camHeading = cameraCardinalHeading(camYawActual)
     const showUndoBtn = isPhone ? undoAvailable : (isPlayerTurn && Boolean(active && active.team === 'ally'))
@@ -2874,7 +2899,7 @@ async function start() {
     const toolbarItems: LayoutNode[] = [
       ...(showUndoBtn ? [
         boxNode({
-          id: 'cs-undo-move', style: { width: isPhone ? 48 : 74, height: tbIconS },
+          id: 'cs-undo-move', style: { width: tinyPhone ? 34 : isPhone ? 44 : compactDesktopTb ? 56 : 74, height: tbIconS },
           widget: {
             type: 'button',
             label: 'Undo Move (Z / Backspace)',
@@ -2882,14 +2907,14 @@ async function start() {
             onPress: () => { performUndoMove() },
             draw: (ctx: CanvasRenderingContext2D, rect: LayoutRect, st: CanvasWidgetDrawState) => drawIconButton(ctx, rect, 'retreat', st, {
               active: undoAvailable,
-              label: isPhone ? 'Undo' : 'Undo Z',
+              label: tinyPhone ? undefined : isPhone || compactDesktopTb ? 'Undo' : 'Undo Z',
               color: undoAvailable ? COLOR.accentText : undefined
             })
           }
         })
       ] : []),
       boxNode({
-        id: 'cs-speed-toggle', style: { width: isPhone ? 38 : 56, height: tbIconS },
+        id: 'cs-speed-toggle', style: { width: tinyPhone ? 34 : isPhone ? 38 : compactDesktopTb ? 44 : 56, height: tbIconS },
         widget: {
           type: 'button',
           label: `Battle Speed ${speedLabel} (X)`,
@@ -2897,13 +2922,13 @@ async function start() {
           onPress: () => { handleToggleBattleSpeed() },
           draw: (ctx: CanvasRenderingContext2D, rect: LayoutRect, st: CanvasWidgetDrawState) => drawIconButton(ctx, rect, 'fast-forward', st, {
             active: isFastSpeed,
-            label: isPhone ? speedLabel : `${speedLabel} X`,
+            label: isPhone || compactDesktopTb ? speedLabel : `${speedLabel} X`,
             color: isFastSpeed ? COLOR.accentText : '#d7e6ff'
           })
         }
       }),
       boxNode({
-        id: 'cs-auto-battle', style: { width: isPhone ? 42 : 68, height: tbIconS },
+        id: 'cs-auto-battle', style: { width: tinyPhone ? 34 : isPhone ? 42 : compactDesktopTb ? 52 : 68, height: tbIconS },
         widget: {
           type: 'button',
           label: autoOn ? 'Stop Auto-Battle (B / Esc)' : 'Auto-Battle (B)',
@@ -2912,13 +2937,13 @@ async function start() {
           onPress: () => { handleToggleAutoBattle() },
           draw: (ctx: CanvasRenderingContext2D, rect: LayoutRect, st: CanvasWidgetDrawState) => drawIconButton(ctx, rect, 'auto', st, {
             active: autoOn,
-            label: isPhone ? 'Auto' : (autoOn ? 'Auto ON' : 'Auto B'),
+            label: tinyPhone ? undefined : isPhone || compactDesktopTb ? 'Auto' : (autoOn ? 'Auto ON' : 'Auto B'),
             color: autoOn ? COLOR.accentText : '#9ef7d4'
           })
         }
       }),
       boxNode({
-        id: 'cs-danger-zone', style: { width: isPhone ? 34 : 64, height: tbIconS },
+        id: 'cs-danger-zone', style: { width: tinyPhone ? 30 : isPhone ? 34 : compactDesktopTb ? 44 : 64, height: tbIconS },
         widget: {
           type: 'button',
           label: dangerZoneOn ? 'Hide Danger Zone (T)' : 'Show Danger Zone (T)',
@@ -2926,40 +2951,42 @@ async function start() {
           onPress: toggleDangerZone,
           draw: (ctx: CanvasRenderingContext2D, rect: LayoutRect, st: CanvasWidgetDrawState) => drawIconButton(ctx, rect, 'skull', st, {
             active: dangerZoneOn,
-            label: isPhone ? 'T' : 'Zone T',
+            label: tinyPhone ? undefined : isPhone || compactDesktopTb ? 'T' : 'Zone T',
             color: dangerZoneOn ? COLOR.dangerLip : '#ff9ca6'
           })
         }
       }),
       ...(isPhone ? [] : [
+        ...(compactDesktopTb ? [] : [
+          boxNode({
+            id: 'tb-cam-up', style: { width: tbIconS, height: tbIconS },
+            widget: {
+              type: 'button', label: 'Tilt Camera Up (ArrowUp)',
+              onPress: () => { scene.tiltCamera(0.16); hudRev++ },
+              draw: (ctx: CanvasRenderingContext2D, rect: LayoutRect, st: CanvasWidgetDrawState) => drawIconButton(ctx, rect, 'chevron-up', st)
+            }
+          }),
+          boxNode({
+            id: 'tb-cam-dn', style: { width: tbIconS, height: tbIconS },
+            widget: {
+              type: 'button', label: 'Tilt Camera Down (ArrowDown)',
+              onPress: () => { scene.tiltCamera(-0.16); hudRev++ },
+              draw: (ctx: CanvasRenderingContext2D, rect: LayoutRect, st: CanvasWidgetDrawState) => drawIconButton(ctx, rect, 'chevron-down', st)
+            }
+          })
+        ]),
         boxNode({
-          id: 'tb-cam-up', style: { width: tbIconS, height: tbIconS },
-          widget: {
-            type: 'button', label: 'Tilt Camera Up (ArrowUp)',
-            onPress: () => { scene.tiltCamera(0.16); hudRev++ },
-            draw: (ctx: CanvasRenderingContext2D, rect: LayoutRect, st: CanvasWidgetDrawState) => drawIconButton(ctx, rect, 'chevron-up', st)
-          }
-        }),
-        boxNode({
-          id: 'tb-cam-dn', style: { width: tbIconS, height: tbIconS },
-          widget: {
-            type: 'button', label: 'Tilt Camera Down (ArrowDown)',
-            onPress: () => { scene.tiltCamera(-0.16); hudRev++ },
-            draw: (ctx: CanvasRenderingContext2D, rect: LayoutRect, st: CanvasWidgetDrawState) => drawIconButton(ctx, rect, 'chevron-down', st)
-          }
-        }),
-        boxNode({
-          id: 'tb-cam-l', style: { width: 42, height: tbIconS },
+          id: 'tb-cam-l', style: { width: compactDesktopTb ? tbIconS : 42, height: tbIconS },
           widget: {
             type: 'button', label: 'Rotate Camera Left 90° (Q)',
             onPress: () => { scene.snapCameraYaw(-1); uiDirty = true; hudRev++ },
             draw: (ctx: CanvasRenderingContext2D, rect: LayoutRect, st: CanvasWidgetDrawState) => drawIconButton(ctx, rect, 'rotate-left', st, {
-              label: 'Q'
+              label: compactDesktopTb ? undefined : 'Q'
             })
           }
         }),
         boxNode({
-          id: 'tb-cam-compass', style: { width: 34, height: tbIconS },
+          id: 'tb-cam-compass', style: { width: 32, height: tbIconS },
           widget: {
             type: 'button', label: `Camera Facing ${camHeading} — Reset North (0)`,
             onPress: () => { scene.setCameraYaw(0); uiDirty = true; hudRev++ },
@@ -2967,26 +2994,28 @@ async function start() {
           }
         }),
         boxNode({
-          id: 'tb-cam-r', style: { width: 42, height: tbIconS },
+          id: 'tb-cam-r', style: { width: compactDesktopTb ? tbIconS : 42, height: tbIconS },
           widget: {
             type: 'button', label: 'Rotate Camera Right 90° (E)',
             onPress: () => { scene.snapCameraYaw(1); uiDirty = true; hudRev++ },
             draw: (ctx: CanvasRenderingContext2D, rect: LayoutRect, st: CanvasWidgetDrawState) => drawIconButton(ctx, rect, 'rotate-right', st, {
-              label: 'E'
+              label: compactDesktopTb ? undefined : 'E'
             })
           }
         }),
-        boxNode({
-          id: 'cs-perf', style: { width: 52, height: tbIconS },
-          widget: {
-            type: 'button', label: `${fpsShort} FPS`, selected: showPerfPanel, onPress: togglePerfOverlay,
-            draw: (ctx: CanvasRenderingContext2D, rect: LayoutRect, st: CanvasWidgetDrawState) => drawIconButton(ctx, rect, 'gauge', st, {
-              active: showPerfPanel,
-              label: fpsShort,
-              color: showPerfPanel ? COLOR.good : undefined
-            })
-          }
-        })
+        ...(compactDesktopTb ? [] : [
+          boxNode({
+            id: 'cs-perf', style: { width: 52, height: tbIconS },
+            widget: {
+              type: 'button', label: `${fpsShort} FPS`, selected: showPerfPanel, onPress: togglePerfOverlay,
+              draw: (ctx: CanvasRenderingContext2D, rect: LayoutRect, st: CanvasWidgetDrawState) => drawIconButton(ctx, rect, 'gauge', st, {
+                active: showPerfPanel,
+                label: fpsShort,
+                color: showPerfPanel ? COLOR.good : undefined
+              })
+            }
+          })
+        ])
       ]),
       boxNode({
         id: 'cs-music', style: { width: tbIconS, height: tbIconS },
@@ -3527,7 +3556,11 @@ async function start() {
       )
     }
 
-    const topLeftW = mobilePortrait ? Math.max(96, w - toolbarW - 20) : mobileLandscape ? 208 : 264
+    const topLeftW = mobilePortrait
+      ? Math.max(76, w - toolbarW - 34)
+      : mobileLandscape
+        ? 208
+        : Math.min(264, Math.max(176, w - toolbarW - 36))
     const singleTopRow = mobileLandscape || (!mobilePortrait && topLeftW + timelineW + toolbarW + 48 <= w)
     const timelineInset: [number, number] = singleTopRow
       ? [6, mobileLandscape ? 6 : 8]
@@ -3542,8 +3575,24 @@ async function start() {
       battle.objective.protectBreached ||
       (battle.objective.turnLimit !== undefined && battle.objective.turnLimit - battle.objective.roundsElapsed <= 2)
     )
+    const edgeX = isPhone ? 6 : 8
     const objBadgeH = isPhone ? 26 : 30
-    const objBadgeW = mobilePortrait ? Math.min(w - 16, 250) : mobileLandscape ? 208 : 264
+    const objBadgeW = mobilePortrait ? Math.min(w - 64, 240) : mobileLandscape ? 208 : 264
+    const hasChallengeBadge = battle.difficultyTier !== 'normal' || battle.mutators.length > 0
+    const challengeBadgeH = isPhone ? 24 : 27
+    const autoPillH = isPhone ? 24 : 26
+
+    // Single unified top-left vertical stack cursor so Objective, Challenge, Auto-Battle,
+    // Combat Log, and Discovery Tips NEVER overlap each other or the turn timeline!
+    let leftStackY = singleTopRow
+      ? edgeX + topBarH + 6
+      : timelineInset[1] + tokenH + (isPhone ? 16 : 20)
+    const objBadgeY = leftStackY
+    leftStackY += objBadgeH + 6
+    const challengeBadgeY = leftStackY
+    if (hasChallengeBadge) leftStackY += challengeBadgeH + 6
+    const autoPillY = leftStackY
+    if (battle.autoBattle) leftStackY += autoPillH + 6
 
     // Collapsible Combat Log toggle + translucent drawer (starts collapsed!)
     const combatLogEntries = battle.combatLog
@@ -3554,32 +3603,26 @@ async function start() {
     const combatLogUnread = combatLogOpen
       ? 0
       : combatLogEntries.reduce((cnt, e) => (e.id > combatLogSeenId ? cnt + 1 : cnt), 0)
-    const logEdgeX = isPhone ? 6 : 8
+    const logEdgeX = edgeX
     const logToggleH = isPhone ? 26 : 28
     const logToggleW = isPhone ? 90 : 112
-    const logToggleY = mobilePortrait
-      ? 114
-      : (isPhone ? 6 : 8) + topBarH + 6 + objBadgeH + 6
+    const logToggleY = leftStackY
+    leftStackY += logToggleH + 6
 
     const combatLogPanelNodes: LayoutNode[] = []
     if (combatLogOpen && !mobileHandOpen) {
       const logPanelW = mobilePortrait
-        ? Math.min(w - 56, 336)
+        ? Math.min(w - 60, 320)
         : mobileLandscape
           ? Math.min(w - 64, 300)
           : narrow
             ? Math.min(308, w - 24)
             : 344
-      const clampedTimelineW = Math.min(w - 16, timelineW)
-      const timelineLeftEdge = (w - clampedTimelineW) * 0.5
-      const timelineBottomY = timelineInset[1] + tokenH + (isPhone ? 16 : 18)
-      let logPanelY = logToggleY + logToggleH + 6
-      if (!mobilePortrait && logEdgeX + logPanelW > timelineLeftEdge - 8 && logPanelY < timelineBottomY) {
-        logPanelY = timelineBottomY
-      }
+      const logPanelY = leftStackY
       const bottomClearance = dockH + (isPhone ? 46 : 52)
       const maxPanelH = Math.max(114, h - bottomClearance - logPanelY)
       const logPanelH = Math.min(mobileLandscape ? 168 : isPhone ? 206 : 232, maxPanelH)
+      leftStackY = logPanelY + logPanelH + 6
       const logHeaderH = isPhone ? 26 : 28
       const logRowH = isPhone ? 20 : 22
       const logVisibleRows = Math.max(3, Math.floor((logPanelH - logHeaderH - 14) / logRowH))
@@ -3672,14 +3715,14 @@ async function start() {
         }
       }),
 
-      // Mission Objective Tracker Badge right below top-left chapter bar
+      // Mission Objective Tracker Badge right below top-left chapter bar (or below timeline when 2-row)
       boxNode({
         id: 'battle-objective-badge',
         style: {
           anchor: 'top-left',
           width: objBadgeW,
           height: objBadgeH,
-          inset: [isPhone ? 6 : 8, (isPhone ? 6 : 8) + topBarH + 6],
+          inset: [edgeX, objBadgeY],
           respectSafeArea: true
         },
         widget: {
@@ -3696,13 +3739,13 @@ async function start() {
       }),
 
       // Active Heroic/Mythic Tier & Mutator Badges right below objective badge
-      ...(battle.difficultyTier !== 'normal' || battle.mutators.length > 0 ? [boxNode({
+      ...(hasChallengeBadge ? [boxNode({
         id: 'battle-challenge-badge',
         style: {
           anchor: 'top-left',
-          width: Math.min(w - 16, Math.max(objBadgeW, isPhone ? 240 : 320)),
-          height: isPhone ? 24 : 27,
-          inset: [isPhone ? 6 : 8, (isPhone ? 6 : 8) + topBarH + objBadgeH + 11],
+          width: mobilePortrait ? Math.min(w - 64, 240) : Math.min(w - 16, Math.max(objBadgeW, isPhone ? 240 : 320)),
+          height: challengeBadgeH,
+          inset: [edgeX, challengeBadgeY],
           respectSafeArea: true
         },
         widget: {
@@ -3724,12 +3767,8 @@ async function start() {
         style: {
           anchor: 'top-left',
           width: isPhone ? Math.min(objBadgeW, 176) : Math.min(objBadgeW, 240),
-          height: isPhone ? 24 : 26,
-          inset: [
-            isPhone ? 6 : 8,
-            (isPhone ? 6 : 8) + topBarH + 6 + objBadgeH + 6 +
-              (battle.difficultyTier !== 'normal' || battle.mutators.length > 0 ? (isPhone ? 29 : 33) : 0)
-          ],
+          height: autoPillH,
+          inset: [edgeX, autoPillY],
           respectSafeArea: true
         },
         widget: {
@@ -3748,28 +3787,23 @@ async function start() {
         }
       })] : []),
 
-      // Compact non-blocking First-Time Discovery Tip callout banner (below objective/challenge/auto badges, never blocks tiles/deploy)
+      // Compact non-blocking First-Time Discovery Tip callout banner (below top-left stack, hidden while combat log drawer is open)
       ...(() => {
         const activeTip = getActiveDiscoveryTip(state)
-        if (!activeTip || (isPhone && mobileHandOpen)) return []
+        if (!activeTip || combatLogOpen || (isPhone && mobileHandOpen)) return []
         const tipBtnH = isPhone ? 24 : 26
         const tipH = isPhone ? 112 : 126
         const tipW = mobilePortrait
-          ? Math.min(w - 16, 336)
+          ? Math.min(w - 64, 296)
           : mobileLandscape
-            ? Math.min(w - 16, 286)
+            ? Math.min(w - 64, 286)
             : Math.min(w - 20, 326)
-        const challengeOffset = battle.difficultyTier !== 'normal' || battle.mutators.length > 0 ? (isPhone ? 29 : 33) : 0
-        const autoPillOffset = battle.autoBattle ? (isPhone ? 30 : 32) : 0
-        const tipAnchor = mobilePortrait ? 'top' : 'top-left'
-        const tipInset: [number, number] = mobilePortrait
-          ? [8, timelineInset[1] + tokenH + 16]
-          : [isPhone ? 6 : 8, (isPhone ? 6 : 8) + topBarH + 6 + objBadgeH + (isPhone ? 6 : 8) + challengeOffset + autoPillOffset]
+        const tipInset: [number, number] = [edgeX, leftStackY]
         return [
           column({
             id: 'discovery-tip-card',
             style: {
-              anchor: tipAnchor,
+              anchor: 'top-left',
               width: tipW,
               height: tipH,
               inset: tipInset,
@@ -6237,9 +6271,9 @@ async function start() {
       ? unitAt(battle, hovered.col, hovered.row)
       : undefined
     const selectedUnit = getUnitByUid(battle, battle.selectedUnitUid)
-    const inspectedEnemy = hoveredEnemy?.team === 'enemy'
+    const inspectedEnemy = hoveredEnemy?.team === 'enemy' && !isEnemyShrouded(battle, hoveredEnemy)
       ? hoveredEnemy
-      : selectedUnit?.team === 'enemy'
+      : selectedUnit?.team === 'enemy' && !isEnemyShrouded(battle, selectedUnit)
         ? selectedUnit
         : undefined
     const dangerMap = dangerZoneOn ? computeDangerZone(battle) : null
@@ -6522,7 +6556,7 @@ async function start() {
       }
       if (obj.kind === 'assassinate' && obj.targetEnemyUid) {
         const tUnit = getUnitByUid(battle, obj.targetEnemyUid)
-        if (tUnit && tUnit.alive) {
+        if (tUnit && tUnit.alive && !isEnemyShrouded(battle, tUnit)) {
           const p = scene.project(tUnit.x, tUnit.y + (tUnit.isBoss ? 2.95 : 2.45), tUnit.z, g.width, g.height)
           if (p) {
             const pw = 62
@@ -6566,7 +6600,7 @@ async function start() {
           : ''
         const text = `${desc} · H${hLvl} (${hovered.col + 1},${hovered.row + 1})${deployTag}${oaTag}${threatTag}`
         const pw = Math.min(560, Math.max(148, text.length * 6.8 + 24))
-        const py = g.height < 480 ? 80 : 94
+        const py = g.height < 480 ? g.height - 134 : g.height - 178
         const hasOaWarn = Boolean(hoveredOa && hoveredOa.triggers.length > 0)
         g.panel(10, py, pw, 28, {
           fill: hasOaWarn ? '#4a1d14' : dzTile ? '#3d1e2e' : deployTag ? '#1b365e' : '#253357',

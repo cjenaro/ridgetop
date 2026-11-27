@@ -1,4 +1,5 @@
 import { ENEMY_SPECS, HERO_SPECS } from './data.ts'
+import { mutatorDamageMultiplier } from './mutators.ts'
 import {
   computeAttackerDamageMultiplier, computeBonusIgnoreArmor, computeShieldWallDefBonus
 } from './passives.ts'
@@ -154,7 +155,7 @@ export function computeZocPerimeterTiles(
  * `rawDamage = attacker.atk * OPPORTUNITY_ATTACK_DAMAGE_MUL`, `ignoreArmor = 0`, `canCrit = false`).
  */
 export function computeOpportunityAttackDamage(
-  battle: Pick<BattleState, 'cells' | 'cols' | 'rows'> & Partial<Pick<BattleState, 'units'>>,
+  battle: Pick<BattleState, 'cells' | 'cols' | 'rows'> & Partial<Pick<BattleState, 'units' | 'mutators'>>,
   attacker: Pick<BattleUnit, 'col' | 'row' | 'atk' | 'empowerTurns'> & Partial<Pick<BattleUnit, 'heroId' | 'weaponId' | 'armorId' | 'relicId'>>,
   defender: Pick<BattleUnit, 'def' | 'shield'> & Partial<Pick<BattleUnit, 'uid' | 'team' | 'alive' | 'slowTurns' | 'burnTurns' | 'stunTurns' | 'isBoss'>>,
   defenderCol: number,
@@ -180,6 +181,7 @@ export function computeOpportunityAttackDamage(
     stunTurns: defender.stunTurns ?? 0,
     isBoss: Boolean(defender.isBoss)
   })
+  dmg *= mutatorDamageMultiplier(battle)
 
   const cell = battle.cells[defenderRow]?.[defenderCol]
   const terrainDef = cell ? terrainDefBonus(cell.terrain) : 0
@@ -225,7 +227,7 @@ export function findStepOpportunityAttackers(
  * and returns every step index, sentinel attacker, and projected OA damage along the path.
  */
 export function previewPathOpportunityAttacks(
-  battle: Pick<BattleState, 'cells' | 'cols' | 'rows' | 'units'>,
+  battle: Pick<BattleState, 'cells' | 'cols' | 'rows' | 'units'> & Partial<Pick<BattleState, 'mutators'>>,
   unit: BattleUnit,
   path: readonly GridCoord[]
 ): PathOpportunityPreview {
