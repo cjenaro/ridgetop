@@ -4,6 +4,7 @@ import { HERO_SPECS, TACTIC_BY_ID } from './data.ts'
 import { classifyElement, previewElementalCombo } from './elemental-combos.ts'
 import { computeEndlessAttackerDamageMultiplier } from './endless-roguelite.ts'
 import { closestFootprintCell, getUnitFootprintCells, unitOccupiesCell } from './expansion-act2.ts'
+import { computeGearSetCombatBonuses } from './gear-sets.ts'
 import { isEnemyShrouded, mutatorDamageMultiplier } from './mutators.ts'
 import {
   adjustCoverBonusForAttacker,
@@ -654,7 +655,8 @@ function estimateStrikeDamage(
   const arc = attackArc(fromCol, fromRow, target.col, target.row, target.facing)
   const aMul = arcDmgMul(arc)
   const cover = isRangedOrIndirect ? coverBonusFor(battle, fromCol, fromRow, target.col, target.row, attacker) : 0
-  const totalIgnore = Math.min(1, ignoreArmor + computeBonusIgnoreArmor(attacker, target.def))
+  const setCombat = computeGearSetCombatBonuses(attacker, target, isSkill, arc)
+  const totalIgnore = Math.min(1, ignoreArmor + computeBonusIgnoreArmor(attacker, target.def) + setCombat.bonusIgnoreArmor)
   const effDef = Math.max(
     0,
     (target.def + computeShieldWallDefBonus(battle, target)) * (1 - totalIgnore) +
@@ -668,7 +670,7 @@ function estimateStrikeDamage(
   const passiveDefMul = computeDefenderIncomingDamageMultiplier(target, isSkill)
   const dmg = Math.max(
     4,
-    Math.round((rawPower * empowerMul * elevMul * aMul * passiveAtkMul * endlessMul * mutMul - effDef * 0.72) * passiveDefMul)
+    Math.round((rawPower * empowerMul * elevMul * aMul * passiveAtkMul * setCombat.damageMul * endlessMul * mutMul - effDef * 0.72) * passiveDefMul)
   )
   return {
     damage: dmg,

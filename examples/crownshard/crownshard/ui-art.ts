@@ -17,6 +17,8 @@ import { ENDLESS_BLESSING_BY_ID, ENDLESS_BLESSING_RARITY_META } from './endless-
 import type { EndlessBlessingSpec } from './endless-roguelite.ts'
 import { DIFFICULTY_META, RARITY_META, RARITY_ORDER } from './data.ts'
 import { EQUIP_FAMILY_META, getEquipFamily, getHeroEquipFamily } from './equip-families.ts'
+import { GEAR_SET_SPECS, getEquipSetSpec, getUnitActiveGearSets } from './gear-sets.ts'
+import type { GearSetProgress } from './gear-sets.ts'
 import { EPIC_PITY_THRESHOLD, LEGENDARY_PITY_THRESHOLD } from './forge.ts'
 import { heroLevelProgress } from './leveling.ts'
 import { STAGE_MUTATOR_SPECS, STAGE_TIER_SPECS, stageTierRank } from './mutators.ts'
@@ -2615,6 +2617,22 @@ export function drawUnitCard(
     })
     badgeX += lvW + 3
   }
+  if (ally) {
+    const activeSets = getUnitActiveGearSets(unit)
+    for (const s of activeSets) {
+      const setLabel = `2pc ${s.spec.tag}`
+      const setEstW = Math.round(measureText(ctx, setLabel, 8, 900, true) + 12)
+      if (badgeX + setEstW > badgeMaxX) break
+      const drawnW = drawChip(ctx, badgeX, py + 20, setLabel, {
+        h: 16,
+        size: 8,
+        color: s.spec.accentHex,
+        bg: s.spec.bgHex,
+        border: s.spec.accentHex + 'bb'
+      })
+      badgeX += drawnW + 3
+    }
+  }
   const unitBadges = getUnitStatusBadges(unit)
   for (const b of unitBadges) {
     const estW = Math.round(measureText(ctx, b.text, 8, 800, true) + 12)
@@ -4043,7 +4061,7 @@ export function drawHeroRosterCard(
 export function drawHeroHeader(
   ctx: CanvasRenderingContext2D,
   rect: LayoutRect,
-  o: { name: string; title: string; stars: number; rarity: Rarity; power: number; portrait?: CanvasImageSource; inSquad: boolean; level?: number; xp?: number; locked?: boolean; equipFamily?: EquipFamily }
+  o: { name: string; title: string; stars: number; rarity: Rarity; power: number; portrait?: CanvasImageSource; inSquad: boolean; level?: number; xp?: number; locked?: boolean; equipFamily?: EquipFamily; gearSets?: readonly GearSetProgress[] }
 ) {
   const meta = RARITY_META[o.rarity]
   const prog = heroLevelProgress(o.level, o.xp)
@@ -4077,6 +4095,20 @@ export function drawHeroHeader(
       cx += drawChip(ctx, cx, y + h * 0.58 - 8.5, fam.shortLabel, { h: 17, size: 9, color: fam.accentHex, bg: fam.bgHex, border: fam.accentHex + '99' }) + 5
     } else if (cx + famCompactW < midRight) {
       cx += drawChip(ctx, cx, y + h * 0.58 - 8.5, fam.compactLabel, { h: 17, size: 8.5, color: fam.accentHex, bg: fam.bgHex, border: fam.accentHex + '99' }) + 5
+    }
+  }
+  if (o.gearSets && o.gearSets.length > 0) {
+    const topSet = o.gearSets[0]
+    const setChipLabel = `${Math.min(topSet.equippedCount, topSet.requiredCount)}/${topSet.requiredCount} ${topSet.spec.tag}`
+    const setChipW = measureText(ctx, setChipLabel, 8.5, 900, true) + 14
+    if (cx + setChipW < midRight) {
+      cx += drawChip(ctx, cx, y + h * 0.58 - 8.5, setChipLabel, {
+        h: 17,
+        size: 8.5,
+        color: topSet.active ? topSet.spec.accentHex : COLOR.muted,
+        bg: topSet.active ? topSet.spec.bgHex : COLOR.wellDeep,
+        border: topSet.active ? topSet.spec.accentHex + 'cc' : topSet.spec.accentHex + '66'
+      }) + 5
     }
   }
   if (cx + 64 < midRight) {
@@ -4233,6 +4265,92 @@ export function drawEquipFamilyPill(
   ctx.restore()
 }
 
+/**
+ * Compact active/partial 2-piece gear set banner for Camp Armory & Squad inspector.
+ * Highlights active `2/2` set perks with themed accents, or shows `1/2` progress hints cleanly
+ * on both desktop and narrow mobile viewports (`375x667`, `390x844`, `844x390`).
+ */
+export function drawGearSetBanner(
+  ctx: CanvasRenderingContext2D,
+  rect: LayoutRect,
+  progress: readonly GearSetProgress[],
+  compact = false
+) {
+  const { x, y, width: w, height: h } = rect
+  if (w < 60 || h < 16 || progress.length === 0) return
+
+  const primary = progress[0]
+  const isActive = primary.active
+  const accent = primary.spec.accentHex
+  const bg = isActive ? primary.spec.bgHex : '#141d36'
+
+  ctx.save()
+  rr(ctx, x, y, w, h, RADIUS.sm)
+  ctx.fillStyle = bg
+  ctx.fill()
+  ctx.strokeStyle = isActive ? accent + 'cc' : accent + '55'
+  ctx.lineWidth = isActive ? 1.6 : 1.2
+  ctx.stroke()
+
+  // Crisp left accent bar
+  rr(ctx, x + 3, y + 3, 3, Math.max(8, h - 6), 1.5)
+  ctx.fillStyle = isActive ? accent : accent + '88'
+  ctx.fill()
+
+  const cy = y + h / 2
+  const chipH = Math.min(16, h - 4)
+  let cx = x + 10
+  const maxRight = x + w - 8
+
+  const badgeText = isActive
+    ? `2/2 ${primary.spec.tag}`
+    : `${primary.equippedCount}/${primary.requiredCount} ${primary.spec.tag}`
+  const badgeW = drawChip(ctx, cx, cy - chipH / 2, badgeText, {
+    h: chipH,
+    size: compact ? 8 : 8.5,
+    color: isActive ? accent : '#cfdcf5',
+    bg: isActive ? '#0c1324aa' : '#0f162b',
+    border: isActive ? accent + 'bb' : accent + '66'
+  })
+  cx += badgeW + 6
+
+  // If no set is active and hero has a second partial 1/2 set, show its pill too if plenty of room
+  if (!isActive && progress.length > 1 && w >= 310) {
+    const second = progress[1]
+    const secText = `${second.equippedCount}/${second.requiredCount} ${second.spec.tag}`
+    const secEstW = measureText(ctx, secText, compact ? 8 : 8.5, 900, true) + 12
+    if (cx + secEstW + 80 < maxRight) {
+      cx += drawChip(ctx, cx, cy - chipH / 2, secText, {
+        h: chipH,
+        size: compact ? 8 : 8.5,
+        color: second.spec.accentHex,
+        bg: '#0f162b',
+        border: second.spec.accentHex + '66'
+      }) + 6
+    }
+  }
+
+  const availW = maxRight - cx
+  if (availW >= 36) {
+    const detailText = isActive
+      ? compact || w < 380
+        ? `★ ${primary.spec.perkName}: ${primary.spec.shortPerk}`
+        : `★ ${primary.spec.name} (${primary.spec.perkName}): ${primary.spec.shortPerk}`
+      : compact || w < 380
+        ? `1 more ${primary.spec.shortName} -> ${primary.spec.perkName}`
+        : `Equip 1 more ${primary.spec.shortName} piece for ${primary.spec.perkName} (${primary.spec.shortPerk})`
+    drawText(ctx, detailText, cx, cy + 0.5, {
+      size: compact || w < 380 ? 9 : 10,
+      weight: isActive ? 800 : 700,
+      color: isActive ? '#f4f8ff' : COLOR.muted,
+      maxW: availW,
+      display: isActive,
+      shadow: isActive
+    })
+  }
+  ctx.restore()
+}
+
 export function drawEquipCard(
   ctx: CanvasRenderingContext2D,
   rect: LayoutRect,
@@ -4312,6 +4430,7 @@ export function drawEquipCard(
   }
 
   const faceH = drawH - (pressed ? 1 : 3)
+  const setSpec = getEquipSetSpec(spec.id)
   if (narrowSlot) {
     const is = Math.min(faceH - 22, 24)
     const ix = x + (w - is) / 2
@@ -4328,6 +4447,17 @@ export function drawEquipCard(
     drawEquipIcon(ctx, spec.slot, spec.id, spec.accentHex, ix + is / 2, iy + is / 2, is * 0.36)
     if (isLocked) {
       drawLockMedallion(ctx, x + 10, y + 10, 6.2)
+    } else if (setSpec) {
+      const tagEstW = measureText(ctx, setSpec.tag, 7, 900, true) + 8
+      if (ix - (x + 4) >= tagEstW + 2) {
+        drawChip(ctx, x + 4, y + 4, setSpec.tag, {
+          h: 13,
+          size: 7,
+          color: setSpec.accentHex,
+          bg: setSpec.bgHex,
+          border: setSpec.accentHex + 'aa'
+        })
+      }
     }
     drawText(ctx, spec.name, x + w / 2, y + faceH - 9, {
       size: 10,
@@ -4403,11 +4533,25 @@ export function drawEquipCard(
     rightUsed += 22
   }
 
+  if (setSpec) {
+    const setEstW = measureText(ctx, setSpec.tag, 7.5, 900, true) + 12
+    if (right - rightUsed - tx - setEstW >= 56) {
+      rightUsed += drawChip(ctx, right - rightUsed, chipY, setSpec.tag, {
+        h: 16,
+        size: 7.5,
+        color: isIncompatible ? '#9eb0cf' : setSpec.accentHex,
+        bg: isIncompatible ? '#1d2438' : setSpec.bgHex,
+        border: isIncompatible ? '#5c6a8888' : setSpec.accentHex + 'bb',
+        align: 'right'
+      }) + 4
+    }
+  }
+
   const showFam = o.showFamilyBadge !== false && !isIncompatible
   if (showFam) {
     const famLabel = w >= 290 ? famMeta.shortLabel : famMeta.compactLabel
     const famEstW = measureText(ctx, famLabel, 8, 800, true) + 14
-    if (right - rightUsed - tx - famEstW >= 78) {
+    if (right - rightUsed - tx - famEstW >= 68) {
       rightUsed += drawChip(ctx, right - rightUsed, chipY, famLabel, {
         h: 16,
         size: 8,
@@ -4540,6 +4684,29 @@ export function drawArmoryStatDiffPanel(
   })
   rightCursor -= pwrW + 6
 
+  const hasActivatedSet = !isLockedClass && diff.activatedSets.length > 0
+  const hasDeactivatedSet = !isLockedClass && diff.deactivatedSets.length > 0
+  const hasSetDelta = hasActivatedSet || hasDeactivatedSet
+  const showDedicatedSetStrip = hasSetDelta && h >= 72
+
+  if (hasSetDelta && !showDedicatedSetStrip) {
+    const setChipLabel = hasActivatedSet
+      ? `+ 2pc ${GEAR_SET_SPECS[diff.activatedSets[0]].shortName}!`
+      : `- 2pc ${GEAR_SET_SPECS[diff.deactivatedSets[0]].shortName}`
+    const setChipEstW = measureText(ctx, setChipLabel, 8.5, 900, true) + 14
+    if (rightCursor - (x + padX + 120) >= setChipEstW) {
+      const setChipW = drawChip(ctx, rightCursor, headerCy - 9, setChipLabel, {
+        h: 18,
+        size: 8.5,
+        color: hasActivatedSet ? '#52f598' : '#ff8e9b',
+        bg: hasActivatedSet ? '#123824' : '#3f1520',
+        border: hasActivatedSet ? '#52f598cc' : '#ff6b7acc',
+        align: 'right'
+      })
+      rightCursor -= setChipW + 6
+    }
+  }
+
   if (!isLockedClass && diff.currentOwnerName && w >= 420) {
     const swapLabel = `⇄ Held by ${diff.currentOwnerName}`
     const swapW = drawChip(ctx, rightCursor, headerCy - 9, swapLabel, {
@@ -4582,8 +4749,44 @@ export function drawArmoryStatDiffPanel(
     shadow: true
   })
 
+  // Optional Set Bonus activation / deactivation callout strip
+  let statsY = y + padY + headerH + (h < 60 ? 3 : 4)
+  if (showDedicatedSetStrip) {
+    const stripH = 16
+    const actSpec = hasActivatedSet ? GEAR_SET_SPECS[diff.activatedSets[0]] : null
+    const deactSpec = hasDeactivatedSet ? GEAR_SET_SPECS[diff.deactivatedSets[0]] : null
+    const stripBg = actSpec ? '#133626' : '#3d1623'
+    const stripBorder = actSpec ? '#52f598bb' : '#ff6b7abb'
+    const stripColor = actSpec ? '#7effb8' : '#ff9ca6'
+    let stripText = ''
+    if (actSpec && deactSpec) {
+      stripText = w < 440
+        ? `+ 2pc ${actSpec.shortName}: ${actSpec.perkName} · - 2pc ${deactSpec.shortName}`
+        : `+ 2pc ${actSpec.shortName}: ${actSpec.perkName} · Breaks 2pc ${deactSpec.shortName}`
+    } else if (actSpec) {
+      stripText = w < 460
+        ? `+ 2pc ${actSpec.shortName}: ${actSpec.perkName}`
+        : `+ 2pc ${actSpec.shortName}: ${actSpec.perkName} (${actSpec.shortPerk})`
+    } else if (deactSpec) {
+      stripText = `- Loses 2pc ${deactSpec.shortName}: ${deactSpec.perkName}`
+    }
+    rr(ctx, x + padX, statsY, innerW, stripH, RADIUS.xs)
+    ctx.fillStyle = stripBg
+    ctx.fill()
+    ctx.strokeStyle = stripBorder
+    ctx.lineWidth = 1.2
+    ctx.stroke()
+    drawText(ctx, stripText, x + padX + 7, statsY + stripH / 2 + 0.5, {
+      size: w < 420 ? 8.5 : 9.5,
+      weight: 900,
+      color: stripColor,
+      maxW: innerW - 14,
+      display: true
+    })
+    statsY += stripH + 4
+  }
+
   // Stat-diff grid across all 7 stats (or Lock Banner when class-incompatible)
-  const statsY = y + padY + headerH + (h < 60 ? 3 : 4)
   const statsH = Math.max(20, y + h - 5 - statsY)
   if (isLockedClass) {
     rr(ctx, x + padX, statsY, innerW, statsH, RADIUS.sm)

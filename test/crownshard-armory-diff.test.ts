@@ -385,9 +385,10 @@ test('drawArmoryStatDiffPanel and drawStatStrip render green ▲ +N and red ▼ 
       texts.some(t => t.text.includes('▲ +2%') && t.fillStyle === '#52f598'),
       'Mixed trade-off should render green ▲ +2% CRIT arrow'
     )
+    // Swapping Heart of Solis -> Skyhawk Crest while wearing Solis Crownblade also breaks 2pc Solis (-4 item -4 set = -8 ATK)
     assert.ok(
-      texts.some(t => t.text.includes('▼ -4') && t.fillStyle === '#ff6b7a'),
-      'Mixed trade-off should render red ▼ -4 ATK arrow'
+      texts.some(t => t.text.includes('▼ -8') && t.fillStyle === '#ff6b7a'),
+      'Mixed trade-off breaking 2pc Solis should render red ▼ -8 ATK arrow'
     )
     assert.ok(
       texts.some(t => t.text.includes(HERO_SPECS.archer.name)),
@@ -399,7 +400,7 @@ test('drawArmoryStatDiffPanel and drawStatStrip render green ▲ +N and red ▼ 
     drawArmoryStatDiffPanel(mobileCanvas.ctx, { x: 6, y: 6, width: 340, height: 78 }, mixedSwapDiff)
     assert.ok(mobileCanvas.ops > 20)
     assert.ok(mobileCanvas.texts.some(t => t.text.includes('▲ +1')))
-    assert.ok(mobileCanvas.texts.some(t => t.text.includes('▼ -4')))
+    assert.ok(mobileCanvas.texts.some(t => t.text.includes('▼ -8')))
   }
 
   // Case D: Already-equipped item renders EQUIPPED badge without throwing

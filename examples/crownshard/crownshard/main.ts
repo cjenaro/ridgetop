@@ -28,7 +28,7 @@ import {
 } from './world-map-3d.ts'
 import type { WorldMap3DCamera } from './world-map-3d.ts'
 import {
-  CROWNLESS_DEEP_MAX_FLOOR, ENDLESS_BLESSING_BY_ID, MAX_TACTIC_DECK, MIN_TACTIC_DECK, OAKHAVEN_STAGE_ID,
+  CROWNLESS_DEEP_MAX_FLOOR, ENDLESS_BLESSING_BY_ID, GEAR_SET_SPECS, MAX_TACTIC_DECK, MIN_TACTIC_DECK, OAKHAVEN_STAGE_ID,
   STARFALL_ATOLL_FIRST_CLEAR_DUST, STARFALL_ATOLL_FIRST_CLEAR_SHARDS,
   STAGE_DIFFICULTY_TIERS, STAGE_MUTATOR_IDS, STAGE_MUTATOR_SPECS, STAGE_TIER_SPECS, WEATHER_SPECS,
   abandonBattle, abandonEndlessRun, areDiscoveryTipsEnabled, armSkill, armTacticCard, autoBuildTacticDeck, autoEquipBestFit, beginWaitFacingPicker,
@@ -41,7 +41,7 @@ import {
   findBestFitUpgrades, findEquipOwner, findGridPath, formatAbyssFloorLabel, formatBattleSpeedLabel, formatBossTelegraphHudSummary, formatCoverTooltip, formatEndlessBiomeLabel, formatOpportunityWarning, formatWeatherHudLabel,
   getAct1StageMechanicStatus, getActiveDiscoveryTip, getActiveTacticDeckUids,
   getBestiaryEntries, getChapterObjectiveSummary, getClaimableMasteryMilestones, getCodexProgress, getCoverHp, getCraftableEquipment, getCraftableHeroes, getCrownlessDeepFloorSpec, getEquipCodexEntries, getEquipCompatibilityReason, getEquipCraftCost, getEquipEffect, getEquipFamily,
-  getEquipSalvageDust, getEquipShortLockLabel, getEquipmentByUid, getHeroByUid, getHeroCodexEntries, getHeroCraftCost, getHeroEquipFamily, getHeroEquipFamilyMeta, getHeroPassive, getHeroSalvageShards,
+  getEquipSalvageDust, getEquipShortLockLabel, getEquipmentByUid, getHeroActiveGearSetIds, getHeroByUid, getHeroCodexEntries, getHeroCraftCost, getHeroEquipFamily, getHeroEquipFamilyMeta, getHeroGearSetProgress, getHeroPassive, getHeroSalvageShards,
   getHeroSkill, getHighestClearedStageTier, getMaxCombatLogScroll, getMaxLivingBossPhase, getMaxMasteryStars, getMaxSelectableCrownlessDeepFloor, getMergeCandidates, getNextMasteryMilestone, getNextRecommendedStage, getOakhavenExchangeOffers, getObjectiveProgressText, getPackPityStatus,
   getSelectedCrownlessDeepFloor, getStageMasteryChestReward, getStageMasteryObjectives, getStageMasteryRecord, getStageUnlockHint, getTacticByUid, getTelegraphsAtCell, getTotalMasteryStars, getUnitByUid, getWorldMapEventById, hasClaimedStageMasteryChest, hasMaxedHero, hasOakhavenPatronDiscount, heroLevelProgress, isChestClaimed,
   isCrownlessDeepStage, isDeployTile, isDestructibleCover, isEndlessBossWave, isEndlessUnlocked, isEnemyShrouded, isOakhavenExchangeUnlocked, isStageCleared, isStageUnlocked, loadSave, maxSquadSize, mergeHero,
@@ -64,7 +64,7 @@ import {
   drawAnimatedRevealCard, drawApMeter, drawArmoryStatDiffPanel, drawAutoBattlePill, drawBattleInfo, drawBoosterPack, drawBossTelegraphBanner, drawButton, drawCameraCompassButton, drawCampHeader,
   drawChallengeHudBadges, drawChapterPicker, drawChip, drawCodexEnemyDetail, drawCodexEntryCard, drawCodexEquipDetail, drawCodexHeader, drawCodexHeroDetail, drawCombatForecast, drawCombatLogPanel, drawCombatLogToggleButton, drawControlHints, drawDefeatBackdrop, drawDeployHeroChip,
   drawDifficultyBadge, drawDiscoveryTipCard, drawEmptyNote, drawEndTurnButton, drawEndlessBlessingCard, drawEndlessBlessingsHudPill, drawEquipCard, drawEquipFamilyPill, drawForecastAltChip,
-  drawForgeBalanceBanner, drawForgeRecipeCard, drawHeroHeader, drawHeroRosterCard, drawHeroXpSummaryAnimated, drawHintPill, drawIconButton, drawLabel, drawLetterbox,
+  drawForgeBalanceBanner, drawForgeRecipeCard, drawGearSetBanner, drawHeroHeader, drawHeroRosterCard, drawHeroXpSummaryAnimated, drawHintPill, drawIconButton, drawLabel, drawLetterbox,
   drawLootRow, drawModal, drawMutatorChipButton, drawObjectiveBadge, drawOverline, drawPackCeremonyBackdrop, drawPanel, drawPassiveBanner, drawPityBanner, drawPortraitTile,
   drawResultHeadlineAnimated, drawRevealCard, drawRewardRowAnimated, drawSegmentTrack,
   drawSettingRow, drawSheet, drawSkillRow, drawSkillTile, drawSpeakerPortrait, drawStageMasteryChecklist, drawStageTierSegment, drawStatStrip,
@@ -5954,6 +5954,7 @@ async function start() {
         const rSpec = relic ? EQUIPMENT_BY_ID[relic.equipId] : undefined
         const salvageVal = RARITY_META[spec.rarity].salvage * (selHero.stars === 3 ? 4 : selHero.stars === 2 ? 2 : 1)
         const heroPortrait = heroCardPortrait(selHero)
+        const heroGearSets = getHeroGearSetProgress(camp, selHero)
 
         const mergeLabel = selHero.stars >= 3
           ? 'Max Tier'
@@ -5986,7 +5987,8 @@ async function start() {
               portrait: heroPortrait,
               inSquad,
               locked: Boolean(selHero.locked),
-              equipFamily: getHeroEquipFamily(selHero.heroId)
+              equipFamily: getHeroEquipFamily(selHero.heroId),
+              gearSets: heroGearSets
             })
           }
         })
@@ -6093,12 +6095,17 @@ async function start() {
         const bestFitUpgrades = findBestFitUpgrades(camp, selHero.uid)
         const bestFitCount = bestFitUpgrades.length
         const bestFitLabel = bestFitCount > 0 ? `Best Fit (+${bestFitCount})` : 'Best Fit'
+        const gearHeaderLabel = !wide && heroGearSets.length > 0
+          ? heroGearSets[0].active
+            ? `Equipped Gear · 2/2 ${heroGearSets[0].spec.tag}: ${heroGearSets[0].spec.perkName}`
+            : `Equipped Gear · 1/2 ${heroGearSets[0].spec.tag}`
+          : 'Equipped Gear'
         const gearHeaderRow = row({ id: 'ins-eq-head', style: { height: 24, gap: 8, align: 'center' } }, [
           boxNode({
             id: 'ins-eq-lbl', style: { grow: 1, height: 24 },
             widget: {
               type: 'panel',
-              draw: (ctx: CanvasRenderingContext2D, rect: LayoutRect) => drawOverline(ctx, 'Equipped Gear', rect.x, rect.y + 12, rect.width)
+              draw: (ctx: CanvasRenderingContext2D, rect: LayoutRect) => drawOverline(ctx, gearHeaderLabel, rect.x, rect.y + 12, rect.width)
             }
           }),
           boxNode({
@@ -6233,7 +6240,17 @@ async function start() {
               statsNode,
               actionsNode,
               gearHeaderRow,
-              gearRow
+              gearRow,
+              ...(heroGearSets.length > 0
+                ? [boxNode({
+                    id: 'ins-gear-sets',
+                    style: { height: 24 },
+                    widget: {
+                      type: 'panel',
+                      draw: (ctx: CanvasRenderingContext2D, rect: LayoutRect) => drawGearSetBanner(ctx, rect, heroGearSets, false)
+                    }
+                  })]
+                : [])
             ]),
             column({
               id: 'camp-skills-col',
@@ -6322,15 +6339,21 @@ async function start() {
           return
         }
         const wasOnSel = findEquipOwner(camp, item.uid)?.uid === selHero.uid
+        const setsBefore = getHeroActiveGearSetIds(camp, selHero)
         if (equipItem(state, selHero.uid, item.uid)) {
           inspectedArmoryEquipUid = null
           saveNow()
           scene.triggerCampEquipFlourish(selHero.uid, item.slot, spec?.accentHex)
+          const setsAfter = getHeroActiveGearSetIds(camp, selHero)
+          const newSetId = setsAfter.find(id => !setsBefore.includes(id))
           const eqEff = spec ? getEquipEffect(spec.id) : null
+          const baseMsg = eqEff
+            ? `Equipped ${spec?.name ?? 'item'} (${eqEff.name}: ${eqEff.shortLabel}) on ${HERO_SPECS[selHero.heroId].name}.`
+            : `Equipped ${spec?.name ?? 'item'} on ${HERO_SPECS[selHero.heroId].name}.`
           showToast(
-            eqEff
-              ? `Equipped ${spec?.name ?? 'item'} (${eqEff.name}: ${eqEff.shortLabel}) on ${HERO_SPECS[selHero.heroId].name}.`
-              : `Equipped ${spec?.name ?? 'item'} on ${HERO_SPECS[selHero.heroId].name}.`
+            newSetId
+              ? `${baseMsg} ★ 2pc ${GEAR_SET_SPECS[newSetId].shortName}: ${GEAR_SET_SPECS[newSetId].perkName}!`
+              : baseMsg
           )
           if (!wasOnSel) startEquipFanfare(selHero, item.equipId)
         }
@@ -6709,6 +6732,18 @@ async function start() {
           })]
         : []
 
+      const selHeroGearSets = selHero ? getHeroGearSetProgress(camp, selHero) : []
+      const armGearSetNode = selHeroGearSets.length > 0
+        ? [boxNode({
+            id: 'arm-gear-sets',
+            style: { height: shortH ? 20 : mobile ? 22 : 24 },
+            widget: {
+              type: 'panel',
+              draw: (ctx: CanvasRenderingContext2D, rect: LayoutRect) => drawGearSetBanner(ctx, rect, selHeroGearSets, mobile || shortH)
+            }
+          })]
+        : []
+
       bodyNode = column({ id: 'camp-armory-body', style: { grow: 1, gap: shortH ? 5 : mobile ? 5 : 6 } }, [
         ...(mobile
           ? [
@@ -6720,6 +6755,7 @@ async function start() {
               row({ id: 'arm-top-controls', style: { height: shortH ? 32 : 34, gap: shortH ? 5 : 6, align: 'center' } }, [armHeroPortraitNode, armHeroStrip, armHeroFamilyNode, armFilterStrip, armCompatToggleBtn, armBestBtn, armBulkSalvageBtn])
             ]),
         ...armHeroStatsNode,
+        ...armGearSetNode,
         ...itemRows,
         spacerNode(1),
         row({ id: 'arm-pager', hidden: maxPage === 0, style: { height: 28, gap: 8, align: 'center' } }, [
@@ -7302,7 +7338,8 @@ async function start() {
       ...(() => {
         const diff = activeArmoryDiff
         if (campTab !== 'armory' || !diff || collapsed || packAnim) return []
-        const diffH = shortH ? 58 : mobile ? 78 : 64
+        const hasSetDelta = diff.compatible && (diff.activatedSets.length > 0 || diff.deactivatedSets.length > 0)
+        const diffH = (shortH ? 58 : mobile ? 78 : 64) + (hasSetDelta ? 18 : 0)
         if (mobile) {
           sheetH = Math.min(sheetH, Math.max(240, h - 68 - diffH - 18))
         }
@@ -7380,7 +7417,9 @@ async function start() {
           height: 32,
           inset: [
             8,
-            sheetH + 18 + (campTab === 'armory' && activeArmoryDiff && !collapsed && !packAnim ? (shortH ? 66 : mobile ? 86 : 72) : 0)
+            sheetH + 18 + (campTab === 'armory' && activeArmoryDiff && !collapsed && !packAnim
+              ? (shortH ? 66 : mobile ? 86 : 72) + (activeArmoryDiff.compatible && (activeArmoryDiff.activatedSets.length > 0 || activeArmoryDiff.deactivatedSets.length > 0) ? 18 : 0)
+              : 0)
           ],
           respectSafeArea: true
         },
@@ -9056,6 +9095,10 @@ async function start() {
       selectedHeroEquipFamily: (() => {
         const h = getHeroByUid(state.campaign, state.campaign.selectedCampHeroUid) ?? state.campaign.heroes[0]
         return h ? getHeroEquipFamily(h.heroId) : null
+      })(),
+      selectedHeroActiveSets: (() => {
+        const h = getHeroByUid(state.campaign, state.campaign.selectedCampHeroUid) ?? state.campaign.heroes[0]
+        return h ? getHeroActiveGearSetIds(state.campaign, h) : []
       })(),
       armoryCompatibleFilter,
       turnOrder: state.battle?.turnOrder.map(t => t.name) ?? [],

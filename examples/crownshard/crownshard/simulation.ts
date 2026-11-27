@@ -127,6 +127,23 @@ export {
 }
 export type { EquipEffectSpec, HeroPassiveSpec, TacticDeckCurve } from './passives.ts'
 import {
+  GEAR_SET_ORDER, GEAR_SET_SPECS,
+  computeGearSetCombatBonuses, computeGearSetStatBonuses,
+  getEquipSetId, getEquipSetSpec, getGearSetSpec,
+  getHeroActiveGearSetIds, getHeroActiveGearSets, getHeroGearSetProgress,
+  getItemsInGearSet, getLoadoutGearSetProgress, getUnitActiveGearSets, getUnitGearSetProgress
+} from './gear-sets.ts'
+export {
+  GEAR_SET_ORDER, GEAR_SET_SPECS,
+  computeGearSetCombatBonuses, computeGearSetStatBonuses,
+  getEquipSetId, getEquipSetSpec, getGearSetSpec,
+  getHeroActiveGearSetIds, getHeroActiveGearSets, getHeroGearSetProgress,
+  getItemsInGearSet, getLoadoutGearSetProgress, getUnitActiveGearSets, getUnitGearSetProgress
+}
+export type {
+  ActiveGearSetInfo, GearSetCombatBonus, GearSetCombatRule, GearSetProgress, GearSetSpec, GearSetStatBonus
+} from './gear-sets.ts'
+import {
   classifyElement, classifyHazardElement, collectWildfirePatch,
   previewElementalCombo, triggerElementalCombo
 } from './elemental-combos.ts'
@@ -623,9 +640,10 @@ export function computeHeroStats(campaign: CampaignState, hero: OwnedHeroCard): 
   let lifesteal = 0
   let shieldStart = 0
 
-  const slots = [hero.weaponUid, hero.armorUid, hero.relicUid]
-  for (const uid of slots) {
-    const owned = getEquipmentByUid(campaign, uid)
+  const weaponOwned = getEquipmentByUid(campaign, hero.weaponUid)
+  const armorOwned = getEquipmentByUid(campaign, hero.armorUid)
+  const relicOwned = getEquipmentByUid(campaign, hero.relicUid)
+  for (const owned of [weaponOwned, armorOwned, relicOwned]) {
     if (!owned) continue
     const item = EQUIPMENT_BY_ID[owned.equipId]
     if (!item) continue
@@ -640,6 +658,20 @@ export function computeHeroStats(campaign: CampaignState, hero: OwnedHeroCard): 
     lifesteal += item.lifesteal
     shieldStart += item.shieldStart
   }
+
+  const setBonus = computeGearSetStatBonuses(
+    weaponOwned?.equipId,
+    armorOwned?.equipId,
+    relicOwned?.equipId
+  )
+  maxHp += setBonus.hp
+  atk += setBonus.atk
+  def += setBonus.def
+  speed += setBonus.speed
+  move += setBonus.move
+  crit += setBonus.crit
+  lifesteal += setBonus.lifesteal
+  shieldStart += setBonus.shieldStart
 
   crit = clamp(crit, 0, 0.85)
   lifesteal = clamp(lifesteal, 0, 0.75)
@@ -4973,6 +5005,7 @@ function previewDamageMath(
   let empowered = false
   let attackArc: AttackArc = 'front'
   let arcCritBonus = 0
+  let setIgnoreArmor = 0
   const hitCell = attacker ? closestFootprintCell(fromCol, fromRow, defender) : { col: defender.col, row: defender.row }
   const terrainDef = terrainDefBonus(battle.cells[hitCell.row][hitCell.col].terrain)
   if (attacker) {
@@ -4991,13 +5024,16 @@ function previewDamageMath(
       empowered = true
     }
     dmg *= computeAttackerDamageMultiplier(attacker, defender)
+    const setCombat = computeGearSetCombatBonuses(attacker, defender, isSkillDamage, attackArc)
+    dmg *= setCombat.damageMul
+    setIgnoreArmor = setCombat.bonusIgnoreArmor
     dmg *= mutatorDamageMultiplier(battle)
     dmg *= computeEndlessAttackerDamageMultiplier(battle.endlessBlessings, attacker, defender)
   }
   const weatherMod = computeWeatherCombatModifiers(battle.weather, element, attackArc)
   dmg *= weatherMod.damageMul
   dmg *= computeDefenderIncomingDamageMultiplier(defender, isSkillDamage)
-  const totalIgnoreArmor = clamp(ignoreArmor + computeBonusIgnoreArmor(attacker, defender.def), 0, 1)
+  const totalIgnoreArmor = clamp(ignoreArmor + computeBonusIgnoreArmor(attacker, defender.def) + setIgnoreArmor, 0, 1)
   const shieldWallDef = computeShieldWallDefBonus(battle, defender)
   const effDef = Math.max(0, (defender.def + shieldWallDef) * (1 - totalIgnoreArmor) + terrainDef + coverBonus)
   const baseDmg = Math.max(4, Math.round(dmg - effDef * 0.72))
@@ -6068,6 +6104,7 @@ function applyDamageDetailed(
   let attackArc: AttackArc = 'front'
   let arcCritBonus = 0
   let coverBonus = 0
+  let setIgnoreArmor = 0
   const hitCell = attacker ? closestFootprintCell(attacker.col, attacker.row, defender) : { col: defender.col, row: defender.row }
   const terrainDef = terrainDefBonus(battle.cells[hitCell.row][hitCell.col].terrain)
   if (attacker) {
@@ -6081,6 +6118,9 @@ function applyDamageDetailed(
     arcCritBonus = arcMod.critBonus + computeBackstabPassiveCritBonus(attacker, attackArc)
     if (attacker.empowerTurns > 0) dmg *= 1.35
     dmg *= computeAttackerDamageMultiplier(attacker, defender)
+    const setCombat = computeGearSetCombatBonuses(attacker, defender, isSkillDamage, attackArc)
+    dmg *= setCombat.damageMul
+    setIgnoreArmor = setCombat.bonusIgnoreArmor
     dmg *= mutatorDamageMultiplier(battle)
     dmg *= computeEndlessAttackerDamageMultiplier(battle.endlessBlessings, attacker, defender)
   }
@@ -6088,7 +6128,7 @@ function applyDamageDetailed(
   dmg *= weatherMod.damageMul
   dmg *= computeDefenderIncomingDamageMultiplier(defender, isSkillDamage)
 
-  const totalIgnoreArmor = clamp(ignoreArmor + computeBonusIgnoreArmor(attacker, defender.def), 0, 1)
+  const totalIgnoreArmor = clamp(ignoreArmor + computeBonusIgnoreArmor(attacker, defender.def) + setIgnoreArmor, 0, 1)
   const shieldWallDef = computeShieldWallDefBonus(battle, defender)
   const effDef = Math.max(0, (defender.def + shieldWallDef) * (1 - totalIgnoreArmor) + terrainDef + coverBonus)
   let finalDmg = Math.max(4, Math.round(dmg - effDef * 0.72))

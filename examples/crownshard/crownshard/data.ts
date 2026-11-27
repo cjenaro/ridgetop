@@ -408,7 +408,7 @@ export const EQUIPMENT_LIST: readonly EquipmentSpec[] = [
     atk: 4, def: 0, hp: 0, speed: 1, move: 0, range: 0, crit: 0.10, lifesteal: 0, shieldStart: 0, accentHex: '#b8834d'
   },
   {
-    id: 'ember_wand', name: 'Ember Scepter', slot: 'weapon', family: 'arcane', rarity: 'uncommon',
+    id: 'ember_wand', name: 'Ember Scepter', slot: 'weapon', family: 'arcane', setId: 'astral', rarity: 'uncommon',
     desc: '+8 ATK, +6 HP, +1 SPD.',
     atk: 8, def: 0, hp: 6, speed: 1, move: 0, range: 0, crit: 0.06, lifesteal: 0, shieldStart: 0, accentHex: '#f08742'
   },
@@ -418,47 +418,47 @@ export const EQUIPMENT_LIST: readonly EquipmentSpec[] = [
     atk: 8, def: 0, hp: 4, speed: 2, move: 0, range: 0, crit: 0.14, lifesteal: 0, shieldStart: 0, accentHex: '#66c98e'
   },
   {
-    id: 'sunsteel_blade', name: 'Sunsteel Blade', slot: 'weapon', family: 'vanguard', rarity: 'rare',
+    id: 'sunsteel_blade', name: 'Sunsteel Blade', slot: 'weapon', family: 'vanguard', setId: 'solis', rarity: 'rare',
     desc: '+11 ATK, +1 SPD, +14% Crit.',
     atk: 11, def: 1, hp: 0, speed: 1, move: 0, range: 0, crit: 0.14, lifesteal: 0, shieldStart: 0, accentHex: '#f0c44d'
   },
   {
-    id: 'frostbite_staff', name: 'Frostbite Staff', slot: 'weapon', family: 'arcane', rarity: 'rare',
+    id: 'frostbite_staff', name: 'Frostbite Staff', slot: 'weapon', family: 'arcane', setId: 'frostguard', rarity: 'rare',
     desc: '+10 ATK, +1 Range, +1 SPD.',
     atk: 10, def: 0, hp: 8, speed: 1, move: 0, range: 1, crit: 0.08, lifesteal: 0, shieldStart: 0, accentHex: '#6dd9ff'
   },
   {
-    id: 'gale_longbow', name: 'Gale Longbow', slot: 'weapon', family: 'skirmisher', rarity: 'rare',
+    id: 'gale_longbow', name: 'Gale Longbow', slot: 'weapon', family: 'skirmisher', setId: 'windrunner', rarity: 'rare',
     desc: '+11 ATK, +1 Range, +2 SPD, +18% Crit.',
     atk: 11, def: 0, hp: 6, speed: 2, move: 0, range: 1, crit: 0.18, lifesteal: 0, shieldStart: 0, accentHex: '#59d4ff'
   },
   {
-    id: 'dragonfang_spear', name: 'Dragonfang Halberd', slot: 'weapon', family: 'vanguard', rarity: 'epic',
+    id: 'dragonfang_spear', name: 'Dragonfang Halberd', slot: 'weapon', family: 'vanguard', setId: 'frostguard', rarity: 'epic',
     desc: '+15 ATK, +1 Range, +15% Lifesteal, Venom.',
     atk: 15, def: 2, hp: 10, speed: 1, move: 0, range: 1, crit: 0.12, lifesteal: 0.15, shieldStart: 0, onHitStatus: 'poison', accentHex: '#d66bff'
   },
   {
-    id: 'solis_archstaff', name: 'Solis Archstaff', slot: 'weapon', family: 'arcane', rarity: 'epic',
+    id: 'solis_archstaff', name: 'Solis Archstaff', slot: 'weapon', family: 'arcane', setId: 'solis', rarity: 'epic',
     desc: '+15 ATK, +1 Range, +2 SPD, +12% Crit.',
     atk: 15, def: 1, hp: 12, speed: 2, move: 0, range: 1, crit: 0.12, lifesteal: 0, shieldStart: 0, accentHex: '#b882ff'
   },
   {
-    id: 'shadowfang_bow', name: 'Shadowfang Bow', slot: 'weapon', family: 'skirmisher', rarity: 'epic',
+    id: 'shadowfang_bow', name: 'Shadowfang Bow', slot: 'weapon', family: 'skirmisher', setId: 'shadowfang', rarity: 'epic',
     desc: '+15 ATK, +1 Range, +22% Crit, Venom.',
     atk: 15, def: 0, hp: 8, speed: 2, move: 0, range: 1, crit: 0.22, lifesteal: 0.12, shieldStart: 0, onHitStatus: 'poison', accentHex: '#c76eff'
   },
   {
-    id: 'solis_crownblade', name: 'Solis Crownblade', slot: 'weapon', family: 'vanguard', rarity: 'legendary',
+    id: 'solis_crownblade', name: 'Solis Crownblade', slot: 'weapon', family: 'vanguard', setId: 'solis', rarity: 'legendary',
     desc: '+22 ATK, +2 SPD, +25% Crit, Lifesteal.',
     atk: 22, def: 3, hp: 16, speed: 2, move: 0, range: 0, crit: 0.25, lifesteal: 0.25, shieldStart: 0, accentHex: '#ffe066'
   },
   {
-    id: 'celestial_staff', name: 'Celestial Staff', slot: 'weapon', family: 'arcane', rarity: 'legendary',
+    id: 'celestial_staff', name: 'Celestial Staff', slot: 'weapon', family: 'arcane', setId: 'astral', rarity: 'legendary',
     desc: '+21 ATK, +1 Range, +2 SPD, +20% Crit.',
     atk: 21, def: 2, hp: 18, speed: 2, move: 0, range: 1, crit: 0.20, lifesteal: 0.15, shieldStart: 0, accentHex: '#8ef4ff'
   },
   {
-    id: 'windrunner_bow', name: 'Windrunner Greatbow', slot: 'weapon', family: 'skirmisher', rarity: 'legendary',
+    id: 'windrunner_bow', name: 'Windrunner Greatbow', slot: 'weapon', family: 'skirmisher', setId: 'windrunner', rarity: 'legendary',
     desc: '+21 ATK, +1 Range, +3 SPD, +28% Crit.',
     atk: 21, def: 1, hp: 12, speed: 3, move: 0, range: 1, crit: 0.28, lifesteal: 0.15, shieldStart: 0, accentHex: '#74f2b8'
   },
@@ -480,57 +480,57 @@ export const EQUIPMENT_LIST: readonly EquipmentSpec[] = [
     atk: 0, def: 2, hp: 12, speed: 1, move: 0, range: 0, crit: 0, lifesteal: 0, shieldStart: 6, accentHex: '#6a7fd4'
   },
   {
-    id: 'ranger_cloak', name: 'Windrunner Cloak', slot: 'armor', family: 'skirmisher', rarity: 'uncommon',
+    id: 'ranger_cloak', name: 'Windrunner Cloak', slot: 'armor', family: 'skirmisher', setId: 'windrunner', rarity: 'uncommon',
     desc: '+16 HP, +2 SPD, +1 Move.',
     atk: 0, def: 2, hp: 16, speed: 2, move: 1, range: 0, crit: 0.06, lifesteal: 0, shieldStart: 0, accentHex: '#43a87b'
   },
   {
-    id: 'sunweave_robe', name: 'Sunweave Vestment', slot: 'armor', family: 'arcane', rarity: 'uncommon',
+    id: 'sunweave_robe', name: 'Sunweave Vestment', slot: 'armor', family: 'arcane', setId: 'solis', rarity: 'uncommon',
     desc: '+18 HP, +3 DEF, +1 ATK, +10 Start Shield.',
     atk: 1, def: 3, hp: 18, speed: 1, move: 0, range: 0, crit: 0.04, lifesteal: 0, shieldStart: 10, accentHex: '#e6b655'
   },
   {
-    id: 'runed_mail', name: 'Runed Chainmail', slot: 'armor', family: 'vanguard', rarity: 'rare',
+    id: 'runed_mail', name: 'Runed Chainmail', slot: 'armor', family: 'vanguard', setId: 'frostguard', rarity: 'rare',
     desc: '+32 HP, +6 DEF, +12 Start Shield.',
     atk: 0, def: 6, hp: 32, speed: 1, move: 0, range: 0, crit: 0, lifesteal: 0, shieldStart: 12, accentHex: '#5a9cf2'
   },
   {
-    id: 'astral_vestments', name: 'Astral Vestments', slot: 'armor', family: 'arcane', rarity: 'rare',
+    id: 'astral_vestments', name: 'Astral Vestments', slot: 'armor', family: 'arcane', setId: 'astral', rarity: 'rare',
     desc: '+26 HP, +4 DEF, +3 ATK, +2 SPD, +14 Shield.',
     atk: 3, def: 4, hp: 26, speed: 2, move: 0, range: 0, crit: 0.06, lifesteal: 0, shieldStart: 14, accentHex: '#6ea8ff'
   },
   {
-    id: 'stalker_leathers', name: 'Stalker Leathers', slot: 'armor', family: 'skirmisher', rarity: 'rare',
+    id: 'stalker_leathers', name: 'Stalker Leathers', slot: 'armor', family: 'skirmisher', setId: 'shadowfang', rarity: 'rare',
     desc: '+24 HP, +4 DEF, +3 ATK, +2 SPD, +10% Crit.',
     atk: 3, def: 4, hp: 24, speed: 2, move: 0, range: 0, crit: 0.10, lifesteal: 0, shieldStart: 0, accentHex: '#5d87b8'
   },
   {
-    id: 'frostguard_plate', name: 'Frostguard Plate', slot: 'armor', family: 'vanguard', rarity: 'epic',
+    id: 'frostguard_plate', name: 'Frostguard Plate', slot: 'armor', family: 'vanguard', setId: 'frostguard', rarity: 'epic',
     desc: '+44 HP, +8 DEF, +20 Start Shield.',
     atk: 2, def: 8, hp: 44, speed: 1, move: 0, range: 0, crit: 0, lifesteal: 0, shieldStart: 20, accentHex: '#9d7bff'
   },
   {
-    id: 'glacier_raiment', name: 'Glacier Raiment', slot: 'armor', family: 'arcane', rarity: 'epic',
+    id: 'glacier_raiment', name: 'Glacier Raiment', slot: 'armor', family: 'arcane', setId: 'frostguard', rarity: 'epic',
     desc: '+36 HP, +5 DEF, +4 ATK, +2 SPD, +18 Shield.',
     atk: 4, def: 5, hp: 36, speed: 2, move: 0, range: 0, crit: 0.08, lifesteal: 0, shieldStart: 18, accentHex: '#85e0ff'
   },
   {
-    id: 'shadowsilk_vest', name: 'Shadowsilk Vest', slot: 'armor', family: 'skirmisher', rarity: 'epic',
+    id: 'shadowsilk_vest', name: 'Shadowsilk Vest', slot: 'armor', family: 'skirmisher', setId: 'shadowfang', rarity: 'epic',
     desc: '+34 HP, +5 DEF, +5 ATK, +3 SPD, +1 Move.',
     atk: 5, def: 5, hp: 34, speed: 3, move: 1, range: 0, crit: 0.14, lifesteal: 0, shieldStart: 0, accentHex: '#a86bff'
   },
   {
-    id: 'aegis_of_dawn', name: 'Aegis of Dawn', slot: 'armor', family: 'vanguard', rarity: 'legendary',
+    id: 'aegis_of_dawn', name: 'Aegis of Dawn', slot: 'armor', family: 'vanguard', setId: 'solis', rarity: 'legendary',
     desc: '+62 HP, +11 DEF, +2 SPD, +32 Shield, Start Taunt.',
     atk: 4, def: 11, hp: 62, speed: 2, move: 0, range: 0, crit: 0, lifesteal: 0, shieldStart: 32, startStatus: 'taunt', accentHex: '#ffd15c'
   },
   {
-    id: 'starweaver_mantle', name: 'Starweaver Mantle', slot: 'armor', family: 'arcane', rarity: 'legendary',
+    id: 'starweaver_mantle', name: 'Starweaver Mantle', slot: 'armor', family: 'arcane', setId: 'astral', rarity: 'legendary',
     desc: '+48 HP, +7 DEF, +6 ATK, +3 SPD, +26 Shield.',
     atk: 6, def: 7, hp: 48, speed: 3, move: 0, range: 0, crit: 0.10, lifesteal: 0, shieldStart: 26, accentHex: '#d499ff'
   },
   {
-    id: 'nightwind_garb', name: 'Nightwind Shroud', slot: 'armor', family: 'skirmisher', rarity: 'legendary',
+    id: 'nightwind_garb', name: 'Nightwind Shroud', slot: 'armor', family: 'skirmisher', setId: 'shadowfang', rarity: 'legendary',
     desc: '+46 HP, +7 DEF, +7 ATK, +3 SPD, +1 Move, +18% Crit.',
     atk: 7, def: 7, hp: 46, speed: 3, move: 1, range: 0, crit: 0.18, lifesteal: 0, shieldStart: 16, accentHex: '#5ce8b8'
   },
@@ -542,22 +542,22 @@ export const EQUIPMENT_LIST: readonly EquipmentSpec[] = [
     atk: 3, def: 1, hp: 8, speed: 1, move: 0, range: 0, crit: 0.05, lifesteal: 0, shieldStart: 0, accentHex: '#c9885b'
   },
   {
-    id: 'swift_boots', name: 'Gale Striders', slot: 'relic', family: 'universal', rarity: 'uncommon',
+    id: 'swift_boots', name: 'Gale Striders', slot: 'relic', family: 'universal', setId: 'windrunner', rarity: 'uncommon',
     desc: '+3 SPD, +1 Move, +10 HP, Start Haste.',
     atk: 2, def: 1, hp: 10, speed: 3, move: 1, range: 0, crit: 0.08, lifesteal: 0, shieldStart: 0, startStatus: 'haste', accentHex: '#5cd99e'
   },
   {
-    id: 'blood_amulet', name: 'Crimson Pendant', slot: 'relic', family: 'universal', rarity: 'rare',
+    id: 'blood_amulet', name: 'Crimson Pendant', slot: 'relic', family: 'universal', setId: 'shadowfang', rarity: 'rare',
     desc: '+6 ATK, +28% Lifesteal, +1 SPD.',
     atk: 6, def: 0, hp: 12, speed: 1, move: 0, range: 0, crit: 0.08, lifesteal: 0.28, shieldStart: 0, accentHex: '#e85a6f'
   },
   {
-    id: 'eagle_charm', name: 'Skyhawk Crest', slot: 'relic', family: 'universal', rarity: 'epic',
+    id: 'eagle_charm', name: 'Skyhawk Crest', slot: 'relic', family: 'universal', setId: 'windrunner', rarity: 'epic',
     desc: '+1 Range, +2 SPD, +8 ATK, +20% Crit.',
     atk: 8, def: 1, hp: 14, speed: 2, move: 0, range: 1, crit: 0.20, lifesteal: 0, shieldStart: 0, accentHex: '#be7dff'
   },
   {
-    id: 'heart_of_solis', name: 'Heart of Solis', slot: 'relic', family: 'universal', rarity: 'legendary',
+    id: 'heart_of_solis', name: 'Heart of Solis', slot: 'relic', family: 'universal', setId: 'solis', rarity: 'legendary',
     desc: '+34 HP, +12 ATK, +3 SPD, +1 Move.',
     atk: 12, def: 4, hp: 34, speed: 3, move: 1, range: 0, crit: 0.18, lifesteal: 0.15, shieldStart: 15, accentHex: '#ffdb6e'
   }
