@@ -6,6 +6,7 @@ import type {
   StageDifficultyTier, StageMasteryChestReward, StageMasteryObjectiveSpec, StageMasteryRecord, StageMasteryStars, StageMutatorId, StatusKind,
   TacticCardSpec, TurnOrderActionPreview, TurnPreviewEntry, WorldMapEvent
 } from './types.ts'
+import type { BossTelegraphHudSummary } from './boss-telegraphs.ts'
 import { ARMORY_STAT_ORDER, formatStatDelta, formatStatValue } from './armory-diff.ts'
 import type { EquipmentStatDiff } from './armory-diff.ts'
 import { getMaxCombatLogScroll, getRecentCombatLog } from './combat-log.ts'
@@ -1927,6 +1928,69 @@ export function drawToolbarBg(ctx: CanvasRenderingContext2D, rect: LayoutRect) {
   drawSurface(ctx, rect, { r: RADIUS.lg, lipH: 4 })
 }
 
+/** Compact glowing Boss Telegraph warning pill shown in the battle HUD when danger tiles are marked. */
+export function drawBossTelegraphBanner(
+  ctx: CanvasRenderingContext2D,
+  rect: LayoutRect,
+  summary: BossTelegraphHudSummary,
+  compact = false
+) {
+  const { x, y, width: w, height: h } = rect
+  const r = Math.min(RADIUS.md, h / 2)
+  const accent =
+    summary.element === 'frost' ? '#7fe8ff'
+      : summary.element === 'fire' ? '#ff9642'
+        : summary.element === 'holy' ? '#ffe078'
+          : summary.element === 'arcane' ? '#c89cff'
+            : '#ff6ec7'
+  const topFill =
+    summary.element === 'frost' ? '#133f5ce8'
+      : summary.element === 'fire' ? '#5e1e12e8'
+        : summary.element === 'holy' ? '#52380ee8'
+          : summary.element === 'arcane' ? '#361b5ce8'
+            : '#591432e8'
+  const botFill =
+    summary.element === 'frost' ? '#0b2438f2'
+      : summary.element === 'fire' ? '#38100af2'
+        : summary.element === 'holy' ? '#332208f2'
+          : summary.element === 'arcane' ? '#200f3af2'
+            : '#340b1ef2'
+
+  ctx.save()
+  rr(ctx, x, y, w, h, r)
+  ctx.fillStyle = COLOR.outline
+  ctx.fill()
+
+  const faceH = Math.max(8, h - 2)
+  rr(ctx, x + 1, y + 1, w - 2, faceH - 1, Math.max(2, r - 1))
+  const grad = ctx.createLinearGradient(0, y, 0, y + faceH)
+  grad.addColorStop(0, topFill)
+  grad.addColorStop(1, botFill)
+  ctx.fillStyle = grad
+  ctx.fill()
+
+  // Crisp glowing left accent bar
+  rr(ctx, x + 2, y + 3, 4, Math.max(6, faceH - 6), 2)
+  ctx.fillStyle = accent
+  ctx.fill()
+
+  rr(ctx, x + 1, y + 1, w - 2, h - 2, Math.max(2, r - 1))
+  ctx.strokeStyle = accent
+  ctx.lineWidth = 1.6
+  ctx.stroke()
+
+  const cy = y + faceH / 2
+  drawText(ctx, summary.text, x + 11, cy + 0.5, {
+    size: compact ? 9.5 : 10.5,
+    weight: 900,
+    color: '#fff6fa',
+    maxW: Math.max(32, w - 18),
+    display: true,
+    shadow: true
+  })
+  ctx.restore()
+}
+
 /** Glowing active Auto-Battle HUD pill showing current speed & stop hint. */
 export function drawAutoBattlePill(
   ctx: CanvasRenderingContext2D,
@@ -2468,8 +2532,9 @@ export function drawUnitCard(
   xpProgress?: { readonly xp: number; readonly xpForNext: number; readonly ratio: number; readonly isMaxLevel: boolean }
 ) {
   const ally = !unit || unit.team === 'ally'
-  const team = ally ? COLOR.ally : COLOR.enemy
-  drawSurface(ctx, rect, { r: RADIUS.lg, lipH: 4, fill: '#32426b', fillBot: '#202c4a' })
+  const isBossPhase2 = Boolean(unit && unit.isBoss && (unit.bossPhase ?? 1) >= 2)
+  const team = ally ? COLOR.ally : isBossPhase2 ? '#ff4f79' : COLOR.enemy
+  drawSurface(ctx, rect, { r: RADIUS.lg, lipH: 4, fill: isBossPhase2 ? '#46223c' : '#32426b', fillBot: isBossPhase2 ? '#291326' : '#202c4a' })
   if (!unit) return
 
   const { x, y, width: w, height: h } = rect
@@ -2479,7 +2544,7 @@ export function drawUnitCard(
 
   // Glowing side accent strip on left edge (signature tactical HUD detail!)
   rr(ctx, x - 2, y + 12, 5, Math.min(36, faceH - 24), 2.5)
-  ctx.fillStyle = team
+  ctx.fillStyle = isBossPhase2 ? COLOR.accent : team
   ctx.fill()
   ctx.strokeStyle = COLOR.outline
   ctx.lineWidth = 1.6
@@ -2488,7 +2553,7 @@ export function drawUnitCard(
   const ps = compact ? faceH - pad * 2 : Math.min(48, faceH * 0.42)
   const px = x + pad + 2
   const py = y + pad
-  drawPortraitTile(ctx, px, py, ps, portrait, { ring: team, ringW: 2.5, r: 10, bg: ally ? '#38629e' : '#7a3040' })
+  drawPortraitTile(ctx, px, py, ps, portrait, { ring: isBossPhase2 ? COLOR.accent : team, ringW: 2.5, r: 10, bg: ally ? '#38629e' : isBossPhase2 ? '#6b1c3c' : '#7a3040' })
 
   // Overlapping circular Star-Tier medallion at bottom-right of portrait
   if (unit.team === 'ally') {
@@ -2515,12 +2580,26 @@ export function drawUnitCard(
   const roleW = drawChip(ctx, tx, py + 20, roleLabel.toUpperCase(), {
     h: 16,
     size: 8.5,
-    color: ally ? '#b8e8ff' : '#ffd0d6',
-    bg: ally ? '#16355e' : '#541826',
-    border: COLOR.outline
+    color: ally ? '#b8e8ff' : isBossPhase2 ? '#ffe078' : '#ffd0d6',
+    bg: ally ? '#16355e' : isBossPhase2 ? '#6b1630' : '#541826',
+    border: isBossPhase2 ? COLOR.accent : COLOR.outline
   })
   const badgeMaxX = x + w - pad
   let badgeX = tx + roleW + 4
+  if (isBossPhase2 && !roleLabel.toUpperCase().includes('PHASE')) {
+    const p2Label = 'PHASE II'
+    const p2EstW = Math.round(measureText(ctx, p2Label, 8.5, 900, true) + 12)
+    if (badgeX + p2EstW <= badgeMaxX) {
+      const p2W = drawChip(ctx, badgeX, py + 20, p2Label, {
+        h: 16,
+        size: 8.5,
+        color: '#ffe078',
+        bg: '#6e142f',
+        border: COLOR.accent
+      })
+      badgeX += p2W + 3
+    }
+  }
   const lvLabel = `Lv.${unit.level ?? 1}`
   const lvEstW = Math.round(measureText(ctx, lvLabel, 8.5, 800, true) + 12)
   if (badgeX + lvEstW <= badgeMaxX) {

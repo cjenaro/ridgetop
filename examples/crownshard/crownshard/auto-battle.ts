@@ -1,3 +1,4 @@
+import { BOSS_TELEGRAPH_AUTO_AVOID_PENALTY, getTelegraphsAtCell } from './boss-telegraphs.ts'
 import { canCounterAttack, computeCounterDamage, isMeleeSkillEligibleForCounter } from './counter-attack.ts'
 import { HERO_SPECS, TACTIC_BY_ID } from './data.ts'
 import { classifyElement, previewElementalCombo } from './elemental-combos.ts'
@@ -499,6 +500,10 @@ function scoreTilePosition(battle: BattleState, actor: BattleUnit, col: number, 
   if (cell.terrain === 'tall_grass') score += actor.range >= 2 ? 6 : 4
   if (cell.terrain === 'shrine' && actor.hp < actor.maxHp) score += 18
   if (cell.terrain === 'lava_geyser' && cell.geyserActive) score -= 52
+  const telegraphsHere = getTelegraphsAtCell(battle.bossTelegraphs, col, row)
+  if (telegraphsHere.length > 0) {
+    score -= telegraphsHere.length * BOSS_TELEGRAPH_AUTO_AVOID_PENALTY
+  }
   if (cell.terrain === 'cursed_altar' && !cell.altarUsed) {
     // Only worth the dark pact HP drain if hero is healthy
     score += actor.hp > actor.maxHp * 0.65 ? 8 : -24

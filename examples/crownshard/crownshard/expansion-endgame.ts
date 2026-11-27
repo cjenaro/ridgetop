@@ -318,6 +318,7 @@ export function createGauntletWaveUnits(
       stars: spec.isBoss ? 3 : 1,
       level: levelBase,
       isBoss: Boolean(spec.isBoss),
+      ...(spec.isBoss ? { bossPhase: 1 } : {}),
       col: tile.col,
       row: tile.row,
       x: wx,

@@ -40,7 +40,7 @@ import { CHAPTERS, TACTIC_BY_ID } from './data.ts'
 import type { GridCursorRenderSpec } from './grid-cursor.ts'
 import { BARRICADE_DEFAULT_HP, FACING_DIRS, TILE_SIZE, facingToYaw, facingVector, gridToWorld, isUnitDowned, vectorToFacing } from './types.ts'
 import type {
-  AttackArc, BattleState, BattleUnit, CombatForecast, DangerZoneMap, DisplacementKind, EnemyThreatMap,
+  AttackArc, BattleState, BattleUnit, BossTelegraphElement, CombatForecast, DangerZoneMap, DisplacementKind, EnemyThreatMap,
   EquipSlot, FacingDir, FacingExposureLevel, FlankThreatTile, GameState, OwnedHeroCard, WorldMapEvent
 } from './types.ts'
 
@@ -79,6 +79,57 @@ const C_FOG_SHROUD_UNIT: Color = [0.16, 0.20, 0.34, 0.34]
 const C_DANGER_TILE_HIGH: Color = [0.96, 0.24, 0.16, 0.30]
 const C_DANGER_HATCH: Color = [1.0, 0.72, 0.30, 0.56]
 const C_DANGER_CORNER: Color = [1.0, 0.56, 0.22, 0.74]
+const TELEGRAPH_PALETTE: Record<BossTelegraphElement, {
+  readonly wash: Color
+  readonly hatch: Color
+  readonly border: Color
+  readonly ring: Color
+  readonly rune: Color
+  readonly beam: Color
+}> = {
+  shadow: {
+    wash: [0.88, 0.12, 0.42, 0.44],
+    hatch: [1.0, 0.32, 0.68, 0.76],
+    border: [1.0, 0.28, 0.56, 0.96],
+    ring: [0.96, 0.34, 1.0, 0.96],
+    rune: [1.0, 0.44, 0.86, 0.98],
+    beam: [0.92, 0.22, 0.68, 0.22]
+  },
+  fire: {
+    wash: [0.98, 0.22, 0.08, 0.44],
+    hatch: [1.0, 0.54, 0.16, 0.78],
+    border: [1.0, 0.36, 0.12, 0.98],
+    ring: [1.0, 0.74, 0.22, 0.96],
+    rune: [1.0, 0.66, 0.24, 0.98],
+    beam: [1.0, 0.36, 0.14, 0.24]
+  },
+  frost: {
+    wash: [0.16, 0.70, 1.0, 0.40],
+    hatch: [0.68, 0.96, 1.0, 0.78],
+    border: [0.42, 0.92, 1.0, 0.98],
+    ring: [0.82, 0.98, 1.0, 0.96],
+    rune: [0.66, 0.95, 1.0, 0.98],
+    beam: [0.36, 0.88, 1.0, 0.22]
+  },
+  holy: {
+    wash: [1.0, 0.72, 0.14, 0.40],
+    hatch: [1.0, 0.92, 0.46, 0.76],
+    border: [1.0, 0.84, 0.28, 0.98],
+    ring: [1.0, 0.94, 0.54, 0.96],
+    rune: [1.0, 0.88, 0.42, 0.98],
+    beam: [1.0, 0.84, 0.30, 0.22]
+  },
+  arcane: {
+    wash: [0.56, 0.24, 1.0, 0.42],
+    hatch: [0.80, 0.56, 1.0, 0.78],
+    border: [0.72, 0.44, 1.0, 0.98],
+    ring: [0.88, 0.68, 1.0, 0.96],
+    rune: [0.84, 0.58, 1.0, 0.98],
+    beam: [0.68, 0.38, 1.0, 0.22]
+  }
+}
+const C_PHASE2_AURA_CRIMSON: Color = [1.0, 0.22, 0.46, 0.92]
+const C_PHASE2_AURA_GOLD: Color = [1.0, 0.84, 0.30, 0.94]
 const C_ENEMY_MOVE_TILE: Color = [0.92, 0.54, 0.14, 0.24]
 const C_ENEMY_MOVE_DASH: Color = [1.0, 0.82, 0.36, 0.90]
 const C_ENEMY_REACH_TILE: Color = [0.98, 0.22, 0.18, 0.28]
@@ -2141,27 +2192,39 @@ export function createCrownshardScene(renderer: LowPolyRenderer) {
       }
     }
     if (unit.isBoss) {
+      const isPhase2 = (unit.bossPhase ?? 1) >= 2
       const bossCrystalCol = unit.enemyId === 'magma_warden' || unit.enemyId === 'ignis_titan' ? C_FIRE_CORE
         : unit.enemyId === 'frost_jarl' || unit.enemyId === 'frostwyrm_rimefang' || unit.enemyId === 'astral_warden_boss' ? C_FROST
         : unit.enemyId === 'mire_matriarch' || unit.enemyId === 'lich_vaelen' ? C_POISON
         : unit.enemyId === 'briar_warlord' || unit.enemyId === 'dune_sovereign_boss' ? C_STAR2_GOLD
-        : unit.enemyId === 'unbroken_crown_boss' && (unit.bossPhase ?? 1) >= 2 ? C_STAR2_GOLD
+        : unit.enemyId === 'unbroken_crown_boss' && isPhase2 ? C_STAR2_GOLD
         : C_SHADOW
       const orbitR = fpSize === 2 ? 1.48 : 0.94
-      const crystalCount = unit.enemyId === 'unbroken_crown_boss' && (unit.bossPhase ?? 1) >= 2 ? 5 : 3
+      const crystalCount = isPhase2 ? 5 : 3
+      const crystalScale = isPhase2 ? 0.23 : 0.20
+      const crystalHeight = isPhase2 ? 0.35 : 0.30
       for (let i = 0; i < crystalCount; i++) {
-        const a = time * (crystalCount > 3 ? 2.4 : 1.6) + (i / crystalCount) * Math.PI * 2
-        const col = unit.enemyId === 'unbroken_crown_boss' && (unit.bossPhase ?? 1) >= 2 && i % 2 === 1
-          ? C_SHADOW
+        const a = time * (isPhase2 ? 2.5 : 1.6) + (i / crystalCount) * Math.PI * 2
+        const col = isPhase2 && i % 2 === 1
+          ? (unit.enemyId === 'unbroken_crown_boss' ? C_SHADOW : C_PHASE2_AURA_CRIMSON)
           : bossCrystalCol
         pool.add(
           crystalMesh,
-          [px + Math.cos(a) * orbitR, py + (fpSize === 2 ? 1.55 : 1.18) + Math.sin(time * 3 + i) * 0.14, pz + Math.sin(a) * orbitR],
-          [0.20, 0.30, 0.20],
+          [px + Math.cos(a) * orbitR, py + (fpSize === 2 ? 1.55 : 1.18) + Math.sin(time * (isPhase2 ? 4.4 : 3) + i) * 0.15, pz + Math.sin(a) * orbitR],
+          [crystalScale, crystalHeight, crystalScale],
           a,
           col,
-          0.95
+          0.98
         )
+      }
+      if (isPhase2) {
+        const auraPulse = 1 + Math.sin(time * 5.2) * 0.09
+        const baseRingR = (fpSize === 2 ? 1.52 : 0.96) * auraPulse
+        pool.add(flatRing, [px, groundY + 0.058, pz], [baseRingR, 1, baseRingR], time * 1.8, C_PHASE2_AURA_CRIMSON, 0.96, 'additive')
+        pool.add(flatRing, [px, groundY + 0.068, pz], [baseRingR * 0.78, 1, baseRingR * 0.78], -time * 2.4, C_PHASE2_AURA_GOLD, 0.92, 'additive')
+        const crownHaloY = py + (fpSize === 2 ? 2.18 : 1.78) * scale + Math.sin(time * 4.5) * 0.08
+        const crownHaloR = (fpSize === 2 ? 0.88 : 0.54) * (1 + Math.sin(time * 6.0) * 0.06)
+        pool.add(flatRing, [px, crownHaloY, pz], [crownHaloR, 1, crownHaloR], -time * 2.8, C_PHASE2_AURA_GOLD, 0.95, 'additive')
       }
     }
   }
@@ -2456,6 +2519,67 @@ export function createCrownshardScene(renderer: LowPolyRenderer) {
           const yaw = Math.atan2(origin.fromCol - origin.col, origin.fromRow - origin.row)
           const warnCol = origin.arc === 'back' ? C_BACKSTAB_WARN : C_FLANK_WARN
           pool.add(flankWarningChevronMesh, [wx, wy + 0.036, wz], [TILE_SIZE * 0.56, 1, TILE_SIZE * 0.56], yaw, warnCol, 0.96, 'alpha')
+        }
+      }
+    }
+
+    // 0.15 Boss 1-Turn-Ahead Glowing AoE Telegraphs (pulsing danger tiles, warning border rings, rising corner runes!)
+    if (isBattleActive && battle.bossTelegraphs.length > 0) {
+      const cornerOff = TILE_SIZE * 0.36
+      const corners: readonly (readonly [number, number])[] = [
+        [-cornerOff, -cornerOff],
+        [cornerOff, -cornerOff],
+        [-cornerOff, cornerOff],
+        [cornerOff, cornerOff]
+      ]
+      for (const zone of battle.bossTelegraphs) {
+        const pal = TELEGRAPH_PALETTE[zone.element]
+        const speed = zone.turnsRemaining <= 1 ? 7.6 : 4.4
+        const pulse = 0.5 + 0.5 * Math.sin(state.time * speed)
+        const ringScale = 0.58 + 0.14 * pulse
+        const washAlpha = 0.72 + 0.28 * pulse
+
+        for (let ci = 0; ci < zone.cells.length; ci++) {
+          const tc = zone.cells[ci]
+          const cell = battle.cells[tc.row]?.[tc.col]
+          if (!cell || cell.terrain === 'void') continue
+          const [wx, wy, wz] = gridToWorld(tc.col, tc.row, cell.elevation, battle.cols, battle.rows)
+
+          // Glowing pulsing danger tile fill + hazard hatch + crisp border frame
+          pool.add(tileQuad, [wx, wy + 0.028, wz], [TILE_SIZE * 0.90, 1, TILE_SIZE * 0.90], 0, pal.wash, washAlpha, 'alpha')
+          pool.add(tileHazardHatchMesh, [wx, wy + 0.034, wz], [TILE_SIZE * 0.88, 1, TILE_SIZE * 0.88], 0, pal.hatch, 0.82 + 0.18 * pulse, 'alpha')
+          pool.add(tileFrameMesh, [wx, wy + 0.039, wz], [TILE_SIZE * 0.92, 1, TILE_SIZE * 0.92], 0, pal.border, 0.96, 'additive')
+          // Animated warning border ring
+          pool.add(
+            flatRing,
+            [wx, wy + 0.045, wz],
+            [TILE_SIZE * 0.52 * ringScale, 1, TILE_SIZE * 0.52 * ringScale],
+            state.time * (ci % 2 === 0 ? 2.2 : -2.2),
+            pal.ring,
+            0.96,
+            'additive'
+          )
+          // Rising danger corner runes/pillars
+          for (let k = 0; k < 4; k++) {
+            const [ox, oz] = corners[k]
+            const lift = 0.14 + 0.16 * (0.5 + 0.5 * Math.sin(state.time * 5.2 + ci * 0.7 + k * 1.4))
+            const spireH = 0.22 + 0.18 * pulse
+            pool.add(
+              crystalMesh,
+              [wx + ox, wy + lift, wz + oz],
+              [0.09, spireH, 0.09],
+              state.time * 2.0 + k,
+              pal.rune,
+              0.94,
+              'additive'
+            )
+          }
+          // Subtle epicenter vertical warning shaft on the primary targeted cell
+          if (ci === 0) {
+            const beamW = 0.62 + 0.12 * pulse
+            const beamH = zone.phase >= 2 ? 2.6 : 2.0
+            pool.add(spotlightBeamMesh, [wx, wy + 0.05, wz], [beamW, beamH, beamW], state.time * 1.1, pal.beam, 0.94, 'additive')
+          }
         }
       }
     }

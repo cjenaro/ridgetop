@@ -36,14 +36,14 @@ import {
   cancelAutoBattle, cancelWaitFacingPicker, checkDiscoveryTipForBattle, claimMasteryMilestone, claimStageMasteryChest, clearSave, computeChallengeRewards,
   computeCombatForecast, computeDangerZone, computeDeckValue,
   computeEnemyThreat, computeHeroStats, computeSquadPower, computeTacticDeckCurve, computeZocPerimeterTiles,
-  confirmDeployment, confirmWaitFacingPicker, craftEquipment, craftHero, createInitialState,
+  confirmDeployment, confirmWaitFacingPicker, countUniqueTelegraphTiles, craftEquipment, craftHero, createInitialState,
   createTurnBoundaryTracker, dismissDiscoveryTip, draftEndlessBlessing, effectiveSpeed, equipItem, evaluateAllFacingExposures, evaluateFacingExposure,
-  findBestFitUpgrades, findEquipOwner, findGridPath, formatAbyssFloorLabel, formatBattleSpeedLabel, formatEndlessBiomeLabel, formatOpportunityWarning,
+  findBestFitUpgrades, findEquipOwner, findGridPath, formatAbyssFloorLabel, formatBattleSpeedLabel, formatBossTelegraphHudSummary, formatEndlessBiomeLabel, formatOpportunityWarning,
   getAct1StageMechanicStatus, getActiveDiscoveryTip, getActiveTacticDeckUids,
   getBestiaryEntries, getChapterObjectiveSummary, getClaimableMasteryMilestones, getCodexProgress, getCraftableEquipment, getCraftableHeroes, getCrownlessDeepFloorSpec, getEquipCodexEntries, getEquipCraftCost, getEquipEffect,
   getEquipSalvageDust, getEquipmentByUid, getHeroByUid, getHeroCodexEntries, getHeroCraftCost, getHeroPassive, getHeroSalvageShards,
-  getHeroSkill, getHighestClearedStageTier, getMaxCombatLogScroll, getMaxMasteryStars, getMaxSelectableCrownlessDeepFloor, getMergeCandidates, getNextMasteryMilestone, getNextRecommendedStage, getOakhavenExchangeOffers, getObjectiveProgressText, getPackPityStatus,
-  getSelectedCrownlessDeepFloor, getStageMasteryChestReward, getStageMasteryObjectives, getStageMasteryRecord, getStageUnlockHint, getTacticByUid, getTotalMasteryStars, getUnitByUid, getWorldMapEventById, hasClaimedStageMasteryChest, hasMaxedHero, hasOakhavenPatronDiscount, heroLevelProgress, isChestClaimed,
+  getHeroSkill, getHighestClearedStageTier, getMaxCombatLogScroll, getMaxLivingBossPhase, getMaxMasteryStars, getMaxSelectableCrownlessDeepFloor, getMergeCandidates, getNextMasteryMilestone, getNextRecommendedStage, getOakhavenExchangeOffers, getObjectiveProgressText, getPackPityStatus,
+  getSelectedCrownlessDeepFloor, getStageMasteryChestReward, getStageMasteryObjectives, getStageMasteryRecord, getStageUnlockHint, getTacticByUid, getTelegraphsAtCell, getTotalMasteryStars, getUnitByUid, getWorldMapEventById, hasClaimedStageMasteryChest, hasMaxedHero, hasOakhavenPatronDiscount, heroLevelProgress, isChestClaimed,
   isCrownlessDeepStage, isDeployTile, isEndlessBossWave, isEndlessUnlocked, isEnemyShrouded, isOakhavenExchangeUnlocked, isStageCleared, isStageUnlocked, loadSave, maxSquadSize, mergeHero,
   moveDeployUnit, persistSave, previewBulkSalvageCommonDupes, previewPathOpportunityAttacks,
   previewTurnOrderAfterAction, previewWaitFacing, resetDiscoveryTips, resolveStageChallenge, restoreBattleState, rotateDeployUnit, salvageEquipCard,
@@ -61,7 +61,7 @@ import type {
 } from './types.ts'
 import {
   COLOR, RADIUS, TIER_COLOR, TYPE, UI_THEME_PALETTE,
-  drawAnimatedRevealCard, drawApMeter, drawArmoryStatDiffPanel, drawAutoBattlePill, drawBattleInfo, drawBoosterPack, drawButton, drawCameraCompassButton, drawCampHeader,
+  drawAnimatedRevealCard, drawApMeter, drawArmoryStatDiffPanel, drawAutoBattlePill, drawBattleInfo, drawBoosterPack, drawBossTelegraphBanner, drawButton, drawCameraCompassButton, drawCampHeader,
   drawChallengeHudBadges, drawChapterPicker, drawChip, drawCodexEnemyDetail, drawCodexEntryCard, drawCodexEquipDetail, drawCodexHeader, drawCodexHeroDetail, drawCombatForecast, drawCombatLogPanel, drawCombatLogToggleButton, drawControlHints, drawDefeatBackdrop, drawDeployHeroChip,
   drawDifficultyBadge, drawDiscoveryTipCard, drawEmptyNote, drawEndTurnButton, drawEndlessBlessingCard, drawEndlessBlessingsHudPill, drawEquipCard, drawForecastAltChip,
   drawForgeBalanceBanner, drawForgeRecipeCard, drawHeroHeader, drawHeroRosterCard, drawHeroXpSummaryAnimated, drawHintPill, drawIconButton, drawLabel, drawLetterbox,
@@ -4372,7 +4372,11 @@ async function start() {
 
     const activePortrait = battleUnitPortrait(inspected ?? undefined)
     const roleLabel = inspected
-      ? (inspected.heroId ? HERO_SPECS[inspected.heroId].title : inspected.isBoss ? 'Boss' : 'Foe')
+      ? (inspected.heroId
+          ? HERO_SPECS[inspected.heroId].title
+          : inspected.isBoss
+            ? ((inspected.bossPhase ?? 1) >= 2 ? 'Boss · Phase II' : 'Boss')
+            : 'Foe')
       : ''
     const inspectedOwned = inspected?.team === 'ally' ? getHeroByUid(state.campaign, inspected.uid) : undefined
     const inspectedXpProgress = inspectedOwned ? heroLevelProgress(inspectedOwned.level, inspectedOwned.xp) : undefined
@@ -5089,15 +5093,24 @@ async function start() {
     const endlessBlessingsH = isPhone ? 24 : 27
     const stageMechanicHud = getAct1StageMechanicStatus(battle)
     const stageMechanicH = isPhone ? 24 : 26
+    const bossTelegraphHud = formatBossTelegraphHudSummary(battle.bossTelegraphs, isPhone)
+    const bossTelegraphH = isPhone ? 26 : 30
+    const bossTelegraphW = mobilePortrait
+      ? Math.min(w - 16, 268)
+      : mobileLandscape
+        ? Math.min(w - 24, 248)
+        : Math.min(w - 24, 336)
     const autoPillH = isPhone ? 24 : 26
 
-    // Single unified top-left vertical stack cursor so Objective, Stage Mechanic, Challenge, Blessings, Auto-Battle,
-    // Combat Log, and Discovery Tips NEVER overlap each other or the turn timeline!
+    // Single unified top-left vertical stack cursor so Objective, Boss Telegraphs, Stage Mechanic, Challenge,
+    // Blessings, Auto-Battle, Combat Log, and Discovery Tips NEVER overlap each other or the turn timeline!
     let leftStackY = singleTopRow
       ? edgeX + topBarH + 6
       : timelineInset[1] + tokenH + (isPhone ? 16 : 20)
     const objBadgeY = leftStackY
     leftStackY += objBadgeH + 6
+    const bossTelegraphY = leftStackY
+    if (bossTelegraphHud) leftStackY += bossTelegraphH + 6
     const stageMechanicY = leftStackY
     if (stageMechanicHud) leftStackY += stageMechanicH + 6
     const challengeBadgeY = leftStackY
@@ -5250,6 +5263,23 @@ async function start() {
           })
         }
       }),
+
+      // Active Boss AoE Telegraph Warning Pill (glowing mobile-safe banner below objective badge)
+      ...(bossTelegraphHud ? [boxNode({
+        id: 'battle-boss-telegraph-badge',
+        style: {
+          anchor: 'top-left',
+          width: bossTelegraphW,
+          height: bossTelegraphH,
+          inset: [edgeX, bossTelegraphY],
+          respectSafeArea: true
+        },
+        widget: {
+          type: 'panel',
+          blocksPointer: false,
+          draw: (ctx: CanvasRenderingContext2D, rect: LayoutRect) => drawBossTelegraphBanner(ctx, rect, bossTelegraphHud, isPhone)
+        }
+      })] : []),
 
       // Active Solis Vale / Silverfen Stage Mechanic callout (Galewind Gust, Rising Tide, Monastery Waves)
       ...(stageMechanicHud ? [boxNode({
@@ -8396,26 +8426,31 @@ async function start() {
       const hpRatio = Math.max(0, Math.min(1, u.hp / Math.max(1, u.maxHp)))
 
       const shortName = u.team === 'ally' ? (u.name.split(' ').pop() ?? u.name) : u.name
-      const tag = u.team === 'ally' && u.stars > 1 ? `${shortName} T${u.stars}` : shortName
+      const isBossPhase2 = u.isBoss && (u.bossPhase ?? 1) >= 2
+      const tag = u.team === 'ally' && u.stars > 1
+        ? `${shortName} T${u.stars}`
+        : isBossPhase2
+          ? `${shortName} · P2`
+          : shortName
       const spotRank = isSpotlight && hoveredTurnSlotIdx >= 0 ? (hoveredTurnSlotIdx === 0 ? ' · NOW' : ` · #${hoveredTurnSlotIdx + 1}`) : ''
       const fullTag = `${tag}${spotRank}`
       const nameW = Math.max(bw + 8, fullTag.length * 6.8 + 16)
-      if (isSpotlight || isActive) {
+      if (isSpotlight || isActive || isBossPhase2) {
         g.panel(Math.round(projected.x - nameW / 2), by - 21, Math.round(nameW), 17, {
-          fill: isSpotlight ? (u.team === 'ally' ? '#1b4768' : '#572230') : '#2b3a63',
+          fill: isSpotlight ? (u.team === 'ally' ? '#1b4768' : '#572230') : isBossPhase2 ? '#5c1430' : '#2b3a63',
           stroke: isSpotlight ? (u.team === 'ally' ? '#7cf0ff' : '#ff9c6e') : COLOR.accent,
           radius: 8
         })
       }
       g.text(fullTag, projected.x, by - 16.5, {
         fill: '#080c18',
-        size: isSpotlight || isActive ? 11 : 10.5,
+        size: isSpotlight || isActive || isBossPhase2 ? 11 : 10.5,
         weight: 900,
         align: 'center'
       })
       g.text(fullTag, projected.x, by - 18, {
-        fill: isSpotlight ? '#ffffff' : isActive ? COLOR.accentHi : u.team === 'ally' ? '#ffffff' : '#ffd2d6',
-        size: isSpotlight || isActive ? 11 : 10.5,
+        fill: isSpotlight ? '#ffffff' : isBossPhase2 ? '#ffe078' : isActive ? COLOR.accentHi : u.team === 'ally' ? '#ffffff' : '#ffd2d6',
+        size: isSpotlight || isActive || isBossPhase2 ? 11 : 10.5,
         weight: 900,
         align: 'center'
       })
@@ -8423,7 +8458,7 @@ async function start() {
       // Chunky dark-outlined tactical HP + Shield + CT gauge
       g.panel(bx - 2, by - 2, bw + 4, 13, {
         fill: '#0b1020',
-        stroke: isSpotlight ? (u.team === 'ally' ? '#7cf0ff' : '#ff9c6e') : isActive ? COLOR.accent : u.team === 'ally' ? '#5cb8ff' : '#ff5e6e',
+        stroke: isSpotlight ? (u.team === 'ally' ? '#7cf0ff' : '#ff9c6e') : isBossPhase2 ? COLOR.accent : isActive ? COLOR.accent : u.team === 'ally' ? '#5cb8ff' : '#ff5e6e',
         radius: 5
       })
       g.panel(bx, by, bw, 7, { fill: '#18213b', radius: 3 })
@@ -8627,6 +8662,10 @@ async function start() {
           : inEnemyZoc
             ? ' · ENEMY ZoC'
             : ''
+        const hoveredTelegraphs = getTelegraphsAtCell(battle.bossTelegraphs, hovered.col, hovered.row)
+        const telegraphTag = hoveredTelegraphs.length > 0
+          ? ` · ⚠ ${hoveredTelegraphs[0].label}!`
+          : ''
         const threatTag = dzTile
           ? dzTile.hasBackstabRisk
             ? ` · Threat x${dzTile.threatCount} BACKSTAB!`
@@ -8634,25 +8673,54 @@ async function start() {
               ? ` · Threat x${dzTile.threatCount} FLANK!`
               : ` · Threat x${dzTile.threatCount}`
           : ''
-        const text = `${desc} · H${hLvl} (${hovered.col + 1},${hovered.row + 1})${deployTag}${oaTag}${threatTag}`
+        const text = `${desc} · H${hLvl} (${hovered.col + 1},${hovered.row + 1})${deployTag}${oaTag}${telegraphTag}${threatTag}`
         const pw = Math.min(560, Math.max(148, text.length * 6.8 + 24))
         const py = g.height < 480 ? g.height - 134 : g.height - 178
         const hasOaWarn = Boolean(hoveredOa && hoveredOa.triggers.length > 0)
+        const hasTgWarn = hoveredTelegraphs.length > 0
         g.panel(10, py, pw, 28, {
-          fill: hasOaWarn ? '#4a1d14' : dzTile ? '#3d1e2e' : deployTag ? '#1b365e' : '#253357',
-          stroke: hasOaWarn ? '#ff7a2b' : dzTile ? '#ff7d6b' : deployTag ? '#68c8ff' : COLOR.borderHi,
+          fill: hasTgWarn ? '#591432' : hasOaWarn ? '#4a1d14' : dzTile ? '#3d1e2e' : deployTag ? '#1b365e' : '#253357',
+          stroke: hasTgWarn ? '#ff6ec7' : hasOaWarn ? '#ff7a2b' : dzTile ? '#ff7d6b' : deployTag ? '#68c8ff' : COLOR.borderHi,
           radius: 10
         })
-        g.text(text, 22, py + 8, { fill: hasOaWarn ? '#ffe2b8' : '#ffffff', size: 11.5, weight: 800 })
+        g.text(text, 22, py + 8, { fill: hasTgWarn ? '#ffe0f2' : hasOaWarn ? '#ffe2b8' : '#ffffff', size: 11.5, weight: 800, maxWidth: pw - 22 })
       }
     }
 
     if (battle.bannerTimer > 0 && battle.bannerText) {
-      const bw = Math.min(g.width - 32, Math.max(248, battle.bannerText.length * 10 + 48))
-      const by = g.width < 660 ? 114 : g.height < 480 ? 64 : 92
-      g.panel(Math.round((g.width - bw) / 2), by, bw, 38, { fill: '#283863', stroke: COLOR.accent, radius: 14 })
-      g.text(battle.bannerText, g.width / 2, by + 13, { fill: '#090d1a', size: 15, weight: 900, align: 'center' })
-      g.text(battle.bannerText, g.width / 2, by + 11.5, { fill: COLOR.accentHi, size: 15, weight: 900, align: 'center' })
+      const isNarrowPhone = g.width < 430
+      const isPhoneW = g.width < 660
+      const isCompactH = g.height < 480
+      const isBossBanner =
+        battle.bannerText.includes('Phase II') ||
+        battle.bannerText.includes('PHASE 2') ||
+        battle.bannerText.includes('SOLAR ECLIPSE') ||
+        battle.bannerText.startsWith('⚠')
+      const bannerFont = isNarrowPhone ? 11.5 : isPhoneW || isCompactH ? 13 : 15
+      const bh = isNarrowPhone ? 32 : isCompactH ? 32 : 38
+      const bw = Math.min(g.width - 24, Math.max(isNarrowPhone ? 196 : 240, Math.round(battle.bannerText.length * (bannerFont * 0.66) + 36)))
+      const bx = Math.max(12, Math.round((g.width - bw) / 2))
+      const by = isPhoneW ? 100 : isCompactH ? 52 : 92
+      const textY = by + Math.round((bh - bannerFont) * 0.5)
+      g.panel(bx, by, bw, bh, {
+        fill: isBossBanner ? '#4f142e' : '#283863',
+        stroke: isBossBanner ? '#ff70a6' : COLOR.accent,
+        radius: Math.min(14, Math.round(bh * 0.4))
+      })
+      g.text(battle.bannerText, g.width / 2, textY + 1.5, {
+        fill: '#090d1a',
+        size: bannerFont,
+        weight: 900,
+        align: 'center',
+        maxWidth: bw - 20
+      })
+      g.text(battle.bannerText, g.width / 2, textY, {
+        fill: isBossBanner ? '#ffe078' : COLOR.accentHi,
+        size: bannerFont,
+        weight: 900,
+        align: 'center',
+        maxWidth: bw - 20
+      })
     }
   }
 
@@ -8738,6 +8806,9 @@ async function start() {
       moveAttackTargets: state.battle ? state.battle.moveAttackTiles.map(t => ({ col: t.col, row: t.row, fromCol: t.fromCol, fromRow: t.fromRow })) : [],
       canUndoMove: canUndoMove(state.battle),
       dangerZoneOn,
+      bossTelegraphCount: state.battle ? state.battle.bossTelegraphs.length : 0,
+      bossTelegraphTilesCount: state.battle ? countUniqueTelegraphTiles(state.battle.bossTelegraphs) : 0,
+      bossPhaseMax: state.battle ? getMaxLivingBossPhase(state.battle) : 0,
       battleSpeed: state.battle?.battleSpeed ?? state.campaign.battleSpeed,
       autoBattle: state.battle?.autoBattle ?? false,
       mobileHandOpen,
