@@ -29,7 +29,10 @@ function p(t: number, position: V3, ease?: Easing): Keyframe {
 const STANCE_CACHE = new Map<string, Record<string, JointPose>>()
 
 function buildStance(heroId?: HeroClassId, enemyId?: EnemyArchetypeId): Record<string, JointPose> {
-  if (heroId === 'knight' || heroId === 'paladin' || enemyId === 'crypt_knight' || enemyId === 'frost_jarl') {
+  if (
+    heroId === 'knight' || heroId === 'paladin' || enemyId === 'crypt_knight' ||
+    enemyId === 'frost_jarl' || enemyId === 'dune_sovereign_boss'
+  ) {
     return {
       body: { rotation: [0.04, -0.14, 0] },
       armL: { rotation: [-0.42, 0.22, -0.12] },
@@ -49,7 +52,8 @@ function buildStance(heroId?: HeroClassId, enemyId?: EnemyArchetypeId): Record<s
     heroId === 'mage' || heroId === 'cryomancer' || heroId === 'cleric' ||
     enemyId === 'bog_shaman' || enemyId === 'eclipse_archon' ||
     enemyId === 'ember_pyromancer' || enemyId === 'ice_wraith' ||
-    enemyId === 'bone_necromancer' || enemyId === 'mire_matriarch' || enemyId === 'ash_inquisitor'
+    enemyId === 'bone_necromancer' || enemyId === 'mire_matriarch' || enemyId === 'ash_inquisitor' ||
+    enemyId === 'astral_warden_boss' || enemyId === 'unbroken_crown_boss'
   ) {
     return {
       body: { rotation: [0.02, -0.06, 0] },
@@ -1618,14 +1622,16 @@ function archetypeOf(heroId?: HeroClassId, enemyId?: EnemyArchetypeId): Archetyp
   if (heroId === 'archer' || enemyId === 'bone_archer') return 'bow'
   if (
     enemyId === 'orc_brute' || heroId === 'champion' || enemyId === 'crypt_knight' || enemyId === 'frost_golem' ||
-    enemyId === 'river_troll' || enemyId === 'briar_warlord' || enemyId === 'frost_jarl' || enemyId === 'magma_warden'
+    enemyId === 'river_troll' || enemyId === 'briar_warlord' || enemyId === 'frost_jarl' || enemyId === 'magma_warden' ||
+    enemyId === 'dune_sovereign_boss'
   ) return 'heavy'
   if (heroId === 'rogue' || enemyId === 'goblin' || enemyId === 'bone_thrall') return 'stab'
   if (
     heroId === 'mage' || heroId === 'cryomancer' || heroId === 'cleric' ||
     enemyId === 'bog_shaman' || enemyId === 'eclipse_archon' ||
     enemyId === 'ember_pyromancer' || enemyId === 'ice_wraith' ||
-    enemyId === 'bone_necromancer' || enemyId === 'mire_matriarch' || enemyId === 'ash_inquisitor'
+    enemyId === 'bone_necromancer' || enemyId === 'mire_matriarch' || enemyId === 'ash_inquisitor' ||
+    enemyId === 'astral_warden_boss' || enemyId === 'unbroken_crown_boss'
   ) return 'caster'
   return 'blade'
 }
@@ -1634,12 +1640,16 @@ function archetypeOf(heroId?: HeroClassId, enemyId?: EnemyArchetypeId): Archetyp
 export type Gait = 'normal' | 'heavy' | 'agile' | 'glide' | 'stomp'
 
 export function gaitFor(heroId?: HeroClassId, enemyId?: EnemyArchetypeId): Gait {
-  if (heroId === 'knight' || heroId === 'paladin' || enemyId === 'crypt_knight' || enemyId === 'frost_jarl') return 'heavy'
+  if (
+    heroId === 'knight' || heroId === 'paladin' || enemyId === 'crypt_knight' ||
+    enemyId === 'frost_jarl' || enemyId === 'dune_sovereign_boss'
+  ) return 'heavy'
   if (heroId === 'rogue' || enemyId === 'goblin' || enemyId === 'bone_thrall') return 'agile'
   if (
     heroId === 'mage' || heroId === 'cryomancer' || enemyId === 'eclipse_archon' ||
     enemyId === 'ice_wraith' || enemyId === 'ember_pyromancer' || enemyId === 'bone_necromancer' ||
-    enemyId === 'mire_matriarch' || enemyId === 'ash_inquisitor'
+    enemyId === 'mire_matriarch' || enemyId === 'ash_inquisitor' ||
+    enemyId === 'astral_warden_boss' || enemyId === 'unbroken_crown_boss'
   ) return 'glide'
   if (
     enemyId === 'frost_golem' || enemyId === 'orc_brute' ||
@@ -1686,7 +1696,10 @@ const ENEMY_ATTACK: Readonly<Record<EnemyArchetypeId, UnitClipName>> = {
   mire_matriarch: 'attack_staff',
   ash_inquisitor: 'attack_staff',
   frost_jarl: 'attack_heavy',
-  magma_warden: 'attack_pound'
+  magma_warden: 'attack_pound',
+  dune_sovereign_boss: 'attack_heavy',
+  astral_warden_boss: 'attack_thrust',
+  unbroken_crown_boss: 'attack_staff'
 }
 
 /** Basic attack clip per class/archetype; hero weapon ids can override the class default. */

@@ -217,8 +217,8 @@ function findChapterIndexForBiome(biome: BiomeId): number {
   return chapter.index
 }
 
-test('all 6 biomes have defined, non-empty, mutually distinct battle music motifs, bass lines, harmonies, and tempos', () => {
-  const expectedBiomes: readonly BiomeId[] = ['meadow', 'river', 'crypt', 'frost', 'volcano', 'throne']
+test('all 9 biomes have defined, non-empty, mutually distinct battle music motifs, bass lines, harmonies, and tempos', () => {
+  const expectedBiomes: readonly BiomeId[] = ['meadow', 'river', 'crypt', 'frost', 'volcano', 'throne', 'dunes', 'aether', 'expanse']
   assert.deepEqual([...BIOME_IDS], [...expectedBiomes])
 
   const melodyKeys = new Set<string>()
@@ -268,12 +268,12 @@ test('all 6 biomes have defined, non-empty, mutually distinct battle music motif
     cutoffs.add(theme.musicCutoff)
   }
 
-  assert.equal(melodyKeys.size, 6, 'All 6 biomes must have distinct melodies')
-  assert.equal(bossMelodyKeys.size, 6, 'All 6 biomes must have distinct boss melodies')
-  assert.equal(bassKeys.size, 6, 'All 6 biomes must have distinct bass lines')
-  assert.equal(harmonyKeys.size, 6, 'All 6 biomes must have distinct harmonies')
-  assert.equal(bpms.size, 6, 'All 6 biomes must have distinct tempos/BPM')
-  assert.equal(cutoffs.size, 6, 'All 6 biomes must have distinct filter cutoffs')
+  assert.equal(melodyKeys.size, BIOME_IDS.length, 'All biomes must have distinct melodies')
+  assert.equal(bossMelodyKeys.size, BIOME_IDS.length, 'All biomes must have distinct boss melodies')
+  assert.equal(bassKeys.size, BIOME_IDS.length, 'All biomes must have distinct bass lines')
+  assert.equal(harmonyKeys.size, BIOME_IDS.length, 'All biomes must have distinct harmonies')
+  assert.equal(bpms.size, BIOME_IDS.length, 'All biomes must have distinct tempos/BPM')
+  assert.equal(cutoffs.size, BIOME_IDS.length, 'All biomes must have distinct filter cutoffs')
 })
 
 test('all 6 biomes have distinct ambient soundscape bed specs, drones, and accent characters', () => {
@@ -310,10 +310,10 @@ test('all 6 biomes have distinct ambient soundscape bed specs, drones, and accen
     characters.add(profile.character)
   }
 
-  assert.equal(bedIds.size, 6)
-  assert.equal(bedSignatures.size, 6)
-  assert.equal(droneFrequencies.size, 6)
-  assert.equal(accentKinds.size, 6)
+  assert.equal(bedIds.size, BIOME_IDS.length)
+  assert.equal(bedSignatures.size, BIOME_IDS.length)
+  assert.equal(droneFrequencies.size, BIOME_IDS.length)
+  assert.equal(accentKinds.size, BIOME_IDS.length)
 })
 
 test('headless Node (no AudioContext) handles switching all 6 biomes, camp, world, mute/unmute, and SFX safely', () => {
@@ -372,8 +372,8 @@ test('mocked AudioContext schedules distinct biome oscillators, ramps ambient be
 
   audio.unlock()
   assert.equal(ctx.state, 'running')
-  // 2 base beds (wind, fire) + 6 per-biome beds = 8 looping pink-noise buffer sources
-  assert.equal(ctx.bufferSources.length, 8, 'Expected 2 base beds + 6 biome noise beds')
+  // 2 base beds (wind, fire) + per-biome beds looping pink-noise buffer sources
+  assert.equal(ctx.bufferSources.length, 2 + BIOME_IDS.length, 'Expected 2 base beds + all biome noise beds')
 
   const scheduledMelodySets = new Map<BiomeId, number[]>()
   let activeDroneOscSnapshot: MockOscNode[] = []
@@ -438,7 +438,7 @@ test('mocked AudioContext schedules distinct biome oscillators, ramps ambient be
 
   // Verify no two biomes produced the exact same scheduled pitch sequence
   const uniqueScheduled = new Set(Array.from(scheduledMelodySets.values(), arr => arr.join(',')))
-  assert.equal(uniqueScheduled.size, 6, 'Each biome should schedule a distinct sequence of frequencies')
+  assert.equal(uniqueScheduled.size, BIOME_IDS.length, 'Each biome should schedule a distinct sequence of frequencies')
 
   // Mute tears down active drone cleanly and suppresses new note scheduling
   audio.setMuted(true)
@@ -496,7 +496,7 @@ test('mocked AudioContext schedules distinct biome oscillators, ramps ambient be
   assert.equal(ctx.closeCalls, 1)
   assert.equal(ctx.state, 'closed')
   const loopingBeds = ctx.bufferSources.filter(src => src.loop)
-  assert.equal(loopingBeds.length, 8, 'Expected 8 looping noise bed sources')
+  assert.equal(loopingBeds.length, 2 + BIOME_IDS.length, 'Expected 2 base + all biome looping noise bed sources')
   for (const src of loopingBeds) {
     assert.ok(src.stops >= 1 && src.disconnected >= 1, 'All looping bed sources must stop and disconnect on close')
   }

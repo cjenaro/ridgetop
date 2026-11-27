@@ -116,6 +116,9 @@ export type EnemyArchetypeId =
   | 'ash_inquisitor'
   | 'frost_jarl'
   | 'magma_warden'
+  | 'dune_sovereign_boss'
+  | 'astral_warden_boss'
+  | 'unbroken_crown_boss'
 
 export type EquipSlot = 'weapon' | 'armor' | 'relic'
 
@@ -142,7 +145,7 @@ export type TileTerrain =
   | 'tall_grass'
   | 'barricade'
 
-export type BiomeId = 'meadow' | 'river' | 'crypt' | 'frost' | 'volcano' | 'throne'
+export type BiomeId = 'meadow' | 'river' | 'crypt' | 'frost' | 'volcano' | 'throne' | 'dunes' | 'aether' | 'expanse'
 
 export type SkillTarget = 'enemy' | 'ally' | 'self' | 'tile' | 'empty_near_enemy'
 
@@ -545,6 +548,7 @@ export interface BattleUnit {
   readonly stars: 1 | 2 | 3
   level: number
   readonly isBoss: boolean
+  bossPhase?: number
   readonly summonerUid?: string
   readonly weaponId?: string
   readonly armorId?: string
@@ -991,6 +995,7 @@ export interface BattleUnitSnapshot {
   readonly stars: 1 | 2 | 3
   readonly level?: number
   readonly isBoss: boolean
+  readonly bossPhase?: number
   readonly summonerUid?: string
   readonly weaponId?: string
   readonly armorId?: string

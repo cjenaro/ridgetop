@@ -334,7 +334,8 @@ test('World Map has branching stages, special levels, upcoming Soon nodes, diffi
   assert.equal(diffs.size, 8, 'Should span difficulty tiers I through VIII so future regions scale beyond today\'s endgame')
   const maxPlayableDiff = Math.max(...PLAYABLE_CHAPTERS.map(ch => ch.difficulty))
   const maxWorldDiff = Math.max(...CHAPTERS.map(ch => ch.difficulty))
-  assert.ok(maxWorldDiff > maxPlayableDiff, 'Future expansion regions must exceed today\'s highest playable tier')
+  assert.equal(maxPlayableDiff, 8, 'Outer Frontier expansion scales playable stages up to Tier VIII')
+  assert.ok(maxWorldDiff >= maxPlayableDiff, 'World Map max tier should cover all playable tiers')
   assert.equal(Object.keys(HERO_SPECS).length, 8)
 })
 

@@ -6033,7 +6033,10 @@ const BIOME_MAP_COLOR: Record<ChapterSpec['biome'], { readonly fill: string; rea
   crypt: { fill: '#48406e', ring: '#9f87ff', label: 'Crypt' },
   frost: { fill: '#4a81ad', ring: '#a8ecff', label: 'Frost' },
   volcano: { fill: '#8c3728', ring: '#ff8a4c', label: 'Volcano' },
-  throne: { fill: '#572770', ring: '#e878ff', label: 'Throne' }
+  throne: { fill: '#572770', ring: '#e878ff', label: 'Throne' },
+  dunes: { fill: '#b57f38', ring: '#ffda78', label: 'Dunes' },
+  aether: { fill: '#3f76b5', ring: '#8cf4ff', label: 'Aether' },
+  expanse: { fill: '#341e5e', ring: '#ffd259', label: 'Expanse' }
 }
 
 export function drawDifficultyBadge(
