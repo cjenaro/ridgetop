@@ -19,11 +19,12 @@ import {
   MAX_TACTIC_DECK, MIN_TACTIC_DECK,
   abandonBattle, armSkill, armTacticCard, autoBuildTacticDeck, autoEquipBestFit, beginWaitFacingPicker,
   bulkSalvageCommonDupes, buyPack, canBuyPack, canCraftEquipment, canCraftHero, canMergeHero, canUndoMove,
-  cancelWaitFacingPicker, clearSave, computeCombatForecast, computeDangerZone, computeDeckValue,
+  cancelAutoBattle, cancelWaitFacingPicker, clearSave, computeCombatForecast, computeDangerZone, computeDeckValue,
   computeEnemyThreat, computeHeroStats, computeSquadPower, computeTacticDeckCurve, computeZocPerimeterTiles,
   confirmDeployment, confirmWaitFacingPicker, craftEquipment, craftHero, createInitialState,
   createTurnBoundaryTracker, effectiveSpeed, equipItem, evaluateAllFacingExposures, evaluateFacingExposure,
-  findBestFitUpgrades, findEquipOwner, findGridPath, formatOpportunityWarning, getActiveTacticDeckUids,
+  findBestFitUpgrades, findEquipOwner, findGridPath, formatBattleSpeedLabel, formatOpportunityWarning,
+  getActiveTacticDeckUids,
   getChapterObjectiveSummary, getCraftableEquipment, getCraftableHeroes, getEquipCraftCost, getEquipEffect,
   getEquipSalvageDust, getEquipmentByUid, getHeroByUid, getHeroCraftCost, getHeroPassive, getHeroSalvageShards,
   getHeroSkill, getMergeCandidates, getNextRecommendedStage, getObjectiveProgressText, getPackPityStatus,
@@ -31,19 +32,21 @@ import {
   isDeployTile, isEndlessUnlocked, isStageCleared, isStageUnlocked, loadSave, maxSquadSize, mergeHero,
   moveDeployUnit, persistSave, previewBulkSalvageCommonDupes, previewPathOpportunityAttacks,
   previewTurnOrderAfterAction, previewWaitFacing, restoreBattleState, rotateDeployUnit, salvageEquipCard,
-  salvageHeroCard, selectHeroByUid, selectTile, serializeBattleState, shouldAutoSaveOnTurnBoundary,
-  startChapterBattle, stepGame, swapDeployUnit, syncTurnBoundaryTracker, toggleEquipLock, toggleHeroLock,
+  salvageHeroCard, selectHeroByUid, selectTile, serializeBattleState, setAutoBattle, setBattleSpeed,
+  shouldAutoSaveOnTurnBoundary,
+  startChapterBattle, stepGame, swapDeployUnit, syncTurnBoundaryTracker, toggleAutoBattle, toggleBattleSpeed,
+  toggleEquipLock, toggleHeroLock,
   toggleSquadMember, toggleTacticInDeck, undoMove, unequipItem, unitAt
 } from './simulation.ts'
 import { FACING_DIRS, cellHeightLevel, gridToWorld, isUnitDowned } from './types.ts'
 import type {
-  BattleSaveSnapshot, BattleUnit, ChapterSpec, CombatForecast, EnemyArchetypeId, FacingDir, GameState,
+  BattleSaveSnapshot, BattleSpeedMultiplier, BattleUnit, ChapterSpec, CombatForecast, EnemyArchetypeId, FacingDir, GameState,
   HeroClassId, OwnedEquipCard, OwnedHeroCard, PackId, PackRevealItem, PathOpportunityPreview, Rarity,
   TurnActionKind, TurnOrderActionPreview
 } from './types.ts'
 import {
   COLOR, RADIUS, TIER_COLOR, TYPE, UI_THEME_PALETTE, WORLD_MAP_H, WORLD_MAP_W,
-  drawAnimatedRevealCard, drawApMeter, drawArmoryStatDiffPanel, drawBattleInfo, drawBoosterPack, drawButton, drawCameraCompassButton, drawCampHeader,
+  drawAnimatedRevealCard, drawApMeter, drawArmoryStatDiffPanel, drawAutoBattlePill, drawBattleInfo, drawBoosterPack, drawButton, drawCameraCompassButton, drawCampHeader,
   drawChapterPicker, drawChip, drawCombatForecast, drawControlHints, drawDefeatBackdrop, drawDeployHeroChip,
   drawDifficultyBadge, drawEmptyNote, drawEndTurnButton, drawEquipCard, drawForecastAltChip,
   drawForgeBalanceBanner, drawForgeRecipeCard, drawHeroHeader, drawHeroRosterCard, drawHeroXpSummaryAnimated, drawHintPill, drawIconButton, drawLabel, drawLetterbox,
@@ -552,6 +555,9 @@ async function start() {
 
   function setScreen(next: Screen) {
     screen = next
+    if (next === 'paused' || next === 'victory' || next === 'defeat') {
+      cancelAutoBattle(state)
+    }
     lockedForecastCell = null
     mobileHandOpen = false
     clearBattleHoverFeedback()
@@ -714,10 +720,37 @@ async function start() {
     hudRev++
   }
 
+  function handleToggleBattleSpeed(): BattleSpeedMultiplier {
+    audio.unlock()
+    const next = toggleBattleSpeed(state)
+    state.sounds.push({ kind: 'card', pitch: next === 2 ? 1.28 : 0.96 })
+    saveNow()
+    uiDirty = true
+    hudRev++
+    return next
+  }
+
+  function handleToggleAutoBattle(): boolean {
+    audio.unlock()
+    const next = toggleAutoBattle(state)
+    if (next) {
+      lockedForecastCell = null
+      mobileHandOpen = false
+      clearBattleHoverFeedback()
+      scene.setForecast(null)
+    }
+    state.sounds.push({ kind: 'card', pitch: next ? 1.24 : 0.88 })
+    uiDirty = true
+    hudRev++
+    return next
+  }
+
   function togglePauseScreen() {
     audio.unlock()
-    if (screen === 'battle') setScreen('paused')
-    else if (screen === 'paused') setScreen('battle')
+    if (screen === 'battle') {
+      cancelAutoBattle(state)
+      setScreen('paused')
+    } else if (screen === 'paused') setScreen('battle')
   }
 
   function toggleMusic() {
@@ -1043,9 +1076,10 @@ async function start() {
       }
       return
     }
+    const autoWasOn = state.battle.autoBattle
     lockedForecastCell = null
     mobileHandOpen = false
-    if (selectTile(state, cell.col, cell.row)) {
+    if (selectTile(state, cell.col, cell.row) || autoWasOn !== state.battle.autoBattle) {
       uiDirty = true
       hudRev++
     }
@@ -1117,6 +1151,7 @@ async function start() {
     }
     // Touch tap on a valid combat/skill/Move+Attack/tactic target:
     // First tap locks Combat Forecast + 3D pre-attack wind-up; second tap on same target confirms!
+    const touchAutoWasOn = cancelAutoBattle(state)
     const fc = computeCombatForecast(state, cell.col, cell.row)
     if (fc) {
       if (lockedForecastCell && lockedForecastCell.col === cell.col && lockedForecastCell.row === cell.row) {
@@ -1132,7 +1167,7 @@ async function start() {
     }
     lockedForecastCell = null
     mobileHandOpen = false
-    if (selectTile(state, cell.col, cell.row)) {
+    if (selectTile(state, cell.col, cell.row) || touchAutoWasOn) {
       uiDirty = true
       hudRev++
     }
@@ -1190,6 +1225,12 @@ async function start() {
     if (screen === 'battle' && state.battle) {
       if (event.code === 'Escape' && !event.repeat) {
         event.preventDefault()
+        if (cancelAutoBattle(state)) {
+          state.sounds.push({ kind: 'card', pitch: 0.88 })
+          uiDirty = true
+          hudRev++
+          return
+        }
         if (state.battle.facingPicker) {
           if (cancelWaitFacingPicker(state)) {
             uiDirty = true
@@ -1205,6 +1246,16 @@ async function start() {
           return
         }
         setScreen('paused')
+        return
+      }
+      if (event.code === 'KeyX' && !event.repeat) {
+        event.preventDefault()
+        handleToggleBattleSpeed()
+        return
+      }
+      if (event.code === 'KeyB' && !event.repeat && (state.battle.phase === 'player' || state.battle.phase === 'enemy')) {
+        event.preventDefault()
+        handleToggleAutoBattle()
         return
       }
       if (event.code === 'Enter' && !event.repeat) {
@@ -2431,6 +2482,10 @@ async function start() {
         : 'DEPLOY SQUAD: click a hero & any blue spawn tile to reposition/swap · F Rotate · Space / Enter Start Battle'
       statusAccent = '#5eeeff'
       statusImportant = true
+    } else if (battle.autoBattle) {
+      statusLine = `AUTO-BATTLE ACTIVE (${formatBattleSpeedLabel(battle.battleSpeed)}) — click board, skill, or press B / Esc to resume manual control.`
+      statusAccent = COLOR.good
+      statusImportant = true
     } else if (!isPlayerTurn && active) {
       statusLine = `${active.name}'s turn - resolving maneuver...`
       statusAccent = COLOR.enemy
@@ -2485,15 +2540,19 @@ async function start() {
     const fpsShort = `${Math.round(perf.snapshot().fps || 60)}`
     const chapterShort = battle.endlessWave > 0 ? `Endless Wave ${battle.endlessWave}` : `${ch.title} · D${battle.difficulty}`
 
-    // Top-right toolbar (compact on phone: Undo when active, Danger Zone, Music, Pause; Wait-to-Face lives on-board via Wait/Space/F!)
+    // Top-right toolbar (compact on phone: Undo when active, Speed 1x/2x, Auto-Battle, Danger Zone, Music, Pause)
     const tbIconS = isPhone ? 28 : 30
     const camYawActual = scene.getCameraYawActual()
     const camHeading = cameraCardinalHeading(camYawActual)
     const showUndoBtn = isPhone ? undoAvailable : (isPlayerTurn && Boolean(active && active.team === 'ally'))
+    const isFastSpeed = battle.battleSpeed === 2
+    const speedLabel = formatBattleSpeedLabel(battle.battleSpeed)
+    const autoAvailable = battle.phase === 'player' || battle.phase === 'enemy'
+    const autoOn = battle.autoBattle
     const toolbarItems: LayoutNode[] = [
       ...(showUndoBtn ? [
         boxNode({
-          id: 'cs-undo-move', style: { width: isPhone ? 58 : 74, height: tbIconS },
+          id: 'cs-undo-move', style: { width: isPhone ? 48 : 74, height: tbIconS },
           widget: {
             type: 'button',
             label: 'Undo Move (Z / Backspace)',
@@ -2508,7 +2567,36 @@ async function start() {
         })
       ] : []),
       boxNode({
-        id: 'cs-danger-zone', style: { width: isPhone ? 46 : 64, height: tbIconS },
+        id: 'cs-speed-toggle', style: { width: isPhone ? 38 : 56, height: tbIconS },
+        widget: {
+          type: 'button',
+          label: `Battle Speed ${speedLabel} (X)`,
+          selected: isFastSpeed,
+          onPress: () => { handleToggleBattleSpeed() },
+          draw: (ctx: CanvasRenderingContext2D, rect: LayoutRect, st: CanvasWidgetDrawState) => drawIconButton(ctx, rect, 'fast-forward', st, {
+            active: isFastSpeed,
+            label: isPhone ? speedLabel : `${speedLabel} X`,
+            color: isFastSpeed ? COLOR.accentText : '#d7e6ff'
+          })
+        }
+      }),
+      boxNode({
+        id: 'cs-auto-battle', style: { width: isPhone ? 42 : 68, height: tbIconS },
+        widget: {
+          type: 'button',
+          label: autoOn ? 'Stop Auto-Battle (B / Esc)' : 'Auto-Battle (B)',
+          selected: autoOn,
+          disabled: !autoAvailable,
+          onPress: () => { handleToggleAutoBattle() },
+          draw: (ctx: CanvasRenderingContext2D, rect: LayoutRect, st: CanvasWidgetDrawState) => drawIconButton(ctx, rect, 'auto', st, {
+            active: autoOn,
+            label: isPhone ? 'Auto' : (autoOn ? 'Auto ON' : 'Auto B'),
+            color: autoOn ? COLOR.accentText : '#9ef7d4'
+          })
+        }
+      }),
+      boxNode({
+        id: 'cs-danger-zone', style: { width: isPhone ? 34 : 64, height: tbIconS },
         widget: {
           type: 'button',
           label: dangerZoneOn ? 'Hide Danger Zone (T)' : 'Show Danger Zone (T)',
@@ -3117,7 +3205,8 @@ async function start() {
       )
     }
 
-    const singleTopRow = mobileLandscape || (!mobilePortrait && w >= 1160)
+    const topLeftW = mobilePortrait ? Math.max(96, w - toolbarW - 20) : mobileLandscape ? 208 : 264
+    const singleTopRow = mobileLandscape || (!mobilePortrait && topLeftW + timelineW + toolbarW + 48 <= w)
     const timelineInset: [number, number] = singleTopRow
       ? [6, mobileLandscape ? 6 : 8]
       : [8, topBarH + 12]
@@ -3131,7 +3220,6 @@ async function start() {
       battle.objective.protectBreached ||
       (battle.objective.turnLimit !== undefined && battle.objective.turnLimit - battle.objective.roundsElapsed <= 2)
     )
-    const topLeftW = mobilePortrait ? w - toolbarW - 22 : mobileLandscape ? 208 : 264
     const objBadgeH = isPhone ? 26 : 30
     const objBadgeW = mobilePortrait ? Math.min(w - 16, 250) : mobileLandscape ? 208 : 264
 
@@ -3175,6 +3263,32 @@ async function start() {
           })
         }
       }),
+
+      // Glowing active Auto-Battle HUD pill right beneath the objective badge (click to stop)
+      ...(battle.autoBattle ? [boxNode({
+        id: 'cs-auto-pill',
+        style: {
+          anchor: 'top-left',
+          width: isPhone ? Math.min(objBadgeW, 176) : Math.min(objBadgeW, 240),
+          height: isPhone ? 24 : 26,
+          inset: [isPhone ? 6 : 8, (isPhone ? 6 : 8) + topBarH + 6 + objBadgeH + 6],
+          respectSafeArea: true
+        },
+        widget: {
+          type: 'button',
+          label: 'Stop Auto-Battle (B / Esc)',
+          selected: true,
+          onPress: () => {
+            if (cancelAutoBattle(state)) {
+              state.sounds.push({ kind: 'card', pitch: 0.88 })
+              uiDirty = true
+              hudRev++
+            }
+          },
+          draw: (ctx: CanvasRenderingContext2D, rect: LayoutRect, st: CanvasWidgetDrawState) =>
+            drawAutoBattlePill(ctx, rect, battle.battleSpeed, st, isPhone)
+        }
+      })] : []),
 
       // Top-right toolbar (aligned on top row for phone portrait & landscape too!)
       row({
@@ -5928,6 +6042,8 @@ async function start() {
       moveAttackTargets: state.battle ? state.battle.moveAttackTiles.map(t => ({ col: t.col, row: t.row, fromCol: t.fromCol, fromRow: t.fromRow })) : [],
       canUndoMove: canUndoMove(state.battle),
       dangerZoneOn,
+      battleSpeed: state.battle?.battleSpeed ?? state.campaign.battleSpeed,
+      autoBattle: state.battle?.autoBattle ?? false,
       mobileHandOpen,
       campCollapsed: mobileCampCollapsed,
       cameraZoom: Math.round(scene.getCameraZoom() * 1000) / 1000,
@@ -6022,6 +6138,31 @@ async function start() {
         toggleDangerZone()
         renderUiNow()
         return dangerZoneOn
+      },
+      toggleBattleSpeed: () => {
+        const next = handleToggleBattleSpeed()
+        renderUiNow()
+        return next
+      },
+      setBattleSpeed: (speed: BattleSpeedMultiplier) => {
+        const next = setBattleSpeed(state, speed)
+        saveNow()
+        uiDirty = true
+        hudRev++
+        renderUiNow()
+        return next
+      },
+      toggleAutoBattle: () => {
+        const next = handleToggleAutoBattle()
+        renderUiNow()
+        return next
+      },
+      setAutoBattle: (enabled: boolean) => {
+        const next = setAutoBattle(state, enabled)
+        uiDirty = true
+        hudRev++
+        renderUiNow()
+        return next
       },
       previewTile: (col: number, row: number) => {
         const fc = computeCombatForecast(state, col, row)

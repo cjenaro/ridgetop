@@ -92,11 +92,22 @@ export {
 } from './inventory-ops.ts'
 export type { BulkSalvagePreview, BulkSalvageResult } from './inventory-ops.ts'
 import type { BulkSalvageResult } from './inventory-ops.ts'
+import {
+  AUTO_BATTLE_POST_ACT_DELAY, AUTO_BATTLE_THINK_DELAY, DEFAULT_BATTLE_SPEED,
+  chooseBestTurnEndFacing, findAutoBattleProvokingTaunters, formatBattleSpeedLabel,
+  nextBattleSpeed, normalizeBattleSpeed, planAutoBattleAction, scaleBattleDt
+} from './auto-battle.ts'
+export {
+  AUTO_BATTLE_POST_ACT_DELAY, AUTO_BATTLE_THINK_DELAY, DEFAULT_BATTLE_SPEED,
+  chooseBestTurnEndFacing, findAutoBattleProvokingTaunters, formatBattleSpeedLabel,
+  nextBattleSpeed, normalizeBattleSpeed, planAutoBattleAction, scaleBattleDt
+}
+export type { AutoBattleActionKind, AutoBattleActionPlan } from './auto-battle.ts'
 import type {
   AttackArc, BattleCellSnapshot, BattleHeroXpGain, BattleObjectiveEvaluation, BattleObjectiveKind,
-  BattleObjectiveSnapshot, BattleObjectiveState, BattleReward, BattleSaveSnapshot, BattleState, BattleUnit,
-  BattleUnitSnapshot, BiomeId, CampaignState, ChapterSpec, CombatForecast, CombatForecastAlt,
-  CounterAvoidReason, DangerZoneMap, DangerZoneTile, DifficultyLevel, DisplacementPreview,
+  BattleObjectiveSnapshot, BattleObjectiveState, BattleReward, BattleSaveSnapshot, BattleSpeedMultiplier,
+  BattleState, BattleUnit, BattleUnitSnapshot, BiomeId, CampaignState, ChapterSpec, CombatForecast,
+  CombatForecastAlt, CounterAvoidReason, DangerZoneMap, DangerZoneTile, DifficultyLevel, DisplacementPreview,
   ElementalComboPreview, EnemyArchetypeId, EnemyThreatMap, EquipSlot,
   EquipmentSpec, FacingDir, FacingExposureLevel, FacingExposureReport, FacingThreatEntry,
   FlankThreatTile, GameState, GridCell, GridCoord, HeroClassId, MoveAttackTile, OwnedEquipCard,
@@ -104,7 +115,7 @@ import type {
   TacticCardSpec, TileTerrain, TurnActionKind, TurnOrderActionPreview, TurnPreviewEntry
 } from './types.ts'
 
-export type { PackPityStatus } from './types.ts'
+export type { BattleSpeedMultiplier, PackPityStatus } from './types.ts'
 export { applyDisplacement, resolveDisplacementPreview } from './forced-movement.ts'
 export {
   classifyElement, classifyHazardElement, collectWildfirePatch,
@@ -775,7 +786,8 @@ export function createInitialCampaign(seed = 1337): CampaignState {
     tactics: [],
     squadUids: [],
     selectedCampHeroUid: null,
-    lastPackReveal: []
+    lastPackReveal: [],
+    battleSpeed: DEFAULT_BATTLE_SPEED
   }
 
   const starterKnight: OwnedHeroCard = {
@@ -924,7 +936,8 @@ function cloneCampaignFromSave(c: SavedCampaignState, fallbackSeed: number): Cam
       : {}),
     squadUids: Array.isArray(c.squadUids) && c.squadUids.length ? c.squadUids.slice() : [c.heroes[0].uid],
     selectedCampHeroUid: c.selectedCampHeroUid ?? c.heroes[0].uid,
-    lastPackReveal: []
+    lastPackReveal: [],
+    battleSpeed: normalizeBattleSpeed(c.battleSpeed)
   }
   if (!isStageUnlocked(cloned, cloned.selectedStageId)) {
     cloned.selectedStageId = getNextRecommendedStage(cloned).id
@@ -1141,6 +1154,7 @@ export function serializeBattleState(
     tacticsPlayed: battle.tacticsPlayed,
     enemyDelay: battle.enemyDelay,
     enemyActedThisTurn: enemyMidMoveReset ? false : battle.enemyActedThisTurn,
+    battleSpeed: normalizeBattleSpeed(battle.battleSpeed),
     ...(rngSeed !== undefined && Number.isFinite(rngSeed) ? { rngSeed: (rngSeed >>> 0) || 1337 } : {}),
     objective: serializeObjective(battle.objective),
     xpEarnedByHero: { ...battle.xpEarnedByHero },
@@ -1394,6 +1408,7 @@ export function validateBattleSnapshot(raw: unknown): BattleSaveSnapshot | null 
   const tacticsPlayed = isFiniteNum(raw.tacticsPlayed) ? Math.max(0, Math.floor(raw.tacticsPlayed)) : 0
   const enemyDelay = isFiniteNum(raw.enemyDelay) ? clamp(raw.enemyDelay, 0, 2) : 0.34
   const enemyActedThisTurn = typeof raw.enemyActedThisTurn === 'boolean' ? raw.enemyActedThisTurn : false
+  const battleSpeed = raw.battleSpeed !== undefined ? normalizeBattleSpeed(raw.battleSpeed) : undefined
   const rngSeed = isFiniteNum(raw.rngSeed) ? ((raw.rngSeed >>> 0) || 1337) : undefined
   const objective = raw.objective !== undefined ? validateObjectiveSnapshot(raw.objective, cols, rows) ?? undefined : undefined
   let xpEarnedByHero: Record<string, number> | undefined
@@ -1434,6 +1449,7 @@ export function validateBattleSnapshot(raw: unknown): BattleSaveSnapshot | null 
     tacticsPlayed,
     enemyDelay,
     enemyActedThisTurn,
+    ...(battleSpeed !== undefined ? { battleSpeed } : {}),
     ...(rngSeed !== undefined ? { rngSeed } : {}),
     ...(objective !== undefined ? { objective } : {}),
     ...(xpEarnedByHero !== undefined ? { xpEarnedByHero } : {}),
@@ -1598,6 +1614,11 @@ export function restoreBattleState(state: GameState, snapshot: unknown): boolean
     pendingAction: null,
     enemyDelay: valid.phase === 'enemy' ? Math.max(0.25, valid.enemyDelay) : 0,
     enemyActedThisTurn: valid.enemyActedThisTurn,
+    battleSpeed: valid.battleSpeed !== undefined
+      ? normalizeBattleSpeed(valid.battleSpeed)
+      : normalizeBattleSpeed(state.campaign.battleSpeed),
+    autoBattle: false,
+    autoBattleDelay: 0,
     floatingNumbers: [],
     nextFloatId: 1,
     bannerText: '',
@@ -1734,7 +1755,8 @@ export function serializeSave(state: GameState): SaveData {
         ? { activeTacticDeckUids: state.campaign.activeTacticDeckUids.slice() }
         : {}),
       squadUids: state.campaign.squadUids.slice(),
-      lastPackReveal: []
+      lastPackReveal: [],
+      battleSpeed: normalizeBattleSpeed(state.campaign.battleSpeed)
     },
     activeBattle
   }
@@ -1799,7 +1821,8 @@ export function loadSave(storage: StorageLike | null | undefined): SaveData | nu
         selectedCampHeroUid: 'selectedCampHeroUid' in camp && typeof camp.selectedCampHeroUid === 'string'
           ? camp.selectedCampHeroUid
           : null,
-        lastPackReveal: []
+        lastPackReveal: [],
+        battleSpeed: 'battleSpeed' in camp ? normalizeBattleSpeed(camp.battleSpeed) : DEFAULT_BATTLE_SPEED
       },
       activeBattle
     }
@@ -2567,6 +2590,9 @@ export function startChapterBattle(
     facingPicker: null,
     enemyDelay: 0,
     enemyActedThisTurn: false,
+    battleSpeed: normalizeBattleSpeed(campaign.battleSpeed),
+    autoBattle: false,
+    autoBattleDelay: 0,
     floatingNumbers: [],
     nextFloatId: 1,
     bannerText: useDeploy ? 'DEPLOY SQUAD' : endlessWave > 0 ? `Endless Wave ${endlessWave}` : chapter.title,
@@ -3411,6 +3437,7 @@ export function rotateActiveUnitFacing(state: GameState, dir?: FacingDir): boole
   if (battle.units.some(u => u.path.length > 0)) return false
   const active = getUnitByUid(battle, battle.activeUnitUid)
   if (!active || active.team !== 'ally') return false
+  if (battle.autoBattle) battle.autoBattle = false
   const nextDir = dir ?? FACING_DIRS[(FACING_DIRS.indexOf(active.facing) + 1) % FACING_DIRS.length]
   setUnitFacing(active, nextDir)
   if (battle.facingPicker && battle.facingPicker.unitUid === active.uid) {
@@ -3622,6 +3649,7 @@ export function beginWaitFacingPicker(state: GameState): boolean {
   if (battle.units.some(u => u.path.length > 0)) return false
   const active = getUnitByUid(battle, battle.activeUnitUid)
   if (!active || !active.alive || active.team !== 'ally') return false
+  if (battle.autoBattle) battle.autoBattle = false
   if (battle.facingPicker && battle.facingPicker.unitUid === active.uid) return true
 
   battle.selectedUnitUid = active.uid
@@ -5295,6 +5323,7 @@ function checkBattleOutcome(state: GameState): void {
 
   if (outcome.status === 'victory') {
     battle.phase = 'victory'
+    battle.autoBattle = false
     battle.objective.outcomeReason = outcome.reason ?? undefined
     battle.moveTiles = []
     battle.targetTiles = []
@@ -5318,6 +5347,7 @@ function checkBattleOutcome(state: GameState): void {
     state.sounds.push({ kind: 'victory' })
   } else if (outcome.status === 'defeat') {
     battle.phase = 'defeat'
+    battle.autoBattle = false
     battle.objective.outcomeReason = outcome.reason ?? undefined
     battle.moveTiles = []
     battle.targetTiles = []
@@ -6157,6 +6187,7 @@ export function selectHeroByUid(state: GameState, uid: string): boolean {
 export function armSkill(state: GameState, skillIndex: number | null): boolean {
   const battle = state.battle
   if (!battle || battle.phase !== 'player') return false
+  if (battle.autoBattle) battle.autoBattle = false
   if (battle.facingPicker) cancelWaitFacingPicker(state)
   const unit = getUnitByUid(battle, battle.activeUnitUid)
   if (!unit || unit.team !== 'ally' || unit.acted || unit.stunTurns > 0) return false
@@ -6187,6 +6218,7 @@ export function armSkill(state: GameState, skillIndex: number | null): boolean {
 export function armTacticCard(state: GameState, tacticUid: string | null): boolean {
   const battle = state.battle
   if (!battle || battle.phase !== 'player') return false
+  if (battle.autoBattle) battle.autoBattle = false
   if (battle.facingPicker) cancelWaitFacingPicker(state)
   battle.pendingAction = null
   if (tacticUid === null || battle.armedTacticUid === tacticUid) {
@@ -6258,7 +6290,13 @@ export function selectTile(state: GameState, col: number, row: number): boolean 
     return false
   }
 
-  if (battle.phase !== 'player') return false
+  if (battle.phase !== 'player') {
+    if (battle.phase === 'enemy' && battle.autoBattle) {
+      battle.autoBattle = false
+    }
+    return false
+  }
+  if (battle.autoBattle) battle.autoBattle = false
   if (battle.facingPicker) return false
 
   // Wait if a unit is currently mid-stride along a path
@@ -6419,6 +6457,7 @@ export function canUndoMove(battle: BattleState | null | undefined): boolean {
 export function undoMove(state: GameState): boolean {
   const battle = state.battle
   if (!battle || !canUndoMove(battle)) return false
+  if (battle.autoBattle) battle.autoBattle = false
   const undo = battle.moveUndo
   const active = getUnitByUid(battle, battle.activeUnitUid)
   if (!undo || !active) return false
@@ -6694,6 +6733,7 @@ function advanceToNextUnitTurn(state: GameState, initial = false): void {
 
     if (next.team === 'ally') {
       battle.phase = 'player'
+      battle.autoBattleDelay = AUTO_BATTLE_THINK_DELAY
       battle.ap = Math.min(battle.maxAp, battle.ap + (initial ? 1 : 2))
       drawTacticCards(battle, state.campaign, 4)
       if (!initial) {
@@ -6936,20 +6976,193 @@ function performEnemyAttack(state: GameState, enemy: BattleUnit, target: BattleU
   executeBasicAttack(state, enemy, target)
 }
 
+/** Set the 1x / 2x battle animation & pacing speed multiplier (persisted on campaign & active battle). */
+export function setBattleSpeed(state: GameState, speed: BattleSpeedMultiplier): BattleSpeedMultiplier {
+  const normalized = normalizeBattleSpeed(speed)
+  state.campaign.battleSpeed = normalized
+  if (state.battle) {
+    state.battle.battleSpeed = normalized
+  }
+  return normalized
+}
+
+/** Toggle battle animation & pacing speed between 1x and 2x. */
+export function toggleBattleSpeed(state: GameState): BattleSpeedMultiplier {
+  const current = state.battle
+    ? normalizeBattleSpeed(state.battle.battleSpeed)
+    : normalizeBattleSpeed(state.campaign.battleSpeed)
+  return setBattleSpeed(state, nextBattleSpeed(current))
+}
+
+/** Enable or disable tactical Auto-Battle during an active battle (always off during deploy/victory/defeat). */
+export function setAutoBattle(state: GameState, enabled: boolean): boolean {
+  const battle = state.battle
+  if (!battle) return false
+  if (!enabled) {
+    battle.autoBattle = false
+    return false
+  }
+  if (battle.phase !== 'player' && battle.phase !== 'enemy') {
+    battle.autoBattle = false
+    return false
+  }
+  if (battle.facingPicker) cancelWaitFacingPicker(state)
+  battle.armedSkillIndex = null
+  battle.armedTacticUid = null
+  battle.autoBattle = true
+  battle.autoBattleDelay = AUTO_BATTLE_THINK_DELAY
+  if (battle.phase === 'player') {
+    refreshHighlights(battle, state.campaign)
+  }
+  return true
+}
+
+/** Toggle Auto-Battle on/off during active combat. */
+export function toggleAutoBattle(state: GameState): boolean {
+  const battle = state.battle
+  if (!battle) return false
+  return setAutoBattle(state, !battle.autoBattle)
+}
+
+/** Cleanly stop Auto-Battle (e.g., on manual override, Escape, or Pause). Returns true if it was active. */
+export function cancelAutoBattle(state: GameState): boolean {
+  const battle = state.battle
+  if (!battle || !battle.autoBattle) return false
+  battle.autoBattle = false
+  return true
+}
+
+/**
+ * Execute one planned Auto-Battle action for the active player hero using the exact same
+ * combat, movement, skill, tactic, and turn-end facing rules as manual play.
+ */
+export function executeAutoBattleStep(state: GameState): boolean {
+  const battle = state.battle
+  if (!battle || battle.phase !== 'player' || !battle.autoBattle) return false
+  if (battle.units.some(u => u.path.length > 0)) return false
+
+  const actor = getUnitByUid(battle, battle.activeUnitUid)
+  if (!actor || !actor.alive || actor.team !== 'ally') {
+    endPlayerTurn(state)
+    return true
+  }
+
+  const plan = planAutoBattleAction(state)
+  if (!plan) return false
+
+  if (plan.kind === 'tactic' && plan.tacticUid && plan.targetCol !== undefined && plan.targetRow !== undefined) {
+    battle.armedSkillIndex = null
+    battle.armedTacticUid = plan.tacticUid
+    refreshHighlights(battle, state.campaign)
+    const fired = executeTacticCard(state, plan.tacticUid, plan.targetCol, plan.targetRow)
+    if (fired) {
+      battle.autoBattleDelay = AUTO_BATTLE_THINK_DELAY
+      return true
+    }
+    battle.armedTacticUid = null
+    refreshHighlights(battle, state.campaign)
+  }
+
+  if (plan.kind === 'skill' && plan.skillIndex !== undefined && plan.targetCol !== undefined && plan.targetRow !== undefined) {
+    executeHeroSkill(state, actor, plan.skillIndex, plan.targetCol, plan.targetRow)
+    battle.armedSkillIndex = null
+    if (battle.phase === 'player') {
+      refreshHighlights(battle, state.campaign)
+    }
+    battle.autoBattleDelay = AUTO_BATTLE_POST_ACT_DELAY
+    return true
+  }
+
+  if (plan.kind === 'attack' && plan.targetCol !== undefined && plan.targetRow !== undefined) {
+    const target = unitAt(battle, plan.targetCol, plan.targetRow)
+    if (target && target.team === 'enemy') {
+      executeBasicAttack(state, actor, target)
+      if (battle.phase === 'player') refreshHighlights(battle, state.campaign)
+      battle.autoBattleDelay = AUTO_BATTLE_POST_ACT_DELAY
+      return true
+    }
+    if (!target && isIntactBarricade(battle.cells[plan.targetRow]?.[plan.targetCol])) {
+      executeBasicAttackOnBarricade(state, actor, plan.targetCol, plan.targetRow)
+      if (battle.phase === 'player') refreshHighlights(battle, state.campaign)
+      battle.autoBattleDelay = AUTO_BATTLE_POST_ACT_DELAY
+      return true
+    }
+  }
+
+  if (
+    (plan.kind === 'move_and_skill' || plan.kind === 'move_and_attack') &&
+    plan.moveTo &&
+    plan.targetCol !== undefined &&
+    plan.targetRow !== undefined
+  ) {
+    const path = findGridPath(battle, actor, plan.moveTo.col, plan.moveTo.row)
+    if (path.length > 0) {
+      actor.path = path
+      actor.moveProgress = 0
+      actor.moved = true
+      actor.animState = 'run'
+      battle.selectedUnitUid = actor.uid
+      battle.moveUndo = null
+      battle.oaTriggeredUids = []
+      battle.pendingAction = {
+        col: plan.targetCol,
+        row: plan.targetRow,
+        skillIndex: plan.kind === 'move_and_skill' && plan.skillIndex !== undefined ? plan.skillIndex : null
+      }
+      battle.moveTiles = []
+      battle.targetTiles = []
+      battle.moveAttackTiles = []
+      battle.autoBattleDelay = AUTO_BATTLE_POST_ACT_DELAY
+      state.sounds.push({ kind: 'step' })
+      return true
+    }
+  }
+
+  if (plan.kind === 'move' && plan.moveTo) {
+    const path = findGridPath(battle, actor, plan.moveTo.col, plan.moveTo.row)
+    if (path.length > 0) {
+      actor.path = path
+      actor.moveProgress = 0
+      actor.moved = true
+      actor.animState = 'run'
+      battle.selectedUnitUid = actor.uid
+      battle.moveUndo = null
+      battle.oaTriggeredUids = []
+      battle.pendingAction = null
+      battle.moveTiles = []
+      battle.targetTiles = []
+      battle.moveAttackTiles = []
+      battle.autoBattleDelay = AUTO_BATTLE_POST_ACT_DELAY
+      state.sounds.push({ kind: 'step' })
+      return true
+    }
+  }
+
+  // End turn with optimal facing toward the nearest / highest-threat enemy
+  if (actor.alive && actor.stunTurns === 0) {
+    setUnitFacing(actor, plan.facing ?? chooseBestTurnEndFacing(battle, actor))
+  }
+  endPlayerTurn(state)
+  return true
+}
+
 export function stepGame(state: GameState, dt: number): void {
   const safeDt = Number.isFinite(dt) && dt > 0 ? Math.min(dt, 0.05) : 0
   state.time += safeDt
   const battle = state.battle
   if (!battle) return
 
-  if (battle.bannerTimer > 0) battle.bannerTimer = Math.max(0, battle.bannerTimer - safeDt)
-  if (battle.shake > 0) battle.shake = Math.max(0, battle.shake - safeDt * 1.8)
+  const speed = normalizeBattleSpeed(battle.battleSpeed)
+  const battleDt = scaleBattleDt(safeDt, speed)
+
+  if (battle.bannerTimer > 0) battle.bannerTimer = Math.max(0, battle.bannerTimer - battleDt)
+  if (battle.shake > 0) battle.shake = Math.max(0, battle.shake - battleDt * 1.8)
 
   // Floating combat numbers
   for (let i = battle.floatingNumbers.length - 1; i >= 0; i--) {
     const fn = battle.floatingNumbers[i]
-    fn.age += safeDt
-    fn.y += safeDt * 0.95
+    fn.age += battleDt
+    fn.y += battleDt * 0.95
     if (fn.age >= fn.duration) battle.floatingNumbers.splice(i, 1)
   }
 
@@ -6957,9 +7170,9 @@ export function stepGame(state: GameState, dt: number): void {
   let anyMoving = false
   for (const u of battle.units) {
     if (!u.alive) continue
-    if (u.hitFlash > 0) u.hitFlash = Math.max(0, u.hitFlash - safeDt)
-    u.lungeX *= Math.pow(0.001, safeDt)
-    u.lungeZ *= Math.pow(0.001, safeDt)
+    if (u.hitFlash > 0) u.hitFlash = Math.max(0, u.hitFlash - battleDt)
+    u.lungeX *= Math.pow(0.001, battleDt)
+    u.lungeZ *= Math.pow(0.001, battleDt)
 
     if (u.path.length > 0) {
       anyMoving = true
@@ -6970,7 +7183,7 @@ export function stepGame(state: GameState, dt: number): void {
       const [tx, ty, tz] = gridToWorld(next.col, next.row, toCell.elevation, battle.cols, battle.rows)
       faceToward(u, tx, tz)
 
-      if (safeDt > 0 && u.moveProgress === 0) {
+      if (battleDt > 0 && u.moveProgress === 0) {
         triggerLeavingZocOpportunityAttacks(state, u, next.col, next.row)
         if (isBattleEnded(battle)) {
           u.path = []
@@ -6995,7 +7208,7 @@ export function stepGame(state: GameState, dt: number): void {
         }
       }
 
-      u.moveProgress += safeDt * 5.2
+      u.moveProgress += battleDt * 5.2
       if (u.moveProgress >= 1) {
         u.col = next.col
         u.row = next.row
@@ -7074,7 +7287,7 @@ export function stepGame(state: GameState, dt: number): void {
         u.y = fy + (ty - fy) * t + hop
       }
     } else if (u.animTimer > 0) {
-      u.animTimer = Math.max(0, u.animTimer - safeDt)
+      u.animTimer = Math.max(0, u.animTimer - battleDt)
       if (u.animTimer === 0 && u.animState !== 'celebrate') {
         u.animState = 'idle'
       }
@@ -7083,7 +7296,7 @@ export function stepGame(state: GameState, dt: number): void {
 
   // Single active Enemy AI Unit Turn on the Speed/CT timeline
   if (battle.phase === 'enemy' && !anyMoving) {
-    battle.enemyDelay -= safeDt
+    battle.enemyDelay -= battleDt
     if (battle.enemyDelay <= 0) {
       const enemy = getUnitByUid(battle, battle.activeUnitUid)
       if (!enemy || !enemy.alive) {
@@ -7099,6 +7312,14 @@ export function stepGame(state: GameState, dt: number): void {
         enemy.ct = Math.max(0, enemy.ct - 100)
         advanceToNextUnitTurn(state)
       }
+    }
+  }
+
+  // Optional Tactical Auto-Battle Turn Execution for Active Player Hero
+  if (battle.phase === 'player' && battle.autoBattle && !anyMoving && !battle.facingPicker) {
+    battle.autoBattleDelay -= battleDt
+    if (battle.autoBattleDelay <= 0) {
+      executeAutoBattleStep(state)
     }
   }
 }

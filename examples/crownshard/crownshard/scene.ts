@@ -1818,15 +1818,17 @@ export function createCrownshardScene(renderer: LowPolyRenderer) {
     applyBattleLightingOnce(battle)
     trackBattleEvents(battle)
     consumeVfx(state)
-    // Hit-stop: briefly freeze character animation on crits and knockouts for weight
-    const animDt = hitStop > 0 ? dt * 0.06 : dt
-    hitStop = Math.max(0, hitStop - dt)
-    particles.step(dt)
+    // Scale combat animation, hit-stop, particles, and VFX by 1x/2x battle speed while keeping camera motion unscaled.
+    const speedMul = battle.battleSpeed === 2 ? 2 : 1
+    const fxDt = dt * speedMul
+    const animDt = hitStop > 0 ? fxDt * 0.06 : fxDt
+    hitStop = Math.max(0, hitStop - fxDt)
+    particles.step(fxDt)
     pool.clear()
     shadows.clear()
 
     const style = BIOME_STYLES[battle.biome]
-    localShake = Math.max(0, localShake - dt * 1.6)
+    localShake = Math.max(0, localShake - fxDt * 1.6)
     const shake = battle.shake + localShake
     const shakeX = shake > 0 ? Math.sin(state.time * 48) * shake * 0.18 : 0
     const shakeY = shake > 0 ? Math.cos(state.time * 54) * shake * 0.12 : 0
@@ -2654,7 +2656,7 @@ export function createCrownshardScene(renderer: LowPolyRenderer) {
         battle,
         unit,
         animDt,
-        dt,
+        fxDt,
         unit.uid === battle.activeUnitUid,
         unit.uid === battle.selectedUnitUid,
         state.time,
@@ -2662,8 +2664,8 @@ export function createCrownshardScene(renderer: LowPolyRenderer) {
       )
     }
 
-    vfx.update(dt)
-    updateShots(dt, state.time)
+    vfx.update(fxDt)
+    updateShots(fxDt, state.time)
     particles.emit(pool)
 
     const batches: InstanceBatch[] = [...boardBatches]

@@ -334,6 +334,8 @@ export interface ChapterEnemySpawn {
 
 export type BattlePhase = 'deploy' | 'player' | 'enemy' | 'victory' | 'defeat'
 
+export type BattleSpeedMultiplier = 1 | 2
+
 export type BattleObjectiveKind = 'rout' | 'assassinate' | 'defend' | 'seize'
 
 export interface BattleObjectiveSpec {
@@ -895,6 +897,9 @@ export interface BattleState {
   facingPicker: FacingPickerState | null
   enemyDelay: number
   enemyActedThisTurn: boolean
+  battleSpeed: BattleSpeedMultiplier
+  autoBattle: boolean
+  autoBattleDelay: number
   floatingNumbers: FloatingNumber[]
   nextFloatId: number
   bannerText: string
@@ -981,6 +986,7 @@ export interface BattleSaveSnapshot {
   readonly tacticsPlayed: number
   readonly enemyDelay: number
   readonly enemyActedThisTurn: boolean
+  readonly battleSpeed?: BattleSpeedMultiplier
   readonly rngSeed?: number
   readonly objective?: BattleObjectiveSnapshot
   readonly xpEarnedByHero?: Record<string, number>
@@ -1008,6 +1014,7 @@ export interface CampaignState {
   squadUids: string[]
   selectedCampHeroUid: string | null
   lastPackReveal: PackRevealItem[]
+  battleSpeed: BattleSpeedMultiplier
 }
 
 export interface GameState {
@@ -1020,12 +1027,13 @@ export interface GameState {
 
 export type SavedCampaignState = Omit<
   CampaignState,
-  'dust' | 'shards' | 'packsSinceEpic' | 'packsSinceLegendary'
+  'dust' | 'shards' | 'packsSinceEpic' | 'packsSinceLegendary' | 'battleSpeed'
 > & {
   dust?: number
   shards?: number
   packsSinceEpic?: number
   packsSinceLegendary?: number
+  battleSpeed?: BattleSpeedMultiplier
 }
 
 export interface SaveData {
