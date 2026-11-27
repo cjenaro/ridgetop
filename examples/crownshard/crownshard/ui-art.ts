@@ -9,6 +9,7 @@ import type {
 import { ARMORY_STAT_ORDER, formatStatDelta, formatStatValue } from './armory-diff.ts'
 import type { EquipmentStatDiff } from './armory-diff.ts'
 import { getMaxCombatLogScroll, getRecentCombatLog } from './combat-log.ts'
+import type { CodexProgress, EnemyCodexEntry, EquipCodexEntry, HeroCodexEntry } from './codex.ts'
 import type { DiscoveryTipSpec } from './discovery-tips.ts'
 import { DIFFICULTY_META, RARITY_META, RARITY_ORDER } from './data.ts'
 import { EPIC_PITY_THRESHOLD, LEGENDARY_PITY_THRESHOLD } from './forge.ts'
@@ -9142,3 +9143,861 @@ export function drawCombatLogPanel(
 
   ctx.restore()
 }
+
+// ===========================================================================
+// CODEX / BESTIARY MODAL DRAW HELPERS
+// ===========================================================================
+
+const CODEX_CATEGORY_META: Record<EnemyCodexEntry['category'], { readonly label: string; readonly hex: string }> = {
+  troop: { label: 'TROOP', hex: '#9fb4c2' },
+  elite: { label: 'ELITE', hex: '#5ca8ff' },
+  miniboss: { label: 'MINI-BOSS', hex: '#c87dff' },
+  boss: { label: 'BOSS', hex: '#ff667a' }
+}
+
+const CODEX_BIOME_LABEL: Record<string, string> = {
+  meadow: 'Solis Meadow',
+  river: 'Silverfen River',
+  crypt: 'Ashen Crypt',
+  frost: 'Frostspire',
+  volcano: 'Emberwaste',
+  throne: 'Eclipse Throne',
+  dunes: 'Sunbleached Dunes',
+  aether: 'Aether Isles',
+  expanse: 'Shattered Expanse'
+}
+
+/** Silhouetted mystery portrait tile with `?` emblem for undiscovered Bestiary enemies. */
+export function drawCodexSilhouetteTile(
+  ctx: CanvasRenderingContext2D,
+  x: number,
+  y: number,
+  size: number,
+  accent: string = '#5a6b92'
+) {
+  const r = Math.round(size * 0.22)
+  ctx.save()
+  rr(ctx, x, y, size, size, r)
+  const g = ctx.createRadialGradient(
+    x + size * 0.5, y + size * 0.35, size * 0.08,
+    x + size * 0.5, y + size * 0.5, size * 0.78
+  )
+  g.addColorStop(0, '#27314a')
+  g.addColorStop(1, '#0d1221')
+  ctx.fillStyle = g
+  ctx.fill()
+
+  // Subtle dark hood/bust silhouette behind the question mark
+  ctx.save()
+  rr(ctx, x + 2, y + 2, size - 4, size - 4, Math.max(0, r - 2))
+  ctx.clip()
+  ctx.fillStyle = '#070a14cc'
+  ctx.beginPath()
+  ctx.arc(x + size * 0.5, y + size * 0.38, size * 0.19, 0, Math.PI * 2)
+  ctx.fill()
+  ctx.beginPath()
+  ctx.arc(x + size * 0.5, y + size * 0.96, size * 0.36, Math.PI, 0)
+  ctx.fill()
+  ctx.restore()
+
+  drawText(ctx, '?', x + size * 0.5, y + size * 0.52, {
+    size: Math.max(14, Math.round(size * 0.48)),
+    weight: 900,
+    color: '#9db4db',
+    align: 'center',
+    display: true,
+    stroke: true,
+    strokeWidth: 2.5
+  })
+
+  rr(ctx, x + 2, y + 2, size - 4, size - 4, Math.max(0, r - 2))
+  ctx.strokeStyle = accent
+  ctx.lineWidth = 2
+  ctx.stroke()
+  rr(ctx, x + 0.5, y + 0.5, size - 1, size - 1, r)
+  ctx.strokeStyle = COLOR.outline
+  ctx.lineWidth = 2.2
+  ctx.stroke()
+  ctx.restore()
+}
+
+/** Codex modal top header bar with emblem, title, and `Codex X%` progress gauge. */
+export function drawCodexHeader(
+  ctx: CanvasRenderingContext2D,
+  rect: LayoutRect,
+  progress: CodexProgress,
+  compact = false
+) {
+  const { x, y, width: w, height: h } = rect
+  const cy = y + h * 0.5
+  ctx.save()
+
+  // Emblem disc
+  const discR = compact ? 13 : 16
+  const discX = x + discR + 2
+  ctx.beginPath()
+  ctx.arc(discX, cy, discR, 0, Math.PI * 2)
+  const g = ctx.createLinearGradient(0, cy - discR, 0, cy + discR)
+  g.addColorStop(0, COLOR.accentHi)
+  g.addColorStop(1, COLOR.accentLo)
+  ctx.fillStyle = g
+  ctx.fill()
+  ctx.strokeStyle = COLOR.outline
+  ctx.lineWidth = 2.2
+  ctx.stroke()
+  drawIcon(ctx, 'scroll', discX, cy, compact ? 14 : 16, COLOR.accentText)
+
+  const titleX = discX + discR + 10
+  const titleText = compact ? 'CODEX' : 'CODEX & BESTIARY'
+  const titleW = drawText(ctx, titleText, titleX, compact ? cy : y + h * 0.36, {
+    size: compact ? 15 : 19,
+    weight: 900,
+    color: COLOR.accentHi,
+    display: true,
+    stroke: true,
+    strokeWidth: 3,
+    maxW: compact ? 86 : 210
+  })
+
+  if (!compact) {
+    drawText(
+      ctx,
+      `Bestiary ${progress.enemiesDiscovered}/${progress.enemiesTotal} · Heroes ${progress.heroesOwned}/${progress.heroesTotal} · Gear ${progress.equipmentOwned}/${progress.equipmentTotal}`,
+      titleX,
+      y + h * 0.74,
+      { size: 10.5, weight: 700, color: COLOR.muted, maxW: Math.max(120, w * 0.52) }
+    )
+  }
+
+  // Right-aligned Codex progress bar (`Codex X%`)
+  const barW = compact ? Math.max(76, Math.min(130, w - (titleX - x) - titleW - 14)) : Math.min(220, Math.max(120, w * 0.28))
+  const barX = x + w - barW - 4
+  const barH = compact ? 10 : 12
+  const pctLabel = `Codex ${progress.overallPct}%`
+  drawText(ctx, pctLabel, barX + barW, y + (compact ? h * 0.26 : h * 0.30), {
+    size: compact ? 10 : 11.5,
+    weight: 900,
+    color: COLOR.accentHi,
+    align: 'right',
+    display: true,
+    stroke: true,
+    strokeWidth: 2
+  })
+  drawBar(
+    ctx,
+    barX,
+    y + (compact ? h * 0.54 : h * 0.56),
+    barW,
+    barH,
+    progress.overallPct / 100,
+    COLOR.accentHi,
+    COLOR.wellDeep,
+    compact ? 0 : 10
+  )
+  ctx.restore()
+}
+
+export type CodexListEntry =
+  | { readonly kind: 'enemy'; readonly data: EnemyCodexEntry }
+  | { readonly kind: 'hero'; readonly data: HeroCodexEntry }
+  | { readonly kind: 'gear'; readonly data: EquipCodexEntry }
+
+/** Compact selectable Codex entry row card for Bestiary, Hero Archive, or Gear & Drops. */
+export function drawCodexEntryCard(
+  ctx: CanvasRenderingContext2D,
+  rect: LayoutRect,
+  item: CodexListEntry,
+  st: CanvasWidgetDrawState,
+  portrait?: CanvasImageSource,
+  compact = false
+) {
+  const { x, y, width: w, height: h } = rect
+  const selected = Boolean(st.selected)
+  const hovered = Boolean(st.hovered)
+
+  let accent: string = COLOR.borderHi
+  if (item.kind === 'enemy') {
+    accent = item.data.discovered ? CODEX_CATEGORY_META[item.data.category].hex : '#5a6b92'
+  } else if (item.kind === 'hero') {
+    accent = RARITY_META[item.data.spec.rarity].hex
+  } else {
+    accent = RARITY_META[item.data.spec.rarity].hex
+  }
+
+  ctx.save()
+  drawSurface(ctx, rect, {
+    r: RADIUS.md,
+    lipH: selected ? 4 : 3,
+    fill: selected ? '#384d82' : hovered ? '#2e3e69' : '#212d4d',
+    fillBot: selected ? '#233259' : hovered ? '#1c2847' : '#151e36',
+    border: selected ? COLOR.accentHi : hovered ? '#7fa0d6' : COLOR.border
+  })
+
+  const pad = compact ? 5 : 7
+  const tileSz = Math.max(26, Math.min(compact ? 32 : 42, h - pad * 2 - 2))
+  const tx = x + pad
+  const ty = y + Math.floor((h - 3 - tileSz) * 0.5)
+
+  if (item.kind === 'enemy') {
+    if (item.data.discovered) {
+      drawPortraitTile(ctx, tx, ty, tileSz, portrait, { ring: accent, r: 7, ringW: 2, bg: '#3e2947' })
+    } else {
+      drawCodexSilhouetteTile(ctx, tx, ty, tileSz, accent)
+    }
+  } else if (item.kind === 'hero') {
+    drawPortraitTile(ctx, tx, ty, tileSz, portrait, {
+      ring: accent,
+      r: 7,
+      ringW: 2,
+      dim: !item.data.owned,
+      bg: '#2c416e'
+    })
+  } else {
+    // Equipment icon tile
+    rr(ctx, tx, ty, tileSz, tileSz, 7)
+    ctx.fillStyle = item.data.owned ? '#1d2b4a' : '#131a2e'
+    ctx.fill()
+    ctx.strokeStyle = accent
+    ctx.lineWidth = 2
+    ctx.stroke()
+    drawEquipIcon(
+      ctx,
+      item.data.spec.slot,
+      item.data.spec.id,
+      item.data.spec.accentHex,
+      tx + tileSz * 0.5,
+      ty + tileSz * 0.5,
+      tileSz * 0.34
+    )
+    if (!item.data.owned) {
+      rr(ctx, tx, ty, tileSz, tileSz, 7)
+      ctx.fillStyle = '#090d1a88'
+      ctx.fill()
+    }
+  }
+
+  const textX = tx + tileSz + (compact ? 6 : 9)
+  const rightPad = compact ? 6 : 8
+  const textMaxW = Math.max(36, x + w - textX - rightPad)
+  const titleY = y + (compact ? h * 0.34 : h * 0.35)
+  const subY = y + (compact ? h * 0.68 : h * 0.68)
+
+  if (item.kind === 'enemy') {
+    const e = item.data
+    const badgeText = e.discovered ? CODEX_CATEGORY_META[e.category].label : 'LOCKED'
+    const badgeColor = e.discovered ? CODEX_CATEGORY_META[e.category].hex : COLOR.faint
+    let badgeW = 0
+    if (!compact || w >= 155) {
+      badgeW = drawChip(ctx, x + w - rightPad, titleY - 8, badgeText, {
+        h: 16,
+        size: 8.5,
+        color: badgeColor,
+        bg: '#0e1529',
+        align: 'right'
+      }) + 6
+    }
+    drawText(ctx, e.displayName, textX, titleY, {
+      size: compact ? 11.5 : 13,
+      weight: 900,
+      color: e.discovered ? COLOR.text : '#96a8cc',
+      maxW: Math.max(30, textMaxW - badgeW),
+      display: true
+    })
+    const sub = e.discovered
+      ? `${CODEX_BIOME_LABEL[e.biomeAffinity] ?? e.biomeAffinity} · HP ${e.spec.maxHp} · ATK ${e.spec.atk}`
+      : e.regionHint
+    drawText(ctx, sub, textX, subY, {
+      size: compact ? 9.5 : 10.5,
+      weight: 700,
+      color: e.discovered ? COLOR.muted : COLOR.faint,
+      maxW: textMaxW
+    })
+  } else if (item.kind === 'hero') {
+    const hEntry = item.data
+    const rMeta = RARITY_META[hEntry.spec.rarity]
+    const statusText = hEntry.owned ? `${'★'.repeat(Math.max(1, hEntry.highestStars))}` : 'UNOWNED'
+    const statusColor = hEntry.owned ? COLOR.accentHi : COLOR.faint
+    let badgeW = 0
+    if (!compact || w >= 155) {
+      badgeW = drawChip(ctx, x + w - rightPad, titleY - 8, statusText, {
+        h: 16,
+        size: 8.5,
+        color: statusColor,
+        bg: '#0e1529',
+        align: 'right'
+      }) + 6
+    }
+    drawText(ctx, `${hEntry.spec.name}`, textX, titleY, {
+      size: compact ? 11.5 : 13,
+      weight: 900,
+      color: hEntry.owned ? COLOR.text : '#aab7d4',
+      maxW: Math.max(30, textMaxW - badgeW),
+      display: true
+    })
+    drawText(ctx, `${hEntry.spec.title} · ${rMeta.label}`, textX, subY, {
+      size: compact ? 9.5 : 10.5,
+      weight: 700,
+      color: rMeta.hex,
+      maxW: textMaxW
+    })
+  } else {
+    const gEntry = item.data
+    const rMeta = RARITY_META[gEntry.spec.rarity]
+    const statusText = gEntry.owned ? `x${gEntry.ownedCount}` : 'UNOWNED'
+    let badgeW = 0
+    if (!compact || w >= 155) {
+      badgeW = drawChip(ctx, x + w - rightPad, titleY - 8, statusText, {
+        h: 16,
+        size: 8.5,
+        color: gEntry.owned ? COLOR.good : COLOR.faint,
+        bg: '#0e1529',
+        align: 'right'
+      }) + 6
+    }
+    drawText(ctx, gEntry.spec.name, textX, titleY, {
+      size: compact ? 11.5 : 13,
+      weight: 900,
+      color: gEntry.owned ? COLOR.text : '#aab7d4',
+      maxW: Math.max(30, textMaxW - badgeW),
+      display: true
+    })
+    const slotLabel = gEntry.spec.slot.charAt(0).toUpperCase() + gEntry.spec.slot.slice(1)
+    drawText(ctx, `${slotLabel} · ${rMeta.label}`, textX, subY, {
+      size: compact ? 9.5 : 10.5,
+      weight: 700,
+      color: rMeta.hex,
+      maxW: textMaxW
+    })
+  }
+
+  ctx.restore()
+}
+
+function drawCodexSectionBox(
+  ctx: CanvasRenderingContext2D,
+  x: number,
+  y: number,
+  w: number,
+  h: number,
+  overline: string,
+  accent: string
+) {
+  drawWell(ctx, { x, y, width: w, height: h }, RADIUS.sm)
+  rr(ctx, x + 2, y + 4, 3, Math.max(8, h - 8), 1.5)
+  ctx.fillStyle = accent
+  ctx.fill()
+  drawOverline(ctx, overline, x + 11, y + 11, Math.max(40, w - 18), accent)
+}
+
+function drawCodexStageTags(
+  ctx: CanvasRenderingContext2D,
+  x: number,
+  y: number,
+  maxW: number,
+  maxH: number,
+  stages: readonly { readonly title: string; readonly difficulty: DifficultyLevel; readonly viaSummon?: boolean }[],
+  emptyText: string
+) {
+  if (stages.length === 0) {
+    drawText(ctx, emptyText, x, y + 9, { size: 10.5, weight: 700, color: COLOR.faint, maxW })
+    return
+  }
+  let cx = x
+  let cy = y
+  const chipH = 18
+  const gapX = 5
+  const gapY = 4
+  const maxY = y + maxH - chipH
+  for (let i = 0; i < stages.length; i++) {
+    const st = stages[i]
+    const diff = DIFFICULTY_META[st.difficulty]
+    const tag = st.viaSummon ? `${st.title} (Summon)` : `${st.title} · T${diff.short}`
+    const estW = Math.min(maxW, Math.round(measureText(ctx, tag, 9.5, 800, false) + 16))
+    if (cx > x && cx + estW > x + maxW) {
+      cx = x
+      cy += chipH + gapY
+      if (cy > maxY) {
+        const rem = stages.length - i
+        drawChip(ctx, x + maxW, cy - chipH - gapY, `+${rem} more`, {
+          h: chipH,
+          size: 9,
+          color: COLOR.accentHi,
+          bg: '#1c2848',
+          align: 'right'
+        })
+        break
+      }
+    }
+    const drawnW = drawChip(ctx, cx, cy, tag, {
+      h: chipH,
+      size: 9.5,
+      color: diff.hex,
+      bg: '#131d36'
+    })
+    cx += drawnW + gapX
+  }
+}
+
+/** Detailed Bestiary dossier pane for a discovered or undiscovered enemy archetype. */
+export function drawCodexEnemyDetail(
+  ctx: CanvasRenderingContext2D,
+  rect: LayoutRect,
+  entry: EnemyCodexEntry,
+  portrait?: CanvasImageSource,
+  compact = false
+) {
+  const { x, y, width: w, height: h } = rect
+  ctx.save()
+  drawPanel(ctx, rect, { r: RADIUS.lg, lipH: 4, fill: '#222f52f2', fillBot: '#141c34f5' })
+
+  const pad = compact ? 10 : 14
+  const innerX = x + pad
+  const innerW = Math.max(60, w - pad * 2)
+  let cy = y + pad
+
+  // Header: Portrait + Name + Badges
+  const pSize = compact ? 52 : 70
+  const catMeta = CODEX_CATEGORY_META[entry.category]
+  if (entry.discovered) {
+    drawPortraitTile(ctx, innerX, cy, pSize, portrait, { ring: catMeta.hex, r: 11, ringW: 2.6, bg: '#45284c' })
+  } else {
+    drawCodexSilhouetteTile(ctx, innerX, cy, pSize, '#62749c')
+  }
+
+  const infoX = innerX + pSize + (compact ? 10 : 14)
+  const infoW = Math.max(60, innerX + innerW - infoX)
+  drawText(ctx, entry.displayName, infoX, cy + (compact ? 13 : 16), {
+    size: compact ? 15.5 : 20,
+    weight: 900,
+    color: entry.discovered ? COLOR.text : '#9cb0d6',
+    display: true,
+    stroke: true,
+    strokeWidth: 2.8,
+    maxW: infoW
+  })
+
+  // Badges row
+  let bx = infoX
+  const badgeY = cy + (compact ? 26 : 34)
+  if (entry.discovered) {
+    bx += drawChip(ctx, bx, badgeY, catMeta.label, { h: 18, size: 9.5, color: catMeta.hex, bg: '#121a30' }) + 5
+    bx += drawChip(ctx, bx, badgeY, CODEX_BIOME_LABEL[entry.biomeAffinity] ?? entry.biomeAffinity, {
+      h: 18,
+      size: 9.5,
+      color: COLOR.ally,
+      bg: '#121a30'
+    }) + 5
+    if (entry.footprintSize === 2 && bx + 64 <= innerX + innerW) {
+      bx += drawChip(ctx, bx, badgeY, '2x2 RAID', { h: 18, size: 9.5, color: COLOR.accentHi, bg: '#2e1d30' }) + 5
+    }
+    if (entry.evadesZoc && bx + 70 <= innerX + innerW) {
+      drawChip(ctx, bx, badgeY, 'EVADE ZOC', { h: 18, size: 9.5, color: '#c87dff', bg: '#231738' })
+    }
+  } else {
+    bx += drawChip(ctx, bx, badgeY, 'UNDISCOVERED', { h: 18, size: 9.5, color: COLOR.faint, bg: '#11182c' }) + 5
+    drawChip(ctx, bx, badgeY, entry.regionHint, { h: 18, size: 9.5, color: COLOR.accentHi, bg: '#1a2440' })
+  }
+
+  drawText(ctx, entry.regionHint, infoX, cy + (compact ? 50 : 62), {
+    size: compact ? 10 : 11,
+    weight: 700,
+    color: COLOR.muted,
+    maxW: infoW
+  })
+
+  cy += pSize + (compact ? 8 : 12)
+
+  if (!entry.discovered) {
+    // Locked mystery state — show biome/region hint and known territory without leaking stats or skills
+    const lockH = Math.max(76, Math.min(120, Math.floor((y + h - cy - pad) * 0.48)))
+    drawCodexSectionBox(ctx, innerX, cy, innerW, lockH, 'FIELD INTELLIGENCE LOCKED', '#7084b0')
+    drawParagraph(
+      ctx,
+      'Encounter this enemy in battle to unlock full combat attributes, signature abilities, tactical notes, and lore.',
+      innerX + 12,
+      cy + 22,
+      innerW - 22,
+      Math.max(24, lockH - 26),
+      { size: compact ? 11 : 12.5, color: COLOR.muted, lineHeight: compact ? 15 : 18 }
+    )
+    cy += lockH + 8
+
+    const stageBoxH = Math.max(54, y + h - cy - pad)
+    drawCodexSectionBox(ctx, innerX, cy, innerW, stageBoxH, 'SCOUTED TERRITORIES', COLOR.accentHi)
+    drawCodexStageTags(ctx, innerX + 11, cy + 23, innerW - 20, Math.max(20, stageBoxH - 28), entry.stages, 'Unknown Territory')
+    ctx.restore()
+    return
+  }
+
+  // Discovered: 8-stat grid (`HP`, `ATK`, `DEF`, `SPD`, `MOV`, `RNG`, `JMP`, `ZoC`)
+  const statsRow1: StatStripItem[] = [
+    { icon: 'heart', label: 'HP', value: `${entry.spec.maxHp}`, color: COLOR.good },
+    { icon: 'sword', label: 'ATK', value: `${entry.spec.atk}`, color: '#ff8a6b' },
+    { icon: 'shield', label: 'DEF', value: `${entry.spec.def}`, color: '#78b8ff' },
+    { icon: 'bolt', label: 'SPD', value: `${entry.spec.speed}`, color: COLOR.accentHi }
+  ]
+  const statsRow2: StatStripItem[] = [
+    { icon: 'boot', label: 'MOV', value: `${entry.spec.move}`, color: '#7ee6b0' },
+    { icon: 'target', label: 'RNG', value: `${entry.spec.range}`, color: '#c89bff' },
+    { icon: 'up', label: 'JMP', value: `${entry.spec.jump}`, color: '#9ed2ff' },
+    { icon: 'flag', label: 'ZOC', value: entry.hasZoc ? 'YES' : entry.evadesZoc ? 'EVADE' : 'NO', color: entry.hasZoc ? '#ffcb57' : COLOR.muted }
+  ]
+  const stripH = compact ? 32 : 38
+  drawStatStrip(ctx, { x: innerX, y: cy, width: innerW, height: stripH }, statsRow1)
+  cy += stripH + 4
+  drawStatStrip(ctx, { x: innerX, y: cy, width: innerW, height: stripH }, statsRow2)
+  cy += stripH + (compact ? 7 : 10)
+
+  const remH = Math.max(96, y + h - cy - pad)
+  const abilH = Math.max(54, Math.min(compact ? 66 : 78, Math.floor(remH * 0.30)))
+  const tipH = Math.max(46, Math.min(compact ? 54 : 64, Math.floor(remH * 0.24)))
+  const loreH = Math.max(44, Math.min(compact ? 56 : 68, Math.floor(remH * 0.24)))
+  const stageH = Math.max(42, remH - abilH - tipH - loreH - 18)
+
+  // Signature Ability & On-Hit Status
+  const abilTitle = entry.basicAttackStatus
+    ? `SIGNATURE · ${entry.signatureAbility.toUpperCase()} (ON HIT: ${entry.basicAttackStatus.toUpperCase()})`
+    : `SIGNATURE · ${entry.signatureAbility.toUpperCase()}`
+  drawCodexSectionBox(ctx, innerX, cy, innerW, abilH, abilTitle, '#ff9c6e')
+  drawParagraph(ctx, entry.abilityDesc, innerX + 11, cy + 20, innerW - 20, Math.max(18, abilH - 24), {
+    size: compact ? 10.5 : 11.5,
+    color: COLOR.text,
+    lineHeight: compact ? 13.5 : 15.5
+  })
+  cy += abilH + 6
+
+  // Tactical Tip
+  drawCodexSectionBox(ctx, innerX, cy, innerW, tipH, 'TACTICAL COUNTER-TIP', COLOR.good)
+  drawParagraph(ctx, entry.tacticalTip, innerX + 11, cy + 20, innerW - 20, Math.max(16, tipH - 24), {
+    size: compact ? 10.2 : 11.2,
+    color: '#d8f5e5',
+    lineHeight: compact ? 13 : 15
+  })
+  cy += tipH + 6
+
+  // Lore
+  drawCodexSectionBox(ctx, innerX, cy, innerW, loreH, 'CHRONICLE LORE', '#9ab6e8')
+  drawParagraph(ctx, entry.lore, innerX + 11, cy + 20, innerW - 20, Math.max(16, loreH - 24), {
+    size: compact ? 10.2 : 11.2,
+    color: COLOR.muted,
+    lineHeight: compact ? 13 : 15
+  })
+  cy += loreH + 6
+
+  // Encounter Stages
+  if (stageH >= 38) {
+    drawCodexSectionBox(ctx, innerX, cy, innerW, stageH, 'ENCOUNTER STAGES', COLOR.accentHi)
+    drawCodexStageTags(ctx, innerX + 11, cy + 21, innerW - 20, Math.max(18, stageH - 25), entry.stages, 'Abyss & Summons')
+  }
+
+  ctx.restore()
+}
+
+/** Detailed Hero Archive dossier pane showing base stats, passive, 1★/2★/3★ skills, lore, and recruitment sources. */
+export function drawCodexHeroDetail(
+  ctx: CanvasRenderingContext2D,
+  rect: LayoutRect,
+  entry: HeroCodexEntry,
+  portrait?: CanvasImageSource,
+  compact = false
+) {
+  const { x, y, width: w, height: h } = rect
+  const rMeta = RARITY_META[entry.spec.rarity]
+  ctx.save()
+  drawPanel(ctx, rect, { r: RADIUS.lg, lipH: 4, fill: '#222f52f2', fillBot: '#141c34f5' })
+
+  const pad = compact ? 10 : 14
+  const innerX = x + pad
+  const innerW = Math.max(60, w - pad * 2)
+  let cy = y + pad
+
+  const pSize = compact ? 50 : 66
+  drawPortraitTile(ctx, innerX, cy, pSize, portrait, {
+    ring: rMeta.hex,
+    r: 11,
+    ringW: 2.6,
+    dim: !entry.owned,
+    bg: '#2c416e'
+  })
+
+  const infoX = innerX + pSize + (compact ? 10 : 14)
+  const infoW = Math.max(60, innerX + innerW - infoX)
+  drawText(ctx, `${entry.spec.name} · ${entry.spec.title}`, infoX, cy + (compact ? 12 : 15), {
+    size: compact ? 14.5 : 19,
+    weight: 900,
+    color: COLOR.text,
+    display: true,
+    stroke: true,
+    strokeWidth: 2.8,
+    maxW: infoW
+  })
+
+  let bx = infoX
+  const badgeY = cy + (compact ? 25 : 32)
+  bx += drawChip(ctx, bx, badgeY, rMeta.label.toUpperCase(), { h: 18, size: 9.5, color: rMeta.hex, bg: '#121a30' }) + 5
+  const ownLabel = entry.owned
+    ? `OWNED x${entry.ownedCount} · ${entry.highestStars}★ LV.${entry.highestLevel}`
+    : 'NOT RECRUITED'
+  bx += drawChip(ctx, bx, badgeY, ownLabel, {
+    h: 18,
+    size: 9.5,
+    color: entry.owned ? COLOR.accentHi : COLOR.faint,
+    bg: '#121a30'
+  }) + 5
+  if (entry.starterHero && bx + 68 <= innerX + innerW) {
+    drawChip(ctx, bx, badgeY, 'STARTER', { h: 18, size: 9, color: COLOR.good, bg: '#142a22' })
+  }
+
+  drawText(ctx, entry.role, infoX, cy + (compact ? 48 : 58), {
+    size: compact ? 10 : 11,
+    weight: 700,
+    color: COLOR.muted,
+    maxW: infoW
+  })
+  cy += pSize + (compact ? 7 : 10)
+
+  // Base Stats (2 compact strips)
+  const stripH = compact ? 30 : 34
+  drawStatStrip(ctx, { x: innerX, y: cy, width: innerW, height: stripH }, [
+    { icon: 'heart', label: 'HP', value: `${entry.spec.maxHp}`, color: COLOR.good },
+    { icon: 'sword', label: 'ATK', value: `${entry.spec.atk}`, color: '#ff8a6b' },
+    { icon: 'shield', label: 'DEF', value: `${entry.spec.def}`, color: '#78b8ff' },
+    { icon: 'bolt', label: 'SPD', value: `${entry.spec.speed}`, color: COLOR.accentHi }
+  ])
+  cy += stripH + 4
+  drawStatStrip(ctx, { x: innerX, y: cy, width: innerW, height: stripH }, [
+    { icon: 'boot', label: 'MOV', value: `${entry.spec.move}`, color: '#7ee6b0' },
+    { icon: 'target', label: 'RNG', value: `${entry.spec.range}`, color: '#c89bff' },
+    { icon: 'up', label: 'JMP', value: `${entry.spec.jump}`, color: '#9ed2ff' },
+    { icon: 'crit', label: 'CRIT', value: `${Math.round(entry.spec.crit * 100)}%`, color: '#ffcb57' }
+  ])
+  cy += stripH + (compact ? 6 : 8)
+
+  // Innate Passive
+  if (entry.passive) {
+    const passH = compact ? 40 : 44
+    drawPassiveBanner(ctx, { x: innerX, y: cy, width: innerW, height: passH }, entry.passive, compact)
+    cy += passH + 6
+  }
+
+  // Skills 1★ / 2★ / 3★
+  const skillH = compact ? 34 : 40
+  for (let i = 0; i < entry.skills.length; i++) {
+    const sk = entry.skills[i]
+    const unlocked = entry.highestStars >= sk.tier
+    drawSkillRow(ctx, { x: innerX, y: cy, width: innerW, height: skillH }, {
+      tier: sk.tier,
+      name: sk.name,
+      desc: sk.desc,
+      unlocked,
+      vfx: sk.vfx,
+      skillId: sk.id
+    })
+    cy += skillH + 4
+  }
+
+  // Remaining height split between Lore and Recruitment Sources
+  const remH = y + h - cy - pad
+  if (remH >= 74) {
+    const loreH = Math.max(36, Math.min(54, Math.floor(remH * 0.44)))
+    drawCodexSectionBox(ctx, innerX, cy, innerW, loreH, 'LORE & TACTICS', '#9ab6e8')
+    drawParagraph(ctx, `${entry.lore} ${entry.playStyleTip}`, innerX + 11, cy + 19, innerW - 20, Math.max(14, loreH - 22), {
+      size: compact ? 9.8 : 10.6,
+      color: COLOR.muted,
+      lineHeight: compact ? 12.5 : 14
+    })
+    cy += loreH + 5
+
+    const srcH = Math.max(36, y + h - cy - pad)
+    drawCodexSectionBox(ctx, innerX, cy, innerW, srcH, 'RECRUITMENT & FORGE SOURCES', COLOR.accentHi)
+    const sourceLine = `Forge: ${entry.forgeShardCost} Shards · Packs: ${entry.packSources.join(', ') || 'All'}`
+    drawText(ctx, sourceLine, innerX + 11, cy + 24, {
+      size: compact ? 9.8 : 10.5,
+      weight: 800,
+      color: COLOR.text,
+      maxW: innerW - 20
+    })
+    if (srcH >= 52) {
+      drawCodexStageTags(
+        ctx,
+        innerX + 11,
+        cy + 34,
+        innerW - 20,
+        Math.max(18, srcH - 38),
+        entry.chapterSources,
+        entry.starterHero ? 'Starter Vanguard Hero' : 'Packs & Armory Forge'
+      )
+    }
+  } else if (remH >= 34) {
+    drawCodexSectionBox(ctx, innerX, cy, innerW, remH, 'RECRUITMENT SOURCES', COLOR.accentHi)
+    const chNames = entry.chapterSources.map(s => s.title).join(', ')
+    const text = `Forge: ${entry.forgeShardCost} Shards${chNames ? ` · Chapters: ${chNames}` : ''}`
+    drawText(ctx, text, innerX + 11, cy + 23, { size: 9.8, weight: 800, color: COLOR.text, maxW: innerW - 20 })
+  }
+
+  ctx.restore()
+}
+
+/** Detailed Armory & Drop Compendium dossier pane for weapons, armor, and relics. */
+export function drawCodexEquipDetail(
+  ctx: CanvasRenderingContext2D,
+  rect: LayoutRect,
+  entry: EquipCodexEntry,
+  compact = false
+) {
+  const { x, y, width: w, height: h } = rect
+  const rMeta = RARITY_META[entry.spec.rarity]
+  const slotLabel = entry.spec.slot.charAt(0).toUpperCase() + entry.spec.slot.slice(1)
+
+  ctx.save()
+  drawPanel(ctx, rect, { r: RADIUS.lg, lipH: 4, fill: '#222f52f2', fillBot: '#141c34f5' })
+
+  const pad = compact ? 10 : 14
+  const innerX = x + pad
+  const innerW = Math.max(60, w - pad * 2)
+  let cy = y + pad
+
+  // Equipment icon emblem tile
+  const iconSz = compact ? 52 : 68
+  rr(ctx, innerX, cy, iconSz, iconSz, 12)
+  const bg = ctx.createRadialGradient(
+    innerX + iconSz * 0.5, cy + iconSz * 0.35, 6,
+    innerX + iconSz * 0.5, cy + iconSz * 0.5, iconSz * 0.78
+  )
+  bg.addColorStop(0, '#364a78')
+  bg.addColorStop(1, '#141d36')
+  ctx.fillStyle = bg
+  ctx.fill()
+  ctx.strokeStyle = rMeta.hex
+  ctx.lineWidth = 2.6
+  ctx.stroke()
+  drawEquipIcon(
+    ctx,
+    entry.spec.slot,
+    entry.spec.id,
+    entry.spec.accentHex,
+    innerX + iconSz * 0.5,
+    cy + iconSz * 0.5,
+    iconSz * 0.33
+  )
+
+  const infoX = innerX + iconSz + (compact ? 10 : 14)
+  const infoW = Math.max(60, innerX + innerW - infoX)
+  drawText(ctx, entry.spec.name, infoX, cy + (compact ? 13 : 16), {
+    size: compact ? 15 : 20,
+    weight: 900,
+    color: COLOR.text,
+    display: true,
+    stroke: true,
+    strokeWidth: 2.8,
+    maxW: infoW
+  })
+
+  let bx = infoX
+  const badgeY = cy + (compact ? 26 : 34)
+  bx += drawChip(ctx, bx, badgeY, rMeta.label.toUpperCase(), { h: 18, size: 9.5, color: rMeta.hex, bg: '#121a30' }) + 5
+  bx += drawChip(ctx, bx, badgeY, slotLabel.toUpperCase(), { h: 18, size: 9.5, color: COLOR.ally, bg: '#121a30' }) + 5
+  const ownText = entry.owned
+    ? `OWNED x${entry.ownedCount}${entry.equippedCount > 0 ? ` (${entry.equippedCount} EQ)` : ''}`
+    : 'UNOWNED'
+  drawChip(ctx, bx, badgeY, ownText, {
+    h: 18,
+    size: 9.5,
+    color: entry.owned ? COLOR.good : COLOR.faint,
+    bg: '#121a30'
+  })
+
+  drawText(ctx, entry.spec.desc, infoX, cy + (compact ? 49 : 60), {
+    size: compact ? 10 : 11.5,
+    weight: 700,
+    color: COLOR.muted,
+    maxW: infoW
+  })
+  cy += iconSz + (compact ? 8 : 12)
+
+  // Stat Bonuses strip (all non-zero stats)
+  const statItems: StatStripItem[] = []
+  if (entry.spec.atk) statItems.push({ icon: 'sword', label: 'ATK', value: `+${entry.spec.atk}`, color: '#ff8a6b' })
+  if (entry.spec.def) statItems.push({ icon: 'shield', label: 'DEF', value: `+${entry.spec.def}`, color: '#78b8ff' })
+  if (entry.spec.hp) statItems.push({ icon: 'heart', label: 'HP', value: `+${entry.spec.hp}`, color: COLOR.good })
+  if (entry.spec.speed) statItems.push({ icon: 'bolt', label: 'SPD', value: `+${entry.spec.speed}`, color: COLOR.accentHi })
+  if (entry.spec.move) statItems.push({ icon: 'boot', label: 'MOV', value: `+${entry.spec.move}`, color: '#7ee6b0' })
+  if (entry.spec.range) statItems.push({ icon: 'target', label: 'RNG', value: `+${entry.spec.range}`, color: '#c89bff' })
+  if (entry.spec.crit) statItems.push({ icon: 'crit', label: 'CRIT', value: `+${Math.round(entry.spec.crit * 100)}%`, color: '#ffcb57' })
+  if (entry.spec.lifesteal) statItems.push({ icon: 'sparkle', label: 'LEECH', value: `+${Math.round(entry.spec.lifesteal * 100)}%`, color: '#f2798f' })
+  if (entry.spec.shieldStart) statItems.push({ icon: 'shield', label: 'SHD', value: `+${entry.spec.shieldStart}`, color: '#69c2ff' })
+
+  const stripH = compact ? 34 : 40
+  if (statItems.length <= 5) {
+    drawStatStrip(ctx, { x: innerX, y: cy, width: innerW, height: stripH }, statItems)
+    cy += stripH + 8
+  } else {
+    const mid = Math.ceil(statItems.length / 2)
+    drawStatStrip(ctx, { x: innerX, y: cy, width: innerW, height: stripH }, statItems.slice(0, mid))
+    cy += stripH + 4
+    drawStatStrip(ctx, { x: innerX, y: cy, width: innerW, height: stripH }, statItems.slice(mid))
+    cy += stripH + 8
+  }
+
+  // Special Effect / Trait Card
+  const traitLines: string[] = []
+  if (entry.effect) traitLines.push(`${entry.effect.name}: ${entry.effect.desc}`)
+  if (entry.spec.startStatus) traitLines.push(`Battle Start: Grants ${entry.spec.startStatus.toUpperCase()} (2 turns).`)
+  if (entry.spec.onHitStatus) traitLines.push(`On Hit: Inflicts ${entry.spec.onHitStatus.toUpperCase()}.`)
+
+  const effH = compact ? 54 : 64
+  drawCodexSectionBox(
+    ctx,
+    innerX,
+    cy,
+    innerW,
+    effH,
+    entry.effect ? `SPECIAL EFFECT · ${entry.effect.name.toUpperCase()}` : 'EQUIPMENT TRAITS',
+    entry.effect ? entry.effect.accentHex : '#7fa4dc'
+  )
+  drawParagraph(
+    ctx,
+    traitLines.length > 0 ? traitLines.join(' ') : 'Pure combat stats with no situational trigger—reliable on any squad build.',
+    innerX + 11,
+    cy + 20,
+    innerW - 20,
+    Math.max(18, effH - 24),
+    { size: compact ? 10.5 : 11.5, color: COLOR.text, lineHeight: compact ? 13.5 : 15.5 }
+  )
+  cy += effH + 8
+
+  // Crafting & Pack Sources
+  const forgeH = compact ? 54 : 62
+  drawCodexSectionBox(ctx, innerX, cy, innerW, forgeH, 'ARMORY FORGE & PACK AVAILABILITY', COLOR.accentHi)
+  drawText(
+    ctx,
+    `Arcane Dust Forge Cost: ${entry.forgeDustCost} Dust${entry.starterGear ? ' · Starter Vanguard Gear' : ''}`,
+    innerX + 11,
+    cy + 25,
+    { size: compact ? 10.5 : 11.5, weight: 800, color: COLOR.accentHi, maxW: innerW - 20 }
+  )
+  drawText(
+    ctx,
+    `Booster Packs: ${entry.packSources.join(' · ') || 'All Packs'}`,
+    innerX + 11,
+    cy + 43,
+    { size: compact ? 10 : 11, weight: 700, color: COLOR.muted, maxW: innerW - 20 }
+  )
+  cy += forgeH + 8
+
+  // Chapter First-Clear & Drop Sources
+  const dropH = Math.max(48, y + h - cy - pad)
+  drawCodexSectionBox(ctx, innerX, cy, innerW, dropH, 'WORLD MAP FIRST-CLEAR / DROP SOURCES', COLOR.good)
+  drawCodexStageTags(
+    ctx,
+    innerX + 11,
+    cy + 22,
+    innerW - 20,
+    Math.max(20, dropH - 26),
+    entry.chapterSources,
+    entry.starterGear ? 'Issued to Starter Vanguard · Forge & Booster Packs' : 'Available via Booster Packs & Armory Forge'
+  )
+
+  ctx.restore()
+}
+

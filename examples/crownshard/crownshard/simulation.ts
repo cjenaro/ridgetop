@@ -19,6 +19,24 @@ export {
   resolvePackPityFloor, selectProtectedEquipment, selectProtectedHero, updatePackPityCounters
 }
 import {
+  ALL_ENEMY_IDS, ENEMY_CODEX_META, HERO_CODEX_META, backfillDiscoveredEnemiesFromStages,
+  discoverBattleEnemiesInCodex, discoverEnemyInCodex, getBestiaryEntries, getBestiaryEntry,
+  getCodexProgress, getEnemyEncounterStages, getEquipCodexEntries, getEquipCodexEntry,
+  getEquipmentDropStages, getHeroCodexEntries, getHeroCodexEntry, getHeroRecruitmentStages,
+  getPackSourcesForRarity, isEnemyDiscovered, isValidEnemyArchetypeId, normalizeDiscoveredEnemies
+} from './codex.ts'
+export {
+  ALL_ENEMY_IDS, ENEMY_CODEX_META, HERO_CODEX_META, backfillDiscoveredEnemiesFromStages,
+  discoverBattleEnemiesInCodex, discoverEnemyInCodex, getBestiaryEntries, getBestiaryEntry,
+  getCodexProgress, getEnemyEncounterStages, getEquipCodexEntries, getEquipCodexEntry,
+  getEquipmentDropStages, getHeroCodexEntries, getHeroCodexEntry, getHeroRecruitmentStages,
+  getPackSourcesForRarity, isEnemyDiscovered, isValidEnemyArchetypeId, normalizeDiscoveredEnemies
+}
+export type {
+  CodexProgress, CodexStageRef, CodexTab, EnemyCodexCategory, EnemyCodexEntry, EnemyCodexMeta,
+  EquipCodexEntry, HeroCodexEntry, HeroCodexMeta
+} from './codex.ts'
+import {
   COMBAT_LOG_ACCENT, COMBAT_LOG_CATEGORIES, MAX_COMBAT_LOG_ENTRIES, appendCombatLog,
   formatCombatLogLine, formatComboLog, formatDamageLog, formatHazardLog, formatHealLog,
   formatKoLog, formatReactionLog, formatStatusLog, getMaxCombatLogScroll, getRecentCombatLog,
@@ -995,6 +1013,7 @@ export function createInitialCampaign(seed = 1337): CampaignState {
     lastPackReveal: [],
     seenTips: [],
     tipsDisabled: false,
+    discoveredEnemies: [],
     battleSpeed: DEFAULT_BATTLE_SPEED,
     oakhavenExchange: { cycle: 0, boughtIds: [] }
   }
@@ -1180,6 +1199,7 @@ function cloneCampaignFromSave(c: SavedCampaignState, fallbackSeed: number): Cam
     lastPackReveal: [],
     seenTips: normalizeSeenTips(c.seenTips),
     tipsDisabled: c.tipsDisabled === true,
+    discoveredEnemies: normalizeDiscoveredEnemies(c.discoveredEnemies, dedupCleared),
     battleSpeed: normalizeBattleSpeed(c.battleSpeed),
     oakhavenExchange: normalizeOakhavenExchange(
       c.oakhavenExchange,
@@ -1990,6 +2010,7 @@ export function restoreBattleState(state: GameState, snapshot: unknown): boolean
   state.battle = battle
   state.sounds = []
   state.vfx = []
+  discoverBattleEnemiesInCodex(state.campaign, units)
   refreshHighlights(battle, state.campaign)
   checkDiscoveryTipForBattle(state)
   return true
@@ -2116,6 +2137,7 @@ export function serializeSave(state: GameState): SaveData {
       lastPackReveal: [],
       seenTips: normalizeSeenTips(state.campaign.seenTips),
       tipsDisabled: state.campaign.tipsDisabled === true,
+      discoveredEnemies: normalizeDiscoveredEnemies(state.campaign.discoveredEnemies),
       battleSpeed: normalizeBattleSpeed(state.campaign.battleSpeed),
       oakhavenExchange: normalizeOakhavenExchange(state.campaign.oakhavenExchange, state.campaign.battlesWon)
     },
@@ -2205,6 +2227,9 @@ export function loadSave(storage: StorageLike | null | undefined): SaveData | nu
         lastPackReveal: [],
         seenTips: 'seenTips' in camp ? normalizeSeenTips(camp.seenTips) : [],
         tipsDisabled: 'tipsDisabled' in camp ? camp.tipsDisabled === true : false,
+        discoveredEnemies: 'discoveredEnemies' in camp
+          ? normalizeDiscoveredEnemies(camp.discoveredEnemies, clearedStageIds)
+          : backfillDiscoveredEnemiesFromStages(clearedStageIds),
         battleSpeed: 'battleSpeed' in camp ? normalizeBattleSpeed(camp.battleSpeed) : DEFAULT_BATTLE_SPEED,
         oakhavenExchange: normalizeOakhavenExchange(
           'oakhavenExchange' in camp ? camp.oakhavenExchange : undefined,
@@ -3087,6 +3112,7 @@ export function startChapterBattle(
 
   drawTacticCards(battle, campaign, 3)
   state.battle = battle
+  discoverBattleEnemiesInCodex(campaign, units)
   if (useDeploy) {
     battle.turnOrder = computeTurnOrderPreview(battle, 8)
   } else {
@@ -5708,6 +5734,7 @@ function handleUnitDefeat(state: GameState, unit: BattleUnit): void {
   } else {
     unit.downed = false
     unit.koCountdown = 0
+    discoverEnemyInCodex(state.campaign, unit.enemyId)
     appendCombatLog(battle, 'ko', formatKoLog({ unitName: unit.name, kind: 'ko', isBoss: unit.isBoss }))
     state.sounds.push({ kind: 'ko' })
     state.vfx.push({ kind: 'ko', at: [unit.x, unit.y + 0.6, unit.z], isBoss: unit.isBoss })
@@ -5973,6 +6000,7 @@ function advanceGauntletWave(state: GameState): boolean {
   const newFoes = createGauntletWaveUnits(battle, nextRound)
   for (const foe of newFoes) {
     battle.units.push(foe)
+    discoverEnemyInCodex(state.campaign, foe.enemyId)
     state.vfx.push({ kind: 'burst', style: 'fire', at: [foe.x, foe.y + 0.5, foe.z], radius: 1.0, uid: foe.uid })
   }
 
@@ -7562,6 +7590,7 @@ function triggerFrontierBossPhaseIfReady(state: GameState, boss: BattleUnit): vo
   for (const tile of summonTiles) {
     const guard = createSummonedEnemyUnit(battle, boss, cfg.summonArchetype, tile.col, tile.row)
     battle.units.push(guard)
+    discoverEnemyInCodex(state.campaign, guard.enemyId)
     state.vfx.push({ kind: 'burst', style: 'gold', at: [guard.x, guard.y + 0.55, guard.z], radius: 0.85, uid: boss.uid })
     addFloat(battle, guard.x, guard.y + 0.4, guard.z, 'SOLAR VANGUARD!', '#ffd166')
   }
@@ -7927,6 +7956,7 @@ function executeEnemyUnitTurn(state: GameState, enemy: BattleUnit): void {
     if (summonTile) {
       const summoned = createSummonedEnemyUnit(battle, enemy, 'bone_thrall', summonTile.col, summonTile.row)
       battle.units.push(summoned)
+      discoverEnemyInCodex(state.campaign, summoned.enemyId)
       enemy.cooldowns[0] = NECROMANCER_SUMMON_COOLDOWN
       enemy.acted = true
       faceToward(enemy, summoned.x, summoned.z)

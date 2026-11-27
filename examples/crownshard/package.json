@@ -24,6 +24,7 @@
     "godotEntries": [
       "crownshard/armory-diff.ts",
       "crownshard/auto-battle.ts",
+      "crownshard/codex.ts",
       "crownshard/combat-log.ts",
       "crownshard/discovery-tips.ts",
       "crownshard/expansion-act1.ts",
