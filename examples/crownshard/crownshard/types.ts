@@ -334,6 +334,19 @@ export interface ChapterEnemySpawn {
 
 export type BattlePhase = 'deploy' | 'player' | 'enemy' | 'victory' | 'defeat'
 
+export type DiscoveryTipId =
+  | 'deploy'
+  | 'move_attack'
+  | 'high_ground'
+  | 'facing_backstab'
+  | 'shrine'
+  | 'hazards'
+  | 'zoc'
+  | 'tactic_cards'
+  | 'status_combos'
+  | 'ko_revive'
+  | 'objective_special'
+
 export type BattleObjectiveKind = 'rout' | 'assassinate' | 'defend' | 'seize'
 
 export interface BattleObjectiveSpec {
@@ -903,6 +916,8 @@ export interface BattleState {
   xpEarnedByHero: Record<string, number>
   heroStartLevelByUid: Record<string, number>
   reward: BattleReward | null
+  activeTipId: DiscoveryTipId | null
+  tipQueue: DiscoveryTipId[]
 }
 
 export interface BattleCellSnapshot {
@@ -1008,6 +1023,8 @@ export interface CampaignState {
   squadUids: string[]
   selectedCampHeroUid: string | null
   lastPackReveal: PackRevealItem[]
+  seenTips: string[]
+  tipsDisabled?: boolean
 }
 
 export interface GameState {
@@ -1020,12 +1037,14 @@ export interface GameState {
 
 export type SavedCampaignState = Omit<
   CampaignState,
-  'dust' | 'shards' | 'packsSinceEpic' | 'packsSinceLegendary'
+  'dust' | 'shards' | 'packsSinceEpic' | 'packsSinceLegendary' | 'seenTips'
 > & {
   dust?: number
   shards?: number
   packsSinceEpic?: number
   packsSinceLegendary?: number
+  seenTips?: string[]
+  tipsDisabled?: boolean
 }
 
 export interface SaveData {

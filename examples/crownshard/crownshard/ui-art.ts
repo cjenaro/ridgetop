@@ -7,6 +7,7 @@ import type {
 } from './types.ts'
 import { ARMORY_STAT_ORDER, formatStatDelta, formatStatValue } from './armory-diff.ts'
 import type { EquipmentStatDiff } from './armory-diff.ts'
+import type { DiscoveryTipSpec } from './discovery-tips.ts'
 import { DIFFICULTY_META, RARITY_META, RARITY_ORDER } from './data.ts'
 import { EPIC_PITY_THRESHOLD, LEGENDARY_PITY_THRESHOLD } from './forge.ts'
 import { heroLevelProgress } from './leveling.ts'
@@ -2791,6 +2792,116 @@ export function drawHintPill(ctx: CanvasRenderingContext2D, rect: LayoutRect, te
   ctx.lineWidth = 1.6
   ctx.stroke()
   drawText(ctx, text, rect.x + 28, cy + 0.5, { size: 12, weight: 800, maxW: rect.width - 42, display: true, shadow: true })
+}
+
+export interface DiscoveryTipCardOpts {
+  readonly compact?: boolean
+  readonly queuedCount?: number
+}
+
+/**
+ * Sleek, non-blocking one-time Discovery Tip callout banner.
+ * Renders the outer 3D-beveled slate card, left accent bar, icon medallion, category kicker,
+ * title, wrapped 1-2 line body, and optional hotkey pill while leaving the bottom strip open
+ * for the interactive "Got it" / "Skip Tips" buttons.
+ */
+export function drawDiscoveryTipCard(
+  ctx: CanvasRenderingContext2D,
+  rect: LayoutRect,
+  tip: DiscoveryTipSpec,
+  o: DiscoveryTipCardOpts = {}
+) {
+  const { x, y, width: w, height: h } = rect
+  if (w < 40 || h < 40) return
+  const compact = Boolean(o.compact)
+  const accent = tip.accentHex || COLOR.accentHi
+
+  // Outer card plate with subtle glowing rim
+  drawSurface(ctx, rect, {
+    r: RADIUS.lg,
+    lipH: 4,
+    fill: '#233156',
+    fillBot: '#141c34',
+    lip: '#0d1324',
+    glow: `${accent}33`
+  })
+
+  // Crisp glowing left category stripe
+  const stripeW = 4
+  ctx.save()
+  rr(ctx, x + 5, y + 8, stripeW, Math.max(12, h - 20), 2)
+  ctx.fillStyle = accent
+  ctx.fill()
+  ctx.restore()
+
+  // Icon medallion
+  const iconSize = compact ? 26 : 30
+  const iconX = x + 16
+  const iconY = y + (compact ? 10 : 12)
+  ctx.save()
+  rr(ctx, iconX, iconY, iconSize, iconSize, RADIUS.sm)
+  ctx.fillStyle = '#121a30'
+  ctx.fill()
+  ctx.strokeStyle = accent
+  ctx.lineWidth = 1.8
+  ctx.stroke()
+  ctx.restore()
+  drawIcon(ctx, tip.icon, iconX + iconSize / 2, iconY + iconSize / 2, compact ? 15 : 17, accent)
+
+  // Header kicker + Title
+  const textX = iconX + iconSize + 10
+  const textW = Math.max(40, w - (textX - x) - 12)
+  const categoryLabel = tip.category.toUpperCase()
+  const kicker = o.queuedCount && o.queuedCount > 0
+    ? `TIP · ${categoryLabel} (+${o.queuedCount})`
+    : `TIP · ${categoryLabel}`
+
+  drawOverline(ctx, kicker, textX, iconY + 6, textW, accent)
+  drawText(ctx, tip.title, textX, iconY + (compact ? 20 : 22), {
+    size: compact ? 12.5 : 13.5,
+    weight: 900,
+    color: COLOR.text,
+    maxW: textW,
+    display: true,
+    shadow: true
+  })
+
+  // Optional compact hotkey chip in top-right corner when space allows
+  if (tip.hotkeyHint && !compact && w >= 280) {
+    drawChip(ctx, x + w - 10, iconY - 1, tip.hotkeyHint, {
+      h: 16,
+      size: 9,
+      color: '#dce8ff',
+      bg: '#141d36',
+      border: '#3a4e7c',
+      align: 'right'
+    })
+  }
+
+  // Body paragraph (1-2 crisp lines) positioned above the bottom action row
+  const bodyY = iconY + iconSize + (compact ? 5 : 6)
+  const footerReserve = compact ? 34 : 38
+  const bodyH = Math.max(24, h - (bodyY - y) - footerReserve)
+  drawParagraph(ctx, tip.body, x + 16, bodyY, Math.max(40, w - 28), bodyH, {
+    size: compact ? 11 : 11.5,
+    weight: 650,
+    color: '#d4e0fa',
+    lineHeight: compact ? 14 : 15,
+    shadow: true
+  })
+
+  // Subtle horizontal divider above the interactive footer buttons
+  const divY = y + h - footerReserve + 1
+  if (divY > bodyY + 10) {
+    ctx.save()
+    ctx.strokeStyle = '#33467066'
+    ctx.lineWidth = 1
+    ctx.beginPath()
+    ctx.moveTo(x + 14, divY)
+    ctx.lineTo(x + w - 14, divY)
+    ctx.stroke()
+    ctx.restore()
+  }
 }
 
 export function drawEmptyNote(ctx: CanvasRenderingContext2D, rect: LayoutRect, text: string, accent?: string) {
