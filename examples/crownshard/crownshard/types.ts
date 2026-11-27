@@ -344,6 +344,8 @@ export interface ChapterEnemySpawn {
 
 export type BattlePhase = 'deploy' | 'player' | 'enemy' | 'victory' | 'defeat'
 
+export type BattleSpeedMultiplier = 1 | 2
+
 export type DiscoveryTipId =
   | 'deploy'
   | 'move_attack'
@@ -938,6 +940,9 @@ export interface BattleState {
   facingPicker: FacingPickerState | null
   enemyDelay: number
   enemyActedThisTurn: boolean
+  battleSpeed: BattleSpeedMultiplier
+  autoBattle: boolean
+  autoBattleDelay: number
   floatingNumbers: FloatingNumber[]
   nextFloatId: number
   combatLog: CombatLogEntry[]
@@ -1029,6 +1034,7 @@ export interface BattleSaveSnapshot {
   readonly tacticsPlayed: number
   readonly enemyDelay: number
   readonly enemyActedThisTurn: boolean
+  readonly battleSpeed?: BattleSpeedMultiplier
   readonly rngSeed?: number
   readonly objective?: BattleObjectiveSnapshot
   readonly xpEarnedByHero?: Record<string, number>
@@ -1060,6 +1066,7 @@ export interface CampaignState {
   lastPackReveal: PackRevealItem[]
   seenTips: string[]
   tipsDisabled?: boolean
+  battleSpeed: BattleSpeedMultiplier
 }
 
 export interface GameState {
@@ -1072,7 +1079,7 @@ export interface GameState {
 
 export type SavedCampaignState = Omit<
   CampaignState,
-  'dust' | 'shards' | 'packsSinceEpic' | 'packsSinceLegendary' | 'seenTips'
+  'dust' | 'shards' | 'packsSinceEpic' | 'packsSinceLegendary' | 'seenTips' | 'battleSpeed'
 > & {
   dust?: number
   shards?: number
@@ -1080,6 +1087,7 @@ export type SavedCampaignState = Omit<
   packsSinceLegendary?: number
   seenTips?: string[]
   tipsDisabled?: boolean
+  battleSpeed?: BattleSpeedMultiplier
 }
 
 export interface SaveData {

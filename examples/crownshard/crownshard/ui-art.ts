@@ -86,7 +86,7 @@ export const UI_THEME_PALETTE = {
 } as const
 
 export type IconName =
-  | 'chevron-left' | 'chevron-right' | 'chevron-up' | 'chevron-down' | 'pause' | 'play' | 'music' | 'volume' | 'mute' | 'gauge'
+  | 'chevron-left' | 'chevron-right' | 'chevron-up' | 'chevron-down' | 'pause' | 'play' | 'fast-forward' | 'auto' | 'music' | 'volume' | 'mute' | 'gauge'
   | 'rotate-left' | 'rotate-right' | 'sword' | 'shield' | 'heart' | 'boot' | 'bolt' | 'target'
   | 'crit' | 'star' | 'coin' | 'gem' | 'hourglass' | 'lock' | 'unlock' | 'check' | 'plus' | 'minus' | 'sparkle' | 'flag'
   | 'users' | 'bag' | 'cards' | 'camp' | 'arrow-right' | 'up' | 'sell' | 'retreat'
@@ -751,6 +751,20 @@ export function drawIcon(ctx: CanvasRenderingContext2D, name: IconName, cx: numb
       rr(ctx, cx + s * 0.18, cy - s * 0.68, s * 0.4, s * 1.36, s * 0.14); ctx.fill(); break
     case 'play':
       ctx.moveTo(cx - s * 0.42, cy - s * 0.68); ctx.lineTo(cx + s * 0.64, cy); ctx.lineTo(cx - s * 0.42, cy + s * 0.68); ctx.closePath(); ctx.fill(); break
+    case 'fast-forward':
+      ctx.moveTo(cx - s * 0.82, cy - s * 0.62); ctx.lineTo(cx - s * 0.04, cy); ctx.lineTo(cx - s * 0.82, cy + s * 0.62); ctx.closePath(); ctx.fill()
+      ctx.beginPath()
+      ctx.moveTo(cx + s * 0.02, cy - s * 0.62); ctx.lineTo(cx + s * 0.84, cy); ctx.lineTo(cx + s * 0.02, cy + s * 0.62); ctx.closePath(); ctx.fill(); break
+    case 'auto':
+      ctx.arc(cx, cy, s * 0.62, -Math.PI * 0.85, Math.PI * 0.15)
+      ctx.stroke()
+      ctx.beginPath()
+      ctx.moveTo(cx + s * 0.34, cy - s * 0.24); ctx.lineTo(cx + s * 0.66, cy + s * 0.18); ctx.lineTo(cx + s * 0.18, cy + s * 0.22); ctx.stroke()
+      ctx.beginPath()
+      ctx.arc(cx, cy, s * 0.62, Math.PI * 0.15, Math.PI * 1.15)
+      ctx.stroke()
+      ctx.beginPath()
+      ctx.moveTo(cx - s * 0.34, cy + s * 0.24); ctx.lineTo(cx - s * 0.66, cy - s * 0.18); ctx.lineTo(cx - s * 0.18, cy - s * 0.22); ctx.stroke(); break
     case 'music':
       ctx.moveTo(cx - s * 0.25, cy + s * 0.45); ctx.lineTo(cx - s * 0.25, cy - s * 0.65); ctx.lineTo(cx + s * 0.6, cy - s * 0.8); ctx.lineTo(cx + s * 0.6, cy + s * 0.3); ctx.stroke()
       ctx.beginPath(); ctx.ellipse(cx - s * 0.48, cy + s * 0.5, s * 0.28, s * 0.22, -0.3, 0, Math.PI * 2); ctx.fill()
@@ -1756,6 +1770,52 @@ export function drawBattleInfo(ctx: CanvasRenderingContext2D, rect: LayoutRect, 
 
 export function drawToolbarBg(ctx: CanvasRenderingContext2D, rect: LayoutRect) {
   drawSurface(ctx, rect, { r: RADIUS.lg, lipH: 4 })
+}
+
+/** Glowing active Auto-Battle HUD pill showing current speed & stop hint. */
+export function drawAutoBattlePill(
+  ctx: CanvasRenderingContext2D,
+  rect: LayoutRect,
+  speed: 1 | 2,
+  st: CanvasWidgetDrawState = { hovered: false, pressed: false, focused: false, selected: true, disabled: false },
+  compact = false
+) {
+  const { x, width: w, height: h } = rect
+  const pressed = st.pressed && !st.disabled
+  const hot = (st.hovered || st.focused) && !st.disabled
+  const y = rect.y + (pressed ? 1.5 : 0)
+  const drawH = Math.max(12, h - (pressed ? 1.5 : 0))
+  const r = Math.min(RADIUS.md, drawH / 2)
+
+  ctx.save()
+  rr(ctx, x, y, w, drawH, r)
+  ctx.fillStyle = '#0d3d2f'
+  ctx.fill()
+
+  const faceH = Math.max(8, drawH - 3)
+  rr(ctx, x + 1, y + 1, w - 2, faceH - 1, Math.max(2, r - 1))
+  const grad = ctx.createLinearGradient(0, y, 0, y + faceH)
+  grad.addColorStop(0, hot ? '#3be6a6' : '#25c488')
+  grad.addColorStop(1, hot ? '#1ca673' : '#138259')
+  ctx.fillStyle = grad
+  ctx.fill()
+
+  rr(ctx, x + 1, y + 1, w - 2, drawH - 2, Math.max(2, r - 1))
+  ctx.strokeStyle = COLOR.outline
+  ctx.lineWidth = 2
+  ctx.stroke()
+
+  const cy = y + faceH / 2
+  drawIcon(ctx, 'auto', x + 14, cy, compact ? 11 : 12.5, '#07241a')
+  const label = compact ? `AUTO ${speed}x · TAP STOP` : `AUTO-BATTLE ${speed}x · B / ESC STOP`
+  drawText(ctx, label, x + 25, cy + 0.5, {
+    size: compact ? 9.5 : 10.5,
+    weight: 900,
+    color: '#062118',
+    maxW: Math.max(24, w - 32),
+    display: true
+  })
+  ctx.restore()
 }
 
 export function drawTimelineBg(ctx: CanvasRenderingContext2D, rect: LayoutRect) {
