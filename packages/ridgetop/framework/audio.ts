@@ -29,6 +29,9 @@ export type {
 
 declare global {
   var webkitAudioContext: typeof AudioContext | undefined
+  interface Navigator {
+    audioSession?: { type: string }
+  }
 }
 
 export type AudioBus = 'music' | 'sfx' | 'ambience'
@@ -252,6 +255,15 @@ export interface Soundscape<MotifName extends string = string> extends StepSeque
   close(): void
 }
 
+function configurePlaybackAudioSession() {
+  try {
+    const audioSession = globalThis.navigator?.audioSession
+    if (audioSession && audioSession.type !== 'playback') {
+      audioSession.type = 'playback'
+    }
+  } catch { /* Audio Session API is optional or may be read-only in some environments. */ }
+}
+
 function resolveAudioContext(createContext?: () => AudioContextLike): AudioContextLike | null {
   if (createContext) return createContext()
   const AudioCtor = globalThis.AudioContext ?? globalThis.webkitAudioContext
@@ -360,8 +372,9 @@ export function createSynthAudio<Name extends string>(
   return {
     unlock() {
       try {
+        configurePlaybackAudioSession()
         ensureOutput()
-        if (context && context.state !== 'running') {
+        if (context && context.state !== 'running' && context.state !== 'closed') {
           context.resume?.().catch(() => {})
         }
       } catch { /* Sound is optional. */ }
@@ -401,7 +414,10 @@ export function createSynthAudio<Name extends string>(
     },
     suspend() { context?.suspend?.().catch(() => {}) },
     resume() {
-      if (!muted && context?.state === 'suspended') context.resume?.().catch(() => {})
+      if (!muted && context && context.state !== 'running' && context.state !== 'closed') {
+        configurePlaybackAudioSession()
+        context.resume?.().catch(() => {})
+      }
     },
     close() {
       const active = context
@@ -911,9 +927,10 @@ export function createSoundscape<MotifName extends string = string>({
     get context() { return ctx },
     get buses() { return busSnapshot },
     unlock() {
+      configurePlaybackAudioSession()
       const activeCtx = ensureMixer()
       if (!activeCtx) return
-      if (activeCtx.state !== 'running') {
+      if (activeCtx.state !== 'running' && activeCtx.state !== 'closed') {
         activeCtx.resume?.().catch(() => {})
       }
     },
@@ -986,7 +1003,12 @@ export function createSoundscape<MotifName extends string = string>({
       internalBank?.stopAll()
     },
     suspend() { ctx?.suspend?.().catch(() => {}) },
-    resume() { if (!muted && ctx?.state === 'suspended') ctx.resume?.().catch(() => {}) },
+    resume() {
+      if (!muted && ctx && ctx.state !== 'running' && ctx.state !== 'closed') {
+        configurePlaybackAudioSession()
+        ctx.resume?.().catch(() => {})
+      }
+    },
     close() {
       internalBank?.dispose()
       internalBank = null

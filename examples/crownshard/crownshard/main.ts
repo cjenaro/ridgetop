@@ -2278,6 +2278,13 @@ async function start() {
     hudRev++
   }, { signal: inputAbort.signal, passive: false })
 
+  // iOS Safari & WKWebView require a touchstart/touchend/click user gesture (not just pointerdown)
+  // to unlock or recover an interrupted AudioContext.
+  const unlockAudioOnGesture = () => { audio.unlock() }
+  window.addEventListener('touchstart', unlockAudioOnGesture, { capture: true, passive: true, signal: inputAbort.signal })
+  window.addEventListener('touchend', unlockAudioOnGesture, { capture: true, passive: true, signal: inputAbort.signal })
+  window.addEventListener('click', unlockAudioOnGesture, { capture: true, passive: true, signal: inputAbort.signal })
+
   // Battle & Debug Keyboard Shortcuts
   window.addEventListener('keydown', event => {
     if (isTestingPaused() || event.altKey || event.ctrlKey || event.metaKey || isEditableEventTarget(event.target)) return

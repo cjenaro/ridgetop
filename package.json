@@ -10,6 +10,7 @@
   },
   "scripts": {
     "rt": "node tools/cli.ts",
+    "ridgetop": "node packages/ridgetop/dist/tools/cli.js",
     "build": "node tools/cli.ts build",
     "typecheck": "node tools/cli.ts typecheck",
     "lint": "oxlint -c .oxlintrc.json",

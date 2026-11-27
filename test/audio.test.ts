@@ -689,3 +689,59 @@ test('createSoundscape integrates AudioBank sample loading & playback on the exa
   assert.equal(ctx.closeCalls, 1)
   assert.equal(sound.hasSample('hit'), false)
 })
+
+test('createSoundscape & createSynthAudio configure iOS playback audioSession and recover from interrupted state', () => {
+  const nav = globalThis.navigator as unknown as { audioSession?: { type: string } }
+  const hadAudioSession = Object.prototype.hasOwnProperty.call(nav, 'audioSession')
+  const prevAudioSession = nav.audioSession
+  const fakeSession = { type: 'ambient' }
+  Object.defineProperty(nav, 'audioSession', {
+    value: fakeSession,
+    configurable: true,
+    writable: true
+  })
+
+  try {
+    const soundCtx = createMockAudioContext()
+    const sound = createSoundscape({ createContext: () => soundCtx })
+    sound.unlock()
+    assert.equal(fakeSession.type, 'playback')
+    assert.equal(soundCtx.resumeCalls, 1)
+
+    // Simulate iOS background/lock 'interrupted' AudioContext state
+    fakeSession.type = 'ambient'
+    ;(soundCtx as { state: string }).state = 'interrupted'
+    sound.resume()
+    assert.equal(fakeSession.type, 'playback')
+    assert.equal(soundCtx.resumeCalls, 2, 'soundscape.resume() must recover from iOS interrupted state')
+
+    // Closed contexts must not be resumed
+    ;(soundCtx as { state: string }).state = 'closed'
+    sound.resume()
+    sound.unlock()
+    assert.equal(soundCtx.resumeCalls, 2)
+
+    const synthCtx = createMockAudioContext()
+    const synth = createSynthAudio({ ping: [[440, 0.1, 0]] }, { createContext: () => synthCtx })
+    fakeSession.type = 'ambient'
+    synth.unlock()
+    assert.equal(fakeSession.type, 'playback')
+    assert.equal(synthCtx.resumeCalls, 1)
+
+    fakeSession.type = 'ambient'
+    ;(synthCtx as { state: string }).state = 'interrupted'
+    synth.resume()
+    assert.equal(fakeSession.type, 'playback')
+    assert.equal(synthCtx.resumeCalls, 2, 'synth.resume() must recover from iOS interrupted state')
+  } finally {
+    if (hadAudioSession) {
+      Object.defineProperty(nav, 'audioSession', {
+        value: prevAudioSession,
+        configurable: true,
+        writable: true
+      })
+    } else {
+      delete nav.audioSession
+    }
+  }
+})

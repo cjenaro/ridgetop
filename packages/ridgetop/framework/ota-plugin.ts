@@ -129,6 +129,7 @@ function escapeNativeString(value: string): string {
 
 function renderIosSwiftPlugin(pinnedPublicKey: string, allowedHost: string, allowLocal: boolean): string {
   return `import Foundation
+import AVFoundation
 import Capacitor
 import CryptoKit
 import Compression
@@ -381,6 +382,7 @@ public class RidgetopOtaPlugin: CAPPlugin, CAPBridgedPlugin {
     }
 
     override public func load() {
+        try? AVAudioSession.sharedInstance().setCategory(.playback, options: [.mixWithOthers])
         var pathToLoad: String?
         workQueue.sync {
             let storedNative = defaults.string(forKey: keyNativeBuild)
