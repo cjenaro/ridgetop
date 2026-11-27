@@ -20,7 +20,7 @@ import {
   STARFALL_ATOLL_FIRST_CLEAR_DUST, STARFALL_ATOLL_FIRST_CLEAR_SHARDS,
   STAGE_DIFFICULTY_TIERS, STAGE_MUTATOR_IDS, STAGE_MUTATOR_SPECS, STAGE_TIER_SPECS,
   abandonBattle, areDiscoveryTipsEnabled, armSkill, armTacticCard, autoBuildTacticDeck, autoEquipBestFit, beginWaitFacingPicker,
-  bulkSalvageCommonDupes, buyOakhavenDeal, buyPack, canBuyPack, canCraftEquipment, canCraftHero, canMergeHero, canUndoMove,
+  bulkSalvageCommonDupes, buyOakhavenDeal, buyPack, buyWorldEventOffer, canBuyPack, canCraftEquipment, canCraftHero, canMergeHero, canUndoMove,
   cancelAutoBattle, cancelWaitFacingPicker, checkDiscoveryTipForBattle, clearSave, computeChallengeRewards,
   computeCombatForecast, computeDangerZone, computeDeckValue,
   computeEnemyThreat, computeHeroStats, computeSquadPower, computeTacticDeckCurve, computeZocPerimeterTiles,
@@ -31,12 +31,12 @@ import {
   getChapterObjectiveSummary, getCraftableEquipment, getCraftableHeroes, getCrownlessDeepFloorSpec, getEquipCraftCost, getEquipEffect,
   getEquipSalvageDust, getEquipmentByUid, getHeroByUid, getHeroCraftCost, getHeroPassive, getHeroSalvageShards,
   getHeroSkill, getHighestClearedStageTier, getMaxCombatLogScroll, getMaxSelectableCrownlessDeepFloor, getMergeCandidates, getNextRecommendedStage, getOakhavenExchangeOffers, getObjectiveProgressText, getPackPityStatus,
-  getSelectedCrownlessDeepFloor, getStageUnlockHint, getTacticByUid, getUnitByUid, hasMaxedHero, hasOakhavenPatronDiscount, heroLevelProgress, isChestClaimed,
+  getSelectedCrownlessDeepFloor, getStageUnlockHint, getTacticByUid, getUnitByUid, getWorldMapEventById, hasMaxedHero, hasOakhavenPatronDiscount, heroLevelProgress, isChestClaimed,
   isCrownlessDeepStage, isDeployTile, isEndlessUnlocked, isEnemyShrouded, isOakhavenExchangeUnlocked, isStageCleared, isStageUnlocked, loadSave, maxSquadSize, mergeHero,
   moveDeployUnit, persistSave, previewBulkSalvageCommonDupes, previewPathOpportunityAttacks,
   previewTurnOrderAfterAction, previewWaitFacing, resetDiscoveryTips, resolveStageChallenge, restoreBattleState, rotateDeployUnit, salvageEquipCard,
   salvageHeroCard, selectHeroByUid, selectTile, serializeBattleState, setAutoBattle, setBattleSpeed,
-  setDiscoveryTipsEnabled, setSelectedCrownlessDeepFloor, shouldAutoSaveOnTurnBoundary, skipAllDiscoveryTips, startChapterBattle, stepGame,
+  setDiscoveryTipsEnabled, setSelectedCrownlessDeepFloor, shouldAutoSaveOnTurnBoundary, skipAllDiscoveryTips, startChapterBattle, startWorldEventBattle, stepGame,
   swapDeployUnit, syncTurnBoundaryTracker, toggleAutoBattle, toggleBattleSpeed, toggleEquipLock, toggleHeroLock,
   toggleSquadMember, toggleTacticInDeck, undoMove, unequipItem, unitAt
 } from './simulation.ts'
@@ -44,7 +44,7 @@ import { FACING_DIRS, cellHeightLevel, gridToWorld, isUnitDowned } from './types
 import type {
   BattleSaveSnapshot, BattleSpeedMultiplier, BattleUnit, ChapterSpec, CombatForecast, EnemyArchetypeId, FacingDir, GameState,
   HeroClassId, OwnedEquipCard, OwnedHeroCard, PackId, PackRevealItem, PathOpportunityPreview, Rarity,
-  StageDifficultyTier, StageMutatorId, TurnActionKind, TurnOrderActionPreview
+  StageDifficultyTier, StageMutatorId, TurnActionKind, TurnOrderActionPreview, WorldMapEvent
 } from './types.ts'
 import {
   COLOR, RADIUS, TIER_COLOR, TYPE, UI_THEME_PALETTE, WORLD_MAP_H, WORLD_MAP_W,
@@ -58,7 +58,7 @@ import {
   drawStoryHeading, drawTab, drawTacticCard, drawTacticDeckCard, drawTacticDeckHeader, drawText, drawTimelineBg, drawTitleCard,
   drawTitleLogo, drawToast, drawToolbarBg, drawTopFade, drawTurnOrderCallout,
   drawTurnOrderPreviewBanner, drawTurnTimelinePreviewOverlay, drawTurnToken, drawUnitCard,
-  drawVictoryBackdrop, drawWell, drawWorldMapCanvas, drawWorldMapNode, worldMapScale, worldMapToScreen,
+  drawVictoryBackdrop, drawWell, drawWorldMapCanvas, drawWorldMapEventNode, drawWorldMapNode, worldMapScale, worldMapToScreen,
   FANFARE_DURATION, drawFanfare
 } from './ui-art.ts'
 import type { FanfareDrawOpts, IconName, StatStripItem, WorldMapViewport } from './ui-art.ts'
@@ -297,6 +297,8 @@ async function start() {
   let worldMapTargetPanY = 0.50
   let worldMapTargetZoom = 0.98
   let worldMapDrag: { pointerId: number; lastX: number; lastY: number; dragged: boolean } | null = null
+  let selectedWorldEventId: string | null = null
+  let pendingWorldEventId: string | null = null
   let packAnim: PackAnimState | null = null
   /** Hero Ascension merge ceremony / Epic+ equip fanfare overlay (presentation only). */
   let fanfare: (Omit<FanfareDrawOpts, 'elapsed'> & { elapsed: number }) | null = null
@@ -358,17 +360,21 @@ async function start() {
     worldMapPanY = Math.max(minY, Math.min(maxY, worldMapPanY))
   }
 
-  function focusWorldMapOn(stage: ChapterSpec, instant = false) {
+  function focusWorldMapOnPoint(mapX: number, mapY: number, instant = false) {
     // Bias slightly right so the floating right-hand inspector never covers the selected landmark!
     const mobile = renderer.canvas.clientWidth < 780
-    worldMapTargetPanX = stage.mapX + (mobile ? 0 : 0.11 / worldMapTargetZoom)
-    worldMapTargetPanY = stage.mapY + (mobile ? 0.10 / worldMapTargetZoom : 0)
+    worldMapTargetPanX = mapX + (mobile ? 0 : 0.11 / worldMapTargetZoom)
+    worldMapTargetPanY = mapY + (mobile ? 0.10 / worldMapTargetZoom : 0)
     clampWorldMapView()
     if (instant) {
       worldMapPanX = worldMapTargetPanX
       worldMapPanY = worldMapTargetPanY
       worldMapZoom = worldMapTargetZoom
     }
+  }
+
+  function focusWorldMapOn(stage: ChapterSpec, instant = false) {
+    focusWorldMapOnPoint(stage.mapX, stage.mapY, instant)
   }
 
   function resetWorldMapOverview(instant = false) {
@@ -488,13 +494,15 @@ async function start() {
 
   function formatResumableBattleLabel(snap: BattleSaveSnapshot, compact = false): string {
     const ch = CHAPTER_BY_ID[snap.stageId] ?? CHAPTERS[snap.chapterIndex] ?? CHAPTERS[0]
-    const stageLabel = snap.endlessWave > 0
-      ? `Endless W${snap.endlessWave}`
-      : snap.abyssFloor
-        ? `${ch.title} F${snap.abyssFloor}/${CROWNLESS_DEEP_MAX_FLOOR}`
-        : snap.gauntletMaxRounds
-          ? `${ch.title} R${snap.gauntletRound ?? 1}/${snap.gauntletMaxRounds}`
-          : ch.title
+    const stageLabel = snap.activeWorldEventTitle
+      ? snap.activeWorldEventTitle
+      : snap.endlessWave > 0
+        ? `Endless W${snap.endlessWave}`
+        : snap.abyssFloor
+          ? `${ch.title} F${snap.abyssFloor}/${CROWNLESS_DEEP_MAX_FLOOR}`
+          : snap.gauntletMaxRounds
+            ? `${ch.title} R${snap.gauntletRound ?? 1}/${snap.gauntletMaxRounds}`
+            : ch.title
     return compact
       ? `Resume (T${snap.turn}) · ${stageLabel}`
       : `Resume Battle — ${stageLabel} (Turn ${snap.turn})`
@@ -513,6 +521,7 @@ async function start() {
     }
     pendingChapter = state.battle.chapterIndex
     pendingEndless = state.battle.endlessWave
+    pendingWorldEventId = state.battle.activeWorldEventId ?? null
     lastBattlePhase = state.battle.phase
     lastActiveUid = state.battle.activeUnitUid
     lastBattleTurn = state.battle.turn
@@ -650,6 +659,8 @@ async function start() {
   function openWorldMap(selectStageId?: string) {
     state.battle = null
     packAnim = null
+    selectedWorldEventId = null
+    pendingWorldEventId = null
     if (selectStageId && CHAPTER_BY_ID[selectStageId]) {
       state.campaign.selectedStageId = selectStageId
       pendingChapter = CHAPTER_BY_ID[selectStageId].index
@@ -680,13 +691,46 @@ async function start() {
 
   function openStory(chapterIndex: number, endlessWave = 0) {
     state.battle = null
+    pendingWorldEventId = null
     pendingChapter = Math.max(0, Math.min(CHAPTERS.length - 1, chapterIndex))
     state.campaign.selectedStageId = CHAPTERS[pendingChapter].id
     pendingEndless = endlessWave
     setScreen('story')
   }
 
+  function launchWorldEventBattle(eventId: string) {
+    audio.unlock()
+    resumableBattle = null
+    const battle = startWorldEventBattle(state, eventId, { deployPhase: true })
+    if (!battle) {
+      selectedWorldEventId = null
+      pendingWorldEventId = null
+      showToast('This road event is no longer active.')
+      uiDirty = true
+      return
+    }
+    pendingWorldEventId = eventId
+    pendingChapter = battle.chapterIndex
+    pendingEndless = 0
+    lastBattlePhase = battle.phase
+    lastActiveUid = battle.activeUnitUid
+    lastBattleTurn = battle.turn
+    resetCombatLogUi()
+    syncTurnBoundaryTracker(turnSaveTracker, state.battle)
+    scene.resetCamera()
+    scene.setCameraYaw(0, true)
+    scene.setDangerZoneVisible(dangerZoneOn)
+    scene.setInspectedEnemyUid(null)
+    setScreen('battle')
+    renderer.canvas.focus()
+  }
+
   function launchBattle() {
+    if (pendingWorldEventId && getWorldMapEventById(state.campaign, pendingWorldEventId)) {
+      launchWorldEventBattle(pendingWorldEventId)
+      return
+    }
+    pendingWorldEventId = null
     audio.unlock()
     resumableBattle = null
     const chapterId = CHAPTERS[pendingChapter]?.id ?? CHAPTERS[0].id
@@ -1762,6 +1806,13 @@ async function start() {
     const nodeH = mobile ? 64 : 72
     const pinCenterY = mobile ? 21 : 25
 
+    const selectedEvent: WorldMapEvent | null = selectedWorldEventId
+      ? (getWorldMapEventById(camp, selectedWorldEventId) ?? null)
+      : null
+    if (!selectedEvent && selectedWorldEventId !== null) {
+      selectedWorldEventId = null
+    }
+
     // Position all visible continent landmarks directly onto the full-viewport map canvas!
     const mapNodes: LayoutNode[] = []
     for (const stage of CHAPTERS) {
@@ -1771,7 +1822,7 @@ async function start() {
       if (left + nodeW < -20 || left > w + 20 || top + nodeH < -20 || top > h + 20) continue
       const unlocked = unlockedSet.has(stage.id)
       const cleared = clearedSet.has(stage.id)
-      const isSel = selected.id === stage.id
+      const isSel = !selectedEvent && selected.id === stage.id
       mapNodes.push(boxNode({
         id: `map-node-${stage.id}`,
         style: { anchor: 'top-left', inset: [left, top], width: nodeW, height: nodeH },
@@ -1781,6 +1832,7 @@ async function start() {
           selected: isSel,
           onPress: () => {
             audio.unlock()
+            selectedWorldEventId = null
             camp.selectedStageId = stage.id
             if (!stage.comingSoon) pendingChapter = stage.index
             pendingEndless = 0
@@ -1797,6 +1849,45 @@ async function start() {
               cleared,
               clearedTier: cleared ? getHighestClearedStageTier(camp, stage.id) : null,
               selected: isSel,
+              time: worldMapTime,
+              compact: mobile
+            },
+            st
+          )
+        }
+      }))
+    }
+
+    // Dynamic temporary World Map event medallions along cleared roads
+    const evNodeW = mobile ? 84 : 108
+    const evNodeH = mobile ? 58 : 66
+    const evPinCenterY = mobile ? 19 : 22
+    for (const ev of camp.worldEvents) {
+      const pt = worldMapToScreen(ev.mapX, ev.mapY, mapRect, vp)
+      const left = Math.round(pt.x - evNodeW / 2)
+      const top = Math.round(pt.y - evPinCenterY)
+      if (left + evNodeW < -20 || left > w + 20 || top + evNodeH < -20 || top > h + 20) continue
+      const isEvSel = selectedEvent?.id === ev.id
+      mapNodes.push(boxNode({
+        id: `map-event-${ev.id}`,
+        style: { anchor: 'top-left', inset: [left, top], width: evNodeW, height: evNodeH },
+        widget: {
+          type: 'button',
+          label: ev.title,
+          selected: isEvSel,
+          onPress: () => {
+            audio.unlock()
+            selectedWorldEventId = ev.id
+            focusWorldMapOnPoint(ev.mapX, ev.mapY)
+            state.sounds.push({ kind: ev.kind === 'wandering_merchant' ? 'coin' : 'card', pitch: 1.15 })
+            uiDirty = true
+          },
+          draw: (ctx: CanvasRenderingContext2D, rect: LayoutRect, st: CanvasWidgetDrawState) => drawWorldMapEventNode(
+            ctx,
+            rect,
+            ev,
+            {
+              selected: isEvSel,
               time: worldMapTime,
               compact: mobile
             },
@@ -1943,7 +2034,7 @@ async function start() {
         )
       : Math.min(h - topH - outerPad * 3 - 8, (extraPanels > 1 ? 690 : extraPanels > 0 ? 624 : 512) + abyssExtraH)
 
-    const inspectorPanel = column({
+    const stageInspectorPanel = column({
       id: 'wm-inspector',
       style: mobile
         ? { anchor: 'bottom', width: inspW, height: inspH, inset: [8, 8], padding: [10, 12], gap: 6, respectSafeArea: true }
@@ -2411,6 +2502,336 @@ async function start() {
         }
       })
     ])
+
+    const buildEventInspectorPanel = (ev: WorldMapEvent): LayoutNode => {
+      const evRegion = WORLD_REGIONS[ev.region]
+      const evBiomeName = ev.biome[0].toUpperCase() + ev.biome.slice(1)
+      const isMerchant = ev.kind === 'wandering_merchant'
+      const evInspH = mobile
+        ? Math.min(h - topH - 36, isMerchant ? (h < 680 ? 298 : 326) : (h < 680 ? 278 : 302))
+        : Math.min(h - topH - outerPad * 3 - 8, isMerchant ? 430 : 444)
+      const tagLabel = isMerchant ? 'RELIC CARAVAN' : ev.kind === 'goblin_ambush' ? 'ROAD BOUNTY' : 'TIMED GAUNTLET'
+      const tagBg = isMerchant ? '#4a3410' : ev.kind === 'goblin_ambush' ? '#571e18' : '#351b5c'
+      const tagCol = isMerchant ? COLOR.accentHi : ev.kind === 'goblin_ambush' ? '#ff9e7d' : '#dfb3ff'
+      const turnsChip = `${ev.expiresAfterBattles}t LEFT`
+      const evPowerRatio = squadPower / Math.max(1, ev.recommendedPower)
+      const evPowerColor = evPowerRatio >= 1.0 ? COLOR.good : evPowerRatio >= 0.8 ? COLOR.accentHi : COLOR.danger
+
+      const evEnemyCounts = new Map<EnemyArchetypeId, number>()
+      if (ev.enemies) {
+        for (const sp of ev.enemies) {
+          evEnemyCounts.set(sp.id, (evEnemyCounts.get(sp.id) ?? 0) + 1)
+        }
+      }
+      const evEnemyList = Array.from(evEnemyCounts.entries())
+
+      const merchantRows: LayoutNode[] = isMerchant
+        ? (ev.offers ?? []).slice(0, 3).map((offer, idx) => {
+            const canAfford = !offer.purchased && camp.gold >= offer.cost
+            const rarMeta = RARITY_META[offer.rarity]
+            return boxNode({
+              id: `cs-event-buy-${idx}`,
+              style: { height: isCompact ? 46 : 62 },
+              widget: {
+                type: 'button',
+                label: offer.purchased ? `${offer.label} (Sold)` : `Buy ${offer.label} (${offer.cost}g)`,
+                disabled: !canAfford,
+                onPress: () => {
+                  audio.unlock()
+                  const res = buyWorldEventOffer(state, ev.id, idx)
+                  if (res.ok) {
+                    const gain = res.equipCard
+                      ? EQUIPMENT_BY_ID[res.equipCard.equipId]?.name ?? offer.label
+                      : res.tacticCard
+                        ? TACTIC_BY_ID[res.tacticCard.tacticId]?.name ?? offer.label
+                        : res.dustGained > 0
+                          ? `+${res.dustGained} Arcane Dust`
+                          : `+${res.shardsGained} Hero Shards`
+                    showToast(
+                      res.eventCleared
+                        ? `Caravan Bargain: ${gain} (-${res.goldSpent}g) · Caravan departed!`
+                        : `Caravan Bargain: ${gain} (-${res.goldSpent}g)`
+                    )
+                    if (res.eventCleared) selectedWorldEventId = null
+                    saveNow()
+                    uiDirty = true
+                    hudRev++
+                  } else if (res.reason) {
+                    showToast(res.reason)
+                  }
+                },
+                draw: (ctx: CanvasRenderingContext2D, rect: LayoutRect, st: CanvasWidgetDrawState) => {
+                  const hot = canAfford && (st.hovered || st.focused)
+                  drawPanel(ctx, rect, {
+                    r: RADIUS.md,
+                    lipH: 3,
+                    fill: offer.purchased ? '#1a2033eb' : hot ? '#364978f2' : '#202d4ef0',
+                    fillBot: offer.purchased ? '#111624f0' : '#141e38f5'
+                  })
+                  const padX = 10
+                  const pillW = isCompact ? 68 : 78
+                  const pillH = isCompact ? 24 : 28
+                  const pillX = rect.x + rect.width - pillW - 8
+                  const pillY = rect.y + (rect.height - pillH - 2) * 0.5
+                  const textMaxW = Math.max(80, pillX - rect.x - padX - 8)
+
+                  drawText(ctx, offer.label, rect.x + padX, rect.y + (isCompact ? 15 : 21), {
+                    size: isCompact ? 11.5 : 13,
+                    weight: 900,
+                    color: offer.purchased ? COLOR.faint : rarMeta.hex,
+                    maxW: textMaxW,
+                    display: true
+                  })
+                  drawText(
+                    ctx,
+                    offer.purchased
+                      ? 'Purchased · Added to Camp'
+                      : offer.originalCost > offer.cost
+                        ? `Was ${offer.originalCost}g · ${offer.detail}`
+                        : offer.detail,
+                    rect.x + padX,
+                    rect.y + (isCompact ? 31 : 41),
+                    {
+                      size: isCompact ? 9 : 10,
+                      weight: 600,
+                      color: offer.purchased ? '#6e7c9e' : '#c8d6f5',
+                      maxW: textMaxW
+                    }
+                  )
+                  drawButton(
+                    ctx,
+                    { x: pillX, y: pillY, width: pillW, height: pillH },
+                    offer.purchased ? 'SOLD' : `${offer.cost}g`,
+                    { ...st, disabled: !canAfford },
+                    {
+                      variant: offer.purchased ? 'secondary' : canAfford ? 'primary' : 'secondary',
+                      icon: offer.purchased ? 'check' : 'coin',
+                      size: isCompact ? 10 : 11
+                    }
+                  )
+                }
+              }
+            })
+          })
+        : []
+
+      const combatLoot: { icon: IconName; text: string; color: string }[] = []
+      if (ev.rewardGold > 0) combatLoot.push({ icon: 'coin', text: `+${ev.rewardGold}g Bounty`, color: COLOR.accentHi })
+      if (ev.rewardDust > 0) combatLoot.push({ icon: 'sparkle', text: `+${ev.rewardDust} Dust`, color: '#7ad4ff' })
+      if (ev.rewardShards > 0) combatLoot.push({ icon: 'star', text: `+${ev.rewardShards} Shards`, color: '#dfb3ff' })
+      if (ev.rewardEquipRarity) {
+        combatLoot.push({
+          icon: 'bag',
+          text: `${RARITY_META[ev.rewardEquipRarity].label} Gear`,
+          color: RARITY_META[ev.rewardEquipRarity].hex
+        })
+      } else if (ev.kind === 'goblin_ambush') {
+        combatLoot.push({ icon: 'chest', text: '2 Supply Chests', color: '#ffe484' })
+      }
+
+      return column({
+        id: 'wm-inspector',
+        style: mobile
+          ? { anchor: 'bottom', width: inspW, height: evInspH, inset: [8, 8], padding: [10, 12], gap: 6, respectSafeArea: true }
+          : { anchor: 'top-right', width: inspW, height: evInspH, inset: [outerPad, topH + outerPad + 10], padding: [13, 14], gap: 8, respectSafeArea: true },
+        widget: {
+          type: 'panel',
+          blocksPointer: true,
+          draw: (ctx: CanvasRenderingContext2D, rect: LayoutRect) => drawPanel(ctx, rect, {
+            r: RADIUS.xl,
+            lipH: 5,
+            fill: isMerchant ? '#362d4cf2' : '#2b244bf2',
+            fillBot: '#141933f6'
+          })
+        }
+      }, [
+        // Event Header
+        boxNode({
+          id: 'wm-ev-head',
+          style: { height: isCompact ? 40 : 50 },
+          widget: {
+            type: 'panel',
+            draw: (ctx: CanvasRenderingContext2D, rect: LayoutRect) => {
+              drawChip(ctx, rect.x, rect.y, tagLabel, { h: 18, size: 9, color: tagCol, bg: tagBg })
+              drawChip(ctx, rect.x + rect.width, rect.y, turnsChip, {
+                h: 18,
+                size: 9,
+                color: ev.expiresAfterBattles <= 1 ? '#ffffff' : COLOR.accentHi,
+                bg: ev.expiresAfterBattles <= 1 ? '#a82235' : '#1b2647',
+                icon: 'hourglass',
+                align: 'right'
+              })
+              drawText(ctx, ev.title, rect.x, rect.y + (isCompact ? 31 : 37), {
+                size: isCompact ? 15 : 18.5,
+                weight: 900,
+                color: '#ffffff',
+                maxW: rect.width,
+                display: true,
+                stroke: true,
+                strokeWidth: 3
+              })
+            }
+          }
+        }),
+
+        // Event Meta Strip
+        boxNode({
+          id: 'wm-ev-meta',
+          style: { height: isCompact ? (isMerchant ? 36 : 42) : 46 },
+          widget: {
+            type: 'panel',
+            draw: (ctx: CanvasRenderingContext2D, rect: LayoutRect) => {
+              drawWell(ctx, rect, RADIUS.md)
+              if (isMerchant) {
+                drawChip(ctx, rect.x + 8, rect.y + 6, evRegion.name, { h: 19, size: 9, color: '#fff0c2', bg: '#423015' })
+                drawChip(ctx, rect.x + rect.width - 8, rect.y + 6, `Gold: ${camp.gold}g`, {
+                  icon: 'coin', h: 19, size: 9.5, color: COLOR.accentHi, bg: '#18223d', align: 'right'
+                })
+                if (!isCompact) {
+                  drawText(ctx, 'Limited-time caravan deals · Disappears when sold out or expired', rect.x + 10, rect.y + rect.height - 9, {
+                    size: 9.5, weight: 700, color: '#cbd8f7', maxW: rect.width - 20
+                  })
+                }
+              } else {
+                const bw = drawDifficultyBadge(ctx, rect.x + 8, rect.y + 5, ev.difficulty, { h: 19, showLabel: true })
+                drawChip(ctx, rect.x + 14 + bw, rect.y + 5, `8x6 ${evBiomeName}`, {
+                  h: 19, size: 9, color: '#dce8ff', bg: '#1e2b4a'
+                })
+                drawText(
+                  ctx,
+                  `Squad Power ${squadPower} / Rec ${ev.recommendedPower} · ${evRegion.name}`,
+                  rect.x + 10,
+                  rect.y + rect.height - 9,
+                  { size: 10, weight: 800, color: evPowerColor, maxW: rect.width - 20, display: true }
+                )
+              }
+            }
+          }
+        }),
+
+        // Merchant 3 rotating bargains OR Combat Enemy + Reward Preview
+        ...(isMerchant
+          ? merchantRows
+          : [
+              boxNode({
+                id: 'wm-ev-foes',
+                style: { height: isCompact ? 54 : 70 },
+                widget: {
+                  type: 'panel',
+                  draw: (ctx: CanvasRenderingContext2D, rect: LayoutRect) => {
+                    drawWell(ctx, rect, RADIUS.md)
+                    drawOverline(ctx, `Event Forces (${ev.enemies?.length ?? 0})`, rect.x + 10, rect.y + 11, rect.width - 20)
+                    let ex = rect.x + 10
+                    const ey = rect.y + (isCompact ? 18 : 22)
+                    const ps = isCompact ? 30 : 38
+                    for (const [eid, count] of evEnemyList) {
+                      if (ex + ps > rect.x + rect.width - 8) break
+                      const spec = ENEMY_SPECS[eid]
+                      drawPortraitTile(ctx, ex, ey, ps, portraits[eid], {
+                        ring: spec.isBoss ? COLOR.accent : COLOR.enemy,
+                        ringW: 2,
+                        bg: spec.isBoss ? '#59205e' : '#632535'
+                      })
+                      drawChip(ctx, ex + ps + 2, ey + ps - 13, `x${count}`, {
+                        h: 14, size: 8, color: '#ffffff', bg: '#151c33', align: 'right'
+                      })
+                      ex += ps + 10
+                    }
+                  }
+                }
+              }),
+              boxNode({
+                id: 'wm-ev-rewards',
+                style: { grow: 1, minHeight: isCompact ? 56 : 92 },
+                widget: {
+                  type: 'panel',
+                  draw: (ctx: CanvasRenderingContext2D, rect: LayoutRect) => {
+                    drawWell(ctx, rect, RADIUS.md)
+                    const px = rect.x + 10
+                    const pw = rect.width - 20
+                    const chipH = isCompact ? 20 : 22
+                    drawOverline(
+                      ctx,
+                      `Bounty Spoils · Expires in ${ev.expiresAfterBattles} Battle${ev.expiresAfterBattles === 1 ? '' : 's'}`,
+                      px,
+                      rect.y + 12,
+                      pw,
+                      COLOR.accentHi
+                    )
+                    let cx = px
+                    let cy = rect.y + 22
+                    for (const item of combatLoot) {
+                      const estW = Math.min(pw, item.text.length * 6.8 + 38)
+                      if (cx > px && cx + estW > px + pw) {
+                        cx = px
+                        cy += chipH + 4
+                      }
+                      const cw = drawChip(ctx, cx, cy, item.text, {
+                        icon: item.icon,
+                        h: chipH,
+                        size: isCompact ? 9.5 : 10.5,
+                        color: item.color,
+                        bg: '#1c2642',
+                        border: COLOR.outline
+                      })
+                      cx += cw + 5
+                    }
+                  }
+                }
+              })
+            ]),
+
+        // Footer Actions: Back to Stage + Deploy to Event (for combat events)
+        isMerchant
+          ? boxNode({
+              id: 'wm-event-close',
+              style: { height: isCompact ? 30 : 34 },
+              widget: {
+                type: 'button',
+                label: 'Back to Stage',
+                onPress: () => {
+                  selectedWorldEventId = null
+                  uiDirty = true
+                },
+                draw: (ctx: CanvasRenderingContext2D, rect: LayoutRect, st: CanvasWidgetDrawState) => drawButton(
+                  ctx, rect, 'Back to Stage', st, { variant: 'secondary', icon: 'map', size: isCompact ? 11.5 : 12.5 }
+                )
+              }
+            })
+          : row({ id: 'wm-event-cta-row', style: { height: isCompact ? 36 : 42, gap: 6 } }, [
+              boxNode({
+                id: 'wm-event-close',
+                style: { width: isCompact ? 68 : 80, height: isCompact ? 36 : 42 },
+                widget: {
+                  type: 'button',
+                  label: 'Stage',
+                  onPress: () => {
+                    selectedWorldEventId = null
+                    uiDirty = true
+                  },
+                  draw: (ctx: CanvasRenderingContext2D, rect: LayoutRect, st: CanvasWidgetDrawState) => drawButton(
+                    ctx, rect, 'Stage', st, { variant: 'secondary', size: isCompact ? 11.5 : 12.5 }
+                  )
+                }
+              }),
+              boxNode({
+                id: 'cs-world-deploy-event',
+                style: { grow: 1, height: isCompact ? 36 : 42 },
+                widget: {
+                  type: 'button',
+                  label: 'Deploy to Event',
+                  primary: true,
+                  onPress: () => launchWorldEventBattle(ev.id),
+                  draw: (ctx: CanvasRenderingContext2D, rect: LayoutRect, st: CanvasWidgetDrawState) => drawButton(
+                    ctx, rect, 'Deploy to Event', st, { variant: 'primary', icon: 'sword', size: isCompact ? 13 : 14 }
+                  )
+                }
+              })
+            ])
+      ])
+    }
+
+    const inspectorPanel = selectedEvent ? buildEventInspectorPanel(selectedEvent) : stageInspectorPanel
 
     const soonCount = CHAPTERS.length - PLAYABLE_CHAPTERS.length
     const zoomCtrlW = mobile ? 96 : 138
@@ -6116,21 +6537,28 @@ async function start() {
       ? state.campaign.heroes.filter(h => h.heroId === reward.heroCard?.heroId && h.stars === 1).length
       : 0
 
+    const eventTitle = reward?.worldEventTitle ?? battle?.activeWorldEventTitle
     const title = won
-      ? (reward?.campaignWon ? 'Sunstone Crown Reforged' : reward?.abyssCompleted ? 'Crownless Deep Conquered!' : 'Victory!')
+      ? (reward?.campaignWon ? 'Sunstone Crown Reforged' : reward?.abyssCompleted ? 'Crownless Deep Conquered!' : eventTitle ? 'Event Cleared!' : 'Victory!')
       : 'Vanguard Defeated'
     const rewardTier = reward?.difficultyTier ?? battle?.difficultyTier ?? 'normal'
     const rewardMutCount = (reward?.mutators ?? battle?.mutators ?? []).length
     const challengeSubTag = rewardTier !== 'normal' || rewardMutCount > 0
       ? ` · ${STAGE_TIER_SPECS[rewardTier].label}${rewardMutCount > 0 ? ` +${rewardMutCount} Mut` : ''}`
-      : (reward && !reward.firstClear && (battle?.endlessWave ?? 0) === 0 && !battle?.abyssFloor ? ' · Replay' : '')
+      : (reward && !reward.firstClear && !eventTitle && (battle?.endlessWave ?? 0) === 0 && !battle?.abyssFloor ? ' · Replay' : '')
     const abyssSubTag = battle?.abyssFloor ? ` · ${formatAbyssFloorLabel(battle.abyssFloor)}` : ''
     const gauntletSubTag = battle?.gauntletMaxRounds ? ` · All ${battle.gauntletMaxRounds} Rounds Cleared` : ''
-    const sub = won
-      ? `${ch.title}${abyssSubTag}${gauntletSubTag}${challengeSubTag}`
-      : `${ch.title}${abyssSubTag} · Regroup & Adapt`
+    const sub = eventTitle
+      ? (won ? `${eventTitle} · Road Event Bounty` : `${eventTitle} · Regroup & Adapt`)
+      : won
+        ? `${ch.title}${abyssSubTag}${gauntletSubTag}${challengeSubTag}`
+        : `${ch.title}${abyssSubTag} · Regroup & Adapt`
     const quote = won
-      ? `${ch.outroSpeaker}: "${ch.outroText}"`
+      ? eventTitle
+        ? (reward?.worldEventKind === 'timed_gauntlet'
+            ? 'Vanguard Herald: "A commanding display of tactics! Claim your gauntlet shards and forged war spoils."'
+            : 'Caravan Scout: "The road is safe again! Take this bounty gold and Arcane Dust for your swift defense."')
+        : `${ch.outroSpeaker}: "${ch.outroText}"`
       : 'Return to Vanguard Camp to equip stronger gear, open booster decks, or merge 3 identical heroes to unlock Tier 2 skills.'
 
     const rowH = shortH ? 38 : 48
@@ -6152,13 +6580,15 @@ async function start() {
               title: `+${shownGold} Gold`,
               detail: `Treasury total: ${state.campaign.gold}g`,
               color: COLOR.accentHi,
-              badge: reward.firstClear
-                ? 'FIRST CLEAR'
-                : rewardTier !== 'normal'
-                  ? STAGE_TIER_SPECS[rewardTier].label.toUpperCase()
-                  : rewardMutCount > 0
-                    ? 'MUTATED'
-                    : 'REPLAY'
+              badge: reward.worldEventId
+                ? 'EVENT BOUNTY'
+                : reward.firstClear
+                  ? 'FIRST CLEAR'
+                  : rewardTier !== 'normal'
+                    ? STAGE_TIER_SPECS[rewardTier].label.toUpperCase()
+                    : rewardMutCount > 0
+                      ? 'MUTATED'
+                      : 'REPLAY'
             }, rowReveal(goldIdx))
           }
         })
@@ -6177,7 +6607,9 @@ async function start() {
                 title: `+${bDust} Dust · +${bShards} Shards`,
                 detail: `Forge spoils · Dust ${state.campaign.dust} · Shards ${state.campaign.shards}`,
                 color: rewardTier === 'mythic' ? '#e5adff' : '#a3f7d0',
-                badge: rewardTier === 'mythic' ? 'MYTHIC BONUS' : rewardTier === 'veteran' ? 'HEROIC BONUS' : 'MUTATOR BONUS'
+                badge: reward.worldEventId
+                  ? 'EVENT SPOILS'
+                  : rewardTier === 'mythic' ? 'MYTHIC BONUS' : rewardTier === 'veteran' ? 'HEROIC BONUS' : 'MUTATOR BONUS'
               }, rowReveal(bonusIdx))
             }
           })
@@ -6929,6 +7361,9 @@ async function start() {
       clearedStageIds: state.campaign.clearedStageIds.slice(),
       clearedStageTiers: { ...state.campaign.clearedStageTiers },
       selectedStageId: state.campaign.selectedStageId,
+      worldEventsCount: state.campaign.worldEvents.length,
+      selectedWorldEventId,
+      activeWorldEventId: state.battle?.activeWorldEventId ?? null,
       battleDifficultyTier: state.battle?.difficultyTier ?? null,
       battleMutators: state.battle ? state.battle.mutators.slice() : [],
       packAnimPhase: packAnim?.phase ?? null,

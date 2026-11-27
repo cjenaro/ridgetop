@@ -41,6 +41,7 @@
       "crownshard/inventory-ops.ts",
       "crownshard/mutators.ts",
       "crownshard/pincer.ts",
+      "crownshard/world-events.ts",
       "crownshard/zoc.ts",
       "crownshard/data.ts",
       "crownshard/types.ts",
