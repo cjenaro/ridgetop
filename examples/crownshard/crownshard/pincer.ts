@@ -1,5 +1,6 @@
 import { computeEndlessAttackerDamageMultiplier } from './endless-roguelite.ts'
 import { closestFootprintCell, getUnitFootprintSize } from './expansion-act2.ts'
+import { computePincerPairBondMultiplier, computeUnitBondAssist } from './hero-bonds.ts'
 import { mutatorDamageMultiplier } from './mutators.ts'
 import { cellHeightAt, terrainDefBonus } from './types.ts'
 import type { BattleState, BattleUnit, SkillSpec } from './types.ts'
@@ -76,9 +77,10 @@ export function findPincerAssisters(
  * damage accounting for elevation, empower, and target DEF + terrain DEF (minimum 4 DMG).
  */
 export function computePincerAssistDamage(
-  battle: Pick<BattleState, 'cells' | 'cols' | 'rows'> & Partial<Pick<BattleState, 'mutators' | 'endlessBlessings'>>,
-  assister: Pick<BattleUnit, 'col' | 'row' | 'atk' | 'empowerTurns'> & Partial<Pick<BattleUnit, 'team'>>,
-  target: Pick<BattleUnit, 'col' | 'row' | 'def'> & Partial<Pick<BattleUnit, 'slowTurns' | 'stunTurns'>>
+  battle: Pick<BattleState, 'cells' | 'cols' | 'rows'> & Partial<Pick<BattleState, 'units' | 'mutators' | 'endlessBlessings' | 'bondPairsActive'>>,
+  assister: Pick<BattleUnit, 'col' | 'row' | 'atk' | 'empowerTurns'> & Partial<Pick<BattleUnit, 'uid' | 'team' | 'alive' | 'heroId' | 'downed'>>,
+  target: Pick<BattleUnit, 'col' | 'row' | 'def'> & Partial<Pick<BattleUnit, 'uid' | 'team' | 'alive' | 'heroId' | 'downed' | 'slowTurns' | 'stunTurns'>>,
+  attacker?: (Pick<BattleUnit, 'team'> & Partial<Pick<BattleUnit, 'heroId'>>) | null
 ): number {
   let dmg = assister.atk
   const aLvl = cellHeightAt(battle, assister.col, assister.row)
@@ -91,10 +93,46 @@ export function computePincerAssistDamage(
     { slowTurns: target.slowTurns ?? 0, stunTurns: target.stunTurns ?? 0 }
   )
   dmg *= mutatorDamageMultiplier(battle)
+  if (battle.units && assister.uid && assister.team) {
+    const assisterBond = computeUnitBondAssist(
+      { units: battle.units, bondPairsActive: battle.bondPairsActive },
+      {
+        uid: assister.uid,
+        team: assister.team,
+        col: assister.col,
+        row: assister.row,
+        alive: assister.alive ?? true,
+        heroId: assister.heroId,
+        downed: assister.downed
+      }
+    )
+    if (assisterBond.active) dmg *= assisterBond.atkMul
+  }
 
   const cell = battle.cells[target.row]?.[target.col]
   const terrainDef = cell ? terrainDefBonus(cell.terrain) : 0
-  const effDef = Math.max(0, target.def + terrainDef)
+  let bondedTargetDef = target.def
+  if (battle.units && target.uid && target.team) {
+    const targetBond = computeUnitBondAssist(
+      { units: battle.units, bondPairsActive: battle.bondPairsActive },
+      {
+        uid: target.uid,
+        team: target.team,
+        col: target.col,
+        row: target.row,
+        alive: target.alive ?? true,
+        heroId: target.heroId,
+        downed: target.downed
+      }
+    )
+    if (targetBond.active) bondedTargetDef *= targetBond.defMul
+  }
+  const effDef = Math.max(0, bondedTargetDef + terrainDef)
   const basicDmg = Math.max(PINCER_MIN_DAMAGE, Math.round(dmg - effDef * 0.72))
-  return Math.max(PINCER_MIN_DAMAGE, Math.round(basicDmg * PINCER_DAMAGE_RATIO))
+  const pincerBondMul = computePincerPairBondMultiplier(
+    battle,
+    attacker,
+    assister.team ? { team: assister.team, heroId: assister.heroId } : null
+  )
+  return Math.max(PINCER_MIN_DAMAGE, Math.round(basicDmg * PINCER_DAMAGE_RATIO * pincerBondMul))
 }

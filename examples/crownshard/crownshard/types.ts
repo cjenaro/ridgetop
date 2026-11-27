@@ -150,6 +150,51 @@ export type HeroSubSpecId =
   | 'champion_sunlord'
   | 'champion_starforged'
 
+export type HeroBondRank = 0 | 1 | 2 | 3
+
+export type BanterTriggerKind =
+  | 'battle_start'
+  | 'crit'
+  | 'pincer'
+  | 'heal'
+  | 'revive'
+  | 'ko'
+  | 'boss_phase'
+
+export interface ActiveBattleBondPair {
+  readonly key: string
+  readonly heroA: HeroClassId
+  readonly heroB: HeroClassId
+  readonly battles: number
+  readonly rank: 1 | 2 | 3
+}
+
+export interface BondRankUp {
+  readonly key: string
+  readonly heroA: HeroClassId
+  readonly heroB: HeroClassId
+  readonly nameA: string
+  readonly nameB: string
+  readonly oldRank: HeroBondRank
+  readonly newRank: 1 | 2 | 3
+  readonly rankTitle: string
+  readonly battles: number
+}
+
+export interface BattleBanterEntry {
+  readonly id: number
+  readonly speakerUid: string
+  readonly speakerHeroId: HeroClassId
+  readonly speakerName: string
+  readonly partnerHeroId: HeroClassId
+  readonly partnerName: string
+  readonly text: string
+  readonly bondRank: 1 | 2 | 3
+  readonly trigger: BanterTriggerKind
+  age: number
+  readonly duration: number
+}
+
 export type EnemyArchetypeId =
   | 'goblin'
   | 'bone_archer'
@@ -892,6 +937,7 @@ export interface BattleReward {
   readonly worldEventTitle?: string
   readonly heroXpGains: readonly BattleHeroXpGain[]
   readonly masteryEarned?: BattleMasteryEvaluation
+  readonly bondRankUps?: readonly BondRankUp[]
 }
 
 export interface TurnPreviewEntry {
@@ -1107,6 +1153,11 @@ export interface CombatForecast {
   readonly damagedCoverCount?: number
   readonly coverHeavyHit?: boolean
   readonly coverHits?: readonly CoverHitPreview[]
+  readonly bondAssistRank?: 1 | 2 | 3
+  readonly bondAssistAtkPct?: number
+  readonly bondAssistCritPct?: number
+  readonly bondAssistPartnerName?: string
+  readonly bondPincerBonus?: boolean
   readonly alternatives: readonly CombatForecastAlt[]
 }
 
@@ -1238,6 +1289,10 @@ export interface BattleState {
   reward: BattleReward | null
   activeTipId: DiscoveryTipId | null
   tipQueue: DiscoveryTipId[]
+  activeBanter: BattleBanterEntry | null
+  banterCooldown: number
+  nextBanterId: number
+  bondPairsActive: readonly ActiveBattleBondPair[]
 }
 
 export interface BattleCellSnapshot {
@@ -1349,6 +1404,9 @@ export interface BattleSaveSnapshot {
   readonly anyHeroFallen?: boolean
   readonly combatLog?: readonly CombatLogEntry[]
   readonly nextLogId?: number
+  readonly bondPairsActive?: readonly ActiveBattleBondPair[]
+  readonly banterCooldown?: number
+  readonly nextBanterId?: number
 }
 
 export interface CampaignState {
@@ -1387,6 +1445,7 @@ export interface CampaignState {
   battleSpeed: BattleSpeedMultiplier
   oakhavenExchange?: OakhavenExchangeState
   worldEvents: WorldMapEvent[]
+  heroBonds: Record<string, number>
 }
 
 export interface GameState {
@@ -1413,6 +1472,7 @@ export type SavedCampaignState = Omit<
   | 'claimedMasteryMilestones'
   | 'endlessRun'
   | 'worldEvents'
+  | 'heroBonds'
 > & {
   dust?: number
   shards?: number
@@ -1425,6 +1485,7 @@ export type SavedCampaignState = Omit<
   battleSpeed?: BattleSpeedMultiplier
   oakhavenExchange?: OakhavenExchangeState
   worldEvents?: WorldMapEvent[]
+  heroBonds?: Record<string, number>
   crownlessDeepFloor?: number
   crownlessDeepSelectedFloor?: number
   crownlessDeepRewardClaimed?: boolean
