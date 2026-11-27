@@ -578,6 +578,7 @@ export interface OwnedEquipCard {
   readonly uid: string
   readonly equipId: string
   readonly slot: EquipSlot
+  upgradeLevel?: number
   locked?: boolean
 }
 
@@ -636,8 +637,11 @@ export interface BattleUnit {
   readonly footprintSize?: 1 | 2
   readonly summonerUid?: string
   readonly weaponId?: string
+  readonly weaponUpgrade?: number
   readonly armorId?: string
+  readonly armorUpgrade?: number
   readonly relicId?: string
+  readonly relicUpgrade?: number
   col: number
   row: number
   x: number
@@ -1236,8 +1240,11 @@ export interface BattleUnitSnapshot {
   readonly footprintSize?: 1 | 2
   readonly summonerUid?: string
   readonly weaponId?: string
+  readonly weaponUpgrade?: number
   readonly armorId?: string
+  readonly armorUpgrade?: number
   readonly relicId?: string
+  readonly relicUpgrade?: number
   readonly col: number
   readonly row: number
   readonly facing: FacingDir

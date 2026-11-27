@@ -18,6 +18,10 @@ import type { EndlessBlessingSpec } from './endless-roguelite.ts'
 import { DIFFICULTY_META, RARITY_META, RARITY_ORDER } from './data.ts'
 import { EQUIP_FAMILY_META, getEquipFamily, getHeroEquipFamily } from './equip-families.ts'
 import { EPIC_PITY_THRESHOLD, LEGENDARY_PITY_THRESHOLD } from './forge.ts'
+import {
+  MAX_EQUIP_UPGRADE, formatUpgradedEquipSummary, normalizeEquipUpgradeLevel
+} from './gear-upgrade.ts'
+import type { EquipUpgradePreview } from './gear-upgrade.ts'
 import { heroLevelProgress } from './leveling.ts'
 import { STAGE_MUTATOR_SPECS, STAGE_TIER_SPECS, stageTierRank } from './mutators.ts'
 import { RECOMMENDED_MIN_TACTIC_DECK, getEquipEffect, getHeroPassive } from './passives.ts'
@@ -4242,6 +4246,7 @@ export function drawEquipCard(
     effect?: EquipEffectSpec
     ownerText?: string
     equippedOnSelected?: boolean
+    upgradeLevel?: number
     locked?: boolean
     incompatible?: boolean
     incompatibleLabel?: string
@@ -4252,6 +4257,8 @@ export function drawEquipCard(
   const spec = o.spec
   const effect = o.effect ?? (spec ? getEquipEffect(spec.id) ?? undefined : undefined)
   const meta = spec ? RARITY_META[spec.rarity] : undefined
+  const upLvl = normalizeEquipUpgradeLevel(o.upgradeLevel)
+  const isMaxUp = upLvl >= MAX_EQUIP_UPGRADE
   const isLocked = Boolean(o.locked)
   const isIncompatible = Boolean(o.incompatible)
   const { x, width: w, height: h } = rect
@@ -4329,6 +4336,16 @@ export function drawEquipCard(
     if (isLocked) {
       drawLockMedallion(ctx, x + 10, y + 10, 6.2)
     }
+    if (upLvl > 0) {
+      drawChip(ctx, x + w - 4, y + 12, `+${upLvl}`, {
+        h: 13,
+        size: 8.5,
+        color: isMaxUp ? '#fff099' : '#ffd278',
+        bg: isMaxUp ? '#4f3108' : '#3a240e',
+        border: isMaxUp ? '#ffcb57' : '#e89835',
+        align: 'right'
+      })
+    }
     drawText(ctx, spec.name, x + w / 2, y + faceH - 9, {
       size: 10,
       weight: 900,
@@ -4403,6 +4420,17 @@ export function drawEquipCard(
     rightUsed += 22
   }
 
+  if (upLvl > 0) {
+    rightUsed += drawChip(ctx, right - rightUsed, chipY, `+${upLvl}`, {
+      h: 16,
+      size: 9,
+      color: isMaxUp ? '#fff099' : '#ffd278',
+      bg: isMaxUp ? '#4f3108' : '#3a240e',
+      border: isMaxUp ? '#ffcb57' : '#e89835',
+      align: 'right'
+    }) + 4
+  }
+
   const showFam = o.showFamilyBadge !== false && !isIncompatible
   if (showFam) {
     const famLabel = w >= 290 ? famMeta.shortLabel : famMeta.compactLabel
@@ -4420,6 +4448,7 @@ export function drawEquipCard(
   }
 
   const nameY = threeLine ? y + 11.5 : y + faceH / 2 - (twoLine ? 8 : 0)
+  const statDesc = upLvl > 0 ? formatUpgradedEquipSummary(spec, upLvl) : spec.desc
   drawText(ctx, spec.name, tx, nameY, {
     size: 12,
     weight: 900,
@@ -4429,7 +4458,7 @@ export function drawEquipCard(
     shadow: true
   })
   if (threeLine && effect) {
-    drawText(ctx, spec.desc, tx, y + 25.5, { size: 9.5, weight: 600, color: isIncompatible ? COLOR.faint : COLOR.muted, maxW: right - tx })
+    drawText(ctx, statDesc, tx, y + 25.5, { size: 9.5, weight: 600, color: isIncompatible ? COLOR.faint : upLvl > 0 ? '#ffe099' : COLOR.muted, maxW: right - tx })
     drawText(ctx, `★ ${effect.name}: ${effect.shortLabel}`, tx, y + 38.5, {
       size: 9.5,
       weight: 800,
@@ -4439,12 +4468,12 @@ export function drawEquipCard(
     })
   } else if (twoLine) {
     const subText = isIncompatible && o.ownerText && o.ownerText !== 'Bag'
-      ? `${spec.desc} · Held by ${o.ownerText}`
-      : effect ? `${spec.desc} · ★ ${effect.shortLabel}` : spec.desc
+      ? `${statDesc} · Held by ${o.ownerText}`
+      : effect ? `${statDesc} · ★ ${effect.shortLabel}` : statDesc
     drawText(ctx, subText, tx, y + faceH / 2 + 8.5, {
       size: 10,
       weight: 600,
-      color: isIncompatible ? COLOR.faint : effect ? effect.accentHex : COLOR.muted,
+      color: isIncompatible ? COLOR.faint : effect ? effect.accentHex : upLvl > 0 ? '#ffe099' : COLOR.muted,
       maxW: right - tx
     })
   }
@@ -4736,6 +4765,81 @@ export function drawArmoryStatDiffPanel(
     drawStatRow(ARMORY_STAT_ORDER.slice(4), statsY + rowH + rowGap, rowH)
   } else {
     drawStatRow(ARMORY_STAT_ORDER, statsY, statsH)
+  }
+
+  ctx.restore()
+}
+
+/**
+ * Compact Armory Temper / Reforge preview strip showing current -> next temper level
+ * and exact before -> after stat gains (`ATK 5 -> 6`, `HP 14 -> 17`, etc.) or `MAX +5`.
+ */
+export function drawArmoryTemperBar(
+  ctx: CanvasRenderingContext2D,
+  rect: LayoutRect,
+  preview: EquipUpgradePreview,
+  o: { compact?: boolean } = {}
+) {
+  const { x, y, width: w, height: h } = rect
+  if (w < 60 || h < 18) return
+  const isMax = preview.isMaxLevel
+  const rimColor = isMax ? COLOR.accent : '#f09d38'
+  const padX = w < 380 ? 7 : 9
+
+  ctx.save()
+  drawSurface(ctx, rect, {
+    r: RADIUS.sm,
+    lipH: 2,
+    fill: isMax ? '#332714' : '#24233d',
+    fillBot: isMax ? '#1f170c' : '#151629',
+    rim: rimColor + '77',
+    border: COLOR.outline,
+    shadow: false
+  })
+
+  const cy = y + (h - 2) / 2 + 0.5
+  let cursor = x + padX
+  const badgeText = isMax
+    ? `MAX +${MAX_EQUIP_UPGRADE}`
+    : `+${preview.currentLevel}→+${preview.nextLevel}`
+  const chipH = Math.min(h - 4, 18)
+  const badgeW = drawChip(ctx, cursor, y + (h - 2 - chipH) / 2, badgeText, {
+    h: chipH,
+    size: o.compact || w < 380 ? 8.5 : 9,
+    color: isMax ? '#fff099' : '#ffd278',
+    bg: isMax ? '#52340a' : '#3d260e',
+    border: isMax ? '#ffcb57' : '#e89835'
+  })
+  cursor += badgeW + 7
+
+  const rightBound = x + w - padX
+  const availW = Math.max(32, rightBound - cursor)
+
+  if (isMax) {
+    const maxSummary = `Max Temper (+${MAX_EQUIP_UPGRADE}) · ${formatUpgradedEquipSummary(preview.spec, preview.currentLevel)}`
+    drawText(ctx, maxSummary, cursor, cy, {
+      size: o.compact || w < 380 ? 9.5 : 10.5,
+      weight: 800,
+      color: '#ffe896',
+      maxW: availW,
+      display: true,
+      shadow: true
+    })
+  } else {
+    const parts = preview.statDeltas.map(d => {
+      const suf = d.isPercent ? '%' : ''
+      return `${d.label} ${d.before}${suf}→${d.after}${suf}`
+    })
+    const prefix = w >= 420 && !o.compact ? 'Temper: ' : ''
+    const summaryText = parts.length > 0 ? `${prefix}${parts.join(' · ')}` : `Temper to +${preview.nextLevel}`
+    drawText(ctx, summaryText, cursor, cy, {
+      size: o.compact || w < 380 ? 9.5 : 10.5,
+      weight: 800,
+      color: '#7ef7b2',
+      maxW: availW,
+      display: true,
+      shadow: true
+    })
   }
 
   ctx.restore()
