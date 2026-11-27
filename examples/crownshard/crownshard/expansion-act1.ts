@@ -1,5 +1,6 @@
 import { nextRandom } from 'ridgetop'
 import { appendCombatLog } from './combat-log.ts'
+import { discoverEnemyInCodex } from './codex.ts'
 import { CHAPTER_BY_ID, ENEMY_SPECS, EQUIPMENT_LIST } from './data.ts'
 import { selectProtectedEquipment } from './forge.ts'
 import { applyDisplacement } from './forced-movement.ts'
@@ -918,6 +919,7 @@ export function spawnMonasteryReinforcements(state: GameState): MonasteryWaveRes
       lungeZ: 0
     }
     battle.units.push(unit)
+    discoverEnemyInCodex(state.campaign, unit.enemyId)
     aliveEnemies += 1
     spawnedUids.push(uid)
     spawnedNames.push(sp.name)

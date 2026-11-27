@@ -1189,6 +1189,7 @@ export interface CampaignState {
   lastPackReveal: PackRevealItem[]
   seenTips: string[]
   tipsDisabled?: boolean
+  discoveredEnemies: EnemyArchetypeId[]
   battleSpeed: BattleSpeedMultiplier
   oakhavenExchange?: OakhavenExchangeState
 }
@@ -1208,6 +1209,7 @@ export type SavedCampaignState = Omit<
   | 'packsSinceEpic'
   | 'packsSinceLegendary'
   | 'seenTips'
+  | 'discoveredEnemies'
   | 'battleSpeed'
   | 'crownlessDeepFloor'
   | 'stageMastery'
@@ -1220,6 +1222,7 @@ export type SavedCampaignState = Omit<
   packsSinceLegendary?: number
   seenTips?: string[]
   tipsDisabled?: boolean
+  discoveredEnemies?: EnemyArchetypeId[]
   battleSpeed?: BattleSpeedMultiplier
   oakhavenExchange?: OakhavenExchangeState
   crownlessDeepFloor?: number

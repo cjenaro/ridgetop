@@ -28,8 +28,8 @@ import {
   createTurnBoundaryTracker, dismissDiscoveryTip, effectiveSpeed, equipItem, evaluateAllFacingExposures, evaluateFacingExposure,
   findBestFitUpgrades, findEquipOwner, findGridPath, formatAbyssFloorLabel, formatBattleSpeedLabel, formatOpportunityWarning,
   getAct1StageMechanicStatus, getActiveDiscoveryTip, getActiveTacticDeckUids,
-  getChapterObjectiveSummary, getClaimableMasteryMilestones, getCraftableEquipment, getCraftableHeroes, getCrownlessDeepFloorSpec, getEquipCraftCost, getEquipEffect,
-  getEquipSalvageDust, getEquipmentByUid, getHeroByUid, getHeroCraftCost, getHeroPassive, getHeroSalvageShards,
+  getBestiaryEntries, getChapterObjectiveSummary, getClaimableMasteryMilestones, getCodexProgress, getCraftableEquipment, getCraftableHeroes, getCrownlessDeepFloorSpec, getEquipCodexEntries, getEquipCraftCost, getEquipEffect,
+  getEquipSalvageDust, getEquipmentByUid, getHeroByUid, getHeroCodexEntries, getHeroCraftCost, getHeroPassive, getHeroSalvageShards,
   getHeroSkill, getHighestClearedStageTier, getMaxCombatLogScroll, getMaxMasteryStars, getMaxSelectableCrownlessDeepFloor, getMergeCandidates, getNextMasteryMilestone, getNextRecommendedStage, getOakhavenExchangeOffers, getObjectiveProgressText, getPackPityStatus,
   getSelectedCrownlessDeepFloor, getStageMasteryChestReward, getStageMasteryObjectives, getStageMasteryRecord, getStageUnlockHint, getTacticByUid, getTotalMasteryStars, getUnitByUid, hasClaimedStageMasteryChest, hasMaxedHero, hasOakhavenPatronDiscount, heroLevelProgress, isChestClaimed,
   isCrownlessDeepStage, isDeployTile, isEndlessUnlocked, isEnemyShrouded, isOakhavenExchangeUnlocked, isStageCleared, isStageUnlocked, loadSave, maxSquadSize, mergeHero,
@@ -40,6 +40,7 @@ import {
   swapDeployUnit, syncTurnBoundaryTracker, toggleAutoBattle, toggleBattleSpeed, toggleEquipLock, toggleHeroLock,
   toggleSquadMember, toggleTacticInDeck, undoMove, unequipItem, unitAt
 } from './simulation.ts'
+import type { CodexTab } from './simulation.ts'
 import { FACING_DIRS, cellHeightLevel, gridToWorld, isUnitDowned } from './types.ts'
 import type {
   BattleSaveSnapshot, BattleSpeedMultiplier, BattleUnit, ChapterSpec, CombatForecast, EnemyArchetypeId, FacingDir, GameState,
@@ -49,7 +50,7 @@ import type {
 import {
   COLOR, RADIUS, TIER_COLOR, TYPE, UI_THEME_PALETTE, WORLD_MAP_H, WORLD_MAP_W,
   drawAnimatedRevealCard, drawApMeter, drawArmoryStatDiffPanel, drawAutoBattlePill, drawBattleInfo, drawBoosterPack, drawButton, drawCameraCompassButton, drawCampHeader,
-  drawChallengeHudBadges, drawChapterPicker, drawChip, drawCombatForecast, drawCombatLogPanel, drawCombatLogToggleButton, drawControlHints, drawDefeatBackdrop, drawDeployHeroChip,
+  drawChallengeHudBadges, drawChapterPicker, drawChip, drawCodexEnemyDetail, drawCodexEntryCard, drawCodexEquipDetail, drawCodexHeader, drawCodexHeroDetail, drawCombatForecast, drawCombatLogPanel, drawCombatLogToggleButton, drawControlHints, drawDefeatBackdrop, drawDeployHeroChip,
   drawDifficultyBadge, drawDiscoveryTipCard, drawEmptyNote, drawEndTurnButton, drawEquipCard, drawForecastAltChip,
   drawForgeBalanceBanner, drawForgeRecipeCard, drawHeroHeader, drawHeroRosterCard, drawHeroXpSummaryAnimated, drawHintPill, drawIconButton, drawLabel, drawLetterbox,
   drawLootRow, drawModal, drawMutatorChipButton, drawObjectiveBadge, drawOverline, drawPackCeremonyBackdrop, drawPanel, drawPassiveBanner, drawPityBanner, drawPortraitTile,
@@ -61,9 +62,9 @@ import {
   drawVictoryBackdrop, drawVictoryMasteryAnimated, drawWell, drawWorldMapCanvas, drawWorldMapNode, worldMapScale, worldMapToScreen,
   FANFARE_DURATION, drawFanfare
 } from './ui-art.ts'
-import type { FanfareDrawOpts, IconName, StatStripItem, WorldMapViewport } from './ui-art.ts'
+import type { CodexListEntry, FanfareDrawOpts, IconName, StatStripItem, WorldMapViewport } from './ui-art.ts'
 
-type Screen = 'title' | 'world' | 'camp' | 'story' | 'battle' | 'victory' | 'defeat' | 'paused'
+type Screen = 'title' | 'world' | 'camp' | 'codex' | 'story' | 'battle' | 'victory' | 'defeat' | 'paused'
 type CampTab = 'squad' | 'armory' | 'deck' | 'forge' | 'decks'
 type ArmoryFilter = 'all' | 'weapon' | 'armor' | 'relic'
 type ForgeCategory = 'heroes' | 'weapon' | 'armor' | 'relic'
@@ -227,6 +228,10 @@ async function start() {
   }
   let screen: Screen = 'title'
   let campTab: CampTab = 'squad'
+  let codexTab: CodexTab = 'enemies'
+  let codexPage = 0
+  let codexSelectedId: string | null = null
+  let codexReturnScreen: 'world' | 'camp' = 'world'
   let pendingChapter = CHAPTER_BY_ID[state.campaign.selectedStageId]?.index ?? getNextRecommendedStage(state.campaign).index
   let pendingEndless = 0
   const DEFAULT_STAGE_CHALLENGE: { readonly tier: StageDifficultyTier; readonly mutators: readonly StageMutatorId[] } = {
@@ -636,8 +641,8 @@ async function start() {
     clearArmoryHover(true)
     if (next !== 'camp') { packAnim = null; fanfare = null }
     if (next === 'victory' || next === 'defeat') resultAnimTime = 0
-    if (next === 'title' || next === 'camp' || next === 'story' || next === 'world') {
-      scene.setCampFraming(next === 'camp' && campTab === 'armory' ? 'armory' : next)
+    if (next === 'title' || next === 'camp' || next === 'codex' || next === 'story' || next === 'world') {
+      scene.setCampFraming(next === 'camp' && campTab === 'armory' ? 'armory' : next === 'codex' ? 'camp' : next)
       scene.setForecast(null)
     }
     if (next === 'world') audio.setMusicMode('world')
@@ -645,6 +650,37 @@ async function start() {
     else if (next === 'camp' || next === 'title' || next === 'story') audio.setMusicMode('camp')
     uiDirty = true
     hudRev++
+  }
+
+  function openCodex(tab?: CodexTab) {
+    if (screen === 'world' || screen === 'camp') {
+      codexReturnScreen = screen
+    }
+    if (tab) {
+      codexTab = tab
+      codexPage = 0
+      codexSelectedId = null
+    }
+    state.sounds.push({ kind: 'card', pitch: 1.08 })
+    setScreen('codex')
+  }
+
+  function closeCodex() {
+    state.sounds.push({ kind: 'card', pitch: 0.92 })
+    if (codexReturnScreen === 'camp') {
+      openCamp(campTab)
+    } else {
+      openWorldMap()
+    }
+  }
+
+  function selectCodexTab(tab: CodexTab) {
+    if (codexTab === tab) return
+    codexTab = tab
+    codexPage = 0
+    codexSelectedId = null
+    state.sounds.push({ kind: 'card', pitch: 1.05 })
+    uiDirty = true
   }
 
   function openWorldMap(selectStageId?: string) {
@@ -1618,6 +1654,13 @@ async function start() {
     } else if (screen === 'paused' && event.code === 'Escape' && !event.repeat) {
       event.preventDefault()
       setScreen('battle')
+    } else if ((screen === 'world' || screen === 'camp') && event.code === 'KeyC' && !event.repeat) {
+      event.preventDefault()
+      audio.unlock()
+      openCodex()
+    } else if (screen === 'codex' && (event.code === 'Escape' || event.code === 'KeyC') && !event.repeat) {
+      event.preventDefault()
+      closeCodex()
     }
   }, sig)
 
@@ -2487,7 +2530,15 @@ async function start() {
     ])
 
     const soonCount = CHAPTERS.length - PLAYABLE_CHAPTERS.length
-    const zoomCtrlW = mobile ? 96 : 138
+    const narrowPhone = w < 520
+    const zoomCtrlW = narrowPhone ? 68 : mobile ? 76 : 138
+    const codexBtnW = narrowPhone ? 66 : mobile ? 84 : 112
+    const campBtnW = narrowPhone ? 66 : mobile ? 84 : 154
+    const endlessBtnW = endlessReady ? (narrowPhone ? 64 : mobile ? 82 : 128) : 0
+    const topActionGap = narrowPhone ? 6 : 8
+    const wmTopActionsW = (narrowPhone ? 0 : zoomCtrlW + topActionGap)
+      + (endlessReady ? endlessBtnW + topActionGap : 0)
+      + codexBtnW + topActionGap + campBtnW
 
     return overlay({ id: 'root', style: { anchor: 'fill' } }, [
       // Full-viewport illustrated continent canvas (does NOT block pointer so drag-to-pan works anywhere!)
@@ -2507,8 +2558,7 @@ async function start() {
 
       // Floating Top-Left Realm Title + Continent Mastery Stars + Gold Pill
       ...(() => {
-        const wmTopActionsW = (mobile ? 92 : 164) + zoomCtrlW + (endlessReady ? (mobile ? 88 : 134) : 0) + (endlessReady ? 16 : 8)
-        const wmHeaderW = Math.max(186, Math.min(mobile ? 264 : 460, w - wmTopActionsW - outerPad * 2 - 24))
+        const wmHeaderW = Math.max(106, Math.min(mobile ? 250 : 450, w - wmTopActionsW - outerPad * 2 - 12))
         return [boxNode({
           id: 'wm-header',
           style: {
@@ -2525,42 +2575,41 @@ async function start() {
               drawPanel(ctx, rect, { r: RADIUS.lg, lipH: 4, fill: '#263459eb', fillBot: '#151e38f0' })
               const cy = rect.y + (rect.height - 4) / 2
               const prog = `${camp.clearedStageIds.length}/${PLAYABLE_CHAPTERS.length}`
-              const starText = `${totalMasteryStars}/${maxMasteryStars}`
-              let rightEdge = rect.x + rect.width - 10
-              const starChipW = drawChip(ctx, rightEdge, cy - 10, starText, {
-                icon: 'star',
+              let rightEdge = rect.x + rect.width - 8
+              let usedRight = 16
+              if (rect.width >= 210) {
+                const starText = `${totalMasteryStars}/${maxMasteryStars}`
+                const starChipW = drawChip(ctx, rightEdge, cy - 10, starText, {
+                  icon: 'star',
+                  h: 21,
+                  size: rect.width < 260 ? 9.5 : 10.5,
+                  color: nextReadyMilestone ? COLOR.accentText : COLOR.accentHi,
+                  bg: nextReadyMilestone ? COLOR.accent : '#2a2210',
+                  border: nextReadyMilestone ? COLOR.accentHi : '#705820',
+                  align: 'right'
+                })
+                rightEdge -= starChipW + 5
+                usedRight += starChipW + 5
+              }
+              const chipText = rect.width < 170
+                ? `${camp.gold}g`
+                : rect.width < 320
+                  ? `${camp.gold}g`
+                  : `${camp.gold}g · ${prog}`
+              const goldChipW = drawChip(ctx, rightEdge, cy - 10, chipText, {
+                icon: 'coin',
                 h: 21,
-                size: 10.5,
-                color: nextReadyMilestone ? COLOR.accentText : COLOR.accentHi,
-                bg: nextReadyMilestone ? COLOR.accent : '#2a2210',
-                border: nextReadyMilestone ? COLOR.accentHi : '#705820',
+                size: rect.width < 170 ? 9.5 : 10.5,
+                color: COLOR.accentHi,
+                bg: COLOR.wellDeep,
                 align: 'right'
               })
-              rightEdge -= starChipW + 6
-              const showSeparateGold = rect.width >= 300
-              const goldChipW = showSeparateGold
-                ? drawChip(ctx, rightEdge, cy - 10, `${camp.gold}g · ${prog}`, {
-                    icon: 'coin',
-                    h: 21,
-                    size: 10.5,
-                    color: COLOR.accentHi,
-                    bg: COLOR.wellDeep,
-                    align: 'right'
-                  })
-                : drawChip(ctx, rightEdge, cy - 10, `${camp.gold}g`, {
-                    icon: 'coin',
-                    h: 21,
-                    size: 10,
-                    color: COLOR.accentHi,
-                    bg: COLOR.wellDeep,
-                    align: 'right'
-                  })
-              const usedRight = starChipW + goldChipW + 26
-              drawText(ctx, mobile || rect.width < 320 ? 'SOLIS' : 'REALM OF SOLIS', rect.x + 12, cy + 0.5, {
+              usedRight += goldChipW + 8
+              drawText(ctx, rect.width < 185 || mobile ? 'SOLIS' : rect.width < 330 ? 'SOLIS MAP' : 'REALM OF SOLIS', rect.x + 10, cy + 0.5, {
                 size: isCompact || rect.width < 320 ? 12 : 15,
                 weight: 900,
                 color: COLOR.accentHi,
-                maxW: Math.max(36, rect.width - usedRight - 14),
+                maxW: Math.max(36, rect.width - usedRight - 10),
                 display: true,
                 stroke: true,
                 strokeWidth: 2.6
@@ -2614,11 +2663,14 @@ async function start() {
       ...(resumableBattle ? (() => {
         const resumeSnap = resumableBattle
         const wmResumeLabel = formatResumableBattleLabel(resumeSnap, isCompact)
+        const resumeW = narrowPhone
+          ? Math.max(180, w - outerPad * 2 - zoomCtrlW - 8)
+          : mobile ? Math.min(w - 16, 420) : 410
         return [row({
           id: 'wm-resume-bar',
           style: {
             anchor: 'top-left',
-            width: mobile ? Math.min(w - 16, 420) : 410,
+            width: resumeW,
             height: isCompact ? 42 : 46,
             inset: [outerPad, topH + outerPad + 10],
             padding: [5, 6],
@@ -2652,7 +2704,7 @@ async function start() {
           }),
           boxNode({
             id: 'cs-world-abandon',
-            style: { width: mobile ? 76 : 92, height: isCompact ? 32 : 34 },
+            style: { width: mobile ? 72 : 92, height: isCompact ? 32 : 34 },
             widget: {
               type: 'button',
               label: 'Abandon',
@@ -2665,20 +2717,59 @@ async function start() {
         ])]
       })() : []),
 
-      // Floating Top-Right Toolbar: Zoom (- / Fit / +) + Endless + Vanguard Camp
+      // Compact Zoom Bar docked cleanly below top-right actions on narrow phones (< 520px)
+      ...(narrowPhone ? [row({
+        id: 'wm-zoom-bar',
+        style: {
+          anchor: 'top-right',
+          width: zoomCtrlW,
+          height: 38,
+          inset: [outerPad, topH + outerPad + 10],
+          padding: [4, 5],
+          gap: 4,
+          align: 'center',
+          respectSafeArea: true
+        },
+        widget: {
+          type: 'panel',
+          blocksPointer: true,
+          draw: (ctx: CanvasRenderingContext2D, rect: LayoutRect) => drawToolbarBg(ctx, rect)
+        }
+      }, [
+        boxNode({
+          id: 'wm-zoom-out',
+          style: { width: 27, height: 28 },
+          widget: {
+            type: 'button', label: 'Zoom Out',
+            onPress: () => { worldMapTargetZoom /= 1.18; clampWorldMapView(); uiDirty = true },
+            draw: (ctx: CanvasRenderingContext2D, rect: LayoutRect, st: CanvasWidgetDrawState) => drawIconButton(ctx, rect, 'minus', st)
+          }
+        }),
+        boxNode({
+          id: 'wm-zoom-in',
+          style: { width: 27, height: 28 },
+          widget: {
+            type: 'button', label: 'Zoom In',
+            onPress: () => { worldMapTargetZoom *= 1.18; clampWorldMapView(); uiDirty = true },
+            draw: (ctx: CanvasRenderingContext2D, rect: LayoutRect, st: CanvasWidgetDrawState) => drawIconButton(ctx, rect, 'plus', st)
+          }
+        })
+      ])] : []),
+
+      // Floating Top-Right Toolbar: Zoom (- / Fit / +) + Endless + Codex + Vanguard Camp
       row({
         id: 'wm-top-actions',
         style: {
           anchor: 'top-right',
-          width: (mobile ? 92 : 164) + zoomCtrlW + (endlessReady ? (mobile ? 88 : 134) : 0) + (endlessReady ? 16 : 8),
+          width: wmTopActionsW,
           height: topH,
           inset: [outerPad, outerPad],
-          gap: 8,
+          gap: topActionGap,
           align: 'center',
           respectSafeArea: true
         }
       }, [
-        row({
+        ...(narrowPhone ? [] : [row({
           id: 'wm-zoom-bar',
           style: { width: zoomCtrlW, height: topH, padding: [5, 6], gap: 5, align: 'center' },
           widget: {
@@ -2714,10 +2805,10 @@ async function start() {
               draw: (ctx: CanvasRenderingContext2D, rect: LayoutRect, st: CanvasWidgetDrawState) => drawIconButton(ctx, rect, 'plus', st)
             }
           })
-        ]),
+        ])]),
         ...(endlessReady ? [boxNode({
           id: 'cs-world-endless',
-          style: { width: mobile ? 88 : 134, height: topH },
+          style: { width: endlessBtnW, height: topH },
           widget: {
             type: 'button',
             label: `Endless W${camp.endlessBest + 1}`,
@@ -2726,13 +2817,28 @@ async function start() {
               openStory(CHAPTER_BY_ID.eclipse_throne.index, camp.endlessBest + 1)
             },
             draw: (ctx: CanvasRenderingContext2D, rect: LayoutRect, st: CanvasWidgetDrawState) => drawButton(
-              ctx, rect, mobile ? `Wave ${camp.endlessBest + 1}` : `Endless W${camp.endlessBest + 1}`, st, { variant: 'danger', icon: 'skull', size: 12 }
+              ctx, rect, narrowPhone ? `W${camp.endlessBest + 1}` : mobile ? `Wave ${camp.endlessBest + 1}` : `Endless W${camp.endlessBest + 1}`, st, { variant: 'danger', icon: 'skull', size: narrowPhone ? 11 : 12 }
             )
           }
         })] : []),
         boxNode({
+          id: 'cs-world-codex',
+          style: { width: codexBtnW, height: topH },
+          widget: {
+            type: 'button',
+            label: 'Codex',
+            onPress: () => {
+              audio.unlock()
+              openCodex()
+            },
+            draw: (ctx: CanvasRenderingContext2D, rect: LayoutRect, st: CanvasWidgetDrawState) => drawButton(
+              ctx, rect, 'Codex', st, { variant: 'secondary', icon: 'scroll', trailing: narrowPhone ? undefined : 'C', size: narrowPhone ? 11.5 : 12.5 }
+            )
+          }
+        }),
+        boxNode({
           id: 'cs-world-camp',
-          style: { width: mobile ? 92 : 164, height: topH },
+          style: { width: campBtnW, height: topH },
           widget: {
             type: 'button',
             label: 'Vanguard Camp',
@@ -2741,7 +2847,7 @@ async function start() {
               openCamp('squad')
             },
             draw: (ctx: CanvasRenderingContext2D, rect: LayoutRect, st: CanvasWidgetDrawState) => drawButton(
-              ctx, rect, mobile ? 'Camp' : 'Vanguard Camp', st, { variant: 'secondary', icon: 'camp', size: 13 }
+              ctx, rect, mobile ? 'Camp' : 'Vanguard Camp', st, { variant: 'secondary', icon: 'camp', size: narrowPhone ? 11.5 : 13 }
             )
           }
         })
@@ -5837,10 +5943,22 @@ async function start() {
             })
           }
         }),
+        boxNode({
+          id: 'cs-camp-codex',
+          style: { width: isPhone ? 66 : mobile ? 84 : 104, height: shortH ? 34 : 38 },
+          widget: {
+            type: 'button',
+            label: 'Codex',
+            onPress: () => { audio.unlock(); openCodex() },
+            draw: (ctx: CanvasRenderingContext2D, rect: LayoutRect, st: CanvasWidgetDrawState) => drawButton(
+              ctx, rect, 'Codex', st, { variant: 'secondary', icon: 'scroll', trailing: isPhone ? undefined : 'C', size: isPhone ? 11.5 : 12.5 }
+            )
+          }
+        }),
         // World Map + Quick Deploy bar
         row({
           id: 'cp-chapter-bar',
-          style: { width: mobile ? 196 : 368, height: shortH ? 36 : 42, padding: [3, 5], gap: 6, align: 'center' },
+          style: { width: isPhone ? 142 : mobile ? 182 : 344, height: shortH ? 36 : 42, padding: [3, 5], gap: isPhone ? 4 : 6, align: 'center' },
           widget: {
             type: 'panel',
             blocksPointer: true,
@@ -5855,19 +5973,19 @@ async function start() {
             }
           })]),
           boxNode({
-            id: 'cs-camp-battle', style: { width: mobile ? 106 : 126, height: 34 },
+            id: 'cs-camp-battle', style: { width: isPhone ? 66 : mobile ? 94 : 118, height: 34 },
             widget: {
               type: 'button',
               label: 'World Map',
               primary: true,
               onPress: () => { audio.unlock(); openWorldMap() },
               draw: (ctx: CanvasRenderingContext2D, rect: LayoutRect, st: CanvasWidgetDrawState) => drawButton(
-                ctx, rect, mobile ? 'Map' : 'World Map', st, { variant: 'primary', icon: 'map', size: 13 }
+                ctx, rect, mobile ? 'Map' : 'World Map', st, { variant: 'primary', icon: 'map', size: isPhone ? 11.5 : 13 }
               )
             }
           }),
           boxNode({
-            id: 'cs-camp-quick-fight', style: { width: mobile ? 76 : 86, height: 34 },
+            id: 'cs-camp-quick-fight', style: { width: isPhone ? 60 : mobile ? 72 : 82, height: 34 },
             widget: {
               type: 'button',
               label: 'Fight',
@@ -5877,7 +5995,7 @@ async function start() {
                 openStory(selectedStage.index, pendingEndless)
               },
               draw: (ctx: CanvasRenderingContext2D, rect: LayoutRect, st: CanvasWidgetDrawState) => drawButton(
-                ctx, rect, 'Fight', st, { variant: 'success', icon: 'sword', size: 12.5 }
+                ctx, rect, 'Fight', st, { variant: 'success', icon: 'sword', size: isPhone ? 11.5 : 12.5 }
               )
             }
           })
@@ -6629,6 +6747,317 @@ async function start() {
   }
 
   // =========================================================================
+  // CODEX / BESTIARY MODAL
+  // =========================================================================
+
+  function buildCodexTree(w: number, h: number): LayoutNode {
+    const camp = state.campaign
+    const mobile = w < 640
+    const tablet = w >= 640 && w < 960
+    const shortH = h < 660
+    const progress = getCodexProgress(camp)
+
+    const enemyEntries = getBestiaryEntries(camp)
+    const heroEntries = getHeroCodexEntries(camp)
+    const equipEntries = getEquipCodexEntries(camp)
+
+    const listItems: CodexListEntry[] = codexTab === 'enemies'
+      ? enemyEntries.map(data => ({ kind: 'enemy' as const, data }))
+      : codexTab === 'heroes'
+        ? heroEntries.map(data => ({ kind: 'hero' as const, data }))
+        : equipEntries.map(data => ({ kind: 'gear' as const, data }))
+
+    // Ensure a valid entry is selected for the active tab
+    if (!codexSelectedId || !listItems.some(it => it.data.id === codexSelectedId)) {
+      codexSelectedId = listItems[0]?.data.id ?? null
+    }
+    const selectedItem = listItems.find(it => it.data.id === codexSelectedId) ?? listItems[0]
+
+    const modalW = mobile ? Math.max(320, w - 12) : Math.min(1080, w - 32)
+    const modalH = mobile ? Math.max(540, h - 12) : Math.min(664, h - 28)
+    const modalPad = mobile ? 8 : 14
+    const headerH = mobile ? 38 : 48
+    const tabsH = mobile ? 34 : 38
+    const bodyH = Math.max(200, modalH - modalPad * 2 - headerH - tabsH - 20)
+
+    const pageSize = mobile
+      ? 4
+      : Math.max(4, Math.min(8, Math.floor((bodyH - 38) / 56)))
+    const totalPages = Math.max(1, Math.ceil(listItems.length / pageSize))
+    if (codexPage >= totalPages) codexPage = totalPages - 1
+    if (codexPage < 0) codexPage = 0
+    const pageStart = codexPage * pageSize
+    const visibleItems = listItems.slice(pageStart, pageStart + pageSize)
+
+    const portraitForItem = (item: CodexListEntry): HTMLCanvasElement | undefined => {
+      if (item.kind === 'enemy') {
+        return item.data.discovered ? portraits[item.data.id] : undefined
+      }
+      if (item.kind === 'hero') {
+        const owned = camp.heroes
+          .filter(h => h.heroId === item.data.id)
+          .sort((a, b) => b.stars - a.stars)[0]
+        return owned ? heroCardPortrait(owned) : portraits[item.data.id]
+      }
+      return undefined
+    }
+
+    const paginationBar = row({
+      id: 'codex-pager',
+      style: { height: mobile ? 26 : 30, gap: 6, align: 'center' }
+    }, [
+      boxNode({
+        id: 'cs-codex-prev',
+        style: { width: mobile ? 60 : 72, height: mobile ? 26 : 28 },
+        widget: {
+          type: 'button',
+          label: 'Prev',
+          disabled: codexPage <= 0,
+          onPress: () => {
+            if (codexPage > 0) {
+              codexPage -= 1
+              state.sounds.push({ kind: 'card', pitch: 0.96 })
+              uiDirty = true
+            }
+          },
+          draw: (ctx: CanvasRenderingContext2D, rect: LayoutRect, st: CanvasWidgetDrawState) => drawButton(
+            ctx, rect, 'Prev', st, { variant: 'secondary', icon: 'chevron-left', size: 11 }
+          )
+        }
+      }),
+      boxNode({
+        id: 'codex-page-label',
+        style: { grow: 1, height: mobile ? 26 : 28 },
+        widget: {
+          type: 'panel',
+          draw: (ctx: CanvasRenderingContext2D, rect: LayoutRect) => {
+            drawText(
+              ctx,
+              `Page ${codexPage + 1} / ${totalPages} (${listItems.length})`,
+              rect.x + rect.width * 0.5,
+              rect.y + rect.height * 0.5 + 0.5,
+              { size: 10.5, weight: 800, color: COLOR.muted, align: 'center' }
+            )
+          }
+        }
+      }),
+      boxNode({
+        id: 'cs-codex-next',
+        style: { width: mobile ? 60 : 72, height: mobile ? 26 : 28 },
+        widget: {
+          type: 'button',
+          label: 'Next',
+          disabled: codexPage >= totalPages - 1,
+          onPress: () => {
+            if (codexPage < totalPages - 1) {
+              codexPage += 1
+              state.sounds.push({ kind: 'card', pitch: 1.06 })
+              uiDirty = true
+            }
+          },
+          draw: (ctx: CanvasRenderingContext2D, rect: LayoutRect, st: CanvasWidgetDrawState) => drawButton(
+            ctx, rect, 'Next', st, { variant: 'secondary', icon: 'chevron-right', size: 11 }
+          )
+        }
+      })
+    ])
+
+    const detailNode = boxNode({
+      id: 'codex-detail-pane',
+      style: { grow: 1 },
+      widget: {
+        type: 'panel',
+        blocksPointer: true,
+        draw: (ctx: CanvasRenderingContext2D, rect: LayoutRect) => {
+          if (!selectedItem) {
+            drawEmptyNote(ctx, rect, 'Select an entry to inspect its dossier.')
+            return
+          }
+          if (selectedItem.kind === 'enemy') {
+            drawCodexEnemyDetail(ctx, rect, selectedItem.data, portraitForItem(selectedItem), mobile || shortH)
+          } else if (selectedItem.kind === 'hero') {
+            drawCodexHeroDetail(ctx, rect, selectedItem.data, portraitForItem(selectedItem), mobile || shortH)
+          } else {
+            drawCodexEquipDetail(ctx, rect, selectedItem.data, mobile || shortH)
+          }
+        }
+      }
+    })
+
+    const makeEntryButton = (item: CodexListEntry, slotIdx: number, rowH: number, compactCard: boolean): LayoutNode => {
+      const itemId = item.data.id
+      const isSelected = itemId === codexSelectedId
+      const label = item.kind === 'enemy' ? item.data.displayName : item.data.spec.name
+      return boxNode({
+        id: `cs-codex-entry-${slotIdx}`,
+        style: compactCard ? { grow: 1, height: rowH } : { height: rowH },
+        widget: {
+          type: 'button',
+          label,
+          selected: isSelected,
+          onPress: () => {
+            codexSelectedId = itemId
+            state.sounds.push({ kind: 'card', pitch: 1.04 })
+            uiDirty = true
+          },
+          draw: (ctx: CanvasRenderingContext2D, rect: LayoutRect, st: CanvasWidgetDrawState) => drawCodexEntryCard(
+            ctx, rect, item, { ...st, selected: isSelected }, portraitForItem(item), compactCard
+          )
+        }
+      })
+    }
+
+    let bodyNode: LayoutNode
+    if (mobile) {
+      const cardH = shortH ? 42 : 46
+      const rowA = visibleItems.slice(0, 2)
+      const rowB = visibleItems.slice(2, 4)
+      const gridRows: LayoutNode[] = []
+      if (rowA.length > 0) {
+        gridRows.push(row({ id: 'codex-grid-r0', style: { height: cardH, gap: 5 } }, [
+          makeEntryButton(rowA[0], 0, cardH, true),
+          rowA[1] ? makeEntryButton(rowA[1], 1, cardH, true) : spacerNode()
+        ]))
+      }
+      if (rowB.length > 0) {
+        gridRows.push(row({ id: 'codex-grid-r1', style: { height: cardH, gap: 5 } }, [
+          makeEntryButton(rowB[0], 2, cardH, true),
+          rowB[1] ? makeEntryButton(rowB[1], 3, cardH, true) : spacerNode()
+        ]))
+      }
+      const listSectionH = gridRows.length * cardH + Math.max(0, gridRows.length - 1) * 5 + 32
+      bodyNode = column({ id: 'codex-mobile-body', style: { grow: 1, gap: 6 } }, [
+        column({ id: 'codex-mobile-list', style: { height: listSectionH, gap: 5 } }, [
+          ...gridRows,
+          paginationBar
+        ]),
+        detailNode
+      ])
+    } else {
+      const listW = tablet ? Math.round(modalW * 0.39) : 344
+      const cardH = Math.max(46, Math.min(54, Math.floor((bodyH - 36 - (pageSize - 1) * 5) / pageSize)))
+      const entryNodes = visibleItems.map((it, idx) => makeEntryButton(it, idx, cardH, false))
+      bodyNode = row({ id: 'codex-desktop-body', style: { grow: 1, gap: 10, align: 'stretch' } }, [
+        column({ id: 'codex-left-pane', style: { width: listW, gap: 5 } }, [
+          column({ id: 'codex-list-items', style: { grow: 1, gap: 5 } }, entryNodes),
+          paginationBar
+        ]),
+        detailNode
+      ])
+    }
+
+    return overlay({ id: 'root', style: { anchor: 'fill' } }, [
+      boxNode({
+        id: 'codex-scrim',
+        style: { anchor: 'fill' },
+        widget: {
+          type: 'panel',
+          blocksPointer: true,
+          draw: (ctx: CanvasRenderingContext2D, rect: LayoutRect) => {
+            ctx.fillStyle = '#070b16d8'
+            ctx.fillRect(rect.x, rect.y, rect.width, rect.height)
+          }
+        }
+      }),
+      column({
+        id: 'codex-modal',
+        style: {
+          anchor: 'center',
+          width: modalW,
+          height: modalH,
+          padding: modalPad,
+          gap: mobile ? 6 : 8,
+          respectSafeArea: true
+        },
+        widget: {
+          type: 'panel',
+          blocksPointer: true,
+          draw: (ctx: CanvasRenderingContext2D, rect: LayoutRect) => drawModal(ctx, rect, COLOR.accent)
+        }
+      }, [
+        // Top Header + Progress + Back button
+        row({ id: 'codex-header-row', style: { height: headerH, gap: 8, align: 'center' } }, [
+          boxNode({
+            id: 'codex-header-info',
+            style: { grow: 1, height: headerH },
+            widget: {
+              type: 'panel',
+              draw: (ctx: CanvasRenderingContext2D, rect: LayoutRect) => drawCodexHeader(ctx, rect, progress, mobile)
+            }
+          }),
+          boxNode({
+            id: 'cs-codex-close',
+            style: { width: mobile ? 66 : 92, height: mobile ? 32 : 36 },
+            widget: {
+              type: 'button',
+              label: 'Back',
+              onPress: () => closeCodex(),
+              draw: (ctx: CanvasRenderingContext2D, rect: LayoutRect, st: CanvasWidgetDrawState) => drawButton(
+                ctx, rect, 'Back', st, { variant: 'secondary', icon: 'close', trailing: mobile ? undefined : 'Esc', size: mobile ? 11.5 : 12.5 }
+              )
+            }
+          })
+        ]),
+
+        // 3 Tabs: Bestiary | Heroes | Gear & Drops
+        row({
+          id: 'codex-tab-bar',
+          style: { height: tabsH, padding: [3, 4], gap: 4, align: 'center' },
+          widget: {
+            type: 'panel',
+            draw: (ctx: CanvasRenderingContext2D, rect: LayoutRect) => drawSegmentTrack(ctx, rect)
+          }
+        }, [
+          boxNode({
+            id: 'cs-codex-tab-enemies',
+            style: { grow: 1, height: tabsH - 6 },
+            widget: {
+              type: 'button',
+              label: 'Bestiary',
+              selected: codexTab === 'enemies',
+              onPress: () => selectCodexTab('enemies'),
+              draw: (ctx: CanvasRenderingContext2D, rect: LayoutRect, st: CanvasWidgetDrawState) => drawTab(
+                ctx, rect, 'Bestiary', { ...st, selected: codexTab === 'enemies' },
+                { icon: 'skull', count: `${progress.enemiesDiscovered}/${progress.enemiesTotal}` }
+              )
+            }
+          }),
+          boxNode({
+            id: 'cs-codex-tab-heroes',
+            style: { grow: 1, height: tabsH - 6 },
+            widget: {
+              type: 'button',
+              label: 'Heroes',
+              selected: codexTab === 'heroes',
+              onPress: () => selectCodexTab('heroes'),
+              draw: (ctx: CanvasRenderingContext2D, rect: LayoutRect, st: CanvasWidgetDrawState) => drawTab(
+                ctx, rect, 'Heroes', { ...st, selected: codexTab === 'heroes' },
+                { icon: 'users', count: `${progress.heroesOwned}/${progress.heroesTotal}` }
+              )
+            }
+          }),
+          boxNode({
+            id: 'cs-codex-tab-gear',
+            style: { grow: 1, height: tabsH - 6 },
+            widget: {
+              type: 'button',
+              label: 'Gear & Drops',
+              selected: codexTab === 'gear',
+              onPress: () => selectCodexTab('gear'),
+              draw: (ctx: CanvasRenderingContext2D, rect: LayoutRect, st: CanvasWidgetDrawState) => drawTab(
+                ctx, rect, mobile ? 'Gear' : 'Gear & Drops', { ...st, selected: codexTab === 'gear' },
+                { icon: 'bag', count: `${progress.equipmentOwned}/${progress.equipmentTotal}` }
+              )
+            }
+          })
+        ]),
+
+        bodyNode
+      ])
+    ])
+  }
+
+  // =========================================================================
   // PERFORMANCE TELEMETRY OVERLAY
   // =========================================================================
 
@@ -6670,6 +7099,7 @@ async function start() {
       : screen === 'story' ? buildStoryTree(w, h)
       : screen === 'battle' ? buildBattleTree(w, h)
       : screen === 'camp' ? buildCampTree(w, h)
+      : screen === 'codex' ? buildCodexTree(w, h)
       : screen === 'victory' ? buildResultTree(w, h, true)
       : screen === 'defeat' ? buildResultTree(w, h, false)
       : buildPausedTree(w, h)
@@ -7109,6 +7539,9 @@ async function start() {
       activeTipId: getActiveDiscoveryTip(state)?.id ?? null,
       seenTips: state.campaign.seenTips.slice(),
       tipsDisabled: state.campaign.tipsDisabled === true,
+      discoveredEnemies: state.campaign.discoveredEnemies.slice(),
+      codexTab,
+      codexProgress: getCodexProgress(state.campaign),
       hasResumableBattle: Boolean(resumableBattle),
       resumableBattleTurn: resumableBattle?.turn ?? 0,
       resumableBattleStageId: resumableBattle?.stageId ?? null,
@@ -7142,6 +7575,10 @@ async function start() {
       },
       openCamp: (tab: CampTab = 'squad') => {
         openCamp(tab)
+        renderUiNow()
+      },
+      openCodex: (tab?: CodexTab) => {
+        openCodex(tab)
         renderUiNow()
       },
       skipPackAnim: () => {
