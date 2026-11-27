@@ -3650,54 +3650,60 @@ export function computeEnemyThreat(battle: BattleState, enemyUid: string): Enemy
   const indirect = enemy.isBoss
   const maxSpan = enemy.range > 1 ? enemy.range + 1 : enemy.range
 
+  const fpSize = getUnitFootprintSize(enemy)
   for (const stage of stagingTiles) {
-    const rMin = Math.max(0, stage.row - maxSpan)
-    const rMax = Math.min(battle.rows - 1, stage.row + maxSpan)
-    const cMin = Math.max(0, stage.col - maxSpan)
-    const cMax = Math.min(battle.cols - 1, stage.col + maxSpan)
+    const fpCells = getFootprintCellsAt(stage.col, stage.row, fpSize)
+    const fpKeySet = fpSize > 1 ? new Set(fpCells.map(fc => `${fc.col},${fc.row}`)) : null
+    for (const origin of fpCells) {
+      const rMin = Math.max(0, origin.row - maxSpan)
+      const rMax = Math.min(battle.rows - 1, origin.row + maxSpan)
+      const cMin = Math.max(0, origin.col - maxSpan)
+      const cMax = Math.min(battle.cols - 1, origin.col + maxSpan)
 
-    for (let row = rMin; row <= rMax; row++) {
-      for (let col = cMin; col <= cMax; col++) {
-        const d = manhattan(stage.col, stage.row, col, row)
-        if (d < 1 || d > maxSpan) continue
-        const cell = battle.cells[row]?.[col]
-        if (!cell || !cell.walkable) continue
-        const effRange = effectiveAttackRange(battle, stage.col, stage.row, col, row, enemy.range)
-        if (d > effRange) continue
-        if (!hasLineOfSight(battle, stage.col, stage.row, col, row, indirect)) continue
+      for (let row = rMin; row <= rMax; row++) {
+        for (let col = cMin; col <= cMax; col++) {
+          const d = manhattan(origin.col, origin.row, col, row)
+          if (d < 1 || d > maxSpan) continue
+          const key = `${col},${row}`
+          if (fpKeySet && fpKeySet.has(key)) continue
+          const cell = battle.cells[row]?.[col]
+          if (!cell || !cell.walkable) continue
+          const effRange = effectiveAttackRange(battle, origin.col, origin.row, col, row, enemy.range)
+          if (d > effRange) continue
+          if (!hasLineOfSight(battle, origin.col, origin.row, col, row, indirect)) continue
 
-        const key = `${col},${row}`
-        if (!attackSeen.has(key)) {
-          attackSeen.add(key)
-          attackTiles.push({ col, row })
-        }
+          if (!attackSeen.has(key)) {
+            attackSeen.add(key)
+            attackTiles.push({ col, row })
+          }
 
-        const ally = allyByKey.get(key)
-        if (ally) {
-          const arc = computeAttackArc(stage.col, stage.row, ally.col, ally.row, ally.facing)
-          if (arc === 'flank' || arc === 'back') {
-            const prevTgt = flankByTargetKey.get(key)
-            if (!prevTgt || arcSeverity(arc) > arcSeverity(prevTgt.arc)) {
-              flankByTargetKey.set(key, {
-                col: ally.col,
-                row: ally.row,
-                targetUid: ally.uid,
-                arc,
-                fromCol: stage.col,
-                fromRow: stage.row
-              })
-            }
-            const originKey = `${stage.col},${stage.row}`
-            const prevOrg = flankByOriginKey.get(originKey)
-            if (!prevOrg || arcSeverity(arc) > arcSeverity(prevOrg.arc)) {
-              flankByOriginKey.set(originKey, {
-                col: stage.col,
-                row: stage.row,
-                targetUid: ally.uid,
-                arc,
-                fromCol: ally.col,
-                fromRow: ally.row
-              })
+          const ally = allyByKey.get(key)
+          if (ally) {
+            const arc = computeAttackArc(origin.col, origin.row, ally.col, ally.row, ally.facing)
+            if (arc === 'flank' || arc === 'back') {
+              const prevTgt = flankByTargetKey.get(key)
+              if (!prevTgt || arcSeverity(arc) > arcSeverity(prevTgt.arc)) {
+                flankByTargetKey.set(key, {
+                  col: ally.col,
+                  row: ally.row,
+                  targetUid: ally.uid,
+                  arc,
+                  fromCol: origin.col,
+                  fromRow: origin.row
+                })
+              }
+              const originKey = `${origin.col},${origin.row}`
+              const prevOrg = flankByOriginKey.get(originKey)
+              if (!prevOrg || arcSeverity(arc) > arcSeverity(prevOrg.arc)) {
+                flankByOriginKey.set(originKey, {
+                  col: origin.col,
+                  row: origin.row,
+                  targetUid: ally.uid,
+                  arc,
+                  fromCol: ally.col,
+                  fromRow: ally.row
+                })
+              }
             }
           }
         }
@@ -4514,15 +4520,16 @@ function previewDamageMath(
   let empowered = false
   let attackArc: AttackArc = 'front'
   let arcCritBonus = 0
-  const terrainDef = terrainDefBonus(battle.cells[defender.row][defender.col].terrain)
+  const hitCell = attacker ? closestFootprintCell(fromCol, fromRow, defender) : { col: defender.col, row: defender.row }
+  const terrainDef = terrainDefBonus(battle.cells[hitCell.row][hitCell.col].terrain)
   if (attacker) {
     const aLvl = cellHeightAt(battle, fromCol, fromRow)
-    const dLvl = cellHeightAt(battle, defender.col, defender.row)
+    const dLvl = cellHeightAt(battle, hitCell.col, hitCell.row)
     elevationDiff = aLvl - dLvl
     dmg *= elevationDamageMultiplier(aLvl, dLvl)
     highGround = elevationDiff > 0
-    coverBonus = computeCoverBonus(battle, fromCol, fromRow, defender.col, defender.row, attacker)
-    attackArc = computeAttackArc(fromCol, fromRow, defender.col, defender.row, defender.facing)
+    coverBonus = computeCoverBonus(battle, fromCol, fromRow, hitCell.col, hitCell.row, attacker)
+    attackArc = computeAttackArc(fromCol, fromRow, hitCell.col, hitCell.row, defender.facing)
     const arcMod = attackArcModifiers(attackArc)
     dmg *= arcMod.dmgMul
     arcCritBonus = arcMod.critBonus + computeBackstabPassiveCritBonus(attacker, attackArc)
@@ -4539,8 +4546,8 @@ function previewDamageMath(
   const effDef = Math.max(0, (defender.def + shieldWallDef) * (1 - totalIgnoreArmor) + terrainDef + coverBonus)
   const baseDmg = Math.max(4, Math.round(dmg - effDef * 0.72))
   const rangedTallGrass = attacker !== null &&
-    manhattan(fromCol, fromRow, defender.col, defender.row) >= 2 &&
-    battle.cells[defender.row][defender.col].terrain === 'tall_grass'
+    manhattan(fromCol, fromRow, hitCell.col, hitCell.row) >= 2 &&
+    battle.cells[hitCell.row][hitCell.col].terrain === 'tall_grass'
   const grassCritPenalty = rangedTallGrass ? TALL_GRASS_RANGED_CRIT_REDUCTION : 0
   const critChance = canCrit && attacker ? clamp(attacker.crit + arcCritBonus - grassCritPenalty, 0, 0.95) : 0
   const critRaw = critChance > 0 ? Math.round(baseDmg * 1.55) : baseDmg
@@ -5493,6 +5500,8 @@ function triggerOnKoEffects(
         if (attacker.team === 'ally' && splashTarget.team === 'enemy') {
           awardHeroBattleXp(state, attacker, XP_ACTION_DAMAGE + (splashTarget.isBoss ? XP_ACTION_BOSS_KO : XP_ACTION_KO))
         }
+      } else {
+        triggerFrontierBossPhaseIfReady(state, splashTarget)
       }
     }
   }
@@ -5523,13 +5532,14 @@ function applyDamageDetailed(
   let attackArc: AttackArc = 'front'
   let arcCritBonus = 0
   let coverBonus = 0
-  const terrainDef = terrainDefBonus(battle.cells[defender.row][defender.col].terrain)
+  const hitCell = attacker ? closestFootprintCell(attacker.col, attacker.row, defender) : { col: defender.col, row: defender.row }
+  const terrainDef = terrainDefBonus(battle.cells[hitCell.row][hitCell.col].terrain)
   if (attacker) {
     const aLvl = cellHeightAt(battle, attacker.col, attacker.row)
-    const dLvl = cellHeightAt(battle, defender.col, defender.row)
+    const dLvl = cellHeightAt(battle, hitCell.col, hitCell.row)
     dmg *= elevationDamageMultiplier(aLvl, dLvl)
-    coverBonus = computeCoverBonus(battle, attacker.col, attacker.row, defender.col, defender.row, attacker)
-    attackArc = computeAttackArc(attacker.col, attacker.row, defender.col, defender.row, defender.facing)
+    coverBonus = computeCoverBonus(battle, attacker.col, attacker.row, hitCell.col, hitCell.row, attacker)
+    attackArc = computeAttackArc(attacker.col, attacker.row, hitCell.col, hitCell.row, defender.facing)
     const arcMod = attackArcModifiers(attackArc)
     dmg *= arcMod.dmgMul
     arcCritBonus = arcMod.critBonus + computeBackstabPassiveCritBonus(attacker, attackArc)
@@ -5546,8 +5556,8 @@ function applyDamageDetailed(
 
   let isCrit = false
   const rangedTallGrass = attacker !== null &&
-    manhattan(attacker.col, attacker.row, defender.col, defender.row) >= 2 &&
-    battle.cells[defender.row][defender.col].terrain === 'tall_grass'
+    manhattan(attacker.col, attacker.row, hitCell.col, hitCell.row) >= 2 &&
+    battle.cells[hitCell.row][hitCell.col].terrain === 'tall_grass'
   const grassCritPenalty = rangedTallGrass ? TALL_GRASS_RANGED_CRIT_REDUCTION : 0
   if (canCrit && attacker && randFloat(state.campaign) < clamp(attacker.crit + arcCritBonus - grassCritPenalty, 0, 0.95)) {
     isCrit = true
@@ -5829,6 +5839,8 @@ function applyPoisonTick(state: GameState, unit: BattleUnit, dmg: number): void 
   state.sounds.push({ kind: 'hit', pitch: 0.85 })
   if (unit.hp <= 0) {
     handleUnitDefeat(state, unit)
+  } else {
+    triggerFrontierBossPhaseIfReady(state, unit)
   }
 }
 
@@ -5980,9 +5992,20 @@ function advanceGauntletWave(state: GameState): boolean {
   return true
 }
 
+function checkFrontierBossPhases(state: GameState): void {
+  const battle = state.battle
+  if (!battle) return
+  for (const u of battle.units) {
+    if (u.alive && u.team === 'enemy' && shouldTriggerUnbrokenCrownPhase2(u)) {
+      triggerFrontierBossPhaseIfReady(state, u)
+    }
+  }
+}
+
 function checkBattleOutcome(state: GameState): void {
   const battle = state.battle
   if (!battle || battle.phase === 'deploy' || battle.phase === 'victory' || battle.phase === 'defeat') return
+  checkFrontierBossPhases(state)
   if (canAdvanceGauntletRound(battle) && advanceGauntletWave(state)) return
   const outcome = evaluateBattleObjective(battle)
 
@@ -6470,6 +6493,8 @@ function executePincerFollowUp(state: GameState, attacker: BattleUnit, target: B
     if (target.hp <= 0) {
       handleUnitDefeat(state, target)
       triggerOnKoEffects(state, assister, target, { isSkillKill: false, rawHitDamage: rawDmg })
+    } else {
+      triggerFrontierBossPhaseIfReady(state, target)
     }
     if (assister.team === 'ally' && target.team === 'enemy' && (finalDmg > 0 || absorbed > 0)) {
       const koBonus = target.hp <= 0 ? (target.isBoss ? XP_ACTION_BOSS_KO : XP_ACTION_KO) : 0
@@ -6570,6 +6595,8 @@ function executeCounterAttack(
   if (attacker.hp <= 0) {
     handleUnitDefeat(state, attacker)
     triggerOnKoEffects(state, defender, attacker, { isSkillKill: false, rawHitDamage: calc.normalDmg })
+  } else {
+    triggerFrontierBossPhaseIfReady(state, attacker)
   }
   if (defender.team === 'ally' && attacker.team === 'enemy' && (hpDmg > 0 || absorbed > 0)) {
     const koBonus = attacker.hp <= 0 ? (attacker.isBoss ? XP_ACTION_BOSS_KO : XP_ACTION_KO) : 0

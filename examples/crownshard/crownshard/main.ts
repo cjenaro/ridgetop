@@ -1935,9 +1935,13 @@ async function start() {
     const oakhavenPatron = showOakhavenExchange && hasOakhavenPatronDiscount(camp)
     const inspW = mobile ? Math.min(w - 16, 460) : 344
     const extraPanels = (showChallengeControls ? 1 : 0) + (showOakhavenExchange ? 1 : 0)
+    const abyssExtraH = selectedIsAbyss ? 42 : 0
     const inspH = mobile
-      ? Math.min(Math.min(h - topH - 36, Math.round(h * (extraPanels > 0 ? 0.72 : 0.42))), extraPanels > 1 ? 464 : extraPanels > 0 ? 408 : 258)
-      : Math.min(h - topH - outerPad * 3 - 8, extraPanels > 1 ? 690 : extraPanels > 0 ? 624 : 512)
+      ? Math.min(
+          Math.min(h - topH - 36, Math.round(h * (extraPanels > 0 ? 0.72 : selectedIsAbyss ? 0.50 : 0.42))),
+          (extraPanels > 1 ? 464 : extraPanels > 0 ? 408 : 258) + abyssExtraH
+        )
+      : Math.min(h - topH - outerPad * 3 - 8, (extraPanels > 1 ? 690 : extraPanels > 0 ? 624 : 512) + abyssExtraH)
 
     const inspectorPanel = column({
       id: 'wm-inspector',
@@ -2615,7 +2619,9 @@ async function start() {
           draw: (ctx: CanvasRenderingContext2D, rect: LayoutRect) => drawHintPill(
             ctx,
             rect,
-            `Drag to Pan · Scroll to Zoom · 9 Regions · ${PLAYABLE_CHAPTERS.length} Playable · ${soonCount} Future (Tier VI–VIII)`,
+            soonCount > 0
+              ? `Drag to Pan · Scroll to Zoom · 9 Regions · ${PLAYABLE_CHAPTERS.length} Playable · ${soonCount} Future (Tier VI–VIII)`
+              : `Drag to Pan · Scroll to Zoom · 9 Regions · ${PLAYABLE_CHAPTERS.length} Playable (Tier I–VIII)`,
             COLOR.accentHi
           )
         }

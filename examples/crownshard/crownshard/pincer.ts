@@ -1,6 +1,7 @@
+import { closestFootprintCell, getUnitFootprintSize } from './expansion-act2.ts'
+import { mutatorDamageMultiplier } from './mutators.ts'
 import { cellHeightAt, terrainDefBonus } from './types.ts'
 import type { BattleState, BattleUnit, SkillSpec } from './types.ts'
-import { mutatorDamageMultiplier } from './mutators.ts'
 
 export const PINCER_DAMAGE_RATIO = 0.5
 export const PINCER_MIN_DAMAGE = 4
@@ -43,17 +44,21 @@ export function findPincerAssisters(
   attacker: Pick<BattleUnit, 'uid' | 'team' | 'alive'>,
   attackerCol: number,
   attackerRow: number,
-  target: Pick<BattleUnit, 'uid' | 'team' | 'col' | 'row' | 'alive'>
+  target: Pick<BattleUnit, 'uid' | 'team' | 'col' | 'row' | 'alive'> & Partial<Pick<BattleUnit, 'footprintSize' | 'enemyId'>>
 ): BattleUnit[] {
   if (!attacker.alive || !target.alive) return []
   if (attacker.team === target.team) return []
-  if (manhattan(attackerCol, attackerRow, target.col, target.row) !== 1) return []
+  const hitCell = closestFootprintCell(attackerCol, attackerRow, target)
+  if (manhattan(attackerCol, attackerRow, hitCell.col, hitCell.row) !== 1) return []
 
-  const oppCol = target.col + (target.col - attackerCol)
-  const oppRow = target.row + (target.row - attackerRow)
+  const fpSize = getUnitFootprintSize(target)
+  const stepCol = hitCell.col - attackerCol
+  const stepRow = hitCell.row - attackerRow
+  const oppCol = hitCell.col + stepCol * fpSize
+  const oppRow = hitCell.row + stepRow * fpSize
   if (oppCol < 0 || oppCol >= battle.cols || oppRow < 0 || oppRow >= battle.rows) return []
 
-  const targetHeight = cellHeightAt(battle, target.col, target.row)
+  const targetHeight = cellHeightAt(battle, hitCell.col, hitCell.row)
   const assisters: BattleUnit[] = []
   for (const u of battle.units) {
     if (u.team !== attacker.team || u.uid === attacker.uid || !u.alive || u.stunTurns > 0) continue

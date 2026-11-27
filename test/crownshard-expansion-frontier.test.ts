@@ -28,6 +28,10 @@ import {
   FRONTIER_BOSS_IDS,
   FRONTIER_STAGE_IDS,
   LIGHTNING_CONDUIT_DAMAGE,
+  computeCombatForecast,
+  computeEnemyThreat,
+  findPincerAssisters,
+  planAutoBattleAction,
   LIGHTNING_CONDUIT_PERIOD,
   SANDSTORM_GUST_DAMAGE,
   SANDSTORM_GUST_PERIOD,
@@ -482,4 +486,98 @@ test('expansion-frontier.ts compiles cleanly to GDScript via compileTsToGd', () 
   assert.ok(gd.includes('func evaluateFrontierRoundHazard('), 'GDScript output should contain evaluateFrontierRoundHazard')
   assert.ok(gd.includes('func applyFrontierBossPhaseTransition('), 'GDScript output should contain applyFrontierBossPhaseTransition')
   assert.ok(gd.includes('func shouldTriggerUnbrokenCrownPhase2('), 'GDScript output should contain shouldTriggerUnbrokenCrownPhase2')
+})
+
+test('Wave 7 QA regressions: Unbroken Crown Phase 2 via Poison DoT & 2x2 Frostwyrm Auto-Battle/Threat/Flank/Pincer', () => {
+  // 1. Unbroken Crown dropping <= 50% HP via Poison DoT must still awaken Phase 2
+  const state = createInitialState(9901)
+  const battle = startStageBattle(state, 'first_sun_sanctum')
+  const crown = battle.units.find(u => u.enemyId === 'unbroken_crown_boss')!
+  for (const u of battle.units) {
+    if (u.team === 'enemy' && u.uid !== crown.uid) {
+      u.alive = false
+      u.hp = 0
+    }
+  }
+  crown.hp = Math.floor(crown.maxHp * 0.5) + 4
+  crown.shield = 0
+  crown.poisonStacks = 3
+  crown.ct = 999
+  battle.phase = 'player'
+  const actor = battle.units.find(u => u.alive && u.team === 'ally')!
+  battle.activeUnitUid = actor.uid
+  endPlayerTurn(state)
+  assert.equal(crown.bossPhase, 2, 'Unbroken Crown must trigger Phase 2 when Poison DoT drops HP <= 50%')
+
+  // 2. 2x2 Frostwyrm Rimefang: Auto-Battle strikes adjacent footprint cell, Threat covers all 4 cells, Flank arc & Pincer work
+  const wyrmState = createInitialState(9902)
+  const wyrmBattle = startStageBattle(wyrmState, 'wyrm_eyrie')
+  const rimefang = wyrmBattle.units.find(u => u.enemyId === 'frostwyrm_rimefang')!
+  const allies = wyrmBattle.units.filter(u => u.alive && u.team === 'ally')
+  for (const u of wyrmBattle.units) {
+    if (u.team === 'enemy' && u.uid !== rimefang.uid) {
+      u.alive = false
+      u.hp = 0
+    }
+  }
+  // Flatten a clear arena around Rimefang at (5,2)..(6,3)
+  for (let r = 0; r < wyrmBattle.rows; r++) {
+    for (let c = 0; c < wyrmBattle.cols; c++) {
+      wyrmBattle.cells[r][c] = {
+        ...wyrmBattle.cells[r][c],
+        terrain: 'snow',
+        heightLevel: 0,
+        elevation: 0,
+        walkable: true
+      }
+    }
+  }
+  rimefang.col = 5
+  rimefang.row = 2
+  rimefang.facing = 'e'
+  // Pin Rimefang onto its 2x2 perch using pillars around the non-attacking borders so moveTiles is empty
+  for (const [pc, pr] of [[4, 2], [4, 3], [7, 2], [7, 3], [5, 1], [5, 4]]) {
+    wyrmBattle.cells[pr][pc] = { ...wyrmBattle.cells[pr][pc], terrain: 'pillar', walkable: false }
+  }
+  const threat = computeEnemyThreat(wyrmBattle, rimefang.uid)
+  assert.equal(threat.moveTiles.length, 0, 'Pinned Rimefang should have 0 moveTiles')
+  assert.equal(
+    threat.attackTiles.some(t => t.col === 8 && t.row === 4),
+    true,
+    '2x2 Frostwyrm threat must radiate range 3 from bottom-right footprint cell (6,3) to (8,4)'
+  )
+  assert.equal(
+    threat.attackTiles.some(t => t.col === 6 && t.row === 3),
+    false,
+    'Pinned 2x2 Frostwyrm threat must not falsely flag its own footprint cell'
+  )
+
+  // Knight at (6,1) facing Rimefang's (6,2) cell while Rimefang faces East -> Flank arc!
+  const knight = allies[0]
+  const partner = allies[1] ?? allies[0]
+  knight.col = 6
+  knight.row = 1
+  knight.moved = true
+  knight.acted = false
+  knight.cooldowns = [3, 3, 3]
+  partner.col = 6
+  partner.row = 4 // directly across the 2x2 body from (6,1) -> (6,2)+(6,3) -> (6,4)!
+  wyrmBattle.phase = 'player'
+  wyrmBattle.activeUnitUid = knight.uid
+  wyrmBattle.hand = []
+  selectHeroByUid(wyrmState, knight.uid)
+
+  const fc = computeCombatForecast(wyrmState, 6, 2)!
+  assert.ok(fc, 'CombatForecast must resolve when targeting Rimefang non-anchor cell (6,2)')
+  assert.equal(fc.attackArc, 'flank', 'Attacking north flank of East-facing 2x2 Rimefang must register flank arc')
+
+  if (partner.uid !== knight.uid) {
+    const pincers = findPincerAssisters(wyrmBattle, knight, knight.col, knight.row, rimefang)
+    assert.ok(pincers.some(p => p.uid === partner.uid), 'Pincer must detect ally across 2x2 Rimefang body')
+  }
+
+  const abPlan = planAutoBattleAction(wyrmState)
+  assert.ok(abPlan !== null && abPlan.kind === 'attack', `Auto-Battle adjacent to non-anchor Rimefang cell must attack, got ${abPlan?.kind}`)
+  assert.equal(abPlan.targetCol, 6)
+  assert.equal(abPlan.targetRow, 2)
 })

@@ -1,7 +1,7 @@
 import { canCounterAttack, computeCounterDamage, isMeleeSkillEligibleForCounter } from './counter-attack.ts'
 import { HERO_SPECS, TACTIC_BY_ID } from './data.ts'
 import { classifyElement, previewElementalCombo } from './elemental-combos.ts'
-import { unitOccupiesCell } from './expansion-act2.ts'
+import { closestFootprintCell, getUnitFootprintCells, unitOccupiesCell } from './expansion-act2.ts'
 import { isEnemyShrouded, mutatorDamageMultiplier } from './mutators.ts'
 import {
   adjustCoverBonusForAttacker,
@@ -1232,12 +1232,14 @@ export function planAutoBattleAction(state: GameState): AutoBattleActionPlan | n
           }
         }
         for (const e of visibleEnemies) {
-          addCand(e.col, e.row)
-          if (skill.pattern === 'cross' || skill.pattern === 'area3') {
-            addCand(e.col + 1, e.row)
-            addCand(e.col - 1, e.row)
-            addCand(e.col, e.row + 1)
-            addCand(e.col, e.row - 1)
+          for (const fp of getUnitFootprintCells(e)) {
+            addCand(fp.col, fp.row)
+            if (skill.pattern === 'cross' || skill.pattern === 'area3') {
+              addCand(fp.col + 1, fp.row)
+              addCand(fp.col - 1, fp.row)
+              addCand(fp.col, fp.row + 1)
+              addCand(fp.col, fp.row - 1)
+            }
           }
         }
         if (skill.id === 'dawns_judgment') {
@@ -1281,13 +1283,14 @@ export function planAutoBattleAction(state: GameState): AutoBattleActionPlan | n
       }
     }
 
-    // 3c. Basic Attacks on alive visible enemies
+    // 3c. Basic Attacks on alive visible enemies (supports 2x2 multi-tile raid bosses!)
     for (const stand of stands) {
       for (const enemy of visibleEnemies) {
-        const dist = manhattan(stand.col, stand.row, enemy.col, enemy.row)
-        const effR = effectiveRange(battle, stand.col, stand.row, enemy.col, enemy.row, actor.range, actor)
+        const hitCell = closestFootprintCell(stand.col, stand.row, enemy)
+        const dist = manhattan(stand.col, stand.row, hitCell.col, hitCell.row)
+        const effR = effectiveRange(battle, stand.col, stand.row, hitCell.col, hitCell.row, actor.range, actor)
         if (dist > effR) continue
-        if (!hasClearLoS(battle, stand.col, stand.row, enemy.col, enemy.row, false)) continue
+        if (!hasClearLoS(battle, stand.col, stand.row, hitCell.col, hitCell.row, false)) continue
 
         const est = estimateStrikeDamage(
           battle,
@@ -1333,16 +1336,16 @@ export function planAutoBattleAction(state: GameState): AutoBattleActionPlan | n
                 kind: 'move_and_attack',
                 actorUid: actor.uid,
                 moveTo: { col: stand.col, row: stand.row },
-                targetCol: enemy.col,
-                targetRow: enemy.row,
+                targetCol: hitCell.col,
+                targetRow: hitCell.row,
                 score,
                 reason: `Move & strike ${enemy.name}`
               }
             : {
                 kind: 'attack',
                 actorUid: actor.uid,
-                targetCol: enemy.col,
-                targetRow: enemy.row,
+                targetCol: hitCell.col,
+                targetRow: hitCell.row,
                 score,
                 reason: `Strike ${enemy.name}`
               }
