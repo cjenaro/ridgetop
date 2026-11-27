@@ -182,6 +182,23 @@ export interface DecisionInput<I, E> {
 
 export interface Decision<L extends string> { label: L; evidence: readonly string[] }
 
+export interface DecisionUsage {
+  readonly inputTokens?: number
+  readonly outputTokens?: number
+}
+
+export interface DecisionDetailed<L extends string> extends Decision<L> {
+  readonly confidence?: number
+  readonly probabilities?: Readonly<Record<string, number>>
+  readonly evidenceProbabilities?: Readonly<Record<string, number>>
+  readonly bugProbability?: number
+  readonly bugSuspected?: boolean
+  readonly model?: string
+  readonly usage?: DecisionUsage
+  readonly latencyMs: number
+  readonly cached: boolean
+}
+
 export type DecisionOutcome<L extends string> = { id: string } & (
   { status: 'error'; message: string } |
   { status: 'invalid' } |

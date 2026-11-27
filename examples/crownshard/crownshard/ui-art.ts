@@ -8729,18 +8729,40 @@ export function drawWorldMapNode(
     selected: boolean
     time: number
     compact?: boolean
+    showLabel?: boolean
+    zoom?: number
   },
   st: CanvasWidgetDrawState
 ) {
   const { x, y, width: w } = rect
   const cx = x + w / 2
   const isSoon = Boolean(stage.comingSoon)
-  const r = opts.compact ? 16 : stage.kind === 'boss' ? 23 : stage.kind !== 'story' ? 20 : 18
-  const cy = y + r + 5
+  const hot = st.hovered || st.focused || opts.selected
+  const zoom = opts.zoom ?? 1
+  const frontier = !isSoon && opts.unlocked && !opts.cleared
+  const zoomedOutPin = zoom < 1.08 && !hot && !frontier
+  const r = zoomedOutPin
+    ? (opts.unlocked ? 8.5 : 6.5)
+    : opts.compact
+      ? ((!opts.unlocked && !hot && zoom < 1.42) ? 10.5 : 15.5)
+      : stage.kind === 'boss' ? 23 : stage.kind !== 'story' ? 20 : 18
+  const cy = y + (opts.compact ? 19 : r + 5)
   const biomeCol = BIOME_MAP_COLOR[stage.biome]
   const diffMeta = DIFFICULTY_META[stage.difficulty]
-  const frontier = !isSoon && opts.unlocked && !opts.cleared
-  const hot = st.hovered || st.focused || opts.selected
+
+  // Minimal map dot when scrolled far out (standard map LOD behavior so zoomed-out continent stays uncluttered)
+  if (zoomedOutPin) {
+    ctx.save()
+    ctx.beginPath()
+    ctx.arc(cx, cy, r, 0, Math.PI * 2)
+    ctx.fillStyle = opts.cleared ? '#2f8a5b' : opts.unlocked ? biomeCol.fill : '#232c44'
+    ctx.fill()
+    ctx.strokeStyle = opts.cleared ? '#9ef5c6' : '#0b1020'
+    ctx.lineWidth = 1.6
+    ctx.stroke()
+    ctx.restore()
+    return
+  }
 
   ctx.save()
 
@@ -8869,8 +8891,8 @@ export function drawWorldMapNode(
     drawIcon(ctx, 'star', bx, by, 8.5, COLOR.accentText)
   }
 
-  // Top-left difficulty pip (hidden on peaceful town hubs)
-  if (stage.kind !== 'town') {
+  // Top-left difficulty pip (hidden on peaceful town hubs and compact locked pins)
+  if (stage.kind !== 'town' && (!opts.compact || opts.unlocked || hot)) {
     const dx = cx - r * 0.74
     const dy = cy - r * 0.68
     const pipW = stage.difficulty >= 6 ? 18 : 14.5
@@ -8889,27 +8911,30 @@ export function drawWorldMapNode(
     })
   }
 
-  // Crisp parchment/slate name ribbon below the medallion
+  // Crisp parchment/slate name ribbon below the medallion (decluttered on compact/zoomed-out maps)
   const plaqueY = cy + r + 3
-  const plaqueH = opts.compact ? 16 : 18
-  const plaqueW = Math.min(w, Math.max(70, measureText(ctx, stage.title, opts.compact ? 9 : 10, 900, true) + 12))
-  const plaqueX = cx - plaqueW / 2
-  rr(ctx, plaqueX, plaqueY, plaqueW, plaqueH, 5)
-  ctx.fillStyle = opts.selected
-    ? '#35497a'
-    : isSoon ? 'rgba(42, 32, 24, 0.88)' : !opts.unlocked ? 'rgba(20, 26, 43, 0.88)' : 'rgba(24, 34, 58, 0.92)'
-  ctx.fill()
-  ctx.strokeStyle = opts.selected ? COLOR.accentHi : isSoon ? '#8f7454' : COLOR.outline
-  ctx.lineWidth = opts.selected ? 2 : 1.5
-  ctx.stroke()
-  drawText(ctx, stage.title, cx, plaqueY + plaqueH / 2 + 0.5, {
-    size: opts.compact ? 9 : 10,
-    weight: 900,
-    color: isSoon ? '#e0cca8' : !opts.unlocked ? '#9aa7c4' : opts.selected ? COLOR.accentHi : '#ffffff',
-    align: 'center',
-    maxW: plaqueW - 8,
-    display: true
-  })
+  const plaqueH = opts.compact ? 15 : 18
+  const shouldDrawLabel = (opts.showLabel ?? true) || hot
+  if (shouldDrawLabel) {
+    const plaqueW = Math.min(w, Math.max(66, measureText(ctx, stage.title, opts.compact ? 8.8 : 10, 900, true) + 12))
+    const plaqueX = cx - plaqueW / 2
+    rr(ctx, plaqueX, plaqueY, plaqueW, plaqueH, 5)
+    ctx.fillStyle = opts.selected
+      ? '#35497a'
+      : isSoon ? 'rgba(42, 32, 24, 0.88)' : !opts.unlocked ? 'rgba(20, 26, 43, 0.88)' : 'rgba(24, 34, 58, 0.92)'
+    ctx.fill()
+    ctx.strokeStyle = opts.selected ? COLOR.accentHi : isSoon ? '#8f7454' : COLOR.outline
+    ctx.lineWidth = opts.selected ? 2 : 1.5
+    ctx.stroke()
+    drawText(ctx, stage.title, cx, plaqueY + plaqueH / 2 + 0.5, {
+      size: opts.compact ? 8.8 : 10,
+      weight: 900,
+      color: isSoon ? '#e0cca8' : !opts.unlocked ? '#9aa7c4' : opts.selected ? COLOR.accentHi : '#ffffff',
+      align: 'center',
+      maxW: plaqueW - 8,
+      display: true
+    })
+  }
 
   // Crisp 3-star mastery pips pill directly beneath cleared World Map pins
   if (!isSoon && opts.cleared) {
@@ -8991,12 +9016,11 @@ export function drawStageMasteryChecklist(
         : obj.id === 'no_ko'
           ? '0 KOs'
           : obj.label.replace(/^Win in /, '').replace(/^Hold intact /, '')
-      const iconCol = obj.completed ? COLOR.good : '#5b6c94'
-      const textCol = obj.completed ? '#d9ffe8' : COLOR.muted
+      const textCol = obj.completed ? '#d9ffe8' : '#b8c8ea'
       drawText(ctx, `${obj.completed ? '✓' : '○'} ${shortLabel}`, cx, rowY, {
         size: 9.2,
         weight: obj.completed ? 800 : 700,
-        color: obj.completed ? textCol : iconCol,
+        color: textCol,
         maxW: colW - 4
       })
     }
@@ -11075,48 +11099,65 @@ export function drawCodexEnemyDetail(
   drawStatStrip(ctx, { x: innerX, y: cy, width: innerW, height: stripH }, statsRow2)
   cy += stripH + (compact ? 7 : 10)
 
-  const remH = Math.max(96, y + h - cy - pad)
-  const abilH = Math.max(54, Math.min(compact ? 66 : 78, Math.floor(remH * 0.30)))
-  const tipH = Math.max(46, Math.min(compact ? 54 : 64, Math.floor(remH * 0.24)))
-  const loreH = Math.max(44, Math.min(compact ? 56 : 68, Math.floor(remH * 0.24)))
-  const stageH = Math.max(42, remH - abilH - tipH - loreH - 18)
+  const maxBottom = y + h - pad
+  const availH = Math.max(0, maxBottom - cy)
+  const gap = compact ? 5 : 6
+  const abilH = Math.min(compact ? 62 : 78, Math.max(44, Math.floor(availH * 0.36)))
+  const tipH = Math.min(compact ? 52 : 64, Math.max(40, Math.floor(availH * 0.32)))
+
+  ctx.save()
+  ctx.beginPath()
+  ctx.rect(x + 2, y + 2, Math.max(0, w - 4), Math.max(0, h - 4))
+  ctx.clip()
 
   // Signature Ability & On-Hit Status
-  const abilTitle = entry.basicAttackStatus
-    ? `SIGNATURE · ${entry.signatureAbility.toUpperCase()} (ON HIT: ${entry.basicAttackStatus.toUpperCase()})`
-    : `SIGNATURE · ${entry.signatureAbility.toUpperCase()}`
-  drawCodexSectionBox(ctx, innerX, cy, innerW, abilH, abilTitle, '#ff9c6e')
-  drawParagraph(ctx, entry.abilityDesc, innerX + 11, cy + 20, innerW - 20, Math.max(18, abilH - 24), {
-    size: compact ? 10.5 : 11.5,
-    color: COLOR.text,
-    lineHeight: compact ? 13.5 : 15.5
-  })
-  cy += abilH + 6
+  if (cy + 36 <= maxBottom) {
+    const boxH = Math.min(abilH, maxBottom - cy)
+    const abilTitle = entry.basicAttackStatus
+      ? `SIGNATURE · ${entry.signatureAbility.toUpperCase()} (ON HIT: ${entry.basicAttackStatus.toUpperCase()})`
+      : `SIGNATURE · ${entry.signatureAbility.toUpperCase()}`
+    drawCodexSectionBox(ctx, innerX, cy, innerW, boxH, abilTitle, '#ff9c6e')
+    drawParagraph(ctx, entry.abilityDesc, innerX + 11, cy + 20, innerW - 20, Math.max(16, boxH - 24), {
+      size: compact ? 10.5 : 11.5,
+      color: COLOR.text,
+      lineHeight: compact ? 13.5 : 15.5
+    })
+    cy += boxH + gap
+  }
 
   // Tactical Tip
-  drawCodexSectionBox(ctx, innerX, cy, innerW, tipH, 'TACTICAL COUNTER-TIP', COLOR.good)
-  drawParagraph(ctx, entry.tacticalTip, innerX + 11, cy + 20, innerW - 20, Math.max(16, tipH - 24), {
-    size: compact ? 10.2 : 11.2,
-    color: '#d8f5e5',
-    lineHeight: compact ? 13 : 15
-  })
-  cy += tipH + 6
+  if (cy + 36 <= maxBottom) {
+    const boxH = Math.min(tipH, maxBottom - cy)
+    drawCodexSectionBox(ctx, innerX, cy, innerW, boxH, 'TACTICAL COUNTER-TIP', COLOR.good)
+    drawParagraph(ctx, entry.tacticalTip, innerX + 11, cy + 20, innerW - 20, Math.max(14, boxH - 24), {
+      size: compact ? 10.2 : 11.2,
+      color: '#d8f5e5',
+      lineHeight: compact ? 13 : 15
+    })
+    cy += boxH + gap
+  }
 
-  // Lore
-  drawCodexSectionBox(ctx, innerX, cy, innerW, loreH, 'CHRONICLE LORE', '#9ab6e8')
-  drawParagraph(ctx, entry.lore, innerX + 11, cy + 20, innerW - 20, Math.max(16, loreH - 24), {
-    size: compact ? 10.2 : 11.2,
-    color: COLOR.muted,
-    lineHeight: compact ? 13 : 15
-  })
-  cy += loreH + 6
+  // Lore (only draw if there is room inside the modal so it never clips off the bottom)
+  if (cy + 38 <= maxBottom) {
+    const remAfterTip = maxBottom - cy
+    const loreH = Math.min(compact ? 56 : 68, remAfterTip >= 84 ? Math.floor(remAfterTip * 0.52) : remAfterTip)
+    drawCodexSectionBox(ctx, innerX, cy, innerW, loreH, 'CHRONICLE LORE', '#9ab6e8')
+    drawParagraph(ctx, entry.lore, innerX + 11, cy + 20, innerW - 20, Math.max(14, loreH - 24), {
+      size: compact ? 10.2 : 11.2,
+      color: COLOR.muted,
+      lineHeight: compact ? 13 : 15
+    })
+    cy += loreH + gap
+  }
 
   // Encounter Stages
+  const stageH = maxBottom - cy
   if (stageH >= 38) {
     drawCodexSectionBox(ctx, innerX, cy, innerW, stageH, 'ENCOUNTER STAGES', COLOR.accentHi)
     drawCodexStageTags(ctx, innerX + 11, cy + 21, innerW - 20, Math.max(18, stageH - 25), entry.stages, 'Abyss & Summons')
   }
 
+  ctx.restore()
   ctx.restore()
 }
 

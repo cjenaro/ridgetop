@@ -70,6 +70,8 @@ export const BROWSER_STUDIO_MODULES: readonly string[] = Object.freeze([
   'testing-recognition.js',
   'testing-runtime.js',
   'testing-session.js',
+  'testing-decision-ui.js',
+  'testing-agent-popout.js',
   'testing-studio.js'
 ])
 
@@ -85,6 +87,7 @@ export const SERVER_FRAMEWORK_MODULES: readonly string[] = Object.freeze([
   'review-store.js',
   'decision-api.js',
   'decision-providers.js',
+  'decision-server.js',
   'host.js',
   'ws.js',
   'room-server.js',
@@ -174,6 +177,9 @@ export const TESTING_RUNTIME_NOOPS: Readonly<Record<string, TestingNoopSpec>> = 
   registerTestingHooks: { kind: 'unsubscribe', arity: 1 },
   onTestingHooksRegistered: { kind: 'unsubscribe', arity: 1 },
   getTestingHooks: { kind: 'emptyArray', arity: 0 },
+  registerDecisionAgent: { kind: 'unsubscribe', arity: 1 },
+  onDecisionAgentsChanged: { kind: 'unsubscribe', arity: 1 },
+  getDecisionAgents: { kind: 'emptyArray', arity: 0 },
   resetTestingRuntime: { kind: 'void', arity: 0 },
   recognizeAssetFromPick: { kind: 'null', arity: 3 }
 })

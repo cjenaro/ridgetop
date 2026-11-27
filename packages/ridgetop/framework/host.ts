@@ -205,8 +205,14 @@ export function createGameHost({
   for (const [path, file] of Object.entries(aliases)) assets.set(path, new URL(file, root))
 
   let reviewHandlerPromise: Promise<(req: IncomingMessage, res: ServerResponse, path: string) => Promise<boolean>> | undefined
+  let decisionHandlerPromise: Promise<(req: IncomingMessage, res: ServerResponse, path: string) => Promise<boolean>> | undefined
   async function handleTesting(req: IncomingMessage, res: ServerResponse, pathname: string): Promise<boolean> {
     if (!testingEnabled || !pathname.startsWith('/__testing/')) return false
+    if (pathname.startsWith('/__testing/decision/') || pathname === '/__testing/agent') {
+      decisionHandlerPromise ??= import('./decision-server.ts').then(mod => mod.createDecisionAgentHandler(root))
+      const decisionHandler = await decisionHandlerPromise
+      return decisionHandler(req, res, pathname)
+    }
     reviewHandlerPromise ??= import('./review-store.ts').then(mod => mod.createArtReviewHandler(root, testingOptions))
     const reviewHandler = await reviewHandlerPromise
     return reviewHandler(req, res, pathname)

@@ -356,15 +356,16 @@ export {
 export type { ActionCameraCueConfig, ActionCameraCueKind, ActionCameraState } from './action-camera.ts'
 import {
   AUTO_BATTLE_POST_ACT_DELAY, AUTO_BATTLE_THINK_DELAY, DEFAULT_BATTLE_SPEED,
-  chooseBestTurnEndFacing, findAutoBattleProvokingTaunters, formatBattleSpeedLabel,
+  chooseBestTurnEndFacing, collectAutoBattleCandidates, findAutoBattleProvokingTaunters, formatBattleSpeedLabel,
   nextBattleSpeed, normalizeBattleSpeed, planAutoBattleAction, scaleBattleDt
 } from './auto-battle.ts'
 export {
   AUTO_BATTLE_POST_ACT_DELAY, AUTO_BATTLE_THINK_DELAY, DEFAULT_BATTLE_SPEED,
-  chooseBestTurnEndFacing, findAutoBattleProvokingTaunters, formatBattleSpeedLabel,
+  chooseBestTurnEndFacing, collectAutoBattleCandidates, findAutoBattleProvokingTaunters, formatBattleSpeedLabel,
   nextBattleSpeed, normalizeBattleSpeed, planAutoBattleAction, scaleBattleDt
 }
-export type { AutoBattleActionKind, AutoBattleActionPlan } from './auto-battle.ts'
+import type { AutoBattleActionKind, AutoBattleActionPlan } from './auto-battle.ts'
+export type { AutoBattleActionKind, AutoBattleActionPlan }
 import {
   ARCANE_SURGE_EXTRA_CD_TICK, ARCANE_SURGE_MAX_AP_BONUS, ARCANE_SURGE_START_AP_BONUS,
   BLOOD_MOON_DAMAGE_MUL, BLOOD_MOON_MELEE_DRAIN, FOG_OF_WAR_VISION_RADIUS,
@@ -9798,12 +9799,12 @@ export function cancelAutoBattle(state: GameState): boolean {
 }
 
 /**
- * Execute one planned Auto-Battle action for the active player hero using the exact same
+ * Execute a specific planned tactical action for the active player hero using the exact same
  * combat, movement, skill, tactic, and turn-end facing rules as manual play.
  */
-export function executeAutoBattleStep(state: GameState): boolean {
+export function executeAutoBattlePlan(state: GameState, plan: AutoBattleActionPlan): boolean {
   const battle = state.battle
-  if (!battle || battle.phase !== 'player' || !battle.autoBattle) return false
+  if (!battle || battle.phase !== 'player') return false
   if (battle.units.some(u => u.path.length > 0)) return false
 
   const actor = getUnitByUid(battle, battle.activeUnitUid)
@@ -9811,9 +9812,6 @@ export function executeAutoBattleStep(state: GameState): boolean {
     endPlayerTurn(state)
     return true
   }
-
-  const plan = planAutoBattleAction(state)
-  if (!plan) return false
 
   if (plan.kind === 'tactic' && plan.tacticUid && plan.targetCol !== undefined && plan.targetRow !== undefined) {
     battle.armedSkillIndex = null
@@ -9912,6 +9910,18 @@ export function executeAutoBattleStep(state: GameState): boolean {
   }
   endPlayerTurn(state)
   return true
+}
+
+/**
+ * Execute one planned Auto-Battle action for the active player hero using the exact same
+ * combat, movement, skill, tactic, and turn-end facing rules as manual play.
+ */
+export function executeAutoBattleStep(state: GameState): boolean {
+  const battle = state.battle
+  if (!battle || battle.phase !== 'player' || !battle.autoBattle) return false
+  const plan = planAutoBattleAction(state)
+  if (!plan) return false
+  return executeAutoBattlePlan(state, plan)
 }
 
 export function stepGame(state: GameState, dt: number): void {

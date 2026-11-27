@@ -4,7 +4,8 @@ import {
 import type { HudPainter } from 'ridgetop'
 import { boxNode, column, createCanvasUi, createUiTheme, overlay, row, spacerNode } from 'ridgetop/ui'
 import type { CanvasWidgetDrawState, LayoutNode, LayoutRect } from 'ridgetop/ui'
-import { isTestingPaused } from 'ridgetop/testing'
+import { isTestingPaused, registerDecisionAgent } from 'ridgetop/testing'
+import { createCrownshardDecisionAgent } from './decision-agent.ts'
 import { computeEquipmentStatDiff, formatCompactStatDelta } from './armory-diff.ts'
 import type { EquipmentStatDiff } from './armory-diff.ts'
 import { createPortraitStore } from './art.ts'
@@ -386,16 +387,26 @@ async function start() {
     }
   }
 
-  function focusWorldMapOnPoint(mapX: number, mapY: number, instant = false) {
-    // Bias slightly right on desktop so the floating right-hand inspector never covers the selected 3D landmark
-    const mobile = renderer.canvas.clientWidth < 780
-    const offsetX = mobile ? 0 : 0.08 / Math.max(0.85, worldMap3DCam.goalZoom)
-    const offsetY = mobile ? 0.07 / Math.max(0.85, worldMap3DCam.goalZoom) : 0
-    focusDioramaOnStage(worldMap3DCam, mapX + offsetX, mapY + offsetY, undefined, instant)
+  function defaultWorldMapZoom(): number {
+    const vw = renderer.canvas.clientWidth || window.innerWidth
+    const vh = renderer.canvas.clientHeight || window.innerHeight
+    if (vw < 900 || vh < 520) return 1.48
+    if (vw < 1200 || vh < 700) return 1.18
+    return 0.96
   }
 
-  function focusWorldMapOn(stage: ChapterSpec, instant = false) {
-    focusWorldMapOnPoint(stage.mapX, stage.mapY, instant)
+  function focusWorldMapOnPoint(mapX: number, mapY: number, instant = false, targetZoom?: number) {
+    // Bias slightly right on desktop/landscape so the floating right-hand inspector never covers the selected 3D landmark
+    const vw = renderer.canvas.clientWidth || window.innerWidth
+    const mobile = vw < 780
+    const z = Math.max(0.85, targetZoom ?? worldMap3DCam.goalZoom)
+    const offsetX = mobile ? 0 : 0.11 / z
+    const offsetY = mobile ? 0.07 / z : 0
+    focusDioramaOnStage(worldMap3DCam, mapX + offsetX, mapY + offsetY, targetZoom, instant)
+  }
+
+  function focusWorldMapOn(stage: ChapterSpec, instant = false, targetZoom?: number) {
+    focusWorldMapOnPoint(stage.mapX, stage.mapY, instant, targetZoom)
   }
 
   function resetWorldMapOverview(instant = false) {
@@ -761,7 +772,14 @@ async function start() {
       pendingChapter = CHAPTER_BY_ID[state.campaign.selectedStageId].index
     }
     pendingEndless = 0
-    resetWorldMapOverview(true)
+    const targetZoom = defaultWorldMapZoom()
+    const selectedStage = CHAPTER_BY_ID[state.campaign.selectedStageId] ?? CHAPTERS[0]
+    if (targetZoom > 1.05 && selectedStage) {
+      resetWorldMapOverview(true)
+      focusWorldMapOn(selectedStage, true, targetZoom)
+    } else {
+      resetWorldMapOverview(true)
+    }
     setScreen('world')
   }
 
@@ -2401,9 +2419,10 @@ async function start() {
     const outerPad = isCompact ? 8 : 12
     const topH = shortH ? 38 : 44
 
-    const nodeW = mobile ? 88 : 118
-    const nodeH = mobile ? 76 : 86
-    const pinCenterY = mobile ? 21 : 25
+    const compactMap = mobile || shortH
+    const nodeW = compactMap ? 78 : 118
+    const nodeH = compactMap ? 58 : 86
+    const pinCenterY = compactMap ? 19 : 25
 
     const selectedEvent: WorldMapEvent | null = selectedWorldEventId
       ? (getWorldMapEventById(camp, selectedWorldEventId) ?? null)
@@ -2413,7 +2432,7 @@ async function start() {
     }
 
     // Project all 33 continent landmarks directly onto their live 3D banner pins!
-    const mapNodeEntries: { readonly node: LayoutNode; readonly cx: number; readonly cy: number }[] = []
+    const mapNodeEntries: { readonly node: LayoutNode; readonly cx: number; readonly cy: number; readonly zOrder: number }[] = []
     for (const stage of CHAPTERS) {
       const pt = scene.projectWorldMapPoint(stage.mapX, stage.mapY, worldMap3DCam, w, h, 0.52)
       if (!pt) continue
@@ -2425,9 +2444,13 @@ async function start() {
       const isSel = !selectedEvent && selected.id === stage.id
       const nodeMastery = cleared ? getStageMasteryRecord(camp, stage.id) : null
       const nodeChestReady = cleared && canClaimStageMasteryChest(camp, stage.id)
+      const z = worldMap3DCam.zoom
+      const showLabel = isSel || (unlocked && !cleared) || (unlocked && z >= 1.12) || z >= 1.42
+      const zOrder = isSel ? 3 : (unlocked && !cleared) ? 2 : unlocked ? 1 : 0
       mapNodeEntries.push({
         cx: pt.x,
         cy: pt.y,
+        zOrder,
         node: boxNode({
         id: `map-node-${stage.id}`,
         style: { anchor: 'top-left', inset: [left, top], width: nodeW, height: nodeH },
@@ -2458,7 +2481,9 @@ async function start() {
               masteryChestReady: nodeChestReady,
               selected: isSel,
               time: worldMapTime,
-              compact: mobile
+              compact: compactMap,
+              showLabel,
+              zoom: z
             },
             st
           )
@@ -2466,6 +2491,7 @@ async function start() {
       })
       })
     }
+    mapNodeEntries.sort((a, b) => a.zOrder - b.zOrder)
 
     // Dynamic temporary World Map event medallions projected directly onto their 3D road beacons!
     const evNodeW = mobile ? 84 : 108
@@ -2481,6 +2507,7 @@ async function start() {
       mapNodeEntries.push({
         cx: pt.x,
         cy: pt.y,
+        zOrder: selectedEvent?.id === ev.id ? 4 : 2,
         node: boxNode({
         id: `map-event-${ev.id}`,
         style: { anchor: 'top-left', inset: [left, top], width: evNodeW, height: evNodeH },
@@ -4479,7 +4506,7 @@ async function start() {
         }
       }),
       boxNode({
-        id: 'cs-auto-battle', style: { width: tinyPhone ? 34 : isPhone ? 42 : compactDesktopTb ? 52 : 68, height: tbIconS },
+        id: 'cs-auto-battle', style: { width: tinyPhone ? 34 : isPhone ? 54 : compactDesktopTb ? 58 : 72, height: tbIconS },
         widget: {
           type: 'button',
           label: autoOn ? 'Stop Auto-Battle (B / Esc)' : 'Auto-Battle (B)',
@@ -8807,13 +8834,13 @@ async function start() {
           }),
           boxNode({
             id: 'cs-codex-close',
-            style: { width: mobile ? 66 : 92, height: mobile ? 32 : 36 },
+            style: { width: mobile ? 68 : shortH ? 84 : 108, height: mobile ? 32 : 36 },
             widget: {
               type: 'button',
               label: 'Back',
               onPress: () => closeCodex(),
               draw: (ctx: CanvasRenderingContext2D, rect: LayoutRect, st: CanvasWidgetDrawState) => drawButton(
-                ctx, rect, 'Back', st, { variant: 'secondary', icon: 'close', trailing: mobile ? undefined : 'Esc', size: mobile ? 11.5 : 12.5 }
+                ctx, rect, 'Back', st, { variant: 'secondary', icon: 'close', trailing: mobile || shortH ? undefined : 'Esc', size: mobile ? 11.5 : 12.5 }
               )
             }
           })
@@ -9952,6 +9979,29 @@ async function start() {
     }
   })
 
+  const unregisterDecisionAgent = registerDecisionAgent(createCrownshardDecisionAgent({
+    state,
+    getScreen() {
+      return screen
+    },
+    enterBattle() {
+      launchBattle()
+    },
+    confirmDeployment() {
+      return confirmDeployAndStart()
+    },
+    dismissOverlays() {
+      if (getActiveDiscoveryTip(state)) {
+        dismissDiscoveryTip(state)
+      }
+    },
+    onActed() {
+      uiDirty = true
+      hudRev++
+      renderUiNow()
+    }
+  }))
+
   const stopLifecycle = page.platform.onLifecycle({
     pause() {
       saveNow()
@@ -9962,6 +10012,7 @@ async function start() {
     },
     dispose() {
       saveNow()
+      unregisterDecisionAgent()
       stop()
       stopLifecycle()
       page.dispose()

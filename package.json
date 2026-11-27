@@ -32,6 +32,7 @@
     "compile:godot": "node packages/ridgetop/dist/tools/cli.js compile-godot",
     "generate:sprites": "node tools/generate-sprites.ts",
     "verify": "node tools/verify-game.ts",
+    "replay:decision": "node tools/replay-decision.ts",
     "feel": "node tools/tune-jumps.ts",
     "start:bun": "bun dist/server.js",
     "start:deno": "deno run --allow-read --allow-write --allow-net --allow-env dist/server.js",

@@ -8,6 +8,7 @@ import { allowedScopesForSurface, isReviewScope, resolveTestingUrlActivation } f
 import type { ReviewStorePort } from './testing-protocol.ts'
 import { createTestingStudioSession, surfaceLabel } from './testing-session.ts'
 import type { ArtRecipeEditor, StudioSelection, TestingStudioSession } from './testing-session.ts'
+import { mountDecisionAgentPane } from './testing-decision-ui.ts'
 import { getLastFrame, isTestingPaused, setTestingActive } from './testing-runtime.ts'
 import type { HudRegion, RecognizedAsset, SpriteDrawRecord } from './testing-runtime.ts'
 import type { BlendMode, InstanceBatch } from './types.ts'
@@ -266,12 +267,15 @@ export function mountTestingStudio(options: { store?: ReviewStorePort; session?:
   const bar = el('div', { className: 'rt-bar', id: 'ridgetop-testing-bar' })
   const brand = el('span', { className: 'rt-brand', text: 'TESTING' })
   const pauseBtn = el('button', { className: 'rt-btn rt-btn-primary', type: 'button', id: 'rt-pause-btn', text: 'Pause & Inspect (F9)' })
+  const agentBtn = el('button', { className: 'rt-btn', type: 'button', id: 'rt-agent-btn', text: 'Decision Agent' })
+  const popoutBtn = el('button', { className: 'rt-btn', type: 'button', id: 'rt-popout-btn', text: 'Pop Out ↗', title: 'Open Decision Agent in a separate window and minimize this bar' })
   const reviewSelect = el('select', { className: 'rt-select', id: 'rt-review-select' })
   reviewSelect.setAttribute('aria-label', 'Saved reviews')
   reviewSelect.append(new Option('Reviews (0)', ''))
   const refreshBtn = el('button', { className: 'rt-btn', type: 'button', id: 'rt-refresh-btn', text: 'Refresh' })
   const statusPill = el('span', { className: 'rt-status-pill', id: 'rt-status-pill', text: 'Live' })
-  bar.append(brand, pauseBtn, reviewSelect, refreshBtn, statusPill)
+  const collapseBtn = el('button', { className: 'rt-btn', type: 'button', id: 'rt-collapse-btn', text: '–', title: 'Minimize testing bar' })
+  bar.append(brand, pauseBtn, agentBtn, popoutBtn, reviewSelect, refreshBtn, statusPill, collapseBtn)
 
   const drawer = el('aside', { className: 'rt-drawer', id: 'ridgetop-testing-drawer' })
   drawer.hidden = true
@@ -288,13 +292,16 @@ export function mountTestingStudio(options: { store?: ReviewStorePort; session?:
   const tabs = el('div', { className: 'rt-tabs' })
   const editorTabBtn = el('button', { className: 'rt-tab rt-tab-active', type: 'button', text: 'Editor' })
   const reviewsTabBtn = el('button', { className: 'rt-tab', type: 'button', text: 'Comments / Reviews' })
-  tabs.append(editorTabBtn, reviewsTabBtn)
+  const agentTabBtn = el('button', { className: 'rt-tab', type: 'button', id: 'rt-tab-agent', text: 'Decision Agent' })
+  tabs.append(editorTabBtn, reviewsTabBtn, agentTabBtn)
 
   const body = el('div', { className: 'rt-drawer-body' })
   const editorPane = el('div', { className: 'rt-pane' })
   const reviewsPane = el('div', { className: 'rt-pane' })
+  const agentPane = el('div', { className: 'rt-pane', id: 'rt-agent-pane' })
   reviewsPane.hidden = true
-  body.append(editorPane, reviewsPane)
+  agentPane.hidden = true
+  body.append(editorPane, reviewsPane, agentPane)
 
   const footerMsg = el('div', { className: 'rt-footer-msg', text: '' })
   drawer.append(drawerHead, tabs, body, footerMsg)
@@ -317,15 +324,60 @@ export function mountTestingStudio(options: { store?: ReviewStorePort; session?:
     footerMsg.textContent = session.getStatus()
   }
 
-  function setTab(next: 'editor' | 'reviews') {
+  function setBarCollapsed(collapsed: boolean) {
+    bar.classList.toggle('rt-bar-collapsed', collapsed)
+    collapseBtn.textContent = collapsed ? 'TESTING ▾' : '–'
+    collapseBtn.title = collapsed ? 'Expand testing bar' : 'Minimize testing bar'
+  }
+
+  function openAgentPopout() {
+    window.open('/__testing/agent', 'ridgetop-decision-agent', 'width=480,height=880')
+    drawer.hidden = true
+    setBarCollapsed(true)
+  }
+
+  collapseBtn.onclick = () => {
+    setBarCollapsed(!bar.classList.contains('rt-bar-collapsed'))
+  }
+  popoutBtn.onclick = () => {
+    decisionUi.stop()
+    openAgentPopout()
+  }
+
+  const decisionUi = mountDecisionAgentPane(agentPane, {
+    onStatus(msg) {
+      footerMsg.textContent = msg
+    },
+    onPopout: openAgentPopout
+  })
+
+  function setTab(next: 'editor' | 'reviews' | 'agent') {
     editorTabBtn.classList.toggle('rt-tab-active', next === 'editor')
     reviewsTabBtn.classList.toggle('rt-tab-active', next === 'reviews')
+    agentTabBtn.classList.toggle('rt-tab-active', next === 'agent')
     editorPane.hidden = next !== 'editor'
     reviewsPane.hidden = next !== 'reviews'
+    agentPane.hidden = next !== 'agent'
+    if (next === 'agent') {
+      badge.textContent = 'AI Agent'
+      titleEl.textContent = 'Decision API Inspector'
+      metaEl.textContent = 'Live action selection & probabilities'
+      decisionUi.refresh()
+    }
   }
 
   editorTabBtn.onclick = () => setTab('editor')
   reviewsTabBtn.onclick = () => setTab('reviews')
+  agentTabBtn.onclick = () => setTab('agent')
+  agentBtn.onclick = () => {
+    const opening = drawer.hidden || agentPane.hidden
+    if (opening) {
+      drawer.hidden = false
+      setTab('agent')
+    } else {
+      drawer.hidden = true
+    }
+  }
   closeDrawerBtn.onclick = () => {
     drawer.hidden = true
     highlight.hidden = true
@@ -1186,6 +1238,15 @@ export function mountTestingStudio(options: { store?: ReviewStorePort; session?:
     if (!disposed) session.setStatus(errorMessage(err))
   })
 
+  // Auto-open Decision Agent drawer when `?agent=1` is present in the URL.
+  try {
+    const params = new URLSearchParams(location.search)
+    if (params.get('agent') === '1' || params.get('agent') === 'true') {
+      drawer.hidden = false
+      setTab('agent')
+    }
+  } catch { /* Ignore invalid location search. */ }
+
   const handle: TestingStudioHandle = {
     root,
     session,
@@ -1196,6 +1257,7 @@ export function mountTestingStudio(options: { store?: ReviewStorePort; session?:
       disposed = true
       if (activeStudioHandle === handle) activeStudioHandle = undefined
       stopSpriteAnim()
+      decisionUi.dispose()
       unsubSession()
       session.dispose()
       controller.abort()
