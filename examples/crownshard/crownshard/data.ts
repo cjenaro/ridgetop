@@ -673,6 +673,13 @@ export const ENEMY_SPECS: Record<EnemyArchetypeId, EnemySpec> = {
   },
   magma_warden: {
     id: 'magma_warden', name: 'Ignar, Magma Warden', maxHp: 168, atk: 25, def: 8, speed: 8, move: 2, jump: 1, range: 2, ai: 'boss', isBoss: true, zoc: true
+  },
+  // Act II Expansion Bosses (Ashen Catacombs & Frostspire)
+  lich_vaelen: {
+    id: 'lich_vaelen', name: 'Lich Vaelen', maxHp: 158, atk: 23, def: 6, speed: 10, move: 2, jump: 2, range: 3, ai: 'boss', isBoss: true, footprintSize: 1, zoc: false
+  },
+  frostwyrm_rimefang: {
+    id: 'frostwyrm_rimefang', name: 'Rimefang, Glacial Frostwyrm', maxHp: 245, atk: 26, def: 8, speed: 9, move: 2, jump: 2, range: 3, ai: 'boss', isBoss: true, footprintSize: 2, zoc: true
   }
 }
 
@@ -1614,23 +1621,51 @@ export const CHAPTERS: readonly ChapterSpec[] = [
     mapY: 0.73,
     requires: ['whispering_barrow', 'emerald_delta'],
     unlockMode: 'any',
-    comingSoon: true,
-    soonNote: 'Soon... Fog-of-War Ambush inside the Haunted Timberlands',
-    specialTag: 'Soon...',
+    specialTag: 'Fog Stalker Hunt',
+    modifierDesc: '9x6 Haunted Timberlands · Innate Fog of War · Tall Grass Ambush',
     title: 'Gloomwood',
     subtitle: 'Fog-of-War Stalker Hunt',
     biome: 'crypt',
     introSpeaker: 'Lyra',
-    introText: 'Shadow stalkers lurk beyond lantern light.',
+    introText: 'Lantern light barely reaches four paces in the Gloomwood! Advance cautiously through the brush, spot the stalkers in the mist, and cut down their Dread Knight captain.',
     outroSpeaker: 'Lyra',
-    outroText: 'The woods breathe easy again.',
+    outroText: 'The stalker captain falls and the mists part! We recovered a gleaming Skyhawk Crest from the cursed grove.',
     rewardGold: 175,
     replayGold: 92,
     rewardEquipId: 'eagle_charm',
     rewardHeroId: null,
-    grid: SOON_GRID,
-    heroSpawns: [[0, 1], [0, 2], [0, 3], [1, 2]],
-    enemies: [{ id: 'goblin', col: 5, row: 2 }, { id: 'bone_archer', col: 5, row: 1 }, { id: 'bog_shaman', col: 5, row: 3 }]
+    innateMutators: ['fog_of_war'],
+    grid: [
+      [V, D, F, H, P, H, F, D, V],
+      [S, F, T, S, F, T, S, F, H],
+      [S, R, F, P, A, F, S, D, D],
+      [S, S, F, S, S, F, P, S, S],
+      [S, F, T, S, F, T, S, F, H],
+      [V, D, F, H, P, H, F, D, V]
+    ],
+    heights: [
+      [0, 1, 1, 2, 2, 2, 1, 2, 0],
+      [0, 0, 1, 1, 1, 1, 1, 1, 2],
+      [0, 0, 0, 1, 1, 1, 1, 2, 2],
+      [0, 0, 0, 0, 1, 1, 1, 1, 1],
+      [0, 0, 1, 1, 1, 1, 1, 1, 2],
+      [0, 1, 1, 2, 2, 2, 1, 2, 0]
+    ],
+    heroSpawns: [[0, 1], [0, 2], [0, 3], [1, 3]],
+    objective: {
+      kind: 'assassinate',
+      label: 'Hunt Gloom Stalker',
+      description: 'Track and slay the Gloom Stalker Captain lurking beyond the Fog of War.',
+      targetEnemyIndex: 0,
+      targetEnemyId: 'crypt_knight',
+      targetName: 'Gloom Stalker Captain'
+    },
+    enemies: [
+      { id: 'crypt_knight', col: 7, row: 2, levelScale: 1.12, name: 'Gloom Stalker Captain' },
+      { id: 'bone_archer', col: 6, row: 0, levelScale: 1.08 },
+      { id: 'bone_archer', col: 6, row: 5, levelScale: 1.08 },
+      { id: 'bone_necromancer', col: 8, row: 3, levelScale: 1.08 }
+    ]
   },
   {
     id: 'bone_cathedral',
@@ -1644,23 +1679,53 @@ export const CHAPTERS: readonly ChapterSpec[] = [
     mapY: 0.77,
     requires: ['whispering_barrow', 'cursed_vault'],
     unlockMode: 'any',
-    comingSoon: true,
-    soonNote: 'Soon... Regional Boss: Bone Necromancer summoning Skeleton waves',
-    specialTag: 'Soon...',
+    specialTag: 'Cathedral Boss',
+    modifierDesc: '9x7 Gothic Crypt Nave · Mini-Boss: Lich Vaelen (Necromancy + Soul Nova)',
     title: 'Ash Cathedral',
     subtitle: 'Mini-Boss: Lich Vaelen',
     biome: 'crypt',
     introSpeaker: 'Vesper',
-    introText: 'A fallen archmage raises legions beneath the shattered nave.',
+    introText: 'Lich Vaelen presides atop the high altar dais of Ash Cathedral! Break through his Dread Knights and shatter the Lich before his Bone Thralls and Cursed-Soul Nova consume the nave!',
     outroSpeaker: 'Vesper',
-    outroText: 'The necromancer\'s phylactery is shattered.',
+    outroText: 'Lich Vaelen\'s phylactery shatters in emerald ash! The cathedral vaults yield a Frostbite Staff and silence at last.',
     rewardGold: 260,
     replayGold: 130,
     rewardEquipId: 'frostbite_staff',
     rewardHeroId: null,
-    grid: SOON_GRID,
-    heroSpawns: [[0, 1], [0, 2], [0, 3], [1, 2]],
-    enemies: [{ id: 'crypt_knight', col: 5, row: 2 }, { id: 'bog_shaman', col: 5, row: 1 }, { id: 'bone_archer', col: 5, row: 3 }]
+    grid: [
+      [V, V, D, S, A, S, D, V, V],
+      [V, S, P, S, T, S, P, D, V],
+      [S, S, S, T, D, T, D, D, D],
+      [S, R, S, S, T, D, D, H, D],
+      [S, S, S, T, D, T, D, D, D],
+      [V, S, P, S, T, S, P, D, V],
+      [V, V, D, S, A, S, D, V, V]
+    ],
+    heights: [
+      [0, 0, 1, 1, 1, 1, 2, 0, 0],
+      [0, 0, 1, 1, 1, 1, 2, 2, 0],
+      [0, 0, 0, 1, 1, 2, 2, 2, 3],
+      [0, 0, 0, 0, 1, 2, 2, 2, 3],
+      [0, 0, 0, 1, 1, 2, 2, 2, 3],
+      [0, 0, 1, 1, 1, 1, 2, 2, 0],
+      [0, 0, 1, 1, 1, 1, 2, 0, 0]
+    ],
+    heroSpawns: [[0, 2], [0, 3], [0, 4], [1, 2]],
+    objective: {
+      kind: 'assassinate',
+      label: 'Slay Lich Vaelen',
+      description: 'Defeat Lich Vaelen atop the elevated cathedral altar dais.',
+      targetEnemyIndex: 0,
+      targetEnemyId: 'lich_vaelen',
+      targetName: 'Lich Vaelen'
+    },
+    enemies: [
+      { id: 'lich_vaelen', col: 7, row: 3, name: 'Lich Vaelen' },
+      { id: 'crypt_knight', col: 5, row: 2, levelScale: 1.08 },
+      { id: 'crypt_knight', col: 5, row: 4, levelScale: 1.08 },
+      { id: 'bone_archer', col: 6, row: 0, levelScale: 1.10 },
+      { id: 'bone_archer', col: 6, row: 6, levelScale: 1.10 }
+    ]
   },
   {
     id: 'runeforge_peak',
@@ -1673,23 +1738,53 @@ export const CHAPTERS: readonly ChapterSpec[] = [
     mapX: 0.46,
     mapY: 0.14,
     requires: ['frozen_lake'],
-    comingSoon: true,
-    soonNote: 'Soon... Glacial Anvil Shrine & Cryomancer Trial',
-    specialTag: 'Soon...',
+    specialTag: 'Cryomancer Trial',
+    modifierDesc: '9x6 Glacial Runeforge Terraces · Seize Runeforge Anvil · Recruits Cryomancer',
     title: 'Runeforge Peak',
-    subtitle: 'Frozen Artifact Spire',
+    subtitle: 'Cryomancer Recruitment Trial',
     biome: 'frost',
     introSpeaker: 'Lyra',
-    introText: 'Ancient dwarven runeforges still hum atop the glacier.',
+    introText: 'Ancient dwarven runeforges hum atop the glacier terraces! Ride the ice sheets past the Frost Golems and Ice Wraiths to seize the Runeforge Anvil — Freya the Cryomancer awaits at the summit!',
     outroSpeaker: 'Lyra',
-    outroText: 'The spire runes awaken.',
+    outroText: 'The Runeforge Anvil blazes with sapphire frost! Freya the Cryomancer pledges her glacial arts to our vanguard!',
     rewardGold: 245,
     replayGold: 125,
     rewardEquipId: 'frostguard_plate',
     rewardHeroId: 'cryomancer',
-    grid: SOON_GRID,
+    grid: [
+      [V, N, T, H, S, T, H, V, V],
+      [N, S, I, I, T, S, I, T, H],
+      [N, S, N, P, I, T, S, R, H],
+      [N, S, I, I, T, S, I, T, H],
+      [N, N, T, N, P, S, T, S, N],
+      [V, V, N, T, S, S, H, V, V]
+    ],
+    heights: [
+      [0, 0, 1, 2, 2, 2, 3, 0, 0],
+      [0, 0, 0, 1, 1, 2, 2, 3, 3],
+      [0, 0, 0, 1, 1, 2, 2, 3, 3],
+      [0, 0, 0, 1, 1, 2, 2, 3, 3],
+      [0, 0, 1, 1, 1, 2, 2, 3, 3],
+      [0, 0, 1, 1, 2, 2, 3, 0, 0]
+    ],
     heroSpawns: [[0, 1], [0, 2], [0, 3], [1, 2]],
-    enemies: [{ id: 'frost_golem', col: 5, row: 2 }, { id: 'frost_golem', col: 5, row: 1 }, { id: 'bog_shaman', col: 5, row: 3 }]
+    objective: {
+      kind: 'seize',
+      label: 'Seize Runeforge Anvil',
+      description: 'Claim the summit Runeforge Anvil within 10 turns (or rout all guardians) to recruit Freya.',
+      goalTile: { col: 7, row: 2 },
+      goalLabel: 'Runeforge Anvil',
+      chestTiles: [{ col: 4, row: 0 }, { col: 5, row: 5 }],
+      requiredChests: 0,
+      turnLimit: 10
+    },
+    enemies: [
+      { id: 'frost_golem', col: 5, row: 2, levelScale: 1.08 },
+      { id: 'frost_golem', col: 6, row: 3, levelScale: 1.08 },
+      { id: 'ice_wraith', col: 6, row: 0, levelScale: 1.12 },
+      { id: 'ice_wraith', col: 8, row: 2, levelScale: 1.12 },
+      { id: 'ice_wraith', col: 6, row: 5, levelScale: 1.10 }
+    ]
   },
   {
     id: 'wyrm_eyrie',
@@ -1702,23 +1797,52 @@ export const CHAPTERS: readonly ChapterSpec[] = [
     mapX: 0.69,
     mapY: 0.13,
     requires: ['glacial_citadel'],
-    comingSoon: true,
-    soonNote: 'Soon... Multi-Tile Boss Raid: Glacial Frostwyrm',
-    specialTag: 'Soon...',
+    specialTag: 'Raid Boss (2x2)',
+    modifierDesc: '10x7 Summit Eyrie · 2x2 Raid Boss: Rimefang (Glacial Breath & Wing Buffet)',
     title: 'Frostwyrm Eyrie',
     subtitle: 'Raid Boss: Rimefang',
     biome: 'frost',
     introSpeaker: 'Sir Aldric',
-    introText: 'At the roof of the world sleeps an elder ice drake.',
+    introText: 'Rimefang, the elder Glacial Frostwyrm, spans the summit perch! Strike any part of the dragon\'s massive 2x2 frame, shelter behind stone pillars against Glacial Breath, and brace against Wing Buffet!',
     outroSpeaker: 'Sir Aldric',
-    outroText: 'The skies over Frostspire clear.',
+    outroText: 'Rimefang crashes into the snowdrifts and the blizzard clears! The Aegis of Dawn shines atop Frostspire\'s crown.',
     rewardGold: 400,
     replayGold: 185,
     rewardEquipId: 'aegis_of_dawn',
     rewardHeroId: null,
-    grid: SOON_GRID,
-    heroSpawns: [[0, 1], [0, 2], [0, 3], [1, 2]],
-    enemies: [{ id: 'frost_golem', col: 5, row: 2 }, { id: 'frost_golem', col: 5, row: 1 }, { id: 'crypt_knight', col: 5, row: 3 }]
+    grid: [
+      [V, V, N, H, I, H, N, V, V, V],
+      [V, N, S, P, T, S, S, S, N, V],
+      [N, S, T, I, S, T, S, S, S, H],
+      [N, R, S, P, I, S, S, S, S, H],
+      [N, S, T, I, S, T, S, S, S, H],
+      [V, N, S, P, T, S, S, S, N, V],
+      [V, V, N, H, I, H, N, V, V, V]
+    ],
+    heights: [
+      [0, 0, 1, 2, 1, 2, 2, 0, 0, 0],
+      [0, 0, 1, 1, 1, 2, 2, 2, 2, 0],
+      [0, 0, 1, 1, 1, 2, 2, 2, 2, 3],
+      [0, 0, 1, 1, 1, 2, 2, 2, 2, 3],
+      [0, 0, 1, 1, 1, 2, 2, 2, 2, 3],
+      [0, 0, 1, 1, 1, 2, 2, 2, 2, 0],
+      [0, 0, 1, 2, 1, 2, 2, 0, 0, 0]
+    ],
+    heroSpawns: [[0, 2], [0, 3], [0, 4], [1, 2]],
+    objective: {
+      kind: 'assassinate',
+      label: 'Slay Rimefang',
+      description: 'Defeat Rimefang the 2x2 Glacial Frostwyrm atop Frostwyrm Eyrie.',
+      targetEnemyIndex: 0,
+      targetEnemyId: 'frostwyrm_rimefang',
+      targetName: 'Rimefang, Glacial Frostwyrm'
+    },
+    enemies: [
+      { id: 'frostwyrm_rimefang', col: 6, row: 2, name: 'Rimefang, Glacial Frostwyrm' },
+      { id: 'ice_wraith', col: 8, row: 1, levelScale: 1.15 },
+      { id: 'ice_wraith', col: 8, row: 5, levelScale: 1.15 },
+      { id: 'frost_golem', col: 5, row: 4, levelScale: 1.12 }
+    ]
   },
   {
     id: 'cinder_colosseum',

@@ -17,6 +17,7 @@ import {
   terrainElevation
 } from './types.ts'
 import { classifyHazardElement, previewElementalCombo, triggerElementalCombo } from './elemental-combos.ts'
+import { closestFootprintCell, getUnitFootprintSize, unitOccupiesCell } from './expansion-act2.ts'
 import type {
   BattleState,
   BattleUnit,
@@ -117,11 +118,42 @@ export function resolveDisplacementPreview(
   displacement: DisplacementSpec,
   origin?: GridCoord
 ): DisplacementPreview {
-  const originCol = origin ? origin.col : (actor ? actor.col : target.col)
-  const originRow = origin ? origin.row : (actor ? actor.row : target.row)
   const fromCol = target.col
   const fromRow = target.row
+  const actorOrigin = !origin && actor && getUnitFootprintSize(actor) > 1
+    ? closestFootprintCell(fromCol, fromRow, actor)
+    : null
+  const originCol = origin ? origin.col : (actorOrigin ? actorOrigin.col : (actor ? actor.col : target.col))
+  const originRow = origin ? origin.row : (actorOrigin ? actorOrigin.row : (actor ? actor.row : target.row))
   const distance = Math.max(0, Math.floor(displacement.distance))
+
+  // Multi-tile 2x2 raid bosses are immovable against forced displacement (knockback, pull, swap)
+  if (getUnitFootprintSize(target) > 1) {
+    return {
+      kind: displacement.kind,
+      distance,
+      fromCol,
+      fromRow,
+      toCol: fromCol,
+      toRow: fromRow,
+      path: [],
+      moved: false,
+      collidedWith: 'none',
+      collisionDmg: 0,
+      secondaryCollisionDmg: 0,
+      barricadeDmg: 0,
+      fallDrop: 0,
+      fallDmg: 0,
+      hazardKind: 'none',
+      hazardDmg: 0,
+      iceSlid: false,
+      causesStun: false,
+      causesSlow: false,
+      causesBurn: false,
+      totalBonusDmg: 0,
+      summaryTag: displacement.kind === 'swap' ? 'SWAP BLOCKED' : 'IMMOVABLE'
+    }
+  }
 
   if (displacement.kind === 'swap') {
     const originCell = inBounds(originCol, originRow, battle.cols, battle.rows)
@@ -300,9 +332,11 @@ export function resolveDisplacementPreview(
 
     const blocker = battle.units.find(u => {
       if (!(u.alive || isUnitDowned(u)) || u.uid === target.uid) return false
-      const uCol = actor && u.uid === actor.uid ? originCol : u.col
-      const uRow = actor && u.uid === actor.uid ? originRow : u.row
-      return uCol === nextCol && uRow === nextRow
+      if (actor && u.uid === actor.uid) {
+        if (getUnitFootprintSize(u) > 1) return unitOccupiesCell(u, nextCol, nextRow)
+        return originCol === nextCol && originRow === nextRow
+      }
+      return unitOccupiesCell(u, nextCol, nextRow)
     })
     if (blocker) {
       collidedWith = 'unit'

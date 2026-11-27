@@ -1429,6 +1429,158 @@ function getAccessoryMeshes(): HeadAccessoryMeshes {
 }
 
 // ---------------------------------------------------------------------------
+// 5. Frostwyrm Dragon Raid-Boss Body Meshes
+// ---------------------------------------------------------------------------
+
+interface FrostwyrmMeshes {
+  readonly cranium: Mesh
+  readonly snoutUpper: Mesh
+  readonly jawLower: Mesh
+  readonly eyeCrystal: Mesh
+  readonly hornMain: Mesh
+  readonly hornSub: Mesh
+  readonly fang: Mesh
+  readonly neck: Mesh
+  readonly chest: Mesh
+  readonly bellyPlate: Mesh
+  readonly frostCore: Mesh
+  readonly tailBase: Mesh
+  readonly tailTip: Mesh
+  readonly dorsalSpine: Mesh
+  readonly wingSpar: Mesh
+  readonly wingSailOuter: Mesh
+  readonly wingSailInner: Mesh
+  readonly wingTalon: Mesh
+  readonly hindLeg: Mesh
+  readonly hindFoot: Mesh
+  readonly tailFin: Mesh
+}
+
+let cachedFrostwyrmMeshes: FrostwyrmMeshes | undefined
+
+function getFrostwyrmMeshes(): FrostwyrmMeshes {
+  if (cachedFrostwyrmMeshes) return cachedFrostwyrmMeshes
+
+  const cranium = sculptLoft([
+    { y: 0.14, rx: 0.19, rz: 0.22, zOffset: 0.04, frontFlat: 0.10 },
+    { y: 0.28, rx: 0.24, rz: 0.26, zOffset: 0.06, frontFlat: 0.12 },
+    { y: 0.42, rx: 0.22, rz: 0.24, zOffset: 0.02, frontFlat: 0.10 },
+    { y: 0.52, rx: 0.14, rz: 0.16, zOffset: -0.02 }
+  ], { sides: 8, aoStrength: 0.16, aoGradient: 0.08 })
+
+  const snoutUpper = sculptLoft([
+    { y: 0.18, rx: 0.14, rz: 0.20, zOffset: 0.28, frontFlat: 0.18 },
+    { y: 0.25, rx: 0.16, rz: 0.24, zOffset: 0.26, frontFlat: 0.16 },
+    { y: 0.34, rx: 0.12, rz: 0.18, zOffset: 0.22, frontFlat: 0.14 }
+  ], { sides: 6, aoStrength: 0.15, aoGradient: 0.08 })
+
+  const jawLower = sculptLoft([
+    { y: 0.06, rx: 0.11, rz: 0.16, zOffset: 0.24, frontFlat: 0.18 },
+    { y: 0.12, rx: 0.13, rz: 0.20, zOffset: 0.23, frontFlat: 0.16 },
+    { y: 0.16, rx: 0.12, rz: 0.17, zOffset: 0.20, frontFlat: 0.14 }
+  ], { sides: 6, aoStrength: 0.18, aoGradient: 0.10 })
+
+  const eyeCrystal = sculptLoft([
+    { y: -0.024, rx: 0.052, rz: 0.024 },
+    { y: 0.000, rx: 0.064, rz: 0.032 },
+    { y: 0.024, rx: 0.048, rz: 0.020 }
+  ], { sides: 6 })
+
+  const hornMain = makeSpikeMesh(0.46, 0.066, 0.062, 6, 0, -0.22, 0.14)
+  const hornSub = makeSpikeMesh(0.28, 0.044, 0.044, 5, 0, -0.14, 0.14)
+  const fang = makeSpikeMesh(0.068, 0.018, 0.018, 4, 0, 0.01, 0.10)
+
+  const neck = sculptLoft([
+    { y: 0.36, rx: 0.20, rz: 0.22, zOffset: 0.02 },
+    { y: 0.48, rx: 0.16, rz: 0.19, zOffset: 0.06 },
+    { y: 0.58, rx: 0.15, rz: 0.17, zOffset: 0.08 }
+  ], { sides: 8, aoStrength: 0.16, aoGradient: 0.08 })
+
+  const chest = sculptLoft([
+    { y: 0.00, rx: 0.26, rz: 0.28, zOffset: -0.02 },
+    { y: 0.16, rx: 0.36, rz: 0.36, zOffset: 0.03 },
+    { y: 0.34, rx: 0.38, rz: 0.34, zOffset: 0.04 },
+    { y: 0.46, rx: 0.28, rz: 0.26, zOffset: 0.01 }
+  ], { sides: 8, aoStrength: 0.18, aoGradient: 0.10 })
+
+  const bellyPlate = sculptLoft([
+    { y: 0.04, rx: 0.18, rz: 0.08, zOffset: 0.30, frontFlat: 0.16 },
+    { y: 0.22, rx: 0.22, rz: 0.09, zOffset: 0.34, frontFlat: 0.16 },
+    { y: 0.38, rx: 0.19, rz: 0.08, zOffset: 0.30, frontFlat: 0.14 }
+  ], { sides: 6, aoStrength: 0.14, aoGradient: 0.08 })
+
+  const frostCore = sculptLoft([
+    { y: 0.16, rx: 0.04, rz: 0.04, zOffset: 0.39 },
+    { y: 0.25, rx: 0.11, rz: 0.06, zOffset: 0.40 },
+    { y: 0.34, rx: 0.04, rz: 0.04, zOffset: 0.39 }
+  ], { sides: 6 })
+
+  const tailBase = sculptLoft([
+    { y: -0.08, rx: 0.19, rz: 0.26, zOffset: -0.26 },
+    { y: 0.02, rx: 0.15, rz: 0.34, zOffset: -0.44 },
+    { y: 0.10, rx: 0.10, rz: 0.24, zOffset: -0.62 }
+  ], { sides: 6, aoStrength: 0.18, aoGradient: 0.10 })
+
+  const tailTip = makeSpikeMesh(0.46, 0.082, 0.082, 5, 0, -0.32, 0.16)
+  const dorsalSpine = makeSpikeMesh(0.24, 0.048, 0.072, 5, 0, -0.08, 0.12)
+
+  // Sweeping draconic wings anchored on armL / armR so idle & boss_breath flap them!
+  const wingSpar = makeSpikeMesh(0.76, 0.056, 0.048, 6, 0.14, -0.18, 0.16)
+  const wingSailOuter = sculptLoft([
+    { y: -0.10, rx: 0.05, rz: 0.03 },
+    { y: 0.18, rx: 0.34, rz: 0.036, zOffset: -0.12 },
+    { y: 0.48, rx: 0.42, rz: 0.030, zOffset: -0.18 },
+    { y: 0.66, rx: 0.14, rz: 0.022, zOffset: -0.12 }
+  ], { sides: 6, aoStrength: 0.14, aoGradient: 0.08 })
+  const wingSailInner = sculptLoft([
+    { y: -0.18, rx: 0.06, rz: 0.03 },
+    { y: 0.08, rx: 0.26, rz: 0.032, zOffset: -0.10 },
+    { y: 0.36, rx: 0.28, rz: 0.028, zOffset: -0.14 },
+    { y: 0.46, rx: 0.10, rz: 0.020, zOffset: -0.08 }
+  ], { sides: 6, aoStrength: 0.14, aoGradient: 0.08 })
+  const wingTalon = makeSpikeMesh(0.18, 0.034, 0.034, 4, 0, 0.04, 0.12)
+
+  const hindLeg = sculptLoft([
+    { y: -0.44, rx: 0.10, rz: 0.12 },
+    { y: -0.24, rx: 0.12, rz: 0.14, zOffset: -0.02 },
+    { y: -0.02, rx: 0.14, rz: 0.16 }
+  ], { sides: 7, aoStrength: 0.18, aoGradient: 0.10 })
+
+  const hindFoot = sculptLoft([
+    { y: -0.500, rx: 0.13, rz: 0.20, zOffset: 0.06, frontFlat: 0.18 },
+    { y: -0.440, rx: 0.12, rz: 0.18, zOffset: 0.05 },
+    { y: -0.390, rx: 0.10, rz: 0.12, zOffset: 0.01 }
+  ], { sides: 6, aoStrength: 0.18, aoGradient: 0.10 })
+
+  const tailFin = makeSpikeMesh(0.32, 0.046, 0.095, 5, 0, -0.16, 0.12)
+
+  cachedFrostwyrmMeshes = {
+    cranium,
+    snoutUpper,
+    jawLower,
+    eyeCrystal,
+    hornMain,
+    hornSub,
+    fang,
+    neck,
+    chest,
+    bellyPlate,
+    frostCore,
+    tailBase,
+    tailTip,
+    dorsalSpine,
+    wingSpar,
+    wingSailOuter,
+    wingSailInner,
+    wingTalon,
+    hindLeg,
+    hindFoot,
+    tailFin
+  }
+  return cachedFrostwyrmMeshes
+}
+
+// ---------------------------------------------------------------------------
 // Public Registration Entry Point
 // ---------------------------------------------------------------------------
 
@@ -1672,6 +1824,71 @@ export function registerCrownshardBodiesAndHair(builder: CharacterBuilder): void
         { name: 'golem_leg_r', mesh: m.pillarLeg, color: slate },
         { name: 'golem_knee_ice_r', mesh: m.kneeCrystal, position: [0, -0.275, 0.112], rotation: [0.34, 0, 0], color: iceBright },
         { name: 'golem_foot_r', mesh: m.pillarFoot, color: slateMid }
+      ]
+    }
+  })
+
+  builder.registerBody('frostwyrm', (palette: CharacterPalette): Record<string, RigPart[]> => {
+    const m = getFrostwyrmMeshes()
+    const scaleMain = palette.primary
+    const scaleDark = palette.primaryDark
+    const bellyIce = mixColor(palette.metal, palette.secondary, 0.35)
+    const wingMembrane = mixColor(palette.secondary, palette.glow, 0.36)
+    const iceCrest = mixColor(palette.accent, palette.glow, 0.42)
+    const glow = palette.glow
+    const hornBone = mixColor(palette.metal, [0.95, 0.98, 1.0, 1], 0.45)
+
+    return {
+      head: [
+        { name: 'wyrm_cranium', mesh: m.cranium, color: scaleMain },
+        { name: 'wyrm_snout', mesh: m.snoutUpper, color: scaleMain },
+        { name: 'wyrm_jaw', mesh: m.jawLower, color: scaleDark },
+        { name: 'wyrm_eye_l', mesh: m.eyeCrystal, position: [-0.14, 0.32, 0.24], rotation: [0, 0.24, -0.18], color: glow, unlit: 0.98 },
+        { name: 'wyrm_eye_r', mesh: m.eyeCrystal, position: [0.14, 0.32, 0.24], rotation: [0, -0.24, 0.18], color: glow, unlit: 0.98 },
+        { name: 'wyrm_horn_l', mesh: m.hornMain, position: [-0.15, 0.44, -0.02], rotation: [-0.46, 0.12, 0.34], color: hornBone },
+        { name: 'wyrm_horn_r', mesh: m.hornMain, position: [0.15, 0.44, -0.02], rotation: [-0.46, -0.12, -0.34], color: hornBone },
+        { name: 'wyrm_brow_horn_l', mesh: m.hornSub, position: [-0.20, 0.32, 0.04], rotation: [-0.32, 0.20, 0.72], color: iceCrest },
+        { name: 'wyrm_brow_horn_r', mesh: m.hornSub, position: [0.20, 0.32, 0.04], rotation: [-0.32, -0.20, -0.72], color: iceCrest },
+        { name: 'wyrm_crest_c', mesh: m.dorsalSpine, position: [0, 0.48, -0.06], rotation: [-0.42, 0, 0], color: iceCrest },
+        { name: 'wyrm_fang_l', mesh: m.fang, position: [-0.08, 0.15, 0.38], rotation: [Math.PI, 0, 0.08], color: TUSK_IVORY },
+        { name: 'wyrm_fang_r', mesh: m.fang, position: [0.08, 0.15, 0.38], rotation: [Math.PI, 0, -0.08], color: TUSK_IVORY }
+      ],
+      body: [
+        { name: 'wyrm_neck', mesh: m.neck, color: scaleMain },
+        { name: 'wyrm_chest', mesh: m.chest, color: scaleMain },
+        { name: 'wyrm_belly', mesh: m.bellyPlate, color: bellyIce },
+        { name: 'wyrm_frost_core', mesh: m.frostCore, color: glow, unlit: 0.92 },
+        { name: 'wyrm_spine_1', mesh: m.dorsalSpine, position: [0, 0.44, -0.24], rotation: [-0.72, 0, 0], color: iceCrest },
+        { name: 'wyrm_spine_2', mesh: m.dorsalSpine, position: [0, 0.26, -0.30], rotation: [-0.95, 0, 0], color: iceCrest },
+        { name: 'wyrm_tail_base', mesh: m.tailBase, color: scaleDark },
+        { name: 'wyrm_tail_tip', mesh: m.tailTip, position: [0, 0.10, -0.70], rotation: [-1.10, 0, 0], color: iceCrest }
+      ],
+      armL: [
+        { name: 'wyrm_wing_spar_l', mesh: m.wingSpar, position: [-0.14, 0.04, -0.06], rotation: [-0.26, 0.18, 0.96], color: scaleDark },
+        { name: 'wyrm_wing_sail_outer_l', mesh: m.wingSailOuter, position: [-0.52, 0.16, -0.14], rotation: [-0.18, 0.22, 0.88], color: wingMembrane },
+        { name: 'wyrm_wing_sail_inner_l', mesh: m.wingSailInner, position: [-0.24, 0.02, -0.12], rotation: [-0.14, 0.12, 0.56], color: bellyIce },
+        { name: 'wyrm_wing_talon_l', mesh: m.wingTalon, position: [-0.62, 0.48, -0.10], rotation: [0.35, 0, 0.72], color: hornBone }
+      ],
+      armR: [
+        { name: 'wyrm_wing_spar_r', mesh: m.wingSpar, position: [0.14, 0.04, -0.06], rotation: [-0.26, -0.18, -0.96], color: scaleDark },
+        { name: 'wyrm_wing_sail_outer_r', mesh: m.wingSailOuter, position: [0.52, 0.16, -0.14], rotation: [-0.18, -0.22, -0.88], color: wingMembrane },
+        { name: 'wyrm_wing_sail_inner_r', mesh: m.wingSailInner, position: [0.24, 0.02, -0.12], rotation: [-0.14, -0.12, -0.56], color: bellyIce },
+        { name: 'wyrm_wing_talon_r', mesh: m.wingTalon, position: [0.62, 0.48, -0.10], rotation: [0.35, 0, -0.72], color: hornBone }
+      ],
+      legL: [
+        { name: 'wyrm_leg_l', mesh: m.hindLeg, color: scaleDark },
+        { name: 'wyrm_foot_l', mesh: m.hindFoot, color: scaleMain },
+        { name: 'wyrm_claw_l1', mesh: m.fang, position: [-0.06, -0.46, 0.22], rotation: [1.35, 0, 0], color: hornBone },
+        { name: 'wyrm_claw_l2', mesh: m.fang, position: [0.06, -0.46, 0.22], rotation: [1.35, 0, 0], color: hornBone }
+      ],
+      legR: [
+        { name: 'wyrm_leg_r', mesh: m.hindLeg, color: scaleDark },
+        { name: 'wyrm_foot_r', mesh: m.hindFoot, color: scaleMain },
+        { name: 'wyrm_claw_r1', mesh: m.fang, position: [-0.06, -0.46, 0.22], rotation: [1.35, 0, 0], color: hornBone },
+        { name: 'wyrm_claw_r2', mesh: m.fang, position: [0.06, -0.46, 0.22], rotation: [1.35, 0, 0], color: hornBone }
+      ],
+      cape: [
+        { name: 'wyrm_dorsal_fin', mesh: m.tailFin, position: [0, 0.06, -0.10], rotation: [-0.72, 0, 0], color: iceCrest, unlit: 0.35 }
       ]
     }
   })

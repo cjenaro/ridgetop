@@ -669,6 +669,48 @@ export const ENEMY_CHARACTER_SPECS: Readonly<Record<EnemyArchetypeId, CharacterS
       bracerR: 'bracer_plate',
       mainHand: 'weapon_obsidian_greatsword'
     }
+  },
+  lich_vaelen: {
+    body: 'skeleton',
+    palette: {
+      skin: '#ebe4d2',
+      primary: '#321852',
+      primaryDark: '#1c0d33',
+      secondary: '#40b883',
+      metal: '#c7b8e0',
+      metalDark: '#3c2e59',
+      leather: '#311e42',
+      accent: '#e6c05c',
+      glow: '#52ffc0'
+    },
+    parts: {
+      headgear: 'hood_lich_crown',
+      chest: 'chest_arcane_robe',
+      pauldrons: 'pauldrons_eclipse',
+      collar: 'collar_blood_amulet',
+      belt: 'belt_arcane_sash',
+      skirt: 'skirt_robe_hem',
+      back: 'mantle_eclipse',
+      bracerL: 'bracer_gold',
+      bracerR: 'bracer_gold',
+      mainHand: 'weapon_scythe_bone',
+      offHand: 'offhand_spell_orb'
+    }
+  },
+  frostwyrm_rimefang: {
+    body: 'frostwyrm',
+    palette: {
+      skin: '#2e5d8f',
+      primary: '#234b78',
+      primaryDark: '#142c4a',
+      secondary: '#5ec8f2',
+      metal: '#c8ecff',
+      metalDark: '#2f5378',
+      leather: '#1c3654',
+      accent: '#9eeeff',
+      glow: '#7cf8ff'
+    },
+    parts: {}
   }
 }
 
@@ -700,7 +742,9 @@ export const ENEMY_RIGS: Record<EnemyArchetypeId, Rig> = {
   mire_matriarch: crownshardCharacterBuilder.assemble(ENEMY_CHARACTER_SPECS.mire_matriarch),
   ash_inquisitor: crownshardCharacterBuilder.assemble(ENEMY_CHARACTER_SPECS.ash_inquisitor),
   frost_jarl: crownshardCharacterBuilder.assemble(ENEMY_CHARACTER_SPECS.frost_jarl),
-  magma_warden: crownshardCharacterBuilder.assemble(ENEMY_CHARACTER_SPECS.magma_warden)
+  magma_warden: crownshardCharacterBuilder.assemble(ENEMY_CHARACTER_SPECS.magma_warden),
+  lich_vaelen: crownshardCharacterBuilder.assemble(ENEMY_CHARACTER_SPECS.lich_vaelen),
+  frostwyrm_rimefang: crownshardCharacterBuilder.assemble(ENEMY_CHARACTER_SPECS.frostwyrm_rimefang)
 }
 
 const customHeroRigCache = new Map<string, Rig>()

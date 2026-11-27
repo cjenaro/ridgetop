@@ -1546,4 +1546,53 @@ export function registerCrownshardHeadgear(builder: CharacterBuilder): void {
       { name: 'bonehood_bead_r', mesh: m.boneHoodBead, position: [0.222, -0.375, 0.118], scale: [0.028, 0.036, 0.028], color: boneTint }
     ]
   })
+
+  // 12. Hooded Lich Sovereign cowl + jagged bone-gold necromantic crown & spectral eyes (Lich Vaelen)
+  builder.registerPart('headgear', 'hood_lich_crown', (palette: CharacterPalette): RigPart[] => {
+    const m = getHeadgearMeshes()
+    const e = getEclipseCrownMeshes()
+    const cowlCloth = mixColor(palette.primary, [0.24, 0.14, 0.42, 1], 0.42)
+    const cowlShade = shadeColor(cowlCloth, -0.10)
+    const gold = mixColor(palette.accent, [0.92, 0.78, 0.36, 1], 0.52)
+    const soulGlow = palette.glow
+    const soulBright = mixColor(palette.glow, [1, 1, 1, 1], 0.25)
+
+    const parts: RigPart[] = [
+      { name: 'lich_hood_crown', mesh: m.boneHoodCrown, color: cowlCloth },
+      { name: 'lich_hood_brow', mesh: m.boneHoodBrowPeak, color: cowlCloth },
+      { name: 'lich_hood_rear', mesh: m.boneHoodRear, color: cowlShade },
+      { name: 'lich_hood_drape_l', mesh: m.boneHoodDrapeL, color: cowlCloth },
+      { name: 'lich_hood_drape_r', mesh: m.boneHoodDrapeR, color: cowlCloth },
+      { name: 'lich_hood_tail', mesh: m.boneHoodTail, color: cowlShade },
+      { name: 'lich_hood_glow_brow', mesh: m.boneHoodGlowBrow, color: soulGlow, unlit: 0.94 },
+      { name: 'lich_hood_glow_l', mesh: m.boneHoodGlowSideL, color: soulGlow, unlit: 0.90 },
+      { name: 'lich_hood_glow_r', mesh: m.boneHoodGlowSideR, color: soulGlow, unlit: 0.90 },
+      // Piercing spectral eyes peering from beneath the deep Lich hood
+      { name: 'lich_eye_l', mesh: m.darkLordEyeGlow, position: [-0.088, -0.135, 0.228], rotation: [0, -0.14, -0.16], color: soulBright, unlit: 0.98 },
+      { name: 'lich_eye_r', mesh: m.darkLordEyeGlow, position: [0.088, -0.135, 0.228], rotation: [0, 0.14, 0.16], color: soulBright, unlit: 0.98 },
+      // Gilded necromantic circlet & twin curved lich horns piercing the cowl
+      { name: 'lich_circlet', mesh: e.band, position: [0, 0.04, 0], color: gold },
+      { name: 'lich_phylactery_gem', mesh: octahedron, position: [0, 0.145, 0.270], scale: [0.044, 0.068, 0.028], color: soulBright, unlit: 0.98 },
+      { name: 'lich_horn_l', mesh: m.darkLordHornL, position: [-0.02, 0.05, -0.02], color: gold },
+      { name: 'lich_horn_r', mesh: m.darkLordHornR, position: [0.02, 0.05, -0.02], color: gold }
+    ]
+    const spikes: readonly [number, number, number][] = [
+      [0, 0.95, 0.14], [0.58, 0.72, 0.22], [-0.58, 0.72, 0.22], [1.18, 0.54, 0.26], [-1.18, 0.54, 0.26]
+    ]
+    for (let i = 0; i < spikes.length; i++) {
+      const [a, h, tilt] = spikes[i]
+      const sx = Math.sin(a)
+      const cz = Math.cos(a)
+      parts.push({
+        name: `lich_crown_shard_${i}`,
+        mesh: e.shard,
+        position: [sx * 0.258, 0.130, cz * 0.236 - 0.004],
+        rotation: [cz * tilt, 0, -sx * tilt],
+        scale: [0.92, h, 0.92],
+        color: i === 0 ? soulBright : gold,
+        unlit: i === 0 ? 0.88 : 0.25
+      })
+    }
+    return parts
+  })
 }

@@ -92,7 +92,7 @@ function manhattanDist(c1: number, r1: number, c2: number, r2: number): number {
 
 /** True when this enemy archetype can summon skeletal minions. */
 export function isSummonerArchetype(enemyId?: EnemyArchetypeId): boolean {
-  return enemyId === 'bone_necromancer' || enemyId === 'ash_inquisitor'
+  return enemyId === 'bone_necromancer' || enemyId === 'ash_inquisitor' || enemyId === 'lich_vaelen'
 }
 
 /** True when this enemy archetype naturally regenerates HP at the start of its turn. */
@@ -114,13 +114,21 @@ export function isRegionalMiniBoss(enemyId?: EnemyArchetypeId): boolean {
 /** Home biome affinity for each enemy archetype. */
 export function getEnemyBiomeAffinity(enemyId: EnemyArchetypeId): BiomeId {
   if (enemyId === 'ember_pyromancer' || enemyId === 'magma_warden') return 'volcano'
-  if (enemyId === 'ice_wraith' || enemyId === 'frost_golem' || enemyId === 'frost_jarl') return 'frost'
+  if (
+    enemyId === 'ice_wraith' ||
+    enemyId === 'frost_golem' ||
+    enemyId === 'frost_jarl' ||
+    enemyId === 'frostwyrm_rimefang'
+  ) {
+    return 'frost'
+  }
   if (
     enemyId === 'bone_necromancer' ||
     enemyId === 'bone_thrall' ||
     enemyId === 'bone_archer' ||
     enemyId === 'crypt_knight' ||
-    enemyId === 'ash_inquisitor'
+    enemyId === 'ash_inquisitor' ||
+    enemyId === 'lich_vaelen'
   ) {
     return 'crypt'
   }
@@ -135,12 +143,13 @@ export function getEnemyProjectileStyle(
 ): 'arrow' | 'fire' | 'frost' | 'shadow' | 'arcane' {
   if (enemyId === 'bone_archer') return 'arrow'
   if (enemyId === 'ember_pyromancer' || enemyId === 'magma_warden') return 'fire'
-  if (enemyId === 'ice_wraith' || enemyId === 'frost_jarl') return 'frost'
+  if (enemyId === 'ice_wraith' || enemyId === 'frost_jarl' || enemyId === 'frostwyrm_rimefang') return 'frost'
   if (
     enemyId === 'eclipse_archon' ||
     enemyId === 'bog_shaman' ||
     enemyId === 'bone_necromancer' ||
     enemyId === 'ash_inquisitor' ||
+    enemyId === 'lich_vaelen' ||
     enemyId === 'mire_matriarch'
   ) {
     return 'shadow'
@@ -153,10 +162,13 @@ export function getEnemyBasicAttackStatus(enemyId?: EnemyArchetypeId): EnemyBasi
   if (enemyId === 'bog_shaman' || enemyId === 'mire_matriarch') {
     return { status: 'poison', stacks: 2 }
   }
+  if (enemyId === 'lich_vaelen') {
+    return { status: 'poison', stacks: 1 }
+  }
   if (enemyId === 'ember_pyromancer' || enemyId === 'magma_warden') {
     return { status: 'burn' }
   }
-  if (enemyId === 'ice_wraith' || enemyId === 'frost_jarl') {
+  if (enemyId === 'ice_wraith' || enemyId === 'frost_jarl' || enemyId === 'frostwyrm_rimefang') {
     return { status: 'slow' }
   }
   return null
@@ -165,8 +177,8 @@ export function getEnemyBasicAttackStatus(enemyId?: EnemyArchetypeId): EnemyBasi
 /** Elemental affinity of an enemy's basic attack for Wave 4 elemental combos. */
 export function getEnemyAttackElement(enemyId?: EnemyArchetypeId): ElementKind | null {
   if (enemyId === 'ember_pyromancer' || enemyId === 'magma_warden') return 'fire'
-  if (enemyId === 'ice_wraith' || enemyId === 'frost_jarl') return 'frost'
-  if (enemyId === 'bog_shaman' || enemyId === 'mire_matriarch') return 'poison'
+  if (enemyId === 'ice_wraith' || enemyId === 'frost_jarl' || enemyId === 'frostwyrm_rimefang') return 'frost'
+  if (enemyId === 'bog_shaman' || enemyId === 'mire_matriarch' || enemyId === 'lich_vaelen') return 'poison'
   return null
 }
 
@@ -254,9 +266,12 @@ export function findBestSummonTile(
 
     let occupied = false
     for (const u of battle.units) {
-      if ((u.alive || isUnitDowned(u)) && u.col === col && u.row === row) {
-        occupied = true
-        break
+      if (u.alive || isUnitDowned(u)) {
+        const fp = u.footprintSize === 2 ? 2 : 1
+        if (col >= u.col && col < u.col + fp && row >= u.row && row < u.row + fp) {
+          occupied = true
+          break
+        }
       }
     }
     if (occupied) continue

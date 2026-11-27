@@ -116,6 +116,8 @@ export type EnemyArchetypeId =
   | 'ash_inquisitor'
   | 'frost_jarl'
   | 'magma_warden'
+  | 'lich_vaelen'
+  | 'frostwyrm_rimefang'
 
 export type EquipSlot = 'weapon' | 'armor' | 'relic'
 
@@ -337,6 +339,8 @@ export interface EnemySpec {
   readonly range: number
   readonly ai: 'melee' | 'ranged' | 'support' | 'boss'
   readonly isBoss?: boolean
+  /** Multi-tile raid boss square footprint size (`1` for standard 1x1, `2` for 2x2 anchored at col..col+1, row..row+1). */
+  readonly footprintSize?: 1 | 2
   /** Optional Zone of Control sentinel override (defaults to melee `range <= 1`). */
   readonly zoc?: boolean
   /** Optional skirmisher trait allowing the unit to evade opposing Zones of Control. */
@@ -475,6 +479,8 @@ export interface ChapterSpec {
   readonly heroSpawns: readonly (readonly [number, number])[]
   readonly deployTiles?: readonly (readonly [number, number])[]
   readonly objective?: BattleObjectiveSpec
+  /** Optional innate stage mutators active by default even on first clear (e.g., Gloomwood Fog of War). */
+  readonly innateMutators?: readonly StageMutatorId[]
   readonly enemies: readonly ChapterEnemySpawn[]
 }
 
@@ -545,6 +551,7 @@ export interface BattleUnit {
   readonly stars: 1 | 2 | 3
   level: number
   readonly isBoss: boolean
+  readonly footprintSize?: 1 | 2
   readonly summonerUid?: string
   readonly weaponId?: string
   readonly armorId?: string
@@ -991,6 +998,7 @@ export interface BattleUnitSnapshot {
   readonly stars: 1 | 2 | 3
   readonly level?: number
   readonly isBoss: boolean
+  readonly footprintSize?: 1 | 2
   readonly summonerUid?: string
   readonly weaponId?: string
   readonly armorId?: string

@@ -27,6 +27,7 @@
       "crownshard/combat-log.ts",
       "crownshard/discovery-tips.ts",
       "crownshard/simulation.ts",
+      "crownshard/expansion-act2.ts",
       "crownshard/enemy-archetypes.ts",
       "crownshard/forge.ts",
       "crownshard/passives.ts",

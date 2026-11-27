@@ -1,6 +1,7 @@
 import { canCounterAttack, computeCounterDamage, isMeleeSkillEligibleForCounter } from './counter-attack.ts'
 import { HERO_SPECS, TACTIC_BY_ID } from './data.ts'
 import { classifyElement, previewElementalCombo } from './elemental-combos.ts'
+import { unitOccupiesCell } from './expansion-act2.ts'
 import { isEnemyShrouded, mutatorDamageMultiplier } from './mutators.ts'
 import {
   adjustCoverBonusForAttacker,
@@ -114,7 +115,7 @@ function isIntactBarricadeCell(cell: GridCell | undefined): boolean {
 }
 
 function activeUnitAt(battle: BattleState, col: number, row: number): BattleUnit | undefined {
-  return battle.units.find(u => u.alive && u.col === col && u.row === row)
+  return battle.units.find(u => u.alive && unitOccupiesCell(u, col, row))
 }
 
 function downedAllyAt(battle: BattleState, col: number, row: number): BattleUnit | undefined {
@@ -122,7 +123,7 @@ function downedAllyAt(battle: BattleState, col: number, row: number): BattleUnit
 }
 
 function unitOrDownedAtCell(battle: BattleState, col: number, row: number): BattleUnit | undefined {
-  return battle.units.find(u => (u.alive || isUnitDowned(u)) && u.col === col && u.row === row)
+  return battle.units.find(u => (u.alive || isUnitDowned(u)) && unitOccupiesCell(u, col, row))
 }
 
 function canStepBetween(fromCell: GridCell, toCell: GridCell, jump: number): boolean {
