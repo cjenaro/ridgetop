@@ -1,8 +1,8 @@
 import type { Vec3 } from 'ridgetop'
 import { appendCombatLog, formatHazardLog, formatKoLog, formatStatusLog } from './combat-log.ts'
+import { applyCoverCellDamage, isBarricadeCell, isCrackedPillarCell, isDestructibleCover } from './destructible-cover.ts'
 import { canTriggerPhoenixGrace } from './endless-roguelite.ts'
 import {
-  BARRICADE_DEFAULT_HP,
   COLLISION_IMPACT_DAMAGE,
   CURSED_ALTAR_HP_COST,
   FALL_DAMAGE_PER_LEVEL,
@@ -14,8 +14,7 @@ import {
   facingVector,
   gridToWorld,
   isUnitDowned,
-  terrainDefBonus,
-  terrainElevation
+  terrainDefBonus
 } from './types.ts'
 import { classifyHazardElement, previewElementalCombo, triggerElementalCombo } from './elemental-combos.ts'
 import { closestFootprintCell, getUnitFootprintSize, unitOccupiesCell } from './expansion-act2.ts'
@@ -45,7 +44,11 @@ function inBounds(col: number, row: number, cols: number, rows: number): boolean
 }
 
 function isIntactBarricadeCell(cell: GridCell | undefined): boolean {
-  return Boolean(cell && cell.terrain === 'barricade' && !cell.walkable && (cell.barricadeHp ?? BARRICADE_DEFAULT_HP) > 0)
+  return Boolean(cell && !cell.walkable && isBarricadeCell(cell))
+}
+
+function isIntactCrackedPillarCell(cell: GridCell | undefined): boolean {
+  return Boolean(cell && !cell.walkable && isCrackedPillarCell(cell))
 }
 
 function computeGeyserImpactDmg(target: BattleUnit, cell: GridCell): number {
@@ -300,6 +303,15 @@ export function resolveDisplacementPreview(
       collidedWith = 'pillar'
       collidedCell = { col: nextCol, row: nextRow }
       collisionDmg += COLLISION_IMPACT_DAMAGE
+      causesStun = true
+      break
+    }
+
+    if (isIntactCrackedPillarCell(nextCell)) {
+      collidedWith = 'cracked_pillar'
+      collidedCell = { col: nextCol, row: nextRow }
+      collisionDmg += COLLISION_IMPACT_DAMAGE
+      barricadeDmg = COLLISION_IMPACT_DAMAGE
       causesStun = true
       break
     }
@@ -560,40 +572,40 @@ function applyBarricadeCollision(
   col: number,
   row: number,
   damage: number
-): { dealt: number; shattered: boolean } {
+): { dealt: number; shattered: boolean; kind: 'barricade' | 'cracked_pillar' | null } {
   const battle = state.battle
   if (!battle || !inBounds(col, row, battle.cols, battle.rows) || damage <= 0) {
-    return { dealt: 0, shattered: false }
+    return { dealt: 0, shattered: false, kind: null }
   }
   const cell = battle.cells[row][col]
-  if (!isIntactBarricadeCell(cell)) {
-    return { dealt: 0, shattered: false }
+  if (!cell || cell.walkable || !isDestructibleCover(cell)) {
+    return { dealt: 0, shattered: false, kind: null }
   }
-  const hpBefore = cell.barricadeHp ?? BARRICADE_DEFAULT_HP
-  const dmg = Math.max(4, Math.round(damage))
-  const hpAfter = Math.max(0, hpBefore - dmg)
-  cell.barricadeHp = hpAfter
-
   const [tx, ty, tz] = gridToWorld(col, row, cell.elevation, battle.cols, battle.rows)
-  pushFloat(battle, tx, ty + 0.15, tz, `-${dmg}`, '#f5c678')
+  const outcome = applyCoverCellDamage(cell, damage)
+  if (!outcome) {
+    return { dealt: 0, shattered: false, kind: null }
+  }
+
+  pushFloat(battle, tx, ty + 0.15, tz, `-${outcome.damage}`, outcome.kind === 'cracked_pillar' ? '#d8dce8' : '#f5c678')
   state.vfx.push({ kind: 'burst', style: 'slash', at: [tx, ty + 0.55, tz], radius: 0.85 })
-  state.sounds.push({ kind: 'hit', pitch: 0.78 })
+  state.sounds.push({ kind: 'hit', pitch: outcome.kind === 'cracked_pillar' ? 0.68 : 0.78 })
   battle.shake = Math.max(battle.shake, 0.24)
 
-  if (hpAfter <= 0) {
-    const hLvl = cellHeightLevel(cell)
-    cell.terrain = 'stone'
-    cell.walkable = true
-    cell.elevation = terrainElevation('stone', hLvl)
-    cell.barricadeHp = 0
-    cell.barricadeMaxHp = undefined
+  if (outcome.shattered) {
     pushFloat(battle, tx, ty + 0.58, tz, 'SHATTERED!', '#ffd980')
+    state.vfx.push({
+      kind: 'cover_shatter',
+      coverKind: outcome.kind === 'cracked_pillar' ? 'pillar' : 'barricade',
+      at: [tx, ty + 0.5, tz],
+      heavy: outcome.isHeavyHit
+    })
     state.vfx.push({ kind: 'burst', style: 'gold', at: [tx, ty + 0.5, tz], radius: 1.35 })
-    state.sounds.push({ kind: 'ko', pitch: 1.15 })
-    battle.shake = Math.max(battle.shake, 0.34)
-    return { dealt: dmg, shattered: true }
+    state.sounds.push({ kind: 'ko', pitch: outcome.kind === 'cracked_pillar' ? 0.96 : 1.15 })
+    battle.shake = Math.max(battle.shake, 0.36)
+    return { dealt: outcome.damage, shattered: true, kind: outcome.kind }
   }
-  return { dealt: dmg, shattered: false }
+  return { dealt: outcome.damage, shattered: false, kind: outcome.kind }
 }
 
 function triggerLandingHazard(
@@ -853,7 +865,7 @@ export function applyDisplacement(
         targetName: target.name,
         damage: colRes.hpDamage,
         absorbed: colRes.absorbed,
-        detail: preview.collidedUnitName ?? preview.collidedWith
+        detail: preview.collidedUnitName ?? (preview.collidedWith === 'cracked_pillar' ? 'cracked pillar' : preview.collidedWith)
       })
     )
     state.vfx.push({ kind: 'burst', style: 'gold', at: [toPos[0], toPos[1] + 0.55, toPos[2]], radius: 0.9 })
@@ -907,16 +919,23 @@ export function applyDisplacement(
           })
         )
       }
-    } else if (preview.collidedWith === 'barricade' && preview.collidedCell && preview.barricadeDmg > 0) {
+    } else if (
+      (preview.collidedWith === 'barricade' || preview.collidedWith === 'cracked_pillar') &&
+      preview.collidedCell &&
+      preview.barricadeDmg > 0
+    ) {
       const barRes = applyBarricadeCollision(state, preview.collidedCell.col, preview.collidedCell.row, preview.barricadeDmg)
       barricadeDmgDealt = barRes.dealt
       barricadeShattered = barRes.shattered
       if (barRes.dealt > 0) {
+        const isPillar = barRes.kind === 'cracked_pillar'
         appendCombatLog(
           battle,
           'hazard',
           formatHazardLog({
-            kind: barRes.shattered ? 'barricade_smash' : 'barricade_hit',
+            kind: isPillar
+              ? (barRes.shattered ? 'pillar_smash' : 'pillar_hit')
+              : (barRes.shattered ? 'barricade_smash' : 'barricade_hit'),
             actorName: target.name,
             damage: barRes.dealt
           })

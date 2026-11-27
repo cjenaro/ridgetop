@@ -110,9 +110,10 @@ function inBounds(col: number, row: number, cols: number, rows: number): boolean
 }
 
 function isIntactBarricadeCell(cell: GridCell | undefined): boolean {
-  return Boolean(
-    cell && cell.terrain === 'barricade' && !cell.walkable && (cell.barricadeHp ?? BARRICADE_DEFAULT_HP) > 0
-  )
+  if (!cell || cell.walkable) return false
+  if (cell.terrain === 'barricade') return (cell.barricadeHp ?? BARRICADE_DEFAULT_HP) > 0
+  if (cell.terrain === 'cracked_pillar') return (cell.pillarHp ?? 35) > 0
+  return false
 }
 
 function activeUnitAt(battle: BattleState, col: number, row: number): BattleUnit | undefined {
@@ -218,7 +219,7 @@ function hasClearLoS(
     if (!cell || cell.terrain === 'void') return false
     const sightH = eyeH * (1 - t) + targetH * t
     const lvl = cellHeightLevel(cell)
-    if (cell.terrain === 'pillar') return lvl + 2.5 > sightH
+    if (cell.terrain === 'pillar' || (cell.terrain === 'cracked_pillar' && (cell.pillarHp ?? 35) > 0)) return lvl + 2.5 > sightH
     if (isIntactBarricadeCell(cell)) return lvl + 1.8 > sightH
     return lvl > sightH + 0.05
   }

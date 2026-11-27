@@ -67,6 +67,19 @@ import {
   applyDisplacement, orderDisplacementTargets, resolveDisplacementPreview
 } from './forced-movement.ts'
 import {
+  CRACKED_PILLAR_DEFAULT_HP, applyCoverCellDamage,
+  isCrackedPillarCell, isDestructibleCover, previewCoverDamageOnCells
+} from './destructible-cover.ts'
+export {
+  COVER_HEAVY_DAMAGE_MUL, COVER_HEAVY_POWER_MUL, COVER_HEAVY_RAW_THRESHOLD,
+  CRACKED_PILLAR_DEFAULT_HP, applyCoverCellDamage, computeCoverDamage,
+  countBattleDestructibleCover, formatCoverForecastBadge, formatCoverTooltip,
+  getCoverDamageRatio, getCoverHp, getCoverLabel, getDestructibleCoverKind,
+  isBarricadeCell, isCrackedPillarCell, isDestructibleCover, isHeavyCoverHit,
+  previewCoverDamageOnCells
+} from './destructible-cover.ts'
+export type { BattleCoverCounts, CoverDamageCalc, CoverDamageOptions, CoverDamageOutcome, CoverForecastSummary } from './destructible-cover.ts'
+import {
   BARRICADE_DEFAULT_HP, CURSED_ALTAR_HP_COST, FACING_DIRS, GRID_COLS, GRID_ROWS, KO_COUNTDOWN_TURNS,
   LAVA_GEYSER_DAMAGE, LAVA_GEYSER_PERIOD, MAX_HEIGHT_LEVEL, MAX_POISON_STACKS,
   OPPORTUNITY_ATTACK_DAMAGE_MUL,
@@ -1151,6 +1164,7 @@ const TERRAIN_LOOKUP: ReadonlyMap<string, TileTerrain> = new Map<string, TileTer
   ['water', 'water'],
   ['shrine', 'shrine'],
   ['pillar', 'pillar'],
+  ['cracked_pillar', 'cracked_pillar'],
   ['lava', 'lava'],
   ['snow', 'snow'],
   ['darkstone', 'darkstone'],
@@ -1500,6 +1514,9 @@ export function serializeBattleState(
       ...(cell.shrineUsed ? { shrineUsed: true } : {}),
       ...(cell.barricadeHp !== undefined ? { barricadeHp: cell.barricadeHp } : {}),
       ...(cell.barricadeMaxHp !== undefined ? { barricadeMaxHp: cell.barricadeMaxHp } : {}),
+      ...(cell.pillarHp !== undefined ? { pillarHp: cell.pillarHp } : {}),
+      ...(cell.pillarMaxHp !== undefined ? { pillarMaxHp: cell.pillarMaxHp } : {}),
+      ...(cell.coverShattered ? { coverShattered: cell.coverShattered } : {}),
       ...(cell.geyserActive !== undefined ? { geyserActive: cell.geyserActive } : {}),
       ...(cell.altarUsed !== undefined ? { altarUsed: cell.altarUsed } : {})
     }))
@@ -1661,6 +1678,15 @@ export function validateBattleSnapshot(raw: unknown): BattleSaveSnapshot | null 
       const barricadeHp = isFiniteNum(rawCell.barricadeHp)
         ? clamp(Math.round(rawCell.barricadeHp), 0, barricadeMaxHp ?? BARRICADE_DEFAULT_HP)
         : (terrain === 'barricade' ? BARRICADE_DEFAULT_HP : undefined)
+      const pillarMaxHp = isFiniteNum(rawCell.pillarMaxHp) && rawCell.pillarMaxHp > 0
+        ? Math.max(1, Math.round(rawCell.pillarMaxHp))
+        : (terrain === 'cracked_pillar' ? CRACKED_PILLAR_DEFAULT_HP : undefined)
+      const pillarHp = isFiniteNum(rawCell.pillarHp)
+        ? clamp(Math.round(rawCell.pillarHp), 0, pillarMaxHp ?? CRACKED_PILLAR_DEFAULT_HP)
+        : (terrain === 'cracked_pillar' ? CRACKED_PILLAR_DEFAULT_HP : undefined)
+      const coverShattered = rawCell.coverShattered === 'pillar' || rawCell.coverShattered === 'barricade'
+        ? rawCell.coverShattered
+        : undefined
       const geyserActive = typeof rawCell.geyserActive === 'boolean'
         ? rawCell.geyserActive
         : (terrain === 'lava_geyser' ? false : undefined)
@@ -1673,6 +1699,9 @@ export function validateBattleSnapshot(raw: unknown): BattleSaveSnapshot | null 
         ...(rawCell.shrineUsed === true ? { shrineUsed: true } : {}),
         ...(barricadeHp !== undefined ? { barricadeHp } : {}),
         ...(barricadeMaxHp !== undefined ? { barricadeMaxHp } : {}),
+        ...(pillarHp !== undefined ? { pillarHp } : {}),
+        ...(pillarMaxHp !== undefined ? { pillarMaxHp } : {}),
+        ...(coverShattered ? { coverShattered } : {}),
         ...(geyserActive !== undefined ? { geyserActive } : {}),
         ...(altarUsed !== undefined ? { altarUsed } : {})
       })
@@ -1968,6 +1997,9 @@ export function restoreBattleState(state: GameState, snapshot: unknown): boolean
       ...(c.shrineUsed ? { shrineUsed: true } : {}),
       ...(c.barricadeHp !== undefined ? { barricadeHp: c.barricadeHp } : c.terrain === 'barricade' ? { barricadeHp: BARRICADE_DEFAULT_HP } : {}),
       ...(c.barricadeMaxHp !== undefined ? { barricadeMaxHp: c.barricadeMaxHp } : c.terrain === 'barricade' ? { barricadeMaxHp: BARRICADE_DEFAULT_HP } : {}),
+      ...(c.pillarHp !== undefined ? { pillarHp: c.pillarHp } : c.terrain === 'cracked_pillar' ? { pillarHp: CRACKED_PILLAR_DEFAULT_HP } : {}),
+      ...(c.pillarMaxHp !== undefined ? { pillarMaxHp: c.pillarMaxHp } : c.terrain === 'cracked_pillar' ? { pillarMaxHp: CRACKED_PILLAR_DEFAULT_HP } : {}),
+      ...(c.coverShattered ? { coverShattered: c.coverShattered } : {}),
       ...(c.geyserActive !== undefined ? { geyserActive: c.geyserActive } : c.terrain === 'lava_geyser' ? { geyserActive: isGeyserEruptingOnTurn(valid.turn) } : {}),
       ...(c.altarUsed !== undefined ? { altarUsed: c.altarUsed } : c.terrain === 'cursed_altar' ? { altarUsed: false } : {})
     }))
@@ -2493,6 +2525,7 @@ function buildCells(
         walkable: terrainWalkable(terrain),
         heightLevel,
         ...(terrain === 'barricade' ? { barricadeHp: BARRICADE_DEFAULT_HP, barricadeMaxHp: BARRICADE_DEFAULT_HP } : {}),
+        ...(terrain === 'cracked_pillar' ? { pillarHp: CRACKED_PILLAR_DEFAULT_HP, pillarMaxHp: CRACKED_PILLAR_DEFAULT_HP } : {}),
         ...(terrain === 'lava_geyser' ? { geyserActive: false } : {}),
         ...(terrain === 'cursed_altar' ? { altarUsed: false } : {})
       })
@@ -3739,7 +3772,7 @@ export function hasLineOfSight(
     if (!cell || cell.terrain === 'void') return false
     const sightH = eyeH * (1 - t) + targetH * t
     const lvl = cellHeightLevel(cell)
-    if (cell.terrain === 'pillar') return lvl + 2.5 > sightH
+    if (cell.terrain === 'pillar' || isCrackedPillarCell(cell)) return lvl + 2.5 > sightH
     if (isIntactBarricade(cell)) return lvl + 1.8 > sightH
     if (lvl > sightH + 0.05) return true
     return false
@@ -3806,7 +3839,7 @@ export function computeCoverBonus(
     if (!isCellInBounds(nc, nr, battle.cols, battle.rows)) continue
     const neighbor = battle.cells[nr][nc]
     if (!neighbor || neighbor.terrain === 'void') continue
-    const isCoverWall = neighbor.terrain === 'pillar' || isIntactBarricade(neighbor)
+    const isCoverWall = neighbor.terrain === 'pillar' || isDestructibleCover(neighbor)
     const isCliffWall = !isCoverWall && cellHeightLevel(neighbor) >= defLvl + 2
     if (!isCoverWall && !isCliffWall) continue
     const facingAttacker = ac * dc + ar * dr > 0
@@ -4514,7 +4547,7 @@ export function computeTargetTiles(
     }
     for (let row = 0; row < battle.rows; row++) {
       for (let col = 0; col < battle.cols; col++) {
-        if (!isIntactBarricade(battle.cells[row][col])) continue
+        if (!isDestructibleCover(battle.cells[row][col])) continue
         const d = manhattan(unit.col, unit.row, col, row)
         const effRange = effectiveAttackRange(battle, unit.col, unit.row, col, row, unit.range, unit)
         if (d >= 1 && d <= effRange && hasLineOfSight(battle, unit.col, unit.row, col, row, false)) {
@@ -4593,7 +4626,7 @@ export function computeTacticTargetTiles(
     if (spec.damage > 0) {
       for (let row = 0; row < battle.rows; row++) {
         for (let col = 0; col < battle.cols; col++) {
-          if (isIntactBarricade(battle.cells[row][col])) out.push({ col, row })
+          if (isDestructibleCover(battle.cells[row][col])) out.push({ col, row })
         }
       }
     }
@@ -4730,7 +4763,7 @@ export function computeMoveAttackTiles(
   if (targetKind === 'enemy' || targetKind === 'tile') {
     for (let row = 0; row < battle.rows; row++) {
       for (let col = 0; col < battle.cols; col++) {
-        if (!isIntactBarricade(battle.cells[row][col])) continue
+        if (!isDestructibleCover(battle.cells[row][col])) continue
         if (directTargets.some(t => t.col === col && t.row === row)) continue
         const approach = pickBestApproachTile(battle, unit, moveTiles, col, row, range, indirect)
         if (approach) {
@@ -4880,14 +4913,13 @@ export function computeCombatForecast(state: GameState, col: number, row: number
       if (live) return live
       return spec.canRevive ? downedHeroAt(battle, c, r) : undefined
     }
+    const tacticCoverSummary = spec.damage > 0
+      ? previewCoverDamageOnCells(battle, affected, spec.damage)
+      : null
     const primary = lookup(col, row) ?? affected.map(c => lookup(c.col, c.row)).find((u): u is BattleUnit => Boolean(u))
     if (!primary) {
-      const barCell = battle.cells[row][col]
-      if (spec.damage > 0 && isIntactBarricade(barCell)) {
-        const hpBefore = barCell.barricadeHp ?? BARRICADE_DEFAULT_HP
-        const maxHp = barCell.barricadeMaxHp ?? BARRICADE_DEFAULT_HP
-        const barDmg = Math.max(4, Math.round(spec.damage))
-        const hpAfter = Math.max(0, hpBefore - barDmg)
+      if (spec.damage > 0 && tacticCoverSummary && tacticCoverSummary.damagedCoverCount > 0) {
+        const directCover = tacticCoverSummary.targets.find(t => t.col === col && t.row === row) ?? tacticCoverSummary.targets[0]
         return {
           mode: 'tactic',
           actionName: spec.name,
@@ -4897,7 +4929,7 @@ export function computeCombatForecast(state: GameState, col: number, row: number
           attackerHeroId: active?.heroId,
           attackerStars: active?.stars ?? 1,
           targetUid: null,
-          targetName: 'Timber Barricade',
+          targetName: directCover.label,
           targetTeam: 'enemy',
           targetCol: col,
           targetRow: row,
@@ -4905,8 +4937,8 @@ export function computeCombatForecast(state: GameState, col: number, row: number
           approachRow: active?.row ?? row,
           requiresMove: false,
           path: [],
-          normalDmg: barDmg,
-          critDmg: barDmg,
+          normalDmg: directCover.damage,
+          critDmg: directCover.damage,
           critChance: 0,
           healAmount: 0,
           shieldAmount: 0,
@@ -4924,14 +4956,20 @@ export function computeCombatForecast(state: GameState, col: number, row: number
           friendlyFireCount: 0,
           emptyTileTarget: false,
           ignoreArmor: 1,
-          aoeTargets: 1,
-          targetHpBefore: hpBefore,
-          targetMaxHp: maxHp,
+          aoeTargets: tacticCoverSummary.damagedCoverCount,
+          targetHpBefore: directCover.hpBefore,
+          targetMaxHp: directCover.maxHp,
           targetShieldBefore: 0,
-          targetHpAfterNormal: hpAfter,
-          targetHpAfterCrit: hpAfter,
-          lethalNormal: hpAfter <= 0,
-          lethalCrit: hpAfter <= 0,
+          targetHpAfterNormal: directCover.hpAfter,
+          targetHpAfterCrit: directCover.hpAfter,
+          lethalNormal: directCover.willShatter,
+          lethalCrit: directCover.willShatter,
+          coverDamage: tacticCoverSummary.coverDamage,
+          willShatterCover: tacticCoverSummary.willShatterCover,
+          shatteredCoverCount: tacticCoverSummary.shatteredCoverCount,
+          damagedCoverCount: tacticCoverSummary.damagedCoverCount,
+          coverHeavyHit: tacticCoverSummary.isHeavyHit,
+          coverHits: tacticCoverSummary.targets,
           alternatives: []
         }
       }
@@ -5032,6 +5070,24 @@ export function computeCombatForecast(state: GameState, col: number, row: number
       lethalCrit: tacticTotalDmg > 0 && hpAfterNormal <= 0,
       ...(displacementPreview ? { displacementPreview } : {}),
       ...(elementalCombo ? { elementalCombo } : {}),
+      ...(tacticCoverSummary && tacticCoverSummary.damagedCoverCount > 0 ? {
+        coverDamage: tacticCoverSummary.coverDamage,
+        willShatterCover: tacticCoverSummary.willShatterCover,
+        shatteredCoverCount: tacticCoverSummary.shatteredCoverCount,
+        damagedCoverCount: tacticCoverSummary.damagedCoverCount,
+        coverHeavyHit: tacticCoverSummary.isHeavyHit,
+        coverHits: tacticCoverSummary.targets
+      } : displacementPreview && (displacementPreview.collidedWith === 'barricade' || displacementPreview.collidedWith === 'cracked_pillar') && displacementPreview.collidedCell && displacementPreview.barricadeDmg > 0 ? (() => {
+        const dc = previewCoverDamageOnCells(battle, [displacementPreview.collidedCell], displacementPreview.barricadeDmg)
+        return dc.damagedCoverCount > 0 ? {
+          coverDamage: dc.coverDamage,
+          willShatterCover: dc.willShatterCover,
+          shatteredCoverCount: dc.shatteredCoverCount,
+          damagedCoverCount: dc.damagedCoverCount,
+          coverHeavyHit: dc.isHeavyHit,
+          coverHits: dc.targets
+        } : {}
+      })() : {}),
       alternatives: []
     }
   }
@@ -5085,16 +5141,23 @@ export function computeCombatForecast(state: GameState, col: number, row: number
     ?? affectedUnits[0]
     ?? null
 
-  // If targeting an intact Barricade or hovering an empty ground space:
+  const coverRawDmg = isOffensive
+    ? (armedSkill ? active.atk * armedSkill.powerMul + armedSkill.flatBonus : active.atk)
+    : 0
+  const coverOpts = {
+    empowered: active.empowerTurns > 0,
+    powerMul: armedSkill ? armedSkill.powerMul : 1,
+    isCrit: active.crit >= 1
+  }
+  const skillCoverSummary = isOffensive
+    ? previewCoverDamageOnCells(battle, affected, coverRawDmg, coverOpts)
+    : null
+
+  // If targeting intact Destructible Cover (Barricade / Cracked Pillar) or hovering an empty ground space:
   if (!primary) {
-    const targetCell = battle.cells[row][col]
-    if (isOffensive && isIntactBarricade(targetCell)) {
-      const hpBefore = targetCell.barricadeHp ?? BARRICADE_DEFAULT_HP
-      const maxHp = targetCell.barricadeMaxHp ?? BARRICADE_DEFAULT_HP
-      const raw = armedSkill ? active.atk * armedSkill.powerMul + armedSkill.flatBonus : active.atk
+    if (isOffensive && skillCoverSummary && skillCoverSummary.damagedCoverCount > 0) {
+      const directCover = skillCoverSummary.targets.find(t => t.col === col && t.row === row) ?? skillCoverSummary.targets[0]
       const empowered = active.empowerTurns > 0
-      const barDmg = Math.max(4, Math.round(raw * (empowered ? 1.35 : 1)))
-      const hpAfter = Math.max(0, hpBefore - barDmg)
       return {
         mode: armedSkill ? 'skill' : 'strike',
         actionName: armedSkill ? armedSkill.name : 'Strike',
@@ -5104,7 +5167,7 @@ export function computeCombatForecast(state: GameState, col: number, row: number
         attackerHeroId: active.heroId,
         attackerStars: active.stars,
         targetUid: null,
-        targetName: 'Timber Barricade',
+        targetName: directCover.label,
         targetTeam: 'enemy',
         targetCol: col,
         targetRow: row,
@@ -5112,8 +5175,8 @@ export function computeCombatForecast(state: GameState, col: number, row: number
         approachRow,
         requiresMove,
         path,
-        normalDmg: barDmg,
-        critDmg: barDmg,
+        normalDmg: directCover.damage,
+        critDmg: directCover.damage,
         critChance: 0,
         healAmount: 0,
         shieldAmount: 0,
@@ -5132,14 +5195,20 @@ export function computeCombatForecast(state: GameState, col: number, row: number
         friendlyFireCount: 0,
         emptyTileTarget: false,
         ignoreArmor: 1,
-        aoeTargets: 1,
-        targetHpBefore: hpBefore,
-        targetMaxHp: maxHp,
+        aoeTargets: skillCoverSummary.damagedCoverCount,
+        targetHpBefore: directCover.hpBefore,
+        targetMaxHp: directCover.maxHp,
         targetShieldBefore: 0,
-        targetHpAfterNormal: hpAfter,
-        targetHpAfterCrit: hpAfter,
-        lethalNormal: hpAfter <= 0,
-        lethalCrit: hpAfter <= 0,
+        targetHpAfterNormal: directCover.hpAfter,
+        targetHpAfterCrit: directCover.hpAfter,
+        lethalNormal: directCover.willShatter,
+        lethalCrit: directCover.willShatter,
+        coverDamage: skillCoverSummary.coverDamage,
+        willShatterCover: skillCoverSummary.willShatterCover,
+        shatteredCoverCount: skillCoverSummary.shatteredCoverCount,
+        damagedCoverCount: skillCoverSummary.damagedCoverCount,
+        coverHeavyHit: skillCoverSummary.isHeavyHit,
+        coverHits: skillCoverSummary.targets,
         ...(pathOaPreview ? { opportunityAttacks: pathOaPreview } : {}),
         alternatives: []
       }
@@ -5634,6 +5703,24 @@ export function computeCombatForecast(state: GameState, col: number, row: number
     ...(pathOaPreview ? { opportunityAttacks: pathOaPreview } : {}),
     ...(displacementPreview ? { displacementPreview } : {}),
     ...(elementalCombo ? { elementalCombo } : {}),
+    ...(skillCoverSummary && skillCoverSummary.damagedCoverCount > 0 ? {
+      coverDamage: skillCoverSummary.coverDamage,
+      willShatterCover: skillCoverSummary.willShatterCover,
+      shatteredCoverCount: skillCoverSummary.shatteredCoverCount,
+      damagedCoverCount: skillCoverSummary.damagedCoverCount,
+      coverHeavyHit: skillCoverSummary.isHeavyHit,
+      coverHits: skillCoverSummary.targets
+    } : displacementPreview && (displacementPreview.collidedWith === 'barricade' || displacementPreview.collidedWith === 'cracked_pillar') && displacementPreview.collidedCell && displacementPreview.barricadeDmg > 0 ? (() => {
+      const dc = previewCoverDamageOnCells(battle, [displacementPreview.collidedCell], displacementPreview.barricadeDmg)
+      return dc.damagedCoverCount > 0 ? {
+        coverDamage: dc.coverDamage,
+        willShatterCover: dc.willShatterCover,
+        shatteredCoverCount: dc.shatteredCoverCount,
+        damagedCoverCount: dc.damagedCoverCount,
+        coverHeavyHit: dc.isHeavyHit,
+        coverHits: dc.targets
+      } : {}
+    })() : {}),
     alternatives
   }
 }
@@ -6724,56 +6811,74 @@ function damageBarricade(
   attacker: BattleUnit | null,
   col: number,
   row: number,
-  rawDamage: number
+  rawDamage: number,
+  opts?: { readonly powerMul?: number; readonly isCrit?: boolean }
 ): number {
   const battle = state.battle
   if (!battle || !isCellInBounds(col, row, battle.cols, battle.rows)) return 0
   const cell = battle.cells[row][col]
-  if (!isIntactBarricade(cell)) return 0
-
-  const empoweredMul = attacker && attacker.empowerTurns > 0 ? 1.35 : 1
-  const dmg = Math.max(4, Math.round(rawDamage * empoweredMul))
-  const hpBefore = cell.barricadeHp ?? BARRICADE_DEFAULT_HP
-  const hpAfter = Math.max(0, hpBefore - dmg)
-  cell.barricadeHp = hpAfter
+  if (!isDestructibleCover(cell)) return 0
 
   const [tx, ty, tz] = gridToWorld(col, row, cell.elevation, battle.cols, battle.rows)
-  addFloat(battle, tx, ty + 0.15, tz, `-${dmg}`, '#f5c678')
-  state.vfx.push({ kind: 'burst', style: 'slash', at: [tx, ty + 0.55, tz], radius: 0.85 })
-  state.sounds.push({ kind: 'hit', pitch: 0.78 })
-  battle.shake = Math.max(battle.shake, 0.2)
+  const outcome = applyCoverCellDamage(cell, rawDamage, {
+    empowered: Boolean(attacker && attacker.empowerTurns > 0),
+    powerMul: opts?.powerMul,
+    isCrit: opts?.isCrit
+  })
+  if (!outcome) return 0
 
-  if (hpAfter <= 0) {
-    const hLvl = cellHeightLevel(cell)
-    cell.terrain = 'stone'
-    cell.walkable = true
-    cell.elevation = terrainElevation('stone', hLvl)
-    cell.barricadeHp = 0
-    cell.barricadeMaxHp = undefined
+  const isPillar = outcome.kind === 'cracked_pillar'
+  addFloat(
+    battle,
+    tx,
+    ty + 0.15,
+    tz,
+    outcome.isHeavyHit ? `-${outcome.damage}!` : `-${outcome.damage}`,
+    isPillar ? '#dfe6f5' : '#f5c678'
+  )
+  state.vfx.push({ kind: 'burst', style: 'slash', at: [tx, ty + 0.55, tz], radius: outcome.isHeavyHit ? 1.1 : 0.85 })
+  state.sounds.push({ kind: 'hit', pitch: isPillar ? 0.68 : 0.78 })
+  battle.shake = Math.max(battle.shake, outcome.isHeavyHit ? 0.28 : 0.2)
+
+  if (outcome.shattered) {
     addFloat(battle, tx, ty + 0.58, tz, 'SHATTERED!', '#ffd980')
+    state.vfx.push({
+      kind: 'cover_shatter',
+      coverKind: isPillar ? 'pillar' : 'barricade',
+      at: [tx, ty + 0.5, tz],
+      heavy: outcome.isHeavyHit
+    })
     state.vfx.push({ kind: 'burst', style: 'gold', at: [tx, ty + 0.5, tz], radius: 1.35 })
-    state.sounds.push({ kind: 'ko', pitch: 1.15 })
-    battle.shake = Math.max(battle.shake, 0.34)
+    state.sounds.push({ kind: 'ko', pitch: isPillar ? 0.96 : 1.15 })
+    battle.shake = Math.max(battle.shake, 0.36)
     appendCombatLog(
       battle,
       'hazard',
-      formatHazardLog({ kind: 'barricade_smash', actorName: attacker?.name ?? null, damage: dmg })
+      formatHazardLog({
+        kind: isPillar ? 'pillar_smash' : 'barricade_smash',
+        actorName: attacker?.name ?? null,
+        damage: outcome.damage
+      })
     )
   } else {
     appendCombatLog(
       battle,
       'hazard',
-      formatHazardLog({ kind: 'barricade_hit', actorName: attacker?.name ?? null, damage: dmg })
+      formatHazardLog({
+        kind: isPillar ? 'pillar_hit' : 'barricade_hit',
+        actorName: attacker?.name ?? null,
+        damage: outcome.damage
+      })
     )
   }
-  return dmg
+  return outcome.damage
 }
 
 function executeBasicAttackOnBarricade(state: GameState, attacker: BattleUnit, col: number, row: number): void {
   const battle = state.battle
   if (!battle || !isCellInBounds(col, row, battle.cols, battle.rows)) return
   const cell = battle.cells[row][col]
-  if (!isIntactBarricade(cell)) return
+  if (!isDestructibleCover(cell)) return
 
   battle.moveUndo = null
   const [tx, ty, tz] = gridToWorld(col, row, cell.elevation, battle.cols, battle.rows)
@@ -6807,7 +6912,7 @@ function executeBasicAttackOnBarricade(state: GameState, attacker: BattleUnit, c
     })
   }
 
-  damageBarricade(state, attacker, col, row, attacker.atk)
+  damageBarricade(state, attacker, col, row, attacker.atk, { powerMul: 1, isCrit: attacker.crit >= 1 })
 }
 
 function executePincerFollowUp(state: GameState, attacker: BattleUnit, target: BattleUnit): number {
@@ -7216,9 +7321,9 @@ function executeHeroSkill(
       }
       const target = unitAt(battle, c.col, c.row)
       if (!target) {
-        if (skill.powerMul > 0 && isIntactBarricade(battle.cells[c.row][c.col])) {
+        if (skill.powerMul > 0 && isDestructibleCover(battle.cells[c.row][c.col])) {
           const raw = caster.atk * skill.powerMul + skill.flatBonus
-          damageBarricade(state, caster, c.col, c.row, raw)
+          damageBarricade(state, caster, c.col, c.row, raw, { powerMul: skill.powerMul, isCrit: caster.crit >= 1 })
           hitAny = true
         } else if (skillElement) {
           const terrainCombo = triggerElementalCombo(state, caster, skillElement, null, c.col, c.row, handleUnitDefeat)
@@ -7396,8 +7501,8 @@ function executeTacticCard(state: GameState, tacticUid: string, col: number, row
       }
       const target = unitAt(battle, c.col, c.row)
       if (!target) {
-        if (spec.damage > 0 && isIntactBarricade(battle.cells[c.row][c.col])) {
-          damageBarricade(state, null, c.col, c.row, spec.damage)
+        if (spec.damage > 0 && isDestructibleCover(battle.cells[c.row][c.col])) {
+          damageBarricade(state, tacticActor, c.col, c.row, spec.damage)
         } else if (tacticElement) {
           triggerElementalCombo(state, tacticActor, tacticElement, null, c.col, c.row, handleUnitDefeat)
         }
@@ -7627,9 +7732,9 @@ export function selectTile(state: GameState, col: number, row: number): boolean 
     refreshHighlights(battle, state.campaign)
   }
 
-  // 3. Click on a highlighted target enemy or intact barricade -> Basic Attack or Move+Attack by active hero!
+  // 3. Click on a highlighted target enemy or intact destructible cover -> Basic Attack or Move+Attack by active hero!
   const clickedUnit = unitAt(battle, col, row)
-  const clickedBarricade = !clickedUnit && isIntactBarricade(battle.cells[row][col])
+  const clickedBarricade = !clickedUnit && isDestructibleCover(battle.cells[row][col])
   if (active && ((clickedUnit && clickedUnit.team === 'enemy') || clickedBarricade)) {
     const inRange = battle.targetTiles.some(t => t.col === col && t.row === row)
     if (inRange) {
@@ -8501,7 +8606,9 @@ function performEnemyAttack(state: GameState, enemy: BattleUnit, target: BattleU
       for (const c of wyrmPlan.cells) {
         const victim = unitAt(battle, c.col, c.row)
         if (!victim) {
-          if (wyrmPlan.element) {
+          if (isDestructibleCover(battle.cells[c.row]?.[c.col])) {
+            damageBarricade(state, enemy, c.col, c.row, enemy.atk * wyrmPlan.powerMul, { powerMul: wyrmPlan.powerMul })
+          } else if (wyrmPlan.element) {
             triggerElementalCombo(state, enemy, wyrmPlan.element, null, c.col, c.row, handleUnitDefeat)
           }
           continue
@@ -8574,7 +8681,11 @@ function performEnemyAttack(state: GameState, enemy: BattleUnit, target: BattleU
     for (const c of affectedCells) {
       const victim = unitAt(battle, c.col, c.row)
       if (!victim) {
-        triggerElementalCombo(state, enemy, lichNova.element, null, c.col, c.row, handleUnitDefeat)
+        if (isDestructibleCover(battle.cells[c.row]?.[c.col])) {
+          damageBarricade(state, enemy, c.col, c.row, enemy.atk * lichNova.powerMul, { powerMul: lichNova.powerMul })
+        } else {
+          triggerElementalCombo(state, enemy, lichNova.element, null, c.col, c.row, handleUnitDefeat)
+        }
         continue
       }
       if (victim.team === 'ally') {
@@ -8662,7 +8773,9 @@ function performEnemyAttack(state: GameState, enemy: BattleUnit, target: BattleU
     for (const c of affectedCells) {
       const victim = unitAt(battle, c.col, c.row)
       if (!victim) {
-        if (special.element) {
+        if (isDestructibleCover(battle.cells[c.row]?.[c.col])) {
+          damageBarricade(state, enemy, c.col, c.row, enemy.atk * special.powerMul, { powerMul: special.powerMul })
+        } else if (special.element) {
           triggerElementalCombo(state, enemy, special.element, null, c.col, c.row, handleUnitDefeat)
         }
         continue
@@ -9011,7 +9124,7 @@ export function stepGame(state: GameState, dt: number): void {
                 const clearLoS = hasLineOfSight(battle, u.col, u.row, pending.col, pending.row, false)
                 if (target && target.team === 'enemy' && distToPending <= effRange && clearLoS) {
                   executeBasicAttack(state, u, target)
-                } else if (!target && isIntactBarricade(battle.cells[pending.row]?.[pending.col]) && distToPending <= effRange && clearLoS) {
+                } else if (!target && isDestructibleCover(battle.cells[pending.row]?.[pending.col]) && distToPending <= effRange && clearLoS) {
                   executeBasicAttackOnBarricade(state, u, pending.col, pending.row)
                 }
               }

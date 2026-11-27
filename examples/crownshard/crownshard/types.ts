@@ -26,6 +26,7 @@ export interface ElementalComboPreview {
 }
 
 export const BARRICADE_DEFAULT_HP = 25
+export const CRACKED_PILLAR_DEFAULT_HP = 35
 export const LAVA_GEYSER_DAMAGE = 12
 export const LAVA_GEYSER_PERIOD = 2
 export const CURSED_ALTAR_HP_COST = 10
@@ -48,6 +49,7 @@ export type DisplacementCollisionKind =
   | 'none'
   | 'wall'
   | 'pillar'
+  | 'cracked_pillar'
   | 'barricade'
   | 'edge'
   | 'unit'
@@ -55,6 +57,21 @@ export type DisplacementCollisionKind =
   | 'water'
   | 'lava'
   | 'cliff'
+
+export type DestructibleCoverKind = 'barricade' | 'cracked_pillar'
+
+export interface CoverHitPreview {
+  readonly col: number
+  readonly row: number
+  readonly kind: DestructibleCoverKind
+  readonly label: string
+  readonly hpBefore: number
+  readonly maxHp: number
+  readonly damage: number
+  readonly hpAfter: number
+  readonly willShatter: boolean
+  readonly isHeavyHit: boolean
+}
 
 export interface DisplacementPreview {
   readonly kind: DisplacementKind
@@ -138,6 +155,7 @@ export type TileTerrain =
   | 'water'
   | 'shrine'
   | 'pillar'
+  | 'cracked_pillar'
   | 'lava'
   | 'snow'
   | 'darkstone'
@@ -567,6 +585,9 @@ export interface GridCell {
   shrineUsed?: boolean
   barricadeHp?: number
   barricadeMaxHp?: number
+  pillarHp?: number
+  pillarMaxHp?: number
+  coverShattered?: 'pillar' | 'barricade'
   geyserActive?: boolean
   altarUsed?: boolean
 }
@@ -710,6 +731,7 @@ export type VfxEvent =
   | { kind: 'shield'; at: Vec3 }
   | { kind: 'ko'; at: Vec3; isBoss?: boolean; downed?: boolean }
   | { kind: 'levelup'; at: Vec3 }
+  | { kind: 'cover_shatter'; coverKind: 'pillar' | 'barricade'; at: Vec3; heavy?: boolean }
   | {
       kind: 'displace'
       uid: string
@@ -1015,6 +1037,12 @@ export interface CombatForecast {
   readonly opportunityAttacks?: PathOpportunityPreview
   readonly displacementPreview?: DisplacementPreview
   readonly elementalCombo?: ElementalComboPreview
+  readonly coverDamage?: number
+  readonly willShatterCover?: boolean
+  readonly shatteredCoverCount?: number
+  readonly damagedCoverCount?: number
+  readonly coverHeavyHit?: boolean
+  readonly coverHits?: readonly CoverHitPreview[]
   readonly alternatives: readonly CombatForecastAlt[]
 }
 
@@ -1151,6 +1179,9 @@ export interface BattleCellSnapshot {
   readonly shrineUsed?: boolean
   readonly barricadeHp?: number
   readonly barricadeMaxHp?: number
+  readonly pillarHp?: number
+  readonly pillarMaxHp?: number
+  readonly coverShattered?: 'pillar' | 'barricade'
   readonly geyserActive?: boolean
   readonly altarUsed?: boolean
 }
@@ -1380,7 +1411,7 @@ export function terrainElevation(t: TileTerrain, heightLevel?: number): number {
 }
 
 export function terrainWalkable(t: TileTerrain): boolean {
-  return t !== 'water' && t !== 'lava' && t !== 'pillar' && t !== 'void' && t !== 'barricade'
+  return t !== 'water' && t !== 'lava' && t !== 'pillar' && t !== 'cracked_pillar' && t !== 'void' && t !== 'barricade'
 }
 
 export function terrainMoveCost(t: TileTerrain): number {

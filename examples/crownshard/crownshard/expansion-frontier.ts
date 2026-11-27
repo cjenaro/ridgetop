@@ -165,7 +165,7 @@ export function computeSandstormGustStrikes(
     if (u.enemyId === 'dune_sovereign_boss') continue
     const cell = battle.cells[u.row]?.[u.col]
     if (!cell || cell.terrain === 'shrine') continue
-    if (hasAdjacentTerrain(battle, u.col, u.row, 'pillar')) continue
+    if (hasAdjacentTerrain(battle, u.col, u.row, 'pillar') || hasAdjacentTerrain(battle, u.col, u.row, 'cracked_pillar')) continue
     const h = cellHeightLevel(cell)
     const exposed = h >= 1 || cell.terrain === 'hill' || cell.terrain === 'bridge'
     if (!exposed) continue
@@ -200,7 +200,7 @@ export function computeLightningConduitStrikes(
     if (u.enemyId === 'astral_warden_boss') continue
     const cell = battle.cells[u.row]?.[u.col]
     if (!cell || cell.terrain === 'shrine') continue
-    const nearConduit = hasAdjacentTerrain(battle, u.col, u.row, 'pillar')
+    const nearConduit = hasAdjacentTerrain(battle, u.col, u.row, 'pillar') || hasAdjacentTerrain(battle, u.col, u.row, 'cracked_pillar')
     const highSpire = cellHeightLevel(cell) >= 3
     const onSkyBridge = cell.terrain === 'bridge' && hasAdjacentTerrain(battle, u.col, u.row, 'void')
     if (!nearConduit && !highSpire && !onSkyBridge) continue

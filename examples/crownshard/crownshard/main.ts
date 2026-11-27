@@ -36,15 +36,15 @@ import {
   cancelAutoBattle, cancelWaitFacingPicker, checkDiscoveryTipForBattle, claimMasteryMilestone, claimStageMasteryChest, clearSave, computeChallengeRewards,
   computeCombatForecast, computeDangerZone, computeDeckValue,
   computeEnemyThreat, computeHeroStats, computeSquadPower, computeTacticDeckCurve, computeZocPerimeterTiles,
-  confirmDeployment, confirmWaitFacingPicker, craftEquipment, craftHero, createInitialState,
+  confirmDeployment, confirmWaitFacingPicker, countBattleDestructibleCover, craftEquipment, craftHero, createInitialState,
   createTurnBoundaryTracker, dismissDiscoveryTip, draftEndlessBlessing, effectiveSpeed, equipItem, evaluateAllFacingExposures, evaluateFacingExposure,
-  findBestFitUpgrades, findEquipOwner, findGridPath, formatAbyssFloorLabel, formatBattleSpeedLabel, formatEndlessBiomeLabel, formatOpportunityWarning,
+  findBestFitUpgrades, findEquipOwner, findGridPath, formatAbyssFloorLabel, formatBattleSpeedLabel, formatCoverTooltip, formatEndlessBiomeLabel, formatOpportunityWarning,
   getAct1StageMechanicStatus, getActiveDiscoveryTip, getActiveTacticDeckUids,
-  getBestiaryEntries, getChapterObjectiveSummary, getClaimableMasteryMilestones, getCodexProgress, getCraftableEquipment, getCraftableHeroes, getCrownlessDeepFloorSpec, getEquipCodexEntries, getEquipCraftCost, getEquipEffect,
+  getBestiaryEntries, getChapterObjectiveSummary, getClaimableMasteryMilestones, getCodexProgress, getCoverHp, getCraftableEquipment, getCraftableHeroes, getCrownlessDeepFloorSpec, getEquipCodexEntries, getEquipCraftCost, getEquipEffect,
   getEquipSalvageDust, getEquipmentByUid, getHeroByUid, getHeroCodexEntries, getHeroCraftCost, getHeroPassive, getHeroSalvageShards,
   getHeroSkill, getHighestClearedStageTier, getMaxCombatLogScroll, getMaxMasteryStars, getMaxSelectableCrownlessDeepFloor, getMergeCandidates, getNextMasteryMilestone, getNextRecommendedStage, getOakhavenExchangeOffers, getObjectiveProgressText, getPackPityStatus,
   getSelectedCrownlessDeepFloor, getStageMasteryChestReward, getStageMasteryObjectives, getStageMasteryRecord, getStageUnlockHint, getTacticByUid, getTotalMasteryStars, getUnitByUid, getWorldMapEventById, hasClaimedStageMasteryChest, hasMaxedHero, hasOakhavenPatronDiscount, heroLevelProgress, isChestClaimed,
-  isCrownlessDeepStage, isDeployTile, isEndlessBossWave, isEndlessUnlocked, isEnemyShrouded, isOakhavenExchangeUnlocked, isStageCleared, isStageUnlocked, loadSave, maxSquadSize, mergeHero,
+  isCrownlessDeepStage, isDeployTile, isDestructibleCover, isEndlessBossWave, isEndlessUnlocked, isEnemyShrouded, isOakhavenExchangeUnlocked, isStageCleared, isStageUnlocked, loadSave, maxSquadSize, mergeHero,
   moveDeployUnit, persistSave, previewBulkSalvageCommonDupes, previewPathOpportunityAttacks,
   previewTurnOrderAfterAction, previewWaitFacing, resetDiscoveryTips, resolveStageChallenge, restoreBattleState, rotateDeployUnit, salvageEquipCard,
   salvageHeroCard, selectEndlessWaveStage, selectHeroByUid, selectTile, serializeBattleState, setActionCameraEnabled, setAutoBattle, setBattleSpeed,
@@ -107,6 +107,7 @@ const TERRAIN_LABEL: Record<string, string> = {
   water: 'Deep Water (Blocked)',
   shrine: 'Sun Shrine (+14 HP, +1 DEF)',
   pillar: 'Stone Pillar (LoS · Cover)',
+  cracked_pillar: 'Cracked Pillar (Destructible · Blocks LoS)',
   lava: 'Molten Rift (Blocked)',
   snow: 'Deep Snow (2 Move)',
   darkstone: 'Obsidian Floor (+2 DEF)',
@@ -8603,17 +8604,78 @@ async function start() {
       }
     }
 
+    // World-space subtle HP bar & shatter indicator for hovered, damaged, or AoE-targeted destructible cover
+    if (battle.phase === 'deploy' || battle.phase === 'player' || battle.phase === 'enemy') {
+      const fcForCover = resolveActiveForecast()
+      const forecastCoverMap = new Map<string, { willShatter: boolean; hpAfter: number }>()
+      if (fcForCover?.coverHits) {
+        for (const ch of fcForCover.coverHits) {
+          forecastCoverMap.set(`${ch.col},${ch.row}`, { willShatter: ch.willShatter, hpAfter: ch.hpAfter })
+        }
+      }
+      for (let r = 0; r < battle.rows; r++) {
+        for (let c = 0; c < battle.cols; c++) {
+          const cell = battle.cells[r]?.[c]
+          if (!cell || !isDestructibleCover(cell)) continue
+          const hpInfo = getCoverHp(cell)
+          if (!hpInfo) continue
+          const isHov = Boolean(hovered && hovered.col === c && hovered.row === r)
+          const fcHit = forecastCoverMap.get(`${c},${r}`)
+          const isDamaged = hpInfo.hp < hpInfo.maxHp
+          if (!isHov && !isDamaged && !fcHit) continue
+          const [wx, wy, wz] = gridToWorld(c, r, cell.elevation, battle.cols, battle.rows)
+          const barHeightOff = hpInfo.kind === 'cracked_pillar' ? 1.62 : 1.24
+          const p = scene.project(wx, wy + barHeightOff, wz, g.width, g.height)
+          if (!p) continue
+          const bw = g.width < 480 ? 40 : 48
+          const bx = Math.round(p.x - bw / 2)
+          const by = Math.round(p.y - 6)
+          const ratio = Math.max(0, Math.min(1, hpInfo.hp / Math.max(1, hpInfo.maxHp)))
+          const willShatter = Boolean(fcHit?.willShatter)
+          g.panel(bx - 2, by - 2, bw + 4, 10, {
+            fill: '#0b1020e6',
+            stroke: willShatter ? '#ff6b42' : hpInfo.kind === 'cracked_pillar' ? '#d4b888' : '#c9884a',
+            radius: 4
+          })
+          g.panel(bx, by, bw, 6, { fill: '#1a2238', radius: 2 })
+          const fw = Math.round(bw * ratio)
+          if (fw > 0) {
+            const fillCol = willShatter ? '#ff5c42' : ratio <= 0.5 ? '#ff9c38' : '#e0bd72'
+            g.panel(bx, by, fw, 6, { fill: fillCol, radius: 2 })
+          }
+          if (fcHit) {
+            const tag = willShatter ? 'SHATTER!' : `${hpInfo.hp}→${fcHit.hpAfter}`
+            const tw = Math.max(46, Math.round(tag.length * 6.0 + 10))
+            g.panel(Math.round(p.x - tw / 2), by - 16, tw, 13, {
+              fill: willShatter ? '#6e1e12eb' : '#3d2c12e8',
+              stroke: willShatter ? '#ff7a4a' : '#ffbf54',
+              radius: 6
+            })
+            g.text(tag, p.x, by - 13.5, {
+              fill: willShatter ? '#ffe0c4' : '#ffeaad',
+              size: 8.5,
+              weight: 900,
+              align: 'center'
+            })
+          }
+        }
+      }
+    }
+
     if (hovered && !battle.facingPicker && g.width >= 660) {
       const cell = battle.cells[hovered.row]?.[hovered.col]
       if (cell && cell.terrain !== 'void') {
-        const baseDesc = TERRAIN_LABEL[cell.terrain] ?? cell.terrain
-        const stateSuffix = cell.terrain === 'lava_geyser'
-          ? (cell.geyserActive ? ' [ERUPTING!]' : ' [Dormant]')
-          : cell.terrain === 'cursed_altar'
-            ? (cell.altarUsed ? ' [Spent]' : ' [Active Pact]')
-            : cell.terrain === 'barricade' && (cell.barricadeHp ?? 0) > 0
-              ? ` [${cell.barricadeHp}/${cell.barricadeMaxHp ?? 25} HP]`
-              : ''
+        const coverTip = formatCoverTooltip(cell, g.width < 880)
+        const baseDesc = coverTip ?? (TERRAIN_LABEL[cell.terrain] ?? cell.terrain)
+        const stateSuffix = coverTip
+          ? ''
+          : cell.terrain === 'lava_geyser'
+            ? (cell.geyserActive ? ' [ERUPTING!]' : ' [Dormant]')
+            : cell.terrain === 'cursed_altar'
+              ? (cell.altarUsed ? ' [Spent]' : ' [Active Pact]')
+              : cell.coverShattered
+                ? ' [Rubble]'
+                : ''
         const desc = `${baseDesc}${stateSuffix}`
         const hLvl = cellHeightLevel(cell)
         const dzTile = dangerMap?.tiles.find(t => t.col === hovered.col && t.row === hovered.row)
@@ -8635,15 +8697,16 @@ async function start() {
               : ` · Threat x${dzTile.threatCount}`
           : ''
         const text = `${desc} · H${hLvl} (${hovered.col + 1},${hovered.row + 1})${deployTag}${oaTag}${threatTag}`
-        const pw = Math.min(560, Math.max(148, text.length * 6.8 + 24))
+        const maxTipW = Math.min(560, Math.max(180, g.width - 20))
+        const pw = Math.min(maxTipW, Math.max(148, text.length * 6.6 + 24))
         const py = g.height < 480 ? g.height - 134 : g.height - 178
         const hasOaWarn = Boolean(hoveredOa && hoveredOa.triggers.length > 0)
         g.panel(10, py, pw, 28, {
-          fill: hasOaWarn ? '#4a1d14' : dzTile ? '#3d1e2e' : deployTag ? '#1b365e' : '#253357',
-          stroke: hasOaWarn ? '#ff7a2b' : dzTile ? '#ff7d6b' : deployTag ? '#68c8ff' : COLOR.borderHi,
+          fill: hasOaWarn ? '#4a1d14' : dzTile ? '#3d1e2e' : deployTag ? '#1b365e' : coverTip ? '#3b2e1e' : '#253357',
+          stroke: hasOaWarn ? '#ff7a2b' : dzTile ? '#ff7d6b' : deployTag ? '#68c8ff' : coverTip ? '#e6b86a' : COLOR.borderHi,
           radius: 10
         })
-        g.text(text, 22, py + 8, { fill: hasOaWarn ? '#ffe2b8' : '#ffffff', size: 11.5, weight: 800 })
+        g.text(text, 22, py + 8, { fill: hasOaWarn ? '#ffe2b8' : coverTip ? '#fff2d1' : '#ffffff', size: 11.5, weight: 800, maxWidth: pw - 24 })
       }
     }
 
@@ -8726,6 +8789,8 @@ async function start() {
       battleAlliesAlive: state.battle ? state.battle.units.filter(u => u.alive && u.team === 'ally').length : 0,
       battleAlliesDowned: state.battle ? state.battle.units.filter(u => isUnitDowned(u)).length : 0,
       battleEnemiesAlive: state.battle ? state.battle.units.filter(u => u.alive && u.team === 'enemy').length : 0,
+      destructibleCoverCount: countBattleDestructibleCover(state.battle).intactCount,
+      shatteredCoverCount: countBattleDestructibleCover(state.battle).shatteredCount,
       activeTipId: getActiveDiscoveryTip(state)?.id ?? null,
       seenTips: state.campaign.seenTips.slice(),
       tipsDisabled: state.campaign.tipsDisabled === true,
