@@ -1,3 +1,4 @@
+import { computeEndlessAttackerDamageMultiplier } from './endless-roguelite.ts'
 import { computeShieldWallDefBonus } from './passives.ts'
 import { mutatorDamageMultiplier } from './mutators.ts'
 import {
@@ -163,9 +164,9 @@ export function getCounterAvoidReason(
  * and attacker's facing toward defender.
  */
 export function computeCounterDamage(
-  battle: Pick<BattleState, 'cells' | 'cols' | 'rows'> & Partial<Pick<BattleState, 'units' | 'mutators'>>,
-  defender: Pick<BattleUnit, 'col' | 'row' | 'atk' | 'empowerTurns'>,
-  attacker: Pick<BattleUnit, 'col' | 'row' | 'facing' | 'def' | 'hp' | 'shield'> & Partial<Pick<BattleUnit, 'uid' | 'team' | 'alive'>>,
+  battle: Pick<BattleState, 'cells' | 'cols' | 'rows'> & Partial<Pick<BattleState, 'units' | 'mutators' | 'endlessBlessings'>>,
+  defender: Pick<BattleUnit, 'col' | 'row' | 'atk' | 'empowerTurns'> & Partial<Pick<BattleUnit, 'team'>>,
+  attacker: Pick<BattleUnit, 'col' | 'row' | 'facing' | 'def' | 'hp' | 'shield'> & Partial<Pick<BattleUnit, 'uid' | 'team' | 'alive' | 'slowTurns' | 'stunTurns'>>,
   opts?: CounterDamageOptions
 ): CounterDamageResult {
   const attCol = opts?.attackerCol ?? attacker.col
@@ -185,6 +186,11 @@ export function computeCounterDamage(
   if (defender.empowerTurns > 0) {
     raw *= 1.35
   }
+  raw *= computeEndlessAttackerDamageMultiplier(
+    battle.endlessBlessings,
+    { team: defender.team ?? 'enemy' },
+    { slowTurns: attacker.slowTurns ?? 0, stunTurns: attacker.stunTurns ?? 0 }
+  )
   raw *= mutatorDamageMultiplier(battle)
 
   const attCell = battle.cells[attRow]?.[attCol]

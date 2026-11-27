@@ -1,6 +1,7 @@
 import { canCounterAttack, computeCounterDamage, isMeleeSkillEligibleForCounter } from './counter-attack.ts'
 import { HERO_SPECS, TACTIC_BY_ID } from './data.ts'
 import { classifyElement, previewElementalCombo } from './elemental-combos.ts'
+import { computeEndlessAttackerDamageMultiplier } from './endless-roguelite.ts'
 import { closestFootprintCell, getUnitFootprintCells, unitOccupiesCell } from './expansion-act2.ts'
 import { isEnemyShrouded, mutatorDamageMultiplier } from './mutators.ts'
 import {
@@ -656,11 +657,12 @@ function estimateStrikeDamage(
   )
   const empowerMul = attacker.empowerTurns > 0 ? 1.35 : 1.0
   const passiveAtkMul = computeAttackerDamageMultiplier(attacker, target)
+  const endlessMul = computeEndlessAttackerDamageMultiplier(battle.endlessBlessings, attacker, target)
   const mutMul = mutatorDamageMultiplier(battle)
   const passiveDefMul = computeDefenderIncomingDamageMultiplier(target, isSkill)
   const dmg = Math.max(
     4,
-    Math.round((rawPower * empowerMul * elevMul * aMul * passiveAtkMul * mutMul - effDef * 0.72) * passiveDefMul)
+    Math.round((rawPower * empowerMul * elevMul * aMul * passiveAtkMul * endlessMul * mutMul - effDef * 0.72) * passiveDefMul)
   )
   return {
     damage: dmg,

@@ -1,4 +1,5 @@
 import { ENEMY_SPECS, HERO_SPECS } from './data.ts'
+import { computeEndlessAttackerDamageMultiplier } from './endless-roguelite.ts'
 import { getUnitPerimeterCells, isCellAdjacentToUnit } from './expansion-act2.ts'
 import { mutatorDamageMultiplier } from './mutators.ts'
 import {
@@ -155,8 +156,8 @@ export function computeZocPerimeterTiles(
  * `rawDamage = attacker.atk * OPPORTUNITY_ATTACK_DAMAGE_MUL`, `ignoreArmor = 0`, `canCrit = false`).
  */
 export function computeOpportunityAttackDamage(
-  battle: Pick<BattleState, 'cells' | 'cols' | 'rows'> & Partial<Pick<BattleState, 'units' | 'mutators'>>,
-  attacker: Pick<BattleUnit, 'col' | 'row' | 'atk' | 'empowerTurns'> & Partial<Pick<BattleUnit, 'heroId' | 'weaponId' | 'armorId' | 'relicId'>>,
+  battle: Pick<BattleState, 'cells' | 'cols' | 'rows'> & Partial<Pick<BattleState, 'units' | 'mutators' | 'endlessBlessings'>>,
+  attacker: Pick<BattleUnit, 'col' | 'row' | 'atk' | 'empowerTurns'> & Partial<Pick<BattleUnit, 'team' | 'heroId' | 'weaponId' | 'armorId' | 'relicId'>>,
   defender: Pick<BattleUnit, 'def' | 'shield'> & Partial<Pick<BattleUnit, 'uid' | 'team' | 'alive' | 'slowTurns' | 'burnTurns' | 'stunTurns' | 'isBoss'>>,
   defenderCol: number,
   defenderRow: number,
@@ -181,6 +182,11 @@ export function computeOpportunityAttackDamage(
     stunTurns: defender.stunTurns ?? 0,
     isBoss: Boolean(defender.isBoss)
   })
+  dmg *= computeEndlessAttackerDamageMultiplier(
+    battle.endlessBlessings,
+    { team: attacker.team ?? 'enemy' },
+    { slowTurns: defender.slowTurns ?? 0, stunTurns: defender.stunTurns ?? 0 }
+  )
   dmg *= mutatorDamageMultiplier(battle)
 
   const cell = battle.cells[defenderRow]?.[defenderCol]

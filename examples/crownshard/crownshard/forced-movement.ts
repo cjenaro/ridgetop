@@ -1,5 +1,6 @@
 import type { Vec3 } from 'ridgetop'
 import { appendCombatLog, formatHazardLog, formatKoLog, formatStatusLog } from './combat-log.ts'
+import { canTriggerPhoenixGrace } from './endless-roguelite.ts'
 import {
   BARRICADE_DEFAULT_HP,
   COLLISION_IMPACT_DAMAGE,
@@ -451,6 +452,24 @@ function pushFloat(battle: BattleState, x: number, y: number, z: number, text: s
 function defeatDisplacedUnit(state: GameState, unit: BattleUnit): void {
   const battle = state.battle
   if (!battle) return
+  if (canTriggerPhoenixGrace(battle, unit)) {
+    battle.phoenixGraceUsed = true
+    const revivedHp = Math.max(1, Math.round(unit.maxHp * 0.4))
+    unit.hp = revivedHp
+    unit.alive = true
+    unit.downed = false
+    unit.koCountdown = 0
+    pushFloat(battle, unit.x, unit.y + 0.52, unit.z, `PHOENIX GRACE! +${revivedHp}`, '#ffda6b')
+    state.vfx.push({ kind: 'burst', style: 'gold', at: [unit.x, unit.y + 0.7, unit.z], radius: 1.15 })
+    state.sounds.push({ kind: 'heal', pitch: 1.25 })
+    appendCombatLog(
+      battle,
+      'system',
+      `Phoenix Grace revives ${unit.name} at ${revivedHp}/${unit.maxHp} HP!`,
+      { accentHex: '#ffda6b' }
+    )
+    return
+  }
   unit.hp = 0
   unit.alive = false
   unit.shield = 0

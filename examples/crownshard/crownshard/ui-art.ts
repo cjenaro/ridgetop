@@ -10057,7 +10057,11 @@ export function drawCodexEnemyDetail(
     }
   } else {
     bx += drawChip(ctx, bx, badgeY, 'UNDISCOVERED', { h: 18, size: 9.5, color: COLOR.faint, bg: '#11182c' }) + 5
-    drawChip(ctx, bx, badgeY, entry.regionHint, { h: 18, size: 9.5, color: COLOR.accentHi, bg: '#1a2440' })
+    const biomeLabel = CODEX_BIOME_LABEL[entry.biomeAffinity] ?? entry.biomeAffinity
+    const biomeEstW = Math.round(measureText(ctx, biomeLabel, 9.5, 800, true) + 18)
+    if (bx + biomeEstW <= innerX + innerW) {
+      drawChip(ctx, bx, badgeY, biomeLabel, { h: 18, size: 9.5, color: COLOR.accentHi, bg: '#1a2440' })
+    }
   }
 
   drawText(ctx, entry.regionHint, infoX, cy + (compact ? 50 : 62), {

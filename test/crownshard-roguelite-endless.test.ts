@@ -11,16 +11,21 @@ import {
   SAVE_KEY,
   abandonBattle,
   abandonEndlessRun,
+  applyDisplacement,
   applyEndlessBlessingsToUnit,
   buildEndlessWaveEnemies,
   computeCombatForecast,
+  computeCounterDamage,
   computeEndlessAttackerDamageMultiplier,
   computeEndlessBlessingModifiers,
+  computeOpportunityAttackDamage,
+  computePincerAssistDamage,
   createInitialState,
   draftEndlessBlessing,
   endPlayerTurn,
   formatEndlessBiomeLabel,
   generateEndlessBlessingDraft,
+  getStageMasteryRecord,
   isEndlessBossWave,
   loadSave,
   persistSave,
@@ -32,7 +37,9 @@ import {
   serializeSave,
   startChapterBattle,
   startEndlessRun,
+  startWorldEventBattle,
   stepGame,
+  tickWorldMapEvents,
   validateBattleSnapshot
 } from '../examples/crownshard/crownshard/simulation.ts'
 import type { StorageLike } from '../examples/crownshard/crownshard/simulation.ts'
@@ -718,4 +725,97 @@ test('endless-roguelite.ts is browser-global-free and compiles cleanly via compi
   assert.ok(gd.includes('buildEndlessWaveEnemies'))
   assert.ok(gd.includes('draftEndlessBlessing'))
   assert.ok(gd.includes('computeEndlessBlessingModifiers'))
+})
+
+test('Wave 8A QA regressions: Phoenix Grace forced-movement, OA/Counter/Pincer blessing parity, selectedStageId & world-event mastery isolation', () => {
+  // 1. Phoenix Grace revives hero killed by forced-movement wall collision
+  const fmState = createInitialState(4242)
+  const fmRun = startEndlessRun(fmState, 1)
+  fmRun.activeBlessings.push('phoenix_grace')
+  const fmBattle = startChapterBattle(fmState, 0, 1)
+  const hero = fmBattle.units.find(u => u.team === 'ally' && u.alive)!
+  const foe = fmBattle.units.find(u => u.team === 'enemy' && u.alive)!
+  // Pin hero at edge col 0 so knockback west triggers wall collision damage
+  hero.col = 0
+  hero.row = 2
+  const [hx, hy, hz] = gridToWorld(0, 2, fmBattle.cells[2][0].elevation, fmBattle.cols, fmBattle.rows)
+  hero.x = hx; hero.y = hy; hero.z = hz
+  hero.hp = 1
+  hero.shield = 0
+  foe.col = 1
+  foe.row = 2
+  applyDisplacement(fmState, foe, hero, { kind: 'knockback', distance: 2 })
+  assert.equal(hero.alive, true, 'Phoenix Grace must revive ally on lethal forced-movement impact')
+  assert.equal(hero.downed, false)
+  assert.equal(hero.hp, Math.max(1, Math.round(hero.maxHp * 0.4)))
+  assert.equal(fmBattle.phoenixGraceUsed, true)
+
+  // 2. Endless blessings (ember_blade + frost_heart) apply to OA, Counter, and Pincer math
+  const eqState = createInitialState(999)
+  const eqRun = startEndlessRun(eqState, 1)
+  const baseB = startChapterBattle(eqState, 0, 1)
+  const allyA = baseB.units.find(u => u.team === 'ally')!
+  const enemyA = baseB.units.find(u => u.team === 'enemy')!
+  enemyA.slowTurns = 2
+  enemyA.def = 0
+  enemyA.shield = 0
+  const baseOa = computeOpportunityAttackDamage(baseB, allyA, enemyA, enemyA.col, enemyA.row, enemyA.facing)
+  const baseCounter = computeCounterDamage(baseB, allyA, enemyA)
+  const basePincer = computePincerAssistDamage(baseB, allyA, enemyA)
+
+  eqRun.activeBlessings.push('ember_blade', 'frost_heart')
+  const blessB = { ...baseB, endlessBlessings: ['ember_blade', 'frost_heart'] as EndlessBlessingId[] }
+  const blessOa = computeOpportunityAttackDamage(blessB, allyA, enemyA, enemyA.col, enemyA.row, enemyA.facing)
+  const blessCounter = computeCounterDamage(blessB, allyA, enemyA)
+  const blessPincer = computePincerAssistDamage(blessB, allyA, enemyA)
+  assert.ok(blessOa.damage > baseOa.damage, 'OA preview must include ember_blade + frost_heart')
+  assert.ok(blessCounter.normalDmg > baseCounter.normalDmg, 'Counter damage must include ember_blade + frost_heart')
+  assert.ok(blessPincer > basePincer, 'Pincer damage must include ember_blade + frost_heart')
+
+  // 3. Starting an Endless wave preserves campaign.selectedStageId instead of mutating it to a locked Frontier stage
+  const selState = createInitialState(555)
+  selState.campaign.selectedStageId = CHAPTERS[0].id
+  startEndlessRun(selState, 1)
+  startChapterBattle(selState, 0, 7)
+  assert.equal(selState.campaign.selectedStageId, CHAPTERS[0].id, 'Endless wave must not mutate campaign.selectedStageId')
+
+  // 4. Clearing a Dynamic World Event does not pollute anchor stage Mastery
+  const evState = createInitialState(777)
+  evState.campaign.clearedStageIds.push(CHAPTERS[0].id)
+  evState.campaign.battlesWon = 1
+  let ambushId: string | null = null
+  for (let i = 0; i < 12 && !ambushId; i++) {
+    evState.campaign.battlesWon += 1
+    tickWorldMapEvents(evState.campaign)
+    const ev = evState.campaign.worldEvents.find(e => e.kind === 'goblin_ambush' || e.kind === 'timed_gauntlet')
+    if (ev) ambushId = ev.id
+  }
+  assert.ok(ambushId, 'Should spawn a playable combat world event')
+  const evBattle = startWorldEventBattle(evState, ambushId!)
+  assert.ok(evBattle)
+  const anchorStageId = evBattle.stageId
+  const masteryBefore = getStageMasteryRecord(evState.campaign, anchorStageId).stars
+  for (const u of evBattle.units) {
+    if (u.team === 'enemy') {
+      u.hp = 1
+      u.shield = 0
+    }
+  }
+  // Finish last enemy cleanly via normal damage path or defeat check
+  const enemies = evBattle.units.filter(u => u.team === 'enemy')
+  for (const e of enemies) {
+    e.hp = 0
+    e.alive = false
+  }
+  evBattle.phase = 'player'
+  const firstAlly = evBattle.units.find(u => u.team === 'ally' && u.alive)!
+  evBattle.activeUnitUid = firstAlly.uid
+  endPlayerTurn(evState)
+  assert.equal(evBattle.phase, 'victory')
+  assert.equal(evBattle.reward?.masteryEarned, undefined, 'World event victory must not emit Stage Mastery')
+  assert.equal(
+    getStageMasteryRecord(evState.campaign, anchorStageId).stars,
+    masteryBefore,
+    'World event victory must not alter anchor stage Mastery stars'
+  )
 })

@@ -3079,9 +3079,6 @@ function launchBattleInternal(
         }
       : baseChapter
   const resolvedChapterIndex = worldEvent ? safeIdx : chapter.index
-  if (!worldEvent && endlessSelection) {
-    campaign.selectedStageId = chapter.id
-  }
 
   const challenge: { readonly tier: StageDifficultyTier; readonly mutators: readonly StageMutatorId[] } = worldEvent
     ? { tier: 'normal', mutators: [] }
@@ -6862,12 +6859,14 @@ function executePincerFollowUp(state: GameState, attacker: BattleUnit, target: B
 
     if (target.hp <= 0) {
       handleUnitDefeat(state, target)
-      triggerOnKoEffects(state, assister, target, { isSkillKill: false, rawHitDamage: rawDmg })
+      if (!target.alive) {
+        triggerOnKoEffects(state, assister, target, { isSkillKill: false, rawHitDamage: rawDmg })
+      }
     } else {
       triggerFrontierBossPhaseIfReady(state, target)
     }
     if (assister.team === 'ally' && target.team === 'enemy' && (finalDmg > 0 || absorbed > 0)) {
-      const koBonus = target.hp <= 0 ? (target.isBoss ? XP_ACTION_BOSS_KO : XP_ACTION_KO) : 0
+      const koBonus = !target.alive ? (target.isBoss ? XP_ACTION_BOSS_KO : XP_ACTION_KO) : 0
       awardHeroBattleXp(state, assister, XP_ACTION_DAMAGE + koBonus)
     }
   }
@@ -6964,12 +6963,14 @@ function executeCounterAttack(
 
   if (attacker.hp <= 0) {
     handleUnitDefeat(state, attacker)
-    triggerOnKoEffects(state, defender, attacker, { isSkillKill: false, rawHitDamage: calc.normalDmg })
+    if (!attacker.alive) {
+      triggerOnKoEffects(state, defender, attacker, { isSkillKill: false, rawHitDamage: calc.normalDmg })
+    }
   } else {
     triggerFrontierBossPhaseIfReady(state, attacker)
   }
   if (defender.team === 'ally' && attacker.team === 'enemy' && (hpDmg > 0 || absorbed > 0)) {
-    const koBonus = attacker.hp <= 0 ? (attacker.isBoss ? XP_ACTION_BOSS_KO : XP_ACTION_KO) : 0
+    const koBonus = !attacker.alive ? (attacker.isBoss ? XP_ACTION_BOSS_KO : XP_ACTION_KO) : 0
     awardHeroBattleXp(state, defender, XP_ACTION_DAMAGE + koBonus)
   }
   checkBattleOutcome(state)

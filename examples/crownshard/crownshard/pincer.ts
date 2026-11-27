@@ -1,3 +1,4 @@
+import { computeEndlessAttackerDamageMultiplier } from './endless-roguelite.ts'
 import { closestFootprintCell, getUnitFootprintSize } from './expansion-act2.ts'
 import { mutatorDamageMultiplier } from './mutators.ts'
 import { cellHeightAt, terrainDefBonus } from './types.ts'
@@ -75,15 +76,20 @@ export function findPincerAssisters(
  * damage accounting for elevation, empower, and target DEF + terrain DEF (minimum 4 DMG).
  */
 export function computePincerAssistDamage(
-  battle: Pick<BattleState, 'cells' | 'cols' | 'rows'> & Partial<Pick<BattleState, 'mutators'>>,
-  assister: Pick<BattleUnit, 'col' | 'row' | 'atk' | 'empowerTurns'>,
-  target: Pick<BattleUnit, 'col' | 'row' | 'def'>
+  battle: Pick<BattleState, 'cells' | 'cols' | 'rows'> & Partial<Pick<BattleState, 'mutators' | 'endlessBlessings'>>,
+  assister: Pick<BattleUnit, 'col' | 'row' | 'atk' | 'empowerTurns'> & Partial<Pick<BattleUnit, 'team'>>,
+  target: Pick<BattleUnit, 'col' | 'row' | 'def'> & Partial<Pick<BattleUnit, 'slowTurns' | 'stunTurns'>>
 ): number {
   let dmg = assister.atk
   const aLvl = cellHeightAt(battle, assister.col, assister.row)
   const dLvl = cellHeightAt(battle, target.col, target.row)
   dmg *= pincerElevationMultiplier(aLvl, dLvl)
   if (assister.empowerTurns > 0) dmg *= 1.35
+  dmg *= computeEndlessAttackerDamageMultiplier(
+    battle.endlessBlessings,
+    { team: assister.team ?? 'enemy' },
+    { slowTurns: target.slowTurns ?? 0, stunTurns: target.stunTurns ?? 0 }
+  )
   dmg *= mutatorDamageMultiplier(battle)
 
   const cell = battle.cells[target.row]?.[target.col]

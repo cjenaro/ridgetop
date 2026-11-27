@@ -1024,6 +1024,15 @@ async function start() {
     hudRev++
   }
 
+  function openPendingEndlessDraft(): boolean {
+    const run = state.campaign.endlessRun
+    if (!run || run.pendingDraft.length === 0) return false
+    audio.unlock()
+    resultAnimTime = 1
+    setScreen('victory')
+    return true
+  }
+
   function pickEndlessBlessingAndAdvance(blessingId: EndlessBlessingId) {
     audio.unlock()
     if (!draftEndlessBlessing(state, blessingId)) return
@@ -2122,8 +2131,12 @@ async function start() {
     const masteryExtraH = showMasteryPanel
       ? (selectedChestClaimable ? (isCompact ? 68 : 94) : (isCompact ? 44 : 66))
       : 0
+    const mobileTopBannersBottom = outerPad + topH + 10
+      + (resumableBattle ? (isCompact ? 48 : 54) : 0)
+      + (nextReadyMilestone ? (isCompact ? 40 : 44) : 0)
     const inspH = mobile
       ? Math.min(
+          Math.max(200, h - mobileTopBannersBottom - 20),
           Math.min(h - topH - 28, Math.round(h * (extraPanels > 0 ? 0.78 : selectedIsAbyss ? 0.56 : 0.49))),
           (extraPanels > 1 ? 470 : extraPanels > 0 ? 424 : 272) + abyssExtraH + masteryExtraH
         )
@@ -3077,10 +3090,14 @@ async function start() {
       ...(nextReadyMilestone ? (() => {
         const ms = nextReadyMilestone
         const msTopOffset = topH + outerPad + 10 + (resumableBattle ? (isCompact ? 48 : 54) : 0)
-        const msW = mobile ? Math.min(w - 16, 400) : 390
-        const msLabel = mobile
-          ? `Claim ★${ms.threshold} Chest (+${ms.gold}g · +${ms.dust}D · +${ms.shards}S)`
-          : `Claim ${ms.threshold}★ ${ms.title} (+${ms.gold}g · +${ms.dust}D · +${ms.shards}S)`
+        const msW = narrowPhone && !resumableBattle
+          ? Math.max(180, w - outerPad * 2 - zoomCtrlW - 8)
+          : mobile ? Math.min(w - 16, 400) : 390
+        const msLabel = narrowPhone && !resumableBattle
+          ? `★${ms.threshold} Chest (+${ms.gold}g · +${ms.dust}D)`
+          : mobile
+            ? `Claim ★${ms.threshold} Chest (+${ms.gold}g · +${ms.dust}D · +${ms.shards}S)`
+            : `Claim ${ms.threshold}★ ${ms.title} (+${ms.gold}g · +${ms.dust}D · +${ms.shards}S)`
         return [boxNode({
           id: 'cs-world-claim-milestone',
           style: {
@@ -3266,10 +3283,16 @@ async function start() {
           widget: {
             type: 'button',
             label: camp.endlessRun
-              ? `Endless W${camp.endlessRun.currentWave}`
+              ? (camp.endlessRun.pendingDraft.length > 0
+                  ? `Draft Endless Blessing (W${camp.endlessRun.currentWave + 1})`
+                  : `Endless W${camp.endlessRun.currentWave}`)
               : camp.endlessBest > 0 ? `Endless (Best W${camp.endlessBest})` : 'Endless W1',
             onPress: () => {
               audio.unlock()
+              if (state.campaign.endlessRun && state.campaign.endlessRun.pendingDraft.length > 0) {
+                openPendingEndlessDraft()
+                return
+              }
               const run = state.campaign.endlessRun ?? startEndlessRun(state, 1)
               const wave = Math.max(1, run.currentWave)
               const sel = selectEndlessWaveStage(run.seed, wave, run.lastBiome && wave > 1 ? run.lastBiome : undefined)
@@ -3278,10 +3301,17 @@ async function start() {
             },
             draw: (ctx: CanvasRenderingContext2D, rect: LayoutRect, st: CanvasWidgetDrawState) => {
               const run = camp.endlessRun
-              const btnLabel = run
-                ? (narrowPhone ? `W${run.currentWave}` : mobile ? `Wave ${run.currentWave}` : `Endless W${run.currentWave}`)
-                : (narrowPhone ? `W${camp.endlessBest + 1}` : mobile ? 'Endless' : camp.endlessBest > 0 ? `Endless · B${camp.endlessBest}` : 'Endless W1')
-              drawButton(ctx, rect, btnLabel, st, { variant: 'danger', icon: 'skull', size: narrowPhone ? 11 : 12 })
+              const hasDraft = Boolean(run && run.pendingDraft.length > 0)
+              const btnLabel = hasDraft && run
+                ? (narrowPhone ? 'Draft' : mobile ? `Draft W${run.currentWave + 1}` : `Draft W${run.currentWave + 1}`)
+                : run
+                  ? (narrowPhone ? `W${run.currentWave}` : mobile ? `Wave ${run.currentWave}` : `Endless W${run.currentWave}`)
+                  : (narrowPhone ? `W${camp.endlessBest + 1}` : mobile ? 'Endless' : camp.endlessBest > 0 ? `Endless · B${camp.endlessBest}` : 'Endless W1')
+              drawButton(ctx, rect, btnLabel, st, {
+                variant: hasDraft ? 'primary' : 'danger',
+                icon: hasDraft ? 'sparkle' : 'skull',
+                size: narrowPhone ? 11 : 12
+              })
             }
           }
         })] : []),
@@ -3808,15 +3838,17 @@ async function start() {
     const inspectedOwned = inspected?.team === 'ally' ? getHeroByUid(state.campaign, inspected.uid) : undefined
     const inspectedXpProgress = inspectedOwned ? heroLevelProgress(inspectedOwned.level, inspectedOwned.xp) : undefined
     const fpsShort = `${Math.round(perf.snapshot().fps || 60)}`
-    const chapterShort = battle.endlessWave > 0
-      ? (isPhone
-          ? `W${battle.endlessWave} · ${formatEndlessBiomeLabel(battle.biome)}`
-          : `Endless Wave ${battle.endlessWave} · ${formatEndlessBiomeLabel(battle.biome)}`)
-      : battle.abyssFloor
-        ? `${ch.title} · ${formatAbyssFloorLabel(battle.abyssFloor)}`
-        : battle.gauntletMaxRounds
-          ? `${ch.title} · R${battle.gauntletRound ?? 1}/${battle.gauntletMaxRounds}`
-          : `${ch.title} · D${battle.difficulty}`
+    const chapterShort = battle.activeWorldEventTitle
+      ? battle.activeWorldEventTitle
+      : battle.endlessWave > 0
+        ? (isPhone
+            ? `W${battle.endlessWave} · ${formatEndlessBiomeLabel(battle.biome)}`
+            : `Endless Wave ${battle.endlessWave} · ${formatEndlessBiomeLabel(battle.biome)}`)
+        : battle.abyssFloor
+          ? `${ch.title} · ${formatAbyssFloorLabel(battle.abyssFloor)}`
+          : battle.gauntletMaxRounds
+            ? `${ch.title} · R${battle.gauntletRound ?? 1}/${battle.gauntletMaxRounds}`
+            : `${ch.title} · D${battle.difficulty}`
 
     // Top-right toolbar (compact on phone & narrow tablets so top-left bar never collides)
     const tbIconS = isPhone ? 28 : 30
@@ -6857,7 +6889,7 @@ async function start() {
   // =========================================================================
 
   function buildResultTree(w: number, h: number, won: boolean): LayoutNode {
-    const shortH = h < 480
+    const shortH = h < 660
     const battle = state.battle
     const reward = battle?.reward
     const ch = CHAPTERS[battle?.chapterIndex ?? 0]
@@ -6868,11 +6900,15 @@ async function start() {
       ? state.campaign.heroes.filter(h => h.heroId === reward.heroCard?.heroId && h.stars === 1).length
       : 0
 
-    const endlessWaveNum = battle?.endlessWave ?? 0
+    const pendingRun = state.campaign.endlessRun
+    const isResumedPendingDraft = won && !battle && Boolean(pendingRun && pendingRun.pendingDraft.length > 0)
+    const endlessWaveNum = battle?.endlessWave || (isResumedPendingDraft ? (pendingRun?.currentWave ?? 1) : 0)
     const isEndlessResult = endlessWaveNum > 0
-    const endlessBiomeLabel = battle ? formatEndlessBiomeLabel(battle.biome) : 'Throne'
+    const endlessBiomeLabel = battle
+      ? formatEndlessBiomeLabel(battle.biome)
+      : formatEndlessBiomeLabel(pendingRun?.lastBiome ?? 'throne')
     const pendingEndlessDraft = won && isEndlessResult
-      ? (state.campaign.endlessRun?.pendingDraft ?? [])
+      ? (pendingRun?.pendingDraft ?? [])
       : []
     const hasBlessingDraft = pendingEndlessDraft.length > 0
     const eventTitle = reward?.worldEventTitle ?? battle?.activeWorldEventTitle
@@ -7087,7 +7123,7 @@ async function start() {
               draw: (ctx: CanvasRenderingContext2D, rect: LayoutRect) => drawLabel(
                 ctx,
                 rect,
-                `DRAFT 1 OF ${pendingEndlessDraft.length} RUN BLESSINGS · WAVE ${(battle?.endlessWave ?? 1) + 1}`,
+                `DRAFT 1 OF ${pendingEndlessDraft.length} RUN BLESSINGS · WAVE ${endlessWaveNum + 1}`,
                 { size: 10.5, weight: 900, color: COLOR.accentHi, align: 'center', display: true, spacing: 0.8 }
               )
             }
@@ -7112,7 +7148,7 @@ async function start() {
         ]
       : []
 
-    const displayRewardRows = hasBlessingDraft ? rewardRows.slice(0, shortH ? 1 : 2) : rewardRows
+    const displayRewardRows = hasBlessingDraft ? rewardRows.slice(0, shortH ? 1 : h >= 680 ? 3 : 2) : rewardRows
     return overlay({ id: 'root', style: { anchor: 'fill' } }, [
       boxNode({
         id: 'res-scrim',
@@ -7371,7 +7407,7 @@ async function start() {
     const selectedItem = listItems.find(it => it.data.id === codexSelectedId) ?? listItems[0]
 
     const modalW = mobile ? Math.max(320, w - 12) : Math.min(1080, w - 32)
-    const modalH = mobile ? Math.max(540, h - 12) : Math.min(664, h - 28)
+    const modalH = mobile ? Math.max(280, h - 12) : Math.min(664, h - 28)
     const modalPad = mobile ? 8 : 14
     const headerH = mobile ? 38 : 48
     const tabsH = mobile ? 34 : 38
