@@ -1,5 +1,7 @@
+import { stepSpring } from './animation.ts'
+import type { SpringConfig, SpringPresetName } from './animation.ts'
 import { readConnectedGamepads } from './input.ts'
-import type { LayoutNode, LayoutRect, SafeInsets } from './ui-layout.ts'
+import type { LayoutNode, LayoutRect, LayoutTransition, LayoutTransitionPreset, SafeInsets } from './ui-layout.ts'
 import { resolveLayout } from './ui-layout.ts'
 import { isTestingActive, isTestingPaused, onTestingPause, recordCanvasUiRegions } from './testing-runtime.ts'
 import type { HudRegion } from './testing-runtime.ts'
@@ -84,12 +86,16 @@ export function createHud(canvas: HTMLCanvasElement) {
 }
 
 export type CanvasUiUnderlay = (painter: HudPainter, ctx: CanvasRenderingContext2D) => void
+export type CanvasUiOverlay = (painter: HudPainter, ctx: CanvasRenderingContext2D) => void
 
 export interface CanvasUiViewport {
   width: number
   height: number
   pixelRatio?: number
+  /** Optional explicit timestep in seconds for UI spring transitions (defaults to wall-clock delta). */
+  dt?: number
   underlay?: CanvasUiUnderlay | null
+  overlay?: CanvasUiOverlay | null
 }
 
 export interface CanvasUiSyncOptions {
@@ -99,8 +105,12 @@ export interface CanvasUiSyncOptions {
   height?: number
   /** Override pixel ratio before capping at 2 (defaults to `globalThis.devicePixelRatio || 1`). */
   pixelRatio?: number
+  /** Optional explicit timestep in seconds for UI spring transitions. */
+  dt?: number
   /** Override underlay painter for this render pass. */
   underlay?: CanvasUiUnderlay | null
+  /** Override overlay painter for this render pass (painted above all widgets). */
+  overlay?: CanvasUiOverlay | null
   /** Render even if internal `ui.dirty` and viewport dimensions are unchanged. */
   dirty?: boolean
   /** Force an unconditional re-render. */
@@ -479,6 +489,8 @@ export function createCanvasUi(canvas: HTMLCanvasElement, options: {
   let hasRendered = false
   let currentUnderlay: CanvasUiUnderlay | null = options.underlay ?? null
   let underlayKey: string | undefined
+  let currentOverlay: CanvasUiOverlay | null = null
+  let overlayKey: string | undefined
   let disposed = false
   let dirty = true
   let padFrame: number | undefined
@@ -487,6 +499,152 @@ export function createCanvasUi(canvas: HTMLCanvasElement, options: {
   let padConfirm = false
   let padBack = false
   const globalCleanups = new Set<() => void>()
+
+  interface NodeTransitionEntry {
+    readonly id: string
+    phase: 'entering' | 'shown' | 'exiting'
+    value: number
+    velocity: number
+    config: LayoutTransition
+    snapshotNode: LayoutNode
+    snapshotRects: Map<string, LayoutRect>
+  }
+  const transitions = new Map<string, NodeTransitionEntry>()
+  let hasActiveTransitions = false
+  let lastTransitionNow: number | null = null
+
+  function prefersReducedMotion(): boolean {
+    try {
+      return Boolean(globalThis.matchMedia?.('(prefers-reduced-motion: reduce)').matches)
+    } catch {
+      return false
+    }
+  }
+
+  function springForTransition(config: LayoutTransition, isExit: boolean): SpringConfig | SpringPresetName {
+    if (isExit) return config.exitSpring ?? 'stiff'
+    if (config.spring !== undefined) return config.spring
+    const preset: LayoutTransitionPreset = config.preset ?? 'fade'
+    if (preset === 'pop') return 'bouncy'
+    if (preset === 'fade') return 'gentle'
+    return 'sheet'
+  }
+
+  function snapshotSubtreeRects(node: LayoutNode, source: ReadonlyMap<string, LayoutRect>, out: Map<string, LayoutRect>) {
+    if (node.hidden) return
+    if (node.id) {
+      const r = source.get(node.id)
+      if (r) out.set(node.id, r)
+    }
+    for (const child of node.children ?? []) snapshotSubtreeRects(child, source, out)
+  }
+
+  function collectTransitionNodes(node: LayoutNode, out: Map<string, LayoutNode>) {
+    if (node.hidden) return
+    if (node.id && node.transition) out.set(node.id, node)
+    for (const child of node.children ?? []) collectTransitionNodes(child, out)
+  }
+
+  function reconcileTransitions(tree: LayoutNode, currentRects: ReadonlyMap<string, LayoutRect>, dtOverride?: number) {
+    const now = typeof performance !== 'undefined' ? performance.now() : Date.now()
+    const rawDt = dtOverride !== undefined ? dtOverride : (lastTransitionNow === null ? 1 / 60 : (now - lastTransitionNow) / 1000)
+    lastTransitionNow = now
+    const dt = Math.max(0.001, Math.min(0.05, Number.isFinite(rawDt) ? rawDt : 1 / 60))
+    const instant = isTestingActive() || prefersReducedMotion()
+
+    const present = new Map<string, LayoutNode>()
+    collectTransitionNodes(tree, present)
+
+    // Enter or update present keyed nodes
+    for (const [id, node] of present) {
+      const config = node.transition!
+      const subRects = new Map<string, LayoutRect>()
+      snapshotSubtreeRects(node, currentRects, subRects)
+      const existing = transitions.get(id)
+      if (!existing) {
+        transitions.set(id, {
+          id,
+          phase: instant ? 'shown' : 'entering',
+          value: instant ? 1 : 0,
+          velocity: 0,
+          config,
+          snapshotNode: node,
+          snapshotRects: subRects
+        })
+      } else {
+        existing.config = config
+        existing.snapshotNode = node
+        existing.snapshotRects = subRects
+        if (instant) {
+          existing.phase = 'shown'
+          existing.value = 1
+          existing.velocity = 0
+        } else if (existing.phase === 'exiting') {
+          // Seamlessly interrupt exit spring back to enter preserving velocity
+          existing.phase = 'entering'
+        }
+      }
+    }
+
+    // Mark removed keyed nodes as exiting
+    for (const [id, entry] of transitions) {
+      if (present.has(id)) continue
+      if (instant || entry.config.exit === false) {
+        transitions.delete(id)
+      } else if (entry.phase !== 'exiting') {
+        entry.phase = 'exiting'
+      }
+    }
+
+    // Advance active springs
+    let active = false
+    for (const [id, entry] of transitions) {
+      if (entry.phase === 'shown') continue
+      const isExit = entry.phase === 'exiting'
+      const target = isExit ? 0 : 1
+      const settled = stepSpring(entry, target, dt, springForTransition(entry.config, isExit))
+      if (isExit) {
+        if (settled || entry.value <= 0.004) {
+          transitions.delete(id)
+        } else {
+          active = true
+        }
+      } else if (settled) {
+        entry.phase = 'shown'
+        entry.value = 1
+        entry.velocity = 0
+      } else {
+        active = true
+      }
+    }
+    hasActiveTransitions = active
+  }
+
+  function applyTransitionTransform(entry: NodeTransitionEntry, rect: LayoutRect) {
+    const p = entry.value
+    const alpha = Math.max(0, Math.min(1, p))
+    ctx.globalAlpha *= alpha
+    const preset: LayoutTransitionPreset = entry.config.preset ?? 'fade'
+    const inv = 1 - p
+    const dist = entry.config.distance ?? 24
+    if (preset === 'slideUp') {
+      ctx.translate(0, inv * dist)
+    } else if (preset === 'slideDown') {
+      ctx.translate(0, -inv * dist)
+    } else if (preset === 'slideLeft') {
+      ctx.translate(inv * dist, 0)
+    } else if (preset === 'slideRight') {
+      ctx.translate(-inv * dist, 0)
+    } else if (preset === 'pop') {
+      const minScale = entry.config.scale ?? 0.92
+      const s = Math.max(0.5, minScale + (1 - minScale) * p)
+      const cx = rect.x + rect.width * 0.5
+      const cy = rect.y + rect.height * 0.5
+      ctx.translate(cx, cy)
+      ctx.scale(s, s)
+      ctx.translate(-cx, -cy)
+    }
+  }
 
   const hudPainter = createHudPainter(ctx, () => ({ width: viewportW, height: viewportH }))
   canvas.addEventListener('contextrestored', () => { dirty = true }, signal)
@@ -503,6 +661,26 @@ export function createCanvasUi(canvas: HTMLCanvasElement, options: {
     currentUnderlay = paint
     dirty = true
     return true
+  }
+
+  function setOverlay(paint: CanvasUiOverlay | null, key?: string): boolean {
+    if (key !== undefined && key === overlayKey) {
+      currentOverlay = paint
+      return false
+    }
+    if (key === undefined && overlayKey === undefined && paint === currentOverlay) {
+      return false
+    }
+    overlayKey = key
+    currentOverlay = paint
+    dirty = true
+    return true
+  }
+
+  function clearTransitions() {
+    transitions.clear()
+    hasActiveTransitions = false
+    dirty = true
   }
 
   function interactiveHits(includeDisabled = false, respectScrim = true): CanvasUiHit[] {
@@ -804,9 +982,15 @@ export function createCanvasUi(canvas: HTMLCanvasElement, options: {
   globalThis.window?.addEventListener('gamepadconnected', () => ensurePadLoop(), signal)
   if (readConnectedGamepads().length) ensurePadLoop()
 
-  function paintNode(node: LayoutNode) {
+  function paintNode(node: LayoutNode, activeRects: ReadonlyMap<string, LayoutRect> = rects, isGhost = false) {
     if (node.hidden) return
-    const rect = node.id ? rects.get(node.id) : undefined
+    const rect = node.id ? activeRects.get(node.id) : undefined
+    const transitionEntry = !isGhost && node.id && node.transition ? transitions.get(node.id) : undefined
+    const applyEnter = Boolean(transitionEntry && transitionEntry.phase === 'entering' && rect)
+    if (applyEnter && transitionEntry && rect) {
+      ctx.save()
+      applyTransitionTransform(transitionEntry, rect)
+    }
     const widget = getCanvasWidget(node)
     if (rect && widget) {
       if (widget.type === 'panel') {
@@ -848,9 +1032,9 @@ export function createCanvasUi(canvas: HTMLCanvasElement, options: {
         ctx.restore()
       } else if (widget.type === 'button' || widget.type === 'toggle' || widget.type === 'select') {
         const disabled = isDisabled(widget)
-        const isHovered = !disabled && hoveredId === node.id
-        const isFocused = !disabled && focusedId === node.id
-        const pressed = !disabled && Boolean(node.id && isPressed(node.id))
+        const isHovered = !isGhost && !disabled && hoveredId === node.id
+        const isFocused = !isGhost && !disabled && focusedId === node.id
+        const pressed = !isGhost && !disabled && Boolean(node.id && isPressed(node.id))
         const selected = widget.type === 'button' && Boolean(widget.selected)
         if (widget.type === 'button' && widget.draw) {
           ctx.save()
@@ -996,7 +1180,8 @@ export function createCanvasUi(canvas: HTMLCanvasElement, options: {
         ctx.restore()
       }
     }
-    for (const child of node.children ?? []) paintNode(child)
+    for (const child of node.children ?? []) paintNode(child, activeRects, isGhost)
+    if (applyEnter) ctx.restore()
   }
 
   function snapshotHit(hit: CanvasUiHit): CanvasUiWidgetSnapshot {
@@ -1166,6 +1351,7 @@ export function createCanvasUi(canvas: HTMLCanvasElement, options: {
     if (focusedId && !enabledIds.has(focusedId)) {
       focusedId = null
     }
+    reconcileTransitions(tree, rects, viewport?.dt)
     ctx.setTransform(pw / w, 0, 0, ph / h, 0, 0)
     ctx.clearRect(0, 0, w, h)
     const underlay = viewport?.underlay !== undefined ? viewport.underlay : currentUnderlay
@@ -1174,7 +1360,22 @@ export function createCanvasUi(canvas: HTMLCanvasElement, options: {
       underlay(hudPainter, ctx)
       ctx.restore()
     }
-    paintNode(tree)
+    paintNode(tree, rects, false)
+    for (const entry of transitions.values()) {
+      if (entry.phase !== 'exiting') continue
+      const ghostRect = entry.snapshotRects.get(entry.id)
+      if (!ghostRect) continue
+      ctx.save()
+      applyTransitionTransform(entry, ghostRect)
+      paintNode(entry.snapshotNode, entry.snapshotRects, true)
+      ctx.restore()
+    }
+    const overlayPaint = viewport?.overlay !== undefined ? viewport.overlay : currentOverlay
+    if (overlayPaint) {
+      ctx.save()
+      overlayPaint(hudPainter, ctx)
+      ctx.restore()
+    }
     if (isTestingActive()) {
       const hudRegions: HudRegion[] = []
       for (const node of nodes) {
@@ -1217,7 +1418,7 @@ export function createCanvasUi(canvas: HTMLCanvasElement, options: {
     const pw = Math.max(1, Math.round(w * ratio))
     const ph = Math.max(1, Math.round(h * ratio))
     const needsRender = Boolean(syncOptions?.force || syncOptions?.dirty) ||
-      !hasRendered || dirty ||
+      !hasRendered || dirty || hasActiveTransitions ||
       w !== viewportW || h !== viewportH || ratio !== lastRatio ||
       canvas.width !== pw || canvas.height !== ph
     if (!needsRender) return false
@@ -1225,7 +1426,9 @@ export function createCanvasUi(canvas: HTMLCanvasElement, options: {
       width: w,
       height: h,
       pixelRatio: ratio,
-      ...(syncOptions?.underlay !== undefined ? { underlay: syncOptions.underlay } : {})
+      ...(syncOptions?.dt !== undefined ? { dt: syncOptions.dt } : {}),
+      ...(syncOptions?.underlay !== undefined ? { underlay: syncOptions.underlay } : {}),
+      ...(syncOptions?.overlay !== undefined ? { overlay: syncOptions.overlay } : {})
     })
     return true
   }
@@ -1287,6 +1490,8 @@ export function createCanvasUi(canvas: HTMLCanvasElement, options: {
   return {
     theme,
     setUnderlay,
+    setOverlay,
+    clearTransitions,
     render,
     sync,
     invalidate,
@@ -1296,6 +1501,7 @@ export function createCanvasUi(canvas: HTMLCanvasElement, options: {
     clearHolds,
     get rects(): ReadonlyMap<string, LayoutRect> { return rects },
     get dirty() { return dirty },
+    get animating() { return hasActiveTransitions },
     focus(id: string | null) { focusedId = id; dirty = true },
     moveFocus,
     activate,

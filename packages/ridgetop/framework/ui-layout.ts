@@ -1,7 +1,25 @@
+import type { SpringConfig, SpringPresetName } from './animation.ts'
+
 export type Align = 'start' | 'center' | 'end' | 'stretch'
 export type Justify = 'start' | 'center' | 'end' | 'between'
 export type Anchor = 'fill' | 'center' | 'top-left' | 'top-right' | 'bottom-left' | 'bottom-right' | 'top' | 'bottom'
 export type Padding = number | readonly [number, number] | readonly [number, number, number, number]
+export type LayoutTransitionPreset = 'fade' | 'pop' | 'slideUp' | 'slideDown' | 'slideLeft' | 'slideRight'
+
+export interface LayoutTransition {
+  /** Spring animation preset for enter/exit. Default: 'fade'. */
+  readonly preset?: LayoutTransitionPreset
+  /** Spring config or preset name for entering. Default: matched to preset. */
+  readonly spring?: SpringConfig | SpringPresetName
+  /** Spring config or preset name for exiting. Default: 'stiff'. */
+  readonly exitSpring?: SpringConfig | SpringPresetName
+  /** Travel distance in logical pixels for slide presets. Default: 24. */
+  readonly distance?: number
+  /** Starting scale for 'pop' preset. Default: 0.92. */
+  readonly scale?: number
+  /** Whether to animate when the node leaves the tree. Default: true. */
+  readonly exit?: boolean
+}
 
 export interface SafeInsets {
   top?: number
@@ -40,6 +58,8 @@ export interface LayoutNode {
   readonly style?: LayoutStyle
   readonly children?: readonly LayoutNode[]
   readonly hidden?: boolean
+  /** Optional spring enter/exit transition (requires a stable `id`). */
+  readonly transition?: LayoutTransition
   /** Optional custom widget payload (consumed by Canvas UI or Godot `.tscn` exporter). */
   readonly widget?: Record<string, unknown>
 }
@@ -254,19 +274,19 @@ export function resolveLayout(
   return rects
 }
 
-export function column(props: { id?: string; style?: LayoutStyle; hidden?: boolean; widget?: Record<string, unknown> }, children: readonly LayoutNode[] = []): LayoutNode {
+export function column(props: { id?: string; style?: LayoutStyle; hidden?: boolean; transition?: LayoutTransition; widget?: Record<string, unknown> }, children: readonly LayoutNode[] = []): LayoutNode {
   return { ...props, kind: 'column', children }
 }
 
-export function row(props: { id?: string; style?: LayoutStyle; hidden?: boolean; widget?: Record<string, unknown> }, children: readonly LayoutNode[] = []): LayoutNode {
+export function row(props: { id?: string; style?: LayoutStyle; hidden?: boolean; transition?: LayoutTransition; widget?: Record<string, unknown> }, children: readonly LayoutNode[] = []): LayoutNode {
   return { ...props, kind: 'row', children }
 }
 
-export function overlay(props: { id?: string; style?: LayoutStyle; hidden?: boolean; widget?: Record<string, unknown> }, children: readonly LayoutNode[] = []): LayoutNode {
+export function overlay(props: { id?: string; style?: LayoutStyle; hidden?: boolean; transition?: LayoutTransition; widget?: Record<string, unknown> }, children: readonly LayoutNode[] = []): LayoutNode {
   return { ...props, kind: 'overlay', children }
 }
 
-export function boxNode(props: { id?: string; style?: LayoutStyle; hidden?: boolean; widget?: Record<string, unknown> }, children: readonly LayoutNode[] = []): LayoutNode {
+export function boxNode(props: { id?: string; style?: LayoutStyle; hidden?: boolean; transition?: LayoutTransition; widget?: Record<string, unknown> }, children: readonly LayoutNode[] = []): LayoutNode {
   return { ...props, kind: 'box', children }
 }
 

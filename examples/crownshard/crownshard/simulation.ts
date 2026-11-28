@@ -5199,26 +5199,26 @@ function pickBestApproachTile(
     const effRange = effectiveAttackRange(battle, m.col, m.row, targetCol, targetRow, range, unit)
     if (d < 1 || d > effRange) continue
     if (!hasLineOfSight(battle, m.col, m.row, targetCol, targetRow, indirect)) continue
+    const path = findGridPath(battle, unit, m.col, m.row)
+    if (path.length === 0) continue
     const cell = battle.cells[m.row][m.col]
-    const elevDiff = cellHeightLevel(cell) - targetLvl
-    let score = elevDiff * 480
-    if (elevDiff > 0) score += 600
-    if (cell.terrain === 'shrine') score += 250
-    if (cell.terrain === 'tall_grass') score += 45
-    if (cell.terrain === 'lava_geyser' && cell.geyserActive) score -= 500
-    score += terrainDefBonus(cell.terrain) * 60
+    const elevDiff = Math.max(-2, Math.min(2, cellHeightLevel(cell) - targetLvl))
+    const oaCount = previewPathOpportunityAttacks(battle, unit, path).triggers.length
+    // Auto-Move+Strike picks the shortest, safest direct approach without detouring to flank/backstab.
+    // Players who want flank, backstab, or pincer positioning can split Move then Strike manually.
+    let score = -path.length * 100
+    if (cell.terrain === 'lava_geyser' && cell.geyserActive) score -= 10000
+    if (oaCount > 0) score -= oaCount * 500
+    // Ranged units prefer staying at max safe distance among equal-step tiles
+    if (range > 1) score += d * 15
+    // Mild tie-breakers for equidistant tiles (strictly smaller than 1 step = 100)
+    score += elevDiff * 6
+    score += terrainDefBonus(cell.terrain) * 3
+    if (cell.terrain === 'shrine') score += 4
+    if (cell.terrain === 'tall_grass') score += 2
     if (offensive && targetUnit) {
-      const arc = computeAttackArc(m.col, m.row, targetCol, targetRow, targetUnit.facing)
-      if (arc === 'back') score += 850
-      else if (arc === 'flank') score += 420
-      if (d === 1 && range <= 1 && findPincerAssisters(battle, unit, m.col, m.row, targetUnit).length > 0) {
-        score += 500
-      }
-      score -= computeCoverBonus(battle, m.col, m.row, targetCol, targetRow, unit) * 45
+      score -= computeCoverBonus(battle, m.col, m.row, targetCol, targetRow, unit) * 4
     }
-    const walkDist = manhattan(unit.col, unit.row, m.col, m.row)
-    // Ranged heroes prefer staying at max safe distance; melee prefers shortest approach
-    score += range > 1 ? d * 25 - walkDist * 6 : -walkDist * 20
     if (score > bestScore) {
       bestScore = score
       best = m

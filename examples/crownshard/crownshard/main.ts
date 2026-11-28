@@ -1,10 +1,10 @@
 import {
-  createGamePage, createLowPolyRenderer, createPerfLogger, createPerfMonitor, fixedLoop
+  createGamePage, createLowPolyRenderer, createPerfLogger, createPerfMonitor, createSpring, fixedLoop
 } from 'ridgetop'
 import type { HudPainter } from 'ridgetop'
 import { boxNode, column, createCanvasUi, createUiTheme, overlay, row, spacerNode } from 'ridgetop/ui'
 import type { CanvasWidgetDrawState, LayoutNode, LayoutRect } from 'ridgetop/ui'
-import { isTestingPaused, registerDecisionAgent } from 'ridgetop/testing'
+import { isTestingActive, isTestingPaused, registerDecisionAgent } from 'ridgetop/testing'
 import { createCrownshardDecisionAgent } from './decision-agent.ts'
 import { computeEquipmentStatDiff, formatCompactStatDelta } from './armory-diff.ts'
 import type { EquipmentStatDiff } from './armory-diff.ts'
@@ -830,7 +830,162 @@ async function start() {
     return null
   }
 
-  function setScreen(next: Screen) {
+  // =========================================================================
+  // SPRING VIEW TRANSITIONS (between major 3D scenes & screens)
+  // =========================================================================
+  type SceneTransitionKind = 'none' | 'wipe' | 'dissolve'
+  interface SceneTransitionState {
+    kind: 'wipe' | 'dissolve'
+    phase: 'cover' | 'reveal'
+    spring: ReturnType<typeof createSpring>
+    pendingScreen: Screen | null
+    snapshot: HTMLCanvasElement | null
+  }
+  let sceneTransition: SceneTransitionState | null = null
+  let snapshotCanvas: HTMLCanvasElement | null = null
+
+  function prefersReducedMotion(): boolean {
+    try {
+      return Boolean(globalThis.matchMedia?.('(prefers-reduced-motion: reduce)').matches)
+    } catch {
+      return false
+    }
+  }
+
+  function classifyScreenTransition(from: Screen, to: Screen): SceneTransitionKind {
+    if (from === to) return 'none'
+    // Live overlays over the current 3D scene rely on their own spring UI enter/exit
+    if (from === 'battle' && (to === 'paused' || to === 'victory' || to === 'defeat')) return 'none'
+    if (from === 'paused' && to === 'battle') return 'none'
+    if ((from === 'camp' || from === 'world') && to === 'codex') return 'none'
+    if (from === 'codex' && (to === 'camp' || to === 'world')) return 'none'
+    if (from === 'camp' && to === 'story') return 'none'
+    if (from === 'story' && to === 'camp') return 'none'
+    // Smooth 3D diorama cross-dissolve between World Map and Camp / Story
+    if ((from === 'world' && (to === 'camp' || to === 'story')) || ((from === 'camp' || from === 'story') && to === 'world')) {
+      return 'dissolve'
+    }
+    // Heavy 3D scene swaps (entering/leaving battle or title) use tactical gold-edged banner wipe
+    return 'wipe'
+  }
+
+  function captureStageSnapshot(): HTMLCanvasElement | null {
+    const src = renderer.canvas
+    if (!src || src.width <= 0 || src.height <= 0) return null
+    try {
+      if (!snapshotCanvas) snapshotCanvas = document.createElement('canvas')
+      const maxDim = 960
+      const scale = Math.min(1, maxDim / Math.max(src.width, src.height))
+      snapshotCanvas.width = Math.max(1, Math.round(src.width * scale))
+      snapshotCanvas.height = Math.max(1, Math.round(src.height * scale))
+      const sctx = snapshotCanvas.getContext('2d')
+      if (!sctx) return null
+      sctx.clearRect(0, 0, snapshotCanvas.width, snapshotCanvas.height)
+      sctx.drawImage(src, 0, 0, snapshotCanvas.width, snapshotCanvas.height)
+      return snapshotCanvas
+    } catch {
+      return null
+    }
+  }
+
+  function stepSceneTransition(dt: number) {
+    if (!sceneTransition) {
+      ui.setOverlay(null, 'none')
+      return
+    }
+    const tr = sceneTransition
+    tr.spring.step(dt)
+    if (tr.kind === 'wipe') {
+      if (tr.phase === 'cover' && (tr.spring.settled || tr.spring.value >= 0.965)) {
+        const next = tr.pendingScreen
+        tr.pendingScreen = null
+        tr.snapshot = null
+        if (next) {
+          ui.clearTransitions()
+          commitScreen(next)
+        }
+        tr.phase = 'reveal'
+        tr.spring.snap(1)
+        tr.spring.setTarget(0)
+      } else if (tr.phase === 'reveal' && (tr.spring.settled || tr.spring.value <= 0.01)) {
+        sceneTransition = null
+        ui.setOverlay(null, 'none')
+        return
+      }
+    } else if (tr.kind === 'dissolve') {
+      if (tr.spring.settled || tr.spring.value <= 0.01) {
+        sceneTransition = null
+        ui.setOverlay(null, 'none')
+        return
+      }
+    }
+    ui.setOverlay(paintSceneTransition, `tr:${tr.kind}:${tr.phase}:${Math.round(tr.spring.value * 1000)}`)
+  }
+
+  function paintSceneTransition(_painter: HudPainter, ctx: CanvasRenderingContext2D) {
+    const tr = sceneTransition
+    if (!tr) return
+    const w = Math.max(1, renderer.canvas.clientWidth)
+    const h = Math.max(1, renderer.canvas.clientHeight)
+    const v = Math.max(0, Math.min(1, tr.spring.value))
+    if (tr.kind === 'dissolve') {
+      if (tr.snapshot && v > 0.005) {
+        ctx.save()
+        ctx.globalAlpha = v
+        ctx.drawImage(tr.snapshot, 0, 0, w, h)
+        ctx.restore()
+      }
+      return
+    }
+    // Freeze the outgoing 3D frame behind the advancing banner wipe so pre-transition state mutations never flash
+    if (tr.phase === 'cover' && tr.snapshot) {
+      ctx.drawImage(tr.snapshot, 0, 0, w, h)
+    }
+    // Tactical gold-edged angled banner wipe
+    const slant = Math.min(120, w * 0.14)
+    const span = w + slant * 2
+    ctx.save()
+    ctx.beginPath()
+    if (tr.phase === 'cover') {
+      const leadX = -slant + span * v
+      ctx.moveTo(-slant, 0)
+      ctx.lineTo(leadX + slant, 0)
+      ctx.lineTo(leadX, h)
+      ctx.lineTo(-slant, h)
+    } else {
+      const trailX = -slant + span * (1 - v)
+      ctx.moveTo(trailX + slant, 0)
+      ctx.lineTo(w + slant, 0)
+      ctx.lineTo(w + slant, h)
+      ctx.lineTo(trailX, h)
+    }
+    ctx.closePath()
+    const grad = ctx.createLinearGradient(0, 0, w, h)
+    grad.addColorStop(0, '#0a1020')
+    grad.addColorStop(0.55, '#111a33')
+    grad.addColorStop(1, '#090e1b')
+    ctx.fillStyle = grad
+    ctx.fill()
+
+    // Crisp gold leading/trailing edge accent
+    const edgeX = tr.phase === 'cover' ? (-slant + span * v) : (-slant + span * (1 - v))
+    ctx.beginPath()
+    ctx.moveTo(edgeX + slant, 0)
+    ctx.lineTo(edgeX, h)
+    ctx.strokeStyle = 'rgba(240, 192, 96, 0.88)'
+    ctx.lineWidth = 3
+    ctx.stroke()
+
+    ctx.beginPath()
+    ctx.moveTo(edgeX + slant + (tr.phase === 'cover' ? -7 : 7), 0)
+    ctx.lineTo(edgeX + (tr.phase === 'cover' ? -7 : 7), h)
+    ctx.strokeStyle = 'rgba(240, 192, 96, 0.28)'
+    ctx.lineWidth = 1.5
+    ctx.stroke()
+    ctx.restore()
+  }
+
+  function commitScreen(next: Screen) {
     screen = next
     focusMode = false
     turnTimelineExpanded = false
@@ -872,6 +1027,44 @@ async function start() {
     else if (next === 'camp' || next === 'title' || next === 'story') audio.setMusicMode('camp')
     uiDirty = true
     hudRev++
+  }
+
+  function setScreen(next: Screen) {
+    if (isTestingActive() || prefersReducedMotion()) {
+      sceneTransition = null
+      ui.setOverlay(null, 'none')
+      commitScreen(next)
+      return
+    }
+    // If a wipe is already covering, just update its destination screen
+    if (sceneTransition?.kind === 'wipe' && sceneTransition.phase === 'cover') {
+      sceneTransition.pendingScreen = next
+      return
+    }
+    const kind = classifyScreenTransition(screen, next)
+    if (kind === 'none') {
+      commitScreen(next)
+      return
+    }
+    if (kind === 'dissolve') {
+      const snap = captureStageSnapshot()
+      ui.clearTransitions()
+      commitScreen(next)
+      if (snap) {
+        const spring = createSpring(1, { stiffness: 260, damping: 28 })
+        spring.setTarget(0)
+        sceneTransition = { kind: 'dissolve', phase: 'reveal', spring, pendingScreen: null, snapshot: snap }
+        ui.setOverlay(paintSceneTransition, 'tr:dissolve:start')
+      }
+      return
+    }
+    // Heavy 3D scene swap: spring-driven angled tactical banner wipe
+    const snap = captureStageSnapshot()
+    const spring = createSpring(0, { stiffness: 380, damping: 34 })
+    spring.setTarget(1)
+    sceneTransition = { kind: 'wipe', phase: 'cover', spring, pendingScreen: next, snapshot: snap }
+    ui.setOverlay(paintSceneTransition, 'tr:wipe:start')
+    uiDirty = true
   }
 
   function openCodex(tab?: CodexTab) {
@@ -1412,6 +1605,7 @@ async function start() {
     }
     return column({
       id: 'discovery-tip-card',
+      transition: { preset: 'pop', spring: 'snappy', scale: 0.94 },
       style: {
         anchor: opts.anchor,
         width: opts.width,
@@ -2738,6 +2932,7 @@ async function start() {
       }),
       column({
         id: 'title-card',
+        transition: { preset: 'slideUp', spring: 'sheet', distance: 26, exit: false },
         style: { anchor: 'bottom', width: cardW, inset: shortH ? 10 : mobile ? 14 : 20, padding: shortH ? [10, 14] : [16, 18], gap: shortH ? 7 : 12, respectSafeArea: true },
         widget: {
           type: 'panel',
@@ -4949,6 +5144,7 @@ async function start() {
       // Top chapter title in upper letterbox bar
       boxNode({
         id: 'st-head',
+        transition: { preset: 'slideDown', spring: 'sheet', distance: 18 },
         style: { anchor: 'top', width: contentW, height: shortH ? 48 : 64, inset: shortH ? 6 : mobile ? 14 : 20, respectSafeArea: true },
         widget: {
           type: 'panel',
@@ -4958,6 +5154,7 @@ async function start() {
       // Bottom cinematic dialogue bar
       column({
         id: 'story-modal',
+        transition: { preset: 'slideUp', spring: 'sheet', distance: 28 },
         style: { anchor: 'bottom', width: contentW, inset: shortH ? 8 : mobile ? 14 : 20, padding: shortH ? [10, 14] : [14, 18], gap: shortH ? 7 : 12, respectSafeArea: true },
         widget: {
           type: 'panel',
@@ -5922,6 +6119,7 @@ async function start() {
       phoneHandNodes.push(
         column({
           id: 'mobile-hand-drawer',
+          transition: { preset: 'slideUp', spring: 'sheet', distance: 28 },
           style: {
             anchor: 'bottom',
             width: drawerW,
@@ -6089,6 +6287,7 @@ async function start() {
       forecastNodes.push(
         column({
           id: 'combat-forecast',
+          transition: { preset: 'pop', spring: 'snappy', scale: 0.94 },
           style: mobilePortrait
             ? { anchor: 'bottom', width: fcW, inset: [6, dockH + 12], padding: 6, gap: 6, respectSafeArea: true }
             : { anchor: 'top-right', width: fcW, inset: [8, topBarH + 14], padding: 6, gap: 6, respectSafeArea: true },
@@ -6223,6 +6422,7 @@ async function start() {
       combatLogPanelNodes.push(
         column({
           id: 'combat-log-panel',
+          transition: { preset: 'slideRight', spring: 'sheet', distance: 26 },
           style: {
             anchor: 'top-left',
             width: logPanelW,
@@ -6331,6 +6531,7 @@ async function start() {
       // Active Boss AoE Telegraph Warning Pill (glowing mobile-safe banner below objective badge)
       ...(bossTelegraphHud ? [boxNode({
         id: 'battle-boss-telegraph-badge',
+        transition: { preset: 'slideDown', spring: 'snappy', distance: 16 },
         style: {
           anchor: 'top-left',
           width: bossTelegraphW,
@@ -6469,6 +6670,7 @@ async function start() {
         return [
           column({
             id: 'discovery-tip-card',
+            transition: { preset: 'pop', spring: 'snappy', scale: 0.94 },
             style: {
               anchor: 'top-left',
               width: tipW,
@@ -6626,6 +6828,7 @@ async function start() {
       // Dashed CT Shift Preview arc + ghost hero marker overlaid cleanly on top of the turn bar
       ...(showFullTimeline && ctPreview ? [boxNode({
         id: 'turn-timeline-preview',
+        transition: { preset: 'fade', spring: 'snappy' },
         style: {
           anchor: 'top',
           width: Math.min(w - 16, timelineW),
@@ -6951,6 +7154,7 @@ async function start() {
       // Compact tap-to-inspect Weather rules popover (auto-clamped inside viewport bounds)
       ...(showWeatherDetail ? [boxNode({
         id: 'cs-weather-detail',
+        transition: { preset: 'pop', spring: 'snappy', scale: 0.94 },
         style: {
           anchor: 'top-left',
           width: weatherDetailW,
@@ -6993,6 +7197,7 @@ async function start() {
           const bottomInsetY = dockH + (showHintPill ? (mobileLandscape ? 38 : 42) : 10)
           return [boxNode({
             id: 'battle-banter-toast',
+            transition: { preset: 'slideUp', spring: 'snappy', distance: 16 },
             style: {
               anchor: 'bottom',
               width: banterW,
@@ -7018,6 +7223,7 @@ async function start() {
         const banterY = subY + (hasTurnSub ? 30 : 2)
         return [boxNode({
           id: 'battle-banter-toast',
+          transition: { preset: 'slideDown', spring: 'snappy', distance: 16 },
           style: {
             anchor: 'top',
             width: banterW,
@@ -8750,6 +8956,7 @@ async function start() {
           return [
             column({
               id: 'arm-diff-dock',
+              transition: { preset: 'slideUp', spring: 'snappy', distance: 18 },
               style: { anchor: 'bottom', width: dockW, height: totalDockH, inset: [isPhone ? 6 : 12, dockInsetBottom], gap: 0, respectSafeArea: true }
             }, [topRowNode])
           ]
@@ -8879,6 +9086,7 @@ async function start() {
         return [
           column({
             id: 'arm-diff-dock',
+            transition: { preset: 'slideUp', spring: 'snappy', distance: 18 },
             style: { anchor: 'bottom', width: dockW, height: totalDockH, inset: [isPhone ? 6 : 12, dockInsetBottom], gap: temperGap, respectSafeArea: true }
           }, [
             topRowNode,
@@ -8898,6 +9106,7 @@ async function start() {
         const toastInsetBottom = Math.min(rawToastInsetBottom, maxToastInsetBottom)
         return [boxNode({
           id: 'camp-toast',
+          transition: { preset: 'pop', spring: 'snappy', scale: 0.94 },
           style: {
             anchor: 'bottom',
             width: Math.min(sheetW - 24, 520),
@@ -8915,6 +9124,7 @@ async function start() {
       // Bottom Glass Sheet Drawer
       column({
         id: 'camp-modal',
+        transition: { preset: 'slideUp', spring: 'sheet', distance: 28 },
         style: {
           anchor: 'bottom',
           width: sheetW,
@@ -9523,6 +9733,7 @@ async function start() {
     return overlay({ id: 'root', style: { anchor: 'fill' } }, [
       boxNode({
         id: 'res-scrim',
+        transition: { preset: 'fade', spring: 'gentle' },
         style: { anchor: 'fill' },
         widget: {
           type: 'panel',
@@ -9533,6 +9744,7 @@ async function start() {
       }),
       column({
         id: 'res-modal',
+        transition: { preset: 'pop', spring: 'bouncy', scale: 0.9 },
         style: {
           anchor: 'center',
           width: modalW,
@@ -9665,9 +9877,10 @@ async function start() {
     const rowH = ultraShortH ? 32 : shortH ? 36 : 42
     const btnH = ultraShortH ? 38 : shortH ? 42 : 46
     return overlay({ id: 'root', style: { anchor: 'fill' } }, [
-      boxNode({ id: 'p-scrim', style: { anchor: 'fill' }, widget: { type: 'panel', scrim: true } }),
+      boxNode({ id: 'p-scrim', transition: { preset: 'fade', spring: 'gentle' }, style: { anchor: 'fill' }, widget: { type: 'panel', scrim: true } }),
       column({
         id: 'p-card',
+        transition: { preset: 'pop', spring: 'snappy', scale: 0.92 },
         style: {
           anchor: 'center',
           width: Math.min(w - Math.max(24, vp.safeArea.left + vp.safeArea.right + 16), 360),
@@ -10096,6 +10309,7 @@ async function start() {
     return overlay({ id: 'root', style: { anchor: 'fill' } }, [
       boxNode({
         id: 'codex-scrim',
+        transition: { preset: 'fade', spring: 'gentle' },
         style: { anchor: 'fill' },
         widget: {
           type: 'panel',
@@ -10108,6 +10322,7 @@ async function start() {
       }),
       column({
         id: 'codex-modal',
+        transition: { preset: 'pop', spring: 'snappy', scale: 0.94 },
         style: {
           anchor: 'center',
           width: modalW,
@@ -11339,6 +11554,7 @@ async function start() {
       }
 
       const u0 = performance.now()
+      stepSceneTransition(renderDt)
       syncUi()
       const uiMs = performance.now() - u0
 

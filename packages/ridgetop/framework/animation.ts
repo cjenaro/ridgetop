@@ -695,3 +695,165 @@ export function createParticles(maxParticles = 240) {
     }
   }
 }
+
+// =========================================================================
+// SPRING PHYSICS (analytical damped harmonic oscillator)
+// =========================================================================
+
+export interface SpringConfig {
+  /** Spring stiffness (k). Higher = faster/snappier. Default: 280. */
+  readonly stiffness?: number
+  /** Damping coefficient (c). Lower = bouncier, higher = smoother. Default: 26. */
+  readonly damping?: number
+  /** Mass (m). Default: 1. */
+  readonly mass?: number
+  /** Position epsilon below which the spring snaps to target. Default: 0.001. */
+  readonly precision?: number
+  /** Velocity epsilon below which the spring snaps to target. Default: 0.001. */
+  readonly velocityPrecision?: number
+}
+
+export type SpringPresetName = 'snappy' | 'gentle' | 'bouncy' | 'stiff' | 'sheet'
+
+export const SPRING_PRESETS: Readonly<Record<SpringPresetName, Required<Pick<SpringConfig, 'stiffness' | 'damping' | 'mass'>>>> = {
+  snappy: { stiffness: 420, damping: 32, mass: 1 },
+  gentle: { stiffness: 220, damping: 26, mass: 1 },
+  bouncy: { stiffness: 320, damping: 20, mass: 1 },
+  stiff: { stiffness: 560, damping: 42, mass: 1 },
+  sheet: { stiffness: 340, damping: 32, mass: 1 }
+}
+
+export interface ResolvedSpringConfig {
+  readonly stiffness: number
+  readonly damping: number
+  readonly mass: number
+  readonly precision: number
+  readonly velocityPrecision: number
+}
+
+export function resolveSpringConfig(config?: SpringConfig | SpringPresetName): ResolvedSpringConfig {
+  if (typeof config === 'string') {
+    const p = SPRING_PRESETS[config] ?? SPRING_PRESETS.snappy
+    return { stiffness: p.stiffness, damping: p.damping, mass: p.mass, precision: 0.001, velocityPrecision: 0.001 }
+  }
+  const stiffness = Math.max(1e-3, config?.stiffness ?? 280)
+  const damping = Math.max(0, config?.damping ?? 26)
+  const mass = Math.max(1e-3, config?.mass ?? 1)
+  const precision = Math.max(1e-6, config?.precision ?? 0.001)
+  const velocityPrecision = Math.max(1e-6, config?.velocityPrecision ?? 0.001)
+  return { stiffness, damping, mass, precision, velocityPrecision }
+}
+
+export interface SpringState {
+  value: number
+  velocity: number
+}
+
+/**
+ * Advance a 1D damped harmonic oscillator analytically toward `target` over `dt` seconds.
+ * Unconditionally stable for any non-negative `dt`. Returns `true` when settled at `target`.
+ */
+export function stepSpring(
+  state: SpringState,
+  target: number,
+  dt: number,
+  config?: SpringConfig | SpringPresetName
+): boolean {
+  const { stiffness, damping, mass, precision, velocityPrecision } = resolveSpringConfig(config)
+  const x0 = state.value - target
+  const v0 = state.velocity
+  if (Math.abs(x0) <= precision && Math.abs(v0) <= velocityPrecision) {
+    state.value = target
+    state.velocity = 0
+    return true
+  }
+  if (!(dt > 0) || !Number.isFinite(dt)) return false
+
+  const w0 = Math.sqrt(stiffness / mass)
+  const zeta = damping / (2 * Math.sqrt(stiffness * mass))
+
+  let x: number
+  let v: number
+
+  if (zeta < 1 - 1e-4) {
+    // Underdamped
+    const wd = w0 * Math.sqrt(1 - zeta * zeta)
+    const decay = Math.exp(-zeta * w0 * dt)
+    const cos = Math.cos(wd * dt)
+    const sin = Math.sin(wd * dt)
+    const b = (v0 + zeta * w0 * x0) / wd
+    x = decay * (x0 * cos + b * sin)
+    v = decay * ((b * wd - x0 * zeta * w0) * cos - (x0 * wd + b * zeta * w0) * sin)
+  } else if (zeta > 1 + 1e-4) {
+    // Overdamped
+    const gamma = w0 * Math.sqrt(zeta * zeta - 1)
+    const r1 = -w0 * zeta + gamma
+    const r2 = -w0 * zeta - gamma
+    const c1 = (v0 - r2 * x0) / (r1 - r2)
+    const c2 = x0 - c1
+    const e1 = Math.exp(r1 * dt)
+    const e2 = Math.exp(r2 * dt)
+    x = c1 * e1 + c2 * e2
+    v = c1 * r1 * e1 + c2 * r2 * e2
+  } else {
+    // Critically damped
+    const decay = Math.exp(-w0 * dt)
+    const b = v0 + w0 * x0
+    x = decay * (x0 + b * dt)
+    v = decay * (b - w0 * (x0 + b * dt))
+  }
+
+  if (Math.abs(x) <= precision && Math.abs(v) <= velocityPrecision) {
+    state.value = target
+    state.velocity = 0
+    return true
+  }
+  state.value = target + x
+  state.velocity = v
+  return false
+}
+
+export interface Spring {
+  readonly value: number
+  readonly velocity: number
+  readonly target: number
+  readonly settled: boolean
+  setTarget(next: number): void
+  snap(value: number): void
+  impulse(deltaVelocity: number): void
+  step(dt: number): number
+}
+
+/** Create a stateful 1D spring controller backed by exact analytical spring physics. */
+export function createSpring(initial = 0, config?: SpringConfig | SpringPresetName): Spring {
+  const resolved = resolveSpringConfig(config)
+  const state: SpringState = { value: initial, velocity: 0 }
+  let target = initial
+  let settled = true
+  return {
+    get value() { return state.value },
+    get velocity() { return state.velocity },
+    get target() { return target },
+    get settled() { return settled },
+    setTarget(next: number) {
+      if (next === target && settled) return
+      target = next
+      settled = Math.abs(state.value - target) <= resolved.precision && Math.abs(state.velocity) <= resolved.velocityPrecision
+    },
+    snap(value: number) {
+      state.value = value
+      state.velocity = 0
+      target = value
+      settled = true
+    },
+    impulse(deltaVelocity: number) {
+      state.velocity += deltaVelocity
+      settled = false
+    },
+    step(dt: number) {
+      if (settled) return state.value
+      settled = stepSpring(state, target, dt, resolved)
+      return state.value
+    }
+  }
+}

@@ -48,8 +48,15 @@ export {
 export type {
   MergeMeshInput, SculptLoftOptions, SculptLoftParamRing, SculptLoftPolygonRing, SculptLoftRing
 } from './geometry.ts'
-export { blendPoses, createAnimator, createMeshPool, createParticles, createRig, mirrorClip, multiplyQuat, renderRig, retimeClip, sampleClip } from './animation.ts'
-export type { AnimationClip, Easing, JointPose, Keyframe, MeshPool, Rig, RigJoint, RigPart, WorldJoint } from './animation.ts'
+export {
+  blendPoses, createAnimator, createMeshPool, createParticles, createRig, createSpring,
+  mirrorClip, multiplyQuat, renderRig, resolveSpringConfig, retimeClip, sampleClip,
+  SPRING_PRESETS, stepSpring
+} from './animation.ts'
+export type {
+  AnimationClip, Easing, JointPose, Keyframe, MeshPool, ResolvedSpringConfig,
+  Rig, RigJoint, RigPart, Spring, SpringConfig, SpringPresetName, SpringState, WorldJoint
+} from './animation.ts'
 export {
   CHARACTER_JOINT_PIVOTS, CHARACTER_SOCKETS, createCharacterBuilder, createCharacterPalette,
   DEFAULT_CHARACTER_PALETTE, mixColor, renderCharacterTurntablePixels, shadeColor

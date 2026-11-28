@@ -6,7 +6,7 @@ import {
   armSkill, armTacticCard, autoEquipBestFit, buyPack, canMergeHero, computeAttackArc, computeCombatForecast,
   computeDeckValue, computeHeroStats, createInitialState, effectiveSpeed, endPlayerTurn, equipItem,
   findBestFitUpgrades, getHeroSkill, getUnitByUid, isEndlessUnlocked, isStageCleared, isStageUnlocked,
-  maxSquadSize, mergeHero, rotateActiveUnitFacing, salvageEquipCard, selectHeroByUid, selectTile, serializeSave,
+  maxSquadSize, mergeHero, refreshHighlights, rotateActiveUnitFacing, salvageEquipCard, selectHeroByUid, selectTile, serializeSave,
   setUnitFacing, startChapterBattle, startStageBattle, stepGame, unequipItem
 } from '../examples/crownshard/crownshard/simulation.ts'
 import { terrainWalkable } from '../examples/crownshard/crownshard/types.ts'
@@ -639,4 +639,81 @@ test('Directional facing computes Front, Flank (+15%), and Backstab (+30%) posit
   const beforeFacing = active.facing
   assert.equal(rotateActiveUnitFacing(state), true)
   assert.notEqual(active.facing, beforeFacing)
+})
+
+test('Move+Strike chooses shortest direct approach without detouring to flank or backstab', () => {
+  const state = createInitialState(3032)
+  const battle = startChapterBattle(state, 0)
+  for (let r = 0; r < battle.rows; r++) {
+    for (let c = 0; c < battle.cols; c++) {
+      battle.cells[r][c] = { col: c, row: r, terrain: 'grass', elevation: 0, walkable: true }
+    }
+  }
+
+  const archer = battle.units.find(u => u.team === 'ally' && u.heroId === 'archer')!
+  const knight = battle.units.find(u => u.team === 'ally' && u.heroId === 'knight')!
+  const enemy = battle.units.find(u => u.team === 'enemy' && u.alive)!
+  for (const u of battle.units) {
+    if (u.uid !== archer.uid && u.uid !== knight.uid && u.uid !== enemy.uid) {
+      u.alive = false
+      u.hp = 0
+    }
+  }
+
+  // Case 1: Archer (range 3, move 5) at (1,0), Enemy at (3,2) facing North so (3,3) behind enemy is reachable.
+  // Auto Move+Strike must step 1 tile into max range (d=3) instead of running behind the enemy at d=1.
+  archer.col = 1
+  archer.row = 0
+  archer.move = 5
+  archer.range = 3
+  archer.moved = false
+  archer.acted = false
+  knight.col = 0
+  knight.row = battle.rows - 1
+  enemy.col = 3
+  enemy.row = 2
+  setUnitFacing(enemy, 'n')
+  battle.phase = 'player'
+  battle.activeUnitUid = archer.uid
+  battle.selectedUnitUid = archer.uid
+  refreshHighlights(battle, state.campaign)
+
+  const archerFc = computeCombatForecast(state, enemy.col, enemy.row)!
+  assert.ok(archerFc, 'Archer Move+Strike forecast should exist')
+  assert.equal(archerFc.requiresMove, true)
+  const archerWalk = Math.abs(archerFc.approachCol - archer.col) + Math.abs(archerFc.approachRow - archer.row)
+  const archerDist = Math.abs(archerFc.approachCol - enemy.col) + Math.abs(archerFc.approachRow - enemy.row)
+  assert.equal(archerWalk, 1, `Archer should move only 1 step into range, not detour (got ${archerWalk} steps to ${archerFc.approachCol},${archerFc.approachRow})`)
+  assert.equal(archerDist, 3, `Archer should stay at max range 3, not run adjacent behind enemy (got dist ${archerDist})`)
+
+  // Case 2: Melee Knight (range 1, move 5) at (1,2), Enemy at (3,2) facing West.
+  // Direct tile (2,2) is 1 step away (front), while flank (3,1)/(3,3) is 3 steps and back (4,2) is 5 steps.
+  knight.col = 1
+  knight.row = 2
+  knight.move = 5
+  knight.range = 1
+  knight.moved = false
+  knight.acted = false
+  archer.col = 0
+  archer.row = 0
+  setUnitFacing(enemy, 'w')
+  battle.activeUnitUid = knight.uid
+  battle.selectedUnitUid = knight.uid
+  refreshHighlights(battle, state.campaign)
+
+  const knightFc = computeCombatForecast(state, enemy.col, enemy.row)!
+  assert.ok(knightFc, 'Knight Move+Strike forecast should exist')
+  assert.equal(knightFc.requiresMove, true)
+  assert.equal(knightFc.approachCol, 2, 'Knight should approach directly to (2,2) instead of looping to flank/backstab')
+  assert.equal(knightFc.approachRow, 2)
+
+  // Case 3: Active lava geyser on direct tile (2,2) still causes Knight to avoid the hazard.
+  battle.cells[2][2] = { col: 2, row: 2, terrain: 'lava_geyser', elevation: 0, walkable: true, geyserActive: true }
+  refreshHighlights(battle, state.campaign)
+  const safeFc = computeCombatForecast(state, enemy.col, enemy.row)!
+  assert.ok(safeFc, 'Knight Move+Strike forecast should still exist around lava geyser')
+  assert.ok(
+    !(safeFc.approachCol === 2 && safeFc.approachRow === 2),
+    'Move+Strike should avoid standing on an active lava geyser when safe adjacent tiles exist'
+  )
 })
